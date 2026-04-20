@@ -1,0 +1,22 @@
+# Development Profile Example
+# Copy this file to application-dev.yml and update values with actual database and JWT configuration
+
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3307/pms_db?allowPublicKeyRetrieval=true&useSSL=false
+    username: pms_user
+    password: pms_password
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    database-platform: org.hibernate.dialect.MySQLDialect
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+jwt:
+  secret: your-dev-secret-key-must-be-32-bytes-or-more-length
+  expiration: 86400000
+  prefix: Bearer

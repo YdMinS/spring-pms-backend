@@ -41,3 +41,7 @@ logs/
 # Misc
 target/
 *.iml
+
+# Configuration Files
+application-dev.yml
+application-prod.yml
