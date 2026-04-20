@@ -1,0 +1,30 @@
+# Development Profile - Example Configuration
+# All values must be provided via environment variables
+# Copy this structure and set the environment variables in your IDE or .env file
+
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    database-platform: org.hibernate.dialect.MySQLDialect
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+jwt:
+  secret: ${JWT_SECRET}
+  expiration: 86400000
+  prefix: Bearer
+
+# Example environment variables to set in IDE Run Configuration:
+# DB_URL=jdbc:mysql://localhost:3307/pms_db?allowPublicKeyRetrieval=true&useSSL=false
+# DB_USERNAME=pms_user
+# DB_PASSWORD=pms_password
+# JWT_SECRET=this-is-a-very-long-secret-key-that-is-at-least-32-bytes-long
+# JWT_EXPIRATION=86400000

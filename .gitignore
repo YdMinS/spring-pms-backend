@@ -33,6 +33,10 @@ logs/
 *.war
 *.ear
 
+# Configuration files
+application-dev.yml
+application-prod.yml
+
 # Environment
 .env
 .env.local

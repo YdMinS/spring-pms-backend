@@ -1,8 +1,10 @@
 # Production Profile
-# Database configuration will be added in Phase 2
-# JWT configuration will be added in Phase 5
-
 spring:
   jpa:
     hibernate:
       ddl-auto: validate
+
+jwt:
+  secret: ${JWT_SECRET}
+  expiration: 86400000
+  prefix: Bearer

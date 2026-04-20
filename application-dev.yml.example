@@ -1,0 +1,19 @@
+# Development Profile - EXAMPLE
+# Copy this file to src/main/resources/application-dev.yml and update values
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3307/pms_db?allowPublicKeyRetrieval=true&useSSL=false
+    username: your-username-here
+    password: your-password-here
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    database-platform: org.hibernate.dialect.MySQLDialect
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+jwt:
+  secret: your-dev-secret-key-here-must-be-at-least-32-bytes-long-for-hmac-sha256
