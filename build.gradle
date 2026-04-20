@@ -19,7 +19,7 @@ repositories {
 
 ext {
     jjwtVersion = '0.12.3'
-    springdocVersion = '2.0.2'
+    springdocVersion = '2.3.0'
 }
 
 dependencies {
