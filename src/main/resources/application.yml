@@ -20,6 +20,18 @@ spring:
     properties:
       hibernate:
         format_sql: true
+  web:
+    resources:
+      static-locations: file:${upload.path}/,classpath:/static/
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 25MB
 
 server:
   port: 8083
+
+upload:
+  path: ${HOME}/services/pms/images
+  max-size: 20971520
+  allowed-types: jpg,jpeg,png,webp,gif

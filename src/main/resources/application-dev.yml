@@ -13,3 +13,6 @@ spring:
     properties:
       hibernate:
         format_sql: true
+
+upload:
+  path: ${HOME}/services/pms/images
