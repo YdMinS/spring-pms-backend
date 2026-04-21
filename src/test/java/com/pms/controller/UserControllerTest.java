@@ -72,8 +72,9 @@ public class UserControllerTest extends BaseIntegrationTest {
     }
 
     @Test
-    public void testGetUserWithValidToken() throws Exception {
-        mockMvc.perform(get("/api/users/{id}", testUserId))
+    public void testGetUserWithValidUserToken() throws Exception {
+        mockMvc.perform(get("/api/users/{id}", testUserId)
+                .header("Authorization", "Bearer " + userToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.email").value(USER_EMAIL))
@@ -83,7 +84,8 @@ public class UserControllerTest extends BaseIntegrationTest {
 
     @Test
     public void testGetUserWithInvalidId() throws Exception {
-        mockMvc.perform(get("/api/users/{id}", 9999))
+        mockMvc.perform(get("/api/users/{id}", 9999)
+                .header("Authorization", "Bearer " + userToken))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.status").value("FAILURE"));
     }
@@ -95,6 +97,7 @@ public class UserControllerTest extends BaseIntegrationTest {
         );
 
         mockMvc.perform(patch("/api/users/{id}", testUserId)
+                .header("Authorization", "Bearer " + userToken)
                 .contentType("application/json")
                 .content(updateJson))
                 .andExpect(status().isOk())
@@ -104,7 +107,8 @@ public class UserControllerTest extends BaseIntegrationTest {
 
     @Test
     public void testDeleteUser() throws Exception {
-        mockMvc.perform(delete("/api/users/{id}", testUserId))
+        mockMvc.perform(delete("/api/users/{id}", testUserId)
+                .header("Authorization", "Bearer " + userToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUCCESS"));
     }
@@ -116,10 +120,78 @@ public class UserControllerTest extends BaseIntegrationTest {
         );
 
         mockMvc.perform(patch("/api/users/{id}/role", testUserId)
+                .header("Authorization", "Bearer " + adminToken)
                 .contentType("application/json")
                 .content(updateJson))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.role").value("ADMIN"));
+    }
+
+    // New security-related tests
+
+    @Test
+    public void testGetUserWithoutToken() throws Exception {
+        mockMvc.perform(get("/api/users/{id}", testUserId))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value("FAILURE"))
+                .andExpect(jsonPath("$.message").value("Authentication required"));
+    }
+
+    @Test
+    public void testGetUserWithAdminToken() throws Exception {
+        mockMvc.perform(get("/api/users/{id}", testUserId)
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.email").value(USER_EMAIL));
+    }
+
+    @Test
+    public void testUpdateUserWithoutToken() throws Exception {
+        String updateJson = objectMapper.writeValueAsString(
+                Map.of("name", "Updated User")
+        );
+
+        mockMvc.perform(patch("/api/users/{id}", testUserId)
+                .contentType("application/json")
+                .content(updateJson))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    @Test
+    public void testDeleteUserWithoutToken() throws Exception {
+        mockMvc.perform(delete("/api/users/{id}", testUserId))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    @Test
+    public void testUpdateRoleWithoutToken() throws Exception {
+        String updateJson = objectMapper.writeValueAsString(
+                Map.of("role", Role.ADMIN)
+        );
+
+        mockMvc.perform(patch("/api/users/{id}/role", testUserId)
+                .contentType("application/json")
+                .content(updateJson))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    @Test
+    public void testUpdateRoleWithUserToken() throws Exception {
+        String updateJson = objectMapper.writeValueAsString(
+                Map.of("role", Role.ADMIN)
+        );
+
+        mockMvc.perform(patch("/api/users/{id}/role", testUserId)
+                .header("Authorization", "Bearer " + userToken)
+                .contentType("application/json")
+                .content(updateJson))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value("FAILURE"))
+                .andExpect(jsonPath("$.message").value("Access denied"));
     }
 }

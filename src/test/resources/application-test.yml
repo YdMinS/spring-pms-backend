@@ -13,6 +13,6 @@ spring:
         format_sql: true
 
 jwt:
-  secret: test-secret-key-32-bytes-minimum-length
-  expiration: 86400000
+  secret: test-secret-key-for-testing-only-must-be-32-bytes-long
+  expiration: 3600000
   prefix: Bearer
