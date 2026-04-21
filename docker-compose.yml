@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: db-spring-pms-backend-dev
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:3307:3306"
+    volumes:
+      - spring-pms-backend_mysql_dev_data:/var/lib/mysql
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  spring-pms-backend_mysql_dev_data:
+    driver: local
