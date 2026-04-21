@@ -47,6 +47,10 @@ dependencies {
     annotationProcessor 'org.projectlombok:lombok'
 }
 
+bootJar {
+    archiveFileName = "app.jar"
+}
+
 tasks.named('test') {
     useJUnitPlatform()
 }
