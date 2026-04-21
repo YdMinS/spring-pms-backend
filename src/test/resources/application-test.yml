@@ -11,3 +11,8 @@ spring:
     properties:
       hibernate:
         format_sql: true
+
+jwt:
+  secret: test-secret-key-for-testing-only-must-be-32-bytes-long
+  expiration: 3600000
+  prefix: Bearer
