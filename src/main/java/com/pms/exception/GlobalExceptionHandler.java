@@ -30,6 +30,14 @@ public class GlobalExceptionHandler {
                 .body(ResponseDTO.failure(e.getMessage()));
     }
 
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ResponseDTO<Void>> handleIllegalArgumentException(
+            IllegalArgumentException e) {
+        log.warn("IllegalArgumentException: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ResponseDTO.failure(e.getMessage()));
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ResponseDTO<Void>> handleMethodArgumentNotValidException(
             MethodArgumentNotValidException e) {
