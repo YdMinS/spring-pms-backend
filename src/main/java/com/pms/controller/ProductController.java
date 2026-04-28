@@ -74,7 +74,7 @@ public class ProductController {
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     @ApiResponse(responseCode = "404", description = "Product not found",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
-    public ResponseEntity<ResponseDTO<ProductResponse>> getProduct(@PathVariable Long id) {
+    public ResponseEntity<ResponseDTO<ProductResponse>> getProduct(@PathVariable(name = "id") Long id) {
         ProductResponse response = productService.getProduct(id);
         return ResponseEntity.ok(ResponseDTO.success(response));
     }
@@ -95,9 +95,9 @@ public class ProductController {
     @ApiResponse(responseCode = "401", description = "Authentication required",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     public ResponseEntity<ResponseDTO<Page<ProductResponse>>> getAllProducts(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
-            @RequestParam(required = false) String search) {
+            @RequestParam(name = "page", defaultValue = "0") int page,
+            @RequestParam(name = "size", defaultValue = "20") int size,
+            @RequestParam(name = "search", required = false) String search) {
         Page<ProductResponse> response = productService.getAllProducts(page, size, search);
         return ResponseEntity.ok(ResponseDTO.success(response));
     }
