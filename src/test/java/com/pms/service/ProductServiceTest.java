@@ -327,4 +327,263 @@ public class ProductServiceTest {
                 .isInstanceOf(RuntimeException.class)
                 .hasMessage("Database error");
     }
+
+    // ==================== Phase 2-2 Cycle 1: testGetProduct_Success ====================
+
+    /**
+     * Test: Get active product by valid ID → product returned
+     *
+     * Scenario: Valid product ID with active = true
+     * Expected:
+     *   - ProductResponse returned with all fields populated
+     *   - Fields match the product in repository
+     */
+    @Test
+    @DisplayName("Should return product when valid ID provided")
+    public void testGetProduct_Success() {
+        // Given
+        Long productId = 1L;
+        Product product = ProductTestFixture.createProduct(productId);
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(product));
+
+        // When
+        ProductResponse response = productService.getProduct(productId);
+
+        // Then
+        assertThat(response)
+                .isNotNull()
+                .extracting("id", "brand", "productName", "active")
+                .containsExactly(productId, "Samsung", "Galaxy S21", true);
+
+        verify(productRepository).findById(productId);
+    }
+
+    // ==================== Phase 2-2 Cycle 2: testGetProduct_InactiveProduct_ThrowsException ====================
+
+    /**
+     * Test: Get inactive product → ResourceNotFoundException thrown
+     *
+     * Scenario: Valid product ID but active = false (soft deleted)
+     * Expected:
+     *   - ResourceNotFoundException thrown
+     *   - Exception message indicates product not found
+     */
+    @Test
+    @DisplayName("Should throw exception when product is inactive")
+    public void testGetProduct_InactiveProduct_ThrowsException() {
+        // Given
+        Long productId = 1L;
+        Product inactiveProduct = ProductTestFixture.createInactiveProduct(productId);
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(inactiveProduct));
+
+        // When & Then
+        assertThatThrownBy(() -> productService.getProduct(productId))
+                .isInstanceOf(com.pms.exception.ResourceNotFoundException.class)
+                .hasMessageContaining("Product not found");
+
+        verify(productRepository).findById(productId);
+    }
+
+    // ==================== Phase 2-2 Cycle 3: testGetProduct_NonexistentId_ThrowsException ====================
+
+    /**
+     * Test: Get non-existent product → ResourceNotFoundException thrown
+     *
+     * Scenario: Product ID does not exist in repository
+     * Expected:
+     *   - ResourceNotFoundException thrown
+     *   - Repository.findById() was called
+     */
+    @Test
+    @DisplayName("Should throw exception when product does not exist")
+    public void testGetProduct_NonexistentId_ThrowsException() {
+        // Given
+        Long productId = 999L;
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.empty());
+
+        // When & Then
+        assertThatThrownBy(() -> productService.getProduct(productId))
+                .isInstanceOf(com.pms.exception.ResourceNotFoundException.class)
+                .hasMessageContaining("not found");
+
+        verify(productRepository).findById(productId);
+    }
+
+    // ==================== Phase 2-2 Cycle 4: testGetAllProducts_Success ====================
+
+    /**
+     * Test: Get all products with pagination → Page returned
+     *
+     * Scenario: Valid pagination parameters (page, size)
+     * Expected:
+     *   - Page<ProductResponse> returned
+     *   - Contains expected products
+     *   - Pagination info correct
+     */
+    @Test
+    @DisplayName("Should return page of products with valid pagination")
+    public void testGetAllProducts_Success() {
+        // Given
+        Product product1 = ProductTestFixture.createProduct(1L);
+        Product product2 = ProductTestFixture.createLaptopProduct(2L);
+        java.util.List<Product> products = java.util.Arrays.asList(product1, product2);
+
+        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(0, 20);
+        org.springframework.data.domain.Page<Product> productPage = new org.springframework.data.domain.PageImpl<>(products, pageable, 2L);
+
+        when(productRepository.findByActiveTrue(any(org.springframework.data.domain.Pageable.class))).thenReturn(productPage);
+
+        // When
+        org.springframework.data.domain.Page<ProductResponse> result = productService.getAllProducts(0, 20, null);
+
+        // Then
+        assertThat(result)
+                .isNotNull()
+                .hasSize(2);
+        assertThat(result.getTotalElements()).isEqualTo(2);
+        assertThat(result.getNumber()).isEqualTo(0);
+        assertThat(result.getSize()).isEqualTo(20);
+
+        verify(productRepository).findByActiveTrue(any(org.springframework.data.domain.Pageable.class));
+    }
+
+    // ==================== Phase 2-2 Cycle 5: testGetAllProducts_DefaultPageSize ====================
+
+    @Test
+    @DisplayName("Should use DEFAULT_PAGE_SIZE when size <= 0")
+    public void testGetAllProducts_DefaultPageSize() {
+        // Given
+        java.util.List<Product> products = java.util.Collections.singletonList(ProductTestFixture.createProduct(1L));
+        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(0, 20);
+        org.springframework.data.domain.Page<Product> productPage = new org.springframework.data.domain.PageImpl<>(products, pageable, 1L);
+
+        when(productRepository.findByActiveTrue(any(org.springframework.data.domain.Pageable.class))).thenReturn(productPage);
+
+        // When - size = 0 should use DEFAULT_PAGE_SIZE (20)
+        org.springframework.data.domain.Page<ProductResponse> result = productService.getAllProducts(0, 0, null);
+
+        // Then
+        assertThat(result.getSize()).isEqualTo(20);
+    }
+
+    // ==================== Phase 2-2 Cycle 6: testGetAllProducts_SortByCreatedDate ====================
+
+    @Test
+    @DisplayName("Should sort products by createdDate DESC")
+    public void testGetAllProducts_SortByCreatedDate() {
+        // Given
+        Product product1 = ProductTestFixture.createProduct(1L);
+        Product product2 = ProductTestFixture.createProduct(2L);
+        java.util.List<Product> products = java.util.Arrays.asList(product2, product1); // product2 created later
+
+        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(0, 20);
+        org.springframework.data.domain.Page<Product> productPage = new org.springframework.data.domain.PageImpl<>(products, pageable, 2L);
+
+        when(productRepository.findByActiveTrue(any(org.springframework.data.domain.Pageable.class))).thenReturn(productPage);
+
+        // When
+        org.springframework.data.domain.Page<ProductResponse> result = productService.getAllProducts(0, 20, null);
+
+        // Then - verify sorting (product2 should be first)
+        assertThat(result.getContent())
+                .hasSize(2)
+                .extracting("id")
+                .containsExactly(2L, 1L);
+    }
+
+    // ==================== Phase 2-2 Cycle 7: testGetAllProducts_OnlyActiveProducts ====================
+
+    @Test
+    @DisplayName("Should only return active products")
+    public void testGetAllProducts_OnlyActiveProducts() {
+        // Given
+        Product activeProduct = ProductTestFixture.createProduct(1L);
+        java.util.List<Product> products = java.util.Collections.singletonList(activeProduct);
+
+        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(0, 20);
+        org.springframework.data.domain.Page<Product> productPage = new org.springframework.data.domain.PageImpl<>(products, pageable, 1L);
+
+        when(productRepository.findByActiveTrue(any(org.springframework.data.domain.Pageable.class))).thenReturn(productPage);
+
+        // When
+        org.springframework.data.domain.Page<ProductResponse> result = productService.getAllProducts(0, 20, null);
+
+        // Then
+        assertThat(result.getContent())
+                .allMatch(p -> p.getActive().equals(true));
+    }
+
+    // ==================== Phase 2-2 Cycle 8: testGetAllProducts_SearchByKeyword_Success ====================
+
+    @Test
+    @DisplayName("Should search by keyword and return filtered products")
+    public void testGetAllProducts_SearchByKeyword_Success() {
+        // Given
+        Product product = ProductTestFixture.createProduct(1L);
+        java.util.List<Product> products = java.util.Collections.singletonList(product);
+
+        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(0, 20);
+        org.springframework.data.domain.Page<Product> productPage = new org.springframework.data.domain.PageImpl<>(products, pageable, 1L);
+
+        when(productRepository.searchByKeyword(eq("Samsung"), any(org.springframework.data.domain.Pageable.class))).thenReturn(productPage);
+
+        // When
+        org.springframework.data.domain.Page<ProductResponse> result = productService.getAllProducts(0, 20, "Samsung");
+
+        // Then
+        assertThat(result)
+                .isNotNull()
+                .hasSize(1);
+
+        verify(productRepository).searchByKeyword(eq("Samsung"), any(org.springframework.data.domain.Pageable.class));
+    }
+
+    // ==================== Phase 2-2 Cycle 9: testGetAllProducts_EmptySearch_AllProducts ====================
+
+    @Test
+    @DisplayName("Should return all products when search is blank")
+    public void testGetAllProducts_EmptySearch_AllProducts() {
+        // Given
+        Product product1 = ProductTestFixture.createProduct(1L);
+        Product product2 = ProductTestFixture.createLaptopProduct(2L);
+        java.util.List<Product> products = java.util.Arrays.asList(product1, product2);
+
+        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(0, 20);
+        org.springframework.data.domain.Page<Product> productPage = new org.springframework.data.domain.PageImpl<>(products, pageable, 2L);
+
+        when(productRepository.findByActiveTrue(any(org.springframework.data.domain.Pageable.class))).thenReturn(productPage);
+
+        // When - blank search should use findByActiveTrue()
+        org.springframework.data.domain.Page<ProductResponse> result = productService.getAllProducts(0, 20, "   ");
+
+        // Then
+        assertThat(result)
+                .isNotNull()
+                .hasSize(2);
+
+        verify(productRepository).findByActiveTrue(any(org.springframework.data.domain.Pageable.class));
+    }
+
+    // ==================== Phase 2-2 Cycle 10: testGetAllProducts_SearchNoResults ====================
+
+    @Test
+    @DisplayName("Should return empty page when search has no results")
+    public void testGetAllProducts_SearchNoResults() {
+        // Given
+        java.util.List<Product> emptyList = java.util.Collections.emptyList();
+
+        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(0, 20);
+        org.springframework.data.domain.Page<Product> emptyPage = new org.springframework.data.domain.PageImpl<>(emptyList, pageable, 0L);
+
+        when(productRepository.searchByKeyword(eq("NonExistent"), any(org.springframework.data.domain.Pageable.class))).thenReturn(emptyPage);
+
+        // When
+        org.springframework.data.domain.Page<ProductResponse> result = productService.getAllProducts(0, 20, "NonExistent");
+
+        // Then
+        assertThat(result)
+                .isNotNull()
+                .isEmpty();
+        assertThat(result.getTotalElements()).isEqualTo(0);
+    }
 }

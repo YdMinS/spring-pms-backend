@@ -3,8 +3,13 @@ package com.pms.service;
 import com.pms.domain.Product;
 import com.pms.dto.request.CreateProductRequest;
 import com.pms.dto.response.ProductResponse;
+import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,6 +33,7 @@ import java.math.BigDecimal;
 public class ProductServiceImpl implements ProductService {
     private final ProductRepository productRepository;
     private static final String[] VALID_UNITS = {"KG", "G", "L", "ML"};
+    private static final int DEFAULT_PAGE_SIZE = 20;
 
     @Override
     @Transactional
@@ -55,6 +61,40 @@ public class ProductServiceImpl implements ProductService {
 
         Product saved = productRepository.save(product);
         return mapToResponse(saved);
+    }
+
+    @Override
+    public ProductResponse getProduct(Long id) {
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Product", id));
+
+        if (!product.getActive()) {
+            throw new ResourceNotFoundException("Product", id);
+        }
+
+        return mapToResponse(product);
+    }
+
+    @Override
+    public Page<ProductResponse> getAllProducts(int page, int size, String search) {
+        // Validate and adjust page size
+        if (size <= 0) {
+            size = DEFAULT_PAGE_SIZE;
+        }
+
+        // Create pageable with createdDate DESC sorting
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+
+        // Fetch products
+        Page<Product> productPage;
+        if (search == null || search.trim().isEmpty()) {
+            productPage = productRepository.findByActiveTrue(pageable);
+        } else {
+            productPage = productRepository.searchByKeyword(search.trim(), pageable);
+        }
+
+        // Convert to response
+        return productPage.map(this::mapToResponse);
     }
 
     /**

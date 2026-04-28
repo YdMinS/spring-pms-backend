@@ -19,6 +19,7 @@ import java.math.BigDecimal;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -207,5 +208,203 @@ public class ProductControllerTest extends BaseIntegrationTest {
 
         // Verify nothing saved
         assertThat(productRepository.count()).isEqualTo(0);
+    }
+
+    // ==================== Phase 3 (Integration) Cycle 1: testGetProduct_Success_200OK ====================
+
+    @Test
+    @DisplayName("Should get product by ID - HTTP 200 OK")
+    public void testGetProduct_Success_200OK() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+
+        // When & Then
+        mockMvc.perform(get("/api/products/" + savedProduct.getId())
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.id").value(savedProduct.getId().intValue()))
+                .andExpect(jsonPath("$.data.brand").value("Samsung"));
+    }
+
+    // ==================== Phase 3 (Integration) Cycle 2: testGetProduct_ResponseStructure ====================
+
+    @Test
+    @DisplayName("Should return complete product response structure")
+    public void testGetProduct_ResponseStructure() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+
+        // When & Then
+        mockMvc.perform(get("/api/products/" + savedProduct.getId())
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.id").exists())
+                .andExpect(jsonPath("$.data.brand").exists())
+                .andExpect(jsonPath("$.data.productName").exists())
+                .andExpect(jsonPath("$.data.price").exists())
+                .andExpect(jsonPath("$.data.active").exists())
+                .andExpect(jsonPath("$.data.createdDate").exists())
+                .andExpect(jsonPath("$.data.modifiedDate").exists());
+    }
+
+    // ==================== Phase 3 (Integration) Cycle 3: testGetProduct_MultipleProducts_CorrectOne ====================
+
+    @Test
+    @DisplayName("Should return correct product when multiple exist")
+    public void testGetProduct_MultipleProducts_CorrectOne() throws Exception {
+        // Given
+        Product product1 = productRepository.save(ProductTestFixture.createProduct(null));
+        Product product2 = productRepository.save(ProductTestFixture.createLaptopProduct(null));
+
+        // When & Then
+        mockMvc.perform(get("/api/products/" + product2.getId())
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.id").value(product2.getId().intValue()))
+                .andExpect(jsonPath("$.data.productName").value("XPS 15"));
+    }
+
+    // ==================== Phase 3 (Integration) Cycle 4: testGetProduct_NotFound_404 ====================
+
+    @Test
+    @DisplayName("Should return 404 when product not found")
+    public void testGetProduct_NotFound_404() throws Exception {
+        // When & Then
+        mockMvc.perform(get("/api/products/999")
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    // ==================== Phase 3 (Integration) Cycle 5: testGetProduct_InactiveProduct_404 ====================
+
+    @Test
+    @DisplayName("Should return 404 for inactive (soft deleted) product")
+    public void testGetProduct_InactiveProduct_404() throws Exception {
+        // Given
+        Product inactiveProduct = productRepository.save(ProductTestFixture.createInactiveProduct(null));
+
+        // When & Then
+        mockMvc.perform(get("/api/products/" + inactiveProduct.getId())
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isNotFound());
+    }
+
+    // ==================== Phase 3 (Integration) Cycle 6: testGetAllProducts_Success_200OK ====================
+
+    @Test
+    @DisplayName("Should list all products - HTTP 200 OK")
+    public void testGetAllProducts_Success_200OK() throws Exception {
+        // Given
+        productRepository.save(ProductTestFixture.createProduct(null));
+        productRepository.save(ProductTestFixture.createLaptopProduct(null));
+
+        // When & Then
+        mockMvc.perform(get("/api/products")
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.content").isArray())
+                .andExpect(jsonPath("$.data.content.length()").value(2));
+    }
+
+    // ==================== Phase 3 (Integration) Cycle 7: testGetAllProducts_PaginationInfo ====================
+
+    @Test
+    @DisplayName("Should include pagination metadata in response")
+    public void testGetAllProducts_PaginationInfo() throws Exception {
+        // Given
+        productRepository.save(ProductTestFixture.createProduct(null));
+        productRepository.save(ProductTestFixture.createLaptopProduct(null));
+
+        // When & Then
+        mockMvc.perform(get("/api/products")
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalElements").exists())
+                .andExpect(jsonPath("$.data.totalPages").exists())
+                .andExpect(jsonPath("$.data.number").exists())
+                .andExpect(jsonPath("$.data.size").exists());
+    }
+
+    // ==================== Phase 3 (Integration) Cycle 8: testGetAllProducts_DefaultPageSize ====================
+
+    @Test
+    @DisplayName("Should use default page size when not provided")
+    public void testGetAllProducts_DefaultPageSize() throws Exception {
+        // Given
+        for (int i = 0; i < 25; i++) {
+            productRepository.save(ProductTestFixture.createProduct(null));
+        }
+
+        // When & Then
+        mockMvc.perform(get("/api/products")
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.size").value(20))
+                .andExpect(jsonPath("$.data.content.length()").value(20));
+    }
+
+    // ==================== Phase 3 (Integration) Cycle 9: testGetAllProducts_SearchByKeyword ====================
+
+    @Test
+    @DisplayName("Should search products by keyword")
+    public void testGetAllProducts_SearchByKeyword() throws Exception {
+        // Given
+        productRepository.save(ProductTestFixture.createProduct(null)); // Samsung
+        productRepository.save(ProductTestFixture.createLaptopProduct(null)); // Laptop
+
+        // When & Then
+        mockMvc.perform(get("/api/products?search=Samsung")
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content.length()").value(1))
+                .andExpect(jsonPath("$.data.content[0].brand").value("Samsung"));
+    }
+
+    // ==================== Phase 3 (Integration) Cycle 10: testGetAllProducts_SearchEmptyResult ====================
+
+    @Test
+    @DisplayName("Should return empty result when search finds nothing")
+    public void testGetAllProducts_SearchEmptyResult() throws Exception {
+        // Given
+        productRepository.save(ProductTestFixture.createProduct(null));
+
+        // When & Then
+        mockMvc.perform(get("/api/products?search=NonExistent")
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalElements").value(0))
+                .andExpect(jsonPath("$.data.content.length()").value(0));
+    }
+
+    // ==================== Phase 3 (Integration) Cycle 11: testGetAllProducts_OnlyActiveProducts ====================
+
+    @Test
+    @DisplayName("Should only return active products")
+    public void testGetAllProducts_OnlyActiveProducts() throws Exception {
+        // Given
+        productRepository.save(ProductTestFixture.createProduct(null)); // active
+        productRepository.save(ProductTestFixture.createInactiveProduct(null)); // inactive
+
+        // When & Then
+        mockMvc.perform(get("/api/products")
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.content.length()").value(1))
+                .andExpect(jsonPath("$.data.content[0].active").value(true));
     }
 }
