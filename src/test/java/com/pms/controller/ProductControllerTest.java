@@ -22,6 +22,7 @@ import static org.assertj.core.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -609,5 +610,96 @@ public class ProductControllerTest extends BaseIntegrationTest {
                 .content(requestBody))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.modifiedDate").exists());
+    }
+
+    // ==================== Phase 2-4 Integration (DELETE): testDeleteProduct_Success_Admin_200OK ====================
+
+    @Test
+    @DisplayName("Should delete product with admin token - HTTP 200 OK")
+    public void testDeleteProduct_Success_Admin_200OK() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+
+        // When & Then
+        mockMvc.perform(delete("/api/products/" + savedProduct.getId())
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"));
+    }
+
+    // ==================== Phase 2-4 Integration (DELETE): testDeleteProduct_UserToken_403Forbidden ====================
+
+    @Test
+    @DisplayName("Should return 403 Forbidden when user (not admin) tries to delete")
+    public void testDeleteProduct_UserToken_403Forbidden() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+
+        // When & Then
+        mockMvc.perform(delete("/api/products/" + savedProduct.getId())
+                .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    // ==================== Phase 2-4 Integration (DELETE): testDeleteProduct_NoToken_401Unauthorized ====================
+
+    @Test
+    @DisplayName("Should return 401 Unauthorized when no token provided")
+    public void testDeleteProduct_NoToken_401Unauthorized() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+
+        // When & Then
+        mockMvc.perform(delete("/api/products/" + savedProduct.getId()))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    // ==================== Phase 2-4 Integration (DELETE): testDeleteProduct_NotFound_404 ====================
+
+    @Test
+    @DisplayName("Should return 404 when product doesn't exist")
+    public void testDeleteProduct_NotFound_404() throws Exception {
+        // Given
+        Long nonexistentId = 999L;
+
+        // When & Then
+        mockMvc.perform(delete("/api/products/" + nonexistentId)
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    // ==================== Phase 2-4 Integration (DELETE): testDeleteProduct_InactiveProduct_404 ====================
+
+    @Test
+    @DisplayName("Should return 404 when trying to delete already soft deleted product")
+    public void testDeleteProduct_InactiveProduct_404() throws Exception {
+        // Given
+        Product inactiveProduct = ProductTestFixture.createInactiveProduct(null);
+        Product savedProduct = productRepository.save(inactiveProduct);
+
+        // When & Then
+        mockMvc.perform(delete("/api/products/" + savedProduct.getId())
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    // ==================== Phase 2-4 Integration (DELETE): testDeleteProduct_ResponseStructure ====================
+
+    @Test
+    @DisplayName("Should return proper response structure on successful delete")
+    public void testDeleteProduct_ResponseStructure() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+
+        // When & Then
+        mockMvc.perform(delete("/api/products/" + savedProduct.getId())
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").exists())
+                .andExpect(jsonPath("$.message").exists());
     }
 }

@@ -223,4 +223,9 @@ public class ProductServiceImpl implements ProductService {
                 .modifiedDate(product.getUpdatedAt())
                 .build();
     }
+
+    @Override
+    public void deleteProduct(Long id) {
+        throw new UnsupportedOperationException("Not implemented yet");
+    }
 }

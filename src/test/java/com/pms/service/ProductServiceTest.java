@@ -756,4 +756,147 @@ public class ProductServiceTest {
         verify(productRepository).findById(productId);
         verify(productRepository, never()).save(any(Product.class));
     }
+
+    // ==================== Phase 2-4 Cycle 1: testDeleteProduct_Success ====================
+
+    @Test
+    @DisplayName("Should soft delete product when valid ID provided")
+    public void testDeleteProduct_Success() {
+        // Given
+        Long productId = 1L;
+        Product existingProduct = ProductTestFixture.createProduct(productId);
+
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(existingProduct));
+        when(productRepository.save(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        // When
+        productService.deleteProduct(productId);
+
+        // Then
+        verify(productRepository).findById(productId);
+        verify(productRepository).save(any(Product.class));
+    }
+
+    // ==================== Phase 2-4 Cycle 2: testDeleteProduct_NonexistentId_ThrowsException ====================
+
+    @Test
+    @DisplayName("Should throw exception when deleting non-existent product")
+    public void testDeleteProduct_NonexistentId_ThrowsException() {
+        // Given
+        Long productId = 999L;
+
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.empty());
+
+        // When & Then
+        assertThatThrownBy(() -> productService.deleteProduct(productId))
+                .isInstanceOf(com.pms.exception.ResourceNotFoundException.class)
+                .hasMessageContaining("not found");
+
+        verify(productRepository).findById(productId);
+        verify(productRepository, never()).save(any(Product.class));
+    }
+
+    // ==================== Phase 2-4 Cycle 3: testDeleteProduct_InactiveProduct_ThrowsException ====================
+
+    @Test
+    @DisplayName("Should throw exception when deleting inactive (already soft deleted) product")
+    public void testDeleteProduct_InactiveProduct_ThrowsException() {
+        // Given
+        Long productId = 1L;
+        Product inactiveProduct = ProductTestFixture.createInactiveProduct(productId);
+
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(inactiveProduct));
+
+        // When & Then
+        assertThatThrownBy(() -> productService.deleteProduct(productId))
+                .isInstanceOf(com.pms.exception.ResourceNotFoundException.class)
+                .hasMessageContaining("not found");
+
+        verify(productRepository).findById(productId);
+        verify(productRepository, never()).save(any(Product.class));
+    }
+
+    // ==================== Phase 2-4 Cycle 4: testDeleteProduct_SoftDelete_NotHardDelete ====================
+
+    @Test
+    @DisplayName("Should soft delete product (not hard delete from database)")
+    public void testDeleteProduct_SoftDelete_NotHardDelete() {
+        // Given
+        Long productId = 1L;
+        Product existingProduct = ProductTestFixture.createProduct(productId);
+
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(existingProduct));
+        when(productRepository.save(any(Product.class))).thenAnswer(invocation -> {
+            Product product = invocation.getArgument(0);
+            // Verify that product is still in repository after save
+            when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(product));
+            return product;
+        });
+
+        // When
+        productService.deleteProduct(productId);
+
+        // Then - verify product still exists in database
+        assertThat(productRepository.findById(productId))
+                .isPresent()
+                .get()
+                .hasFieldOrPropertyWithValue("active", false);
+    }
+
+    // ==================== Phase 2-4 Cycle 5: testDeleteProduct_CannotGetAfterDelete ====================
+
+    @Test
+    @DisplayName("Should not be able to get product after soft delete")
+    public void testDeleteProduct_CannotGetAfterDelete() {
+        // Given
+        Long productId = 1L;
+        Product existingProduct = ProductTestFixture.createProduct(productId);
+
+        when(productRepository.findById(productId))
+                .thenReturn(java.util.Optional.of(existingProduct))  // First call in deleteProduct
+                .thenReturn(java.util.Optional.of(existingProduct.builder().active(false).build()));  // After soft delete
+
+        when(productRepository.save(any(Product.class))).thenAnswer(invocation -> {
+            Product product = invocation.getArgument(0);
+            product.setActive(false);
+            return product;
+        });
+
+        // When - delete the product
+        productService.deleteProduct(productId);
+
+        // Then - verify getProduct throws exception
+        Product deletedProduct = existingProduct.builder().active(false).build();
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(deletedProduct));
+
+        assertThatThrownBy(() -> productService.getProduct(productId))
+                .isInstanceOf(com.pms.exception.ResourceNotFoundException.class);
+    }
+
+    // ==================== Phase 2-4 Cycle 6: testDeleteProduct_CannotUpdateAfterDelete ====================
+
+    @Test
+    @DisplayName("Should not be able to update product after soft delete")
+    public void testDeleteProduct_CannotUpdateAfterDelete() {
+        // Given
+        Long productId = 1L;
+        Product existingProduct = ProductTestFixture.createProduct(productId);
+        UpdateProductRequest updateRequest = ProductTestFixture.createUpdateRequest();
+
+        when(productRepository.findById(productId))
+                .thenReturn(java.util.Optional.of(existingProduct))  // First call in deleteProduct
+                .thenReturn(java.util.Optional.of(existingProduct.builder().active(false).build()));  // After soft delete
+
+        when(productRepository.save(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        // When - delete the product
+        productService.deleteProduct(productId);
+
+        // Then - verify updateProduct throws exception
+        Product deletedProduct = existingProduct.builder().active(false).build();
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(deletedProduct));
+
+        assertThatThrownBy(() -> productService.updateProduct(productId, updateRequest))
+                .isInstanceOf(com.pms.exception.ResourceNotFoundException.class);
+    }
 }
