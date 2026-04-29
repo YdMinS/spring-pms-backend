@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.Product;
 import com.pms.dto.request.CreateProductRequest;
+import com.pms.dto.request.UpdateProductRequest;
 import com.pms.dto.response.ProductResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.ProductRepository;
@@ -95,6 +96,74 @@ public class ProductServiceImpl implements ProductService {
 
         // Convert to response
         return productPage.map(this::mapToResponse);
+    }
+
+    @Override
+    @Transactional
+    public ProductResponse updateProduct(Long id, UpdateProductRequest request) {
+        // Find product by id
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Product", id));
+
+        // Check if product is active
+        if (!product.getActive()) {
+            throw new ResourceNotFoundException("Product", id);
+        }
+
+        // Validate and apply updates
+        if (request.getPrice() != null) {
+            validatePrice(request.getPrice());
+            product.setPrice(request.getPrice());
+        }
+
+        if (request.getUnit() != null) {
+            validateUnit(request.getUnit());
+            product.setUnit(request.getUnit());
+        }
+
+        if (request.getBarcodeId() != null) {
+            product.setBarcodeId(request.getBarcodeId());
+        }
+
+        if (request.getBrand() != null) {
+            product.setBrand(request.getBrand());
+        }
+
+        if (request.getProductName() != null) {
+            product.setProductName(request.getProductName());
+        }
+
+        if (request.getStore() != null) {
+            product.setStore(request.getStore());
+        }
+
+        if (request.getVolumeHeight() != null) {
+            product.setVolumeHeight(request.getVolumeHeight());
+        }
+
+        if (request.getVolumeLong() != null) {
+            product.setVolumeLong(request.getVolumeLong());
+        }
+
+        if (request.getVolumeShort() != null) {
+            product.setVolumeShort(request.getVolumeShort());
+        }
+
+        if (request.getWeight() != null) {
+            product.setWeight(request.getWeight());
+        }
+
+        if (request.getDescription() != null) {
+            product.setDescription(request.getDescription());
+        }
+
+        if (request.getName() != null) {
+            product.setName(request.getName());
+        }
+
+        // Save updated product
+        Product updated = productRepository.save(product);
+        return mapToResponse(updated);
     }
 
     /**

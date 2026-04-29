@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.Product;
 import com.pms.dto.request.CreateProductRequest;
+import com.pms.dto.request.UpdateProductRequest;
 import com.pms.dto.response.ProductResponse;
 import com.pms.fixture.ProductTestFixture;
 import com.pms.repository.ProductRepository;
@@ -585,5 +586,174 @@ public class ProductServiceTest {
                 .isNotNull()
                 .isEmpty();
         assertThat(result.getTotalElements()).isEqualTo(0);
+    }
+
+    // ==================== Phase 2-3 Cycle 1: testUpdateProduct_Success ====================
+
+    /**
+     * Test: Update product with valid request → product updated
+     *
+     * Scenario: Valid product ID + valid UpdateProductRequest
+     * Expected:
+     *   - Product updated with new values
+     *   - active field unchanged
+     *   - createdAt unchanged, updatedAt updated
+     */
+    @Test
+    @DisplayName("Should update product when valid request provided")
+    public void testUpdateProduct_Success() {
+        // Given
+        Long productId = 1L;
+        Product existingProduct = ProductTestFixture.createProduct(productId);
+        UpdateProductRequest updateRequest = ProductTestFixture.createUpdateRequest();
+
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(existingProduct));
+        when(productRepository.save(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        // When
+        ProductResponse response = productService.updateProduct(productId, updateRequest);
+
+        // Then
+        assertThat(response)
+                .isNotNull()
+                .extracting("id", "brand", "productName", "active")
+                .containsExactly(productId, "Apple", "iPhone 15", true);
+
+        verify(productRepository).findById(productId);
+        verify(productRepository).save(any(Product.class));
+    }
+
+    // ==================== Phase 2-3 Cycle 2: testUpdateProduct_PartialUpdate ====================
+
+    @Test
+    @DisplayName("Should update only specified fields in partial update")
+    public void testUpdateProduct_PartialUpdate() {
+        // Given
+        Long productId = 1L;
+        Product existingProduct = ProductTestFixture.createProduct(productId);
+        UpdateProductRequest partialUpdate = ProductTestFixture.createPartialUpdateRequest();
+
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(existingProduct));
+        when(productRepository.save(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        // When
+        ProductResponse response = productService.updateProduct(productId, partialUpdate);
+
+        // Then
+        assertThat(response)
+                .isNotNull()
+                .hasFieldOrPropertyWithValue("id", productId);
+
+        verify(productRepository).findById(productId);
+        verify(productRepository).save(any(Product.class));
+    }
+
+    // ==================== Phase 2-3 Cycle 3: testUpdateProduct_PartialUpdate_AllFieldsOptional ====================
+
+    @Test
+    @DisplayName("Should preserve unspecified fields when fields are null")
+    public void testUpdateProduct_PartialUpdate_AllFieldsOptional() {
+        // Given
+        Long productId = 1L;
+        Product existingProduct = ProductTestFixture.createProduct(productId);
+        UpdateProductRequest emptyUpdate = UpdateProductRequest.builder().build();
+
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(existingProduct));
+        when(productRepository.save(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        // When
+        ProductResponse response = productService.updateProduct(productId, emptyUpdate);
+
+        // Then
+        assertThat(response)
+                .isNotNull()
+                .extracting("brand", "productName")
+                .containsExactly("Samsung", "Galaxy S21");
+
+        verify(productRepository).findById(productId);
+    }
+
+    // ==================== Phase 2-3 Cycle 4: testUpdateProduct_InvalidPrice_ThrowsException ====================
+
+    @Test
+    @DisplayName("Should throw exception when update price is invalid")
+    public void testUpdateProduct_InvalidPrice_ThrowsException() {
+        // Given
+        Long productId = 1L;
+        Product existingProduct = ProductTestFixture.createProduct(productId);
+        UpdateProductRequest invalidPriceRequest = UpdateProductRequest.builder()
+                .price(java.math.BigDecimal.ZERO)
+                .build();
+
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(existingProduct));
+
+        // When & Then
+        assertThatThrownBy(() -> productService.updateProduct(productId, invalidPriceRequest))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Price must be positive");
+
+        verify(productRepository, never()).save(any(Product.class));
+    }
+
+    // ==================== Phase 2-3 Cycle 5: testUpdateProduct_InvalidUnit_ThrowsException ====================
+
+    @Test
+    @DisplayName("Should throw exception when update unit is invalid")
+    public void testUpdateProduct_InvalidUnit_ThrowsException() {
+        // Given
+        Long productId = 1L;
+        Product existingProduct = ProductTestFixture.createProduct(productId);
+        UpdateProductRequest invalidUnitRequest = UpdateProductRequest.builder()
+                .unit("INVALID")
+                .build();
+
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(existingProduct));
+
+        // When & Then
+        assertThatThrownBy(() -> productService.updateProduct(productId, invalidUnitRequest))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Unit must be one of");
+
+        verify(productRepository, never()).save(any(Product.class));
+    }
+
+    // ==================== Phase 2-3 Cycle 6: testUpdateProduct_NonexistentId_ThrowsException ====================
+
+    @Test
+    @DisplayName("Should throw exception when updating non-existent product")
+    public void testUpdateProduct_NonexistentId_ThrowsException() {
+        // Given
+        Long productId = 999L;
+        UpdateProductRequest updateRequest = ProductTestFixture.createUpdateRequest();
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.empty());
+
+        // When & Then
+        assertThatThrownBy(() -> productService.updateProduct(productId, updateRequest))
+                .isInstanceOf(com.pms.exception.ResourceNotFoundException.class)
+                .hasMessageContaining("not found");
+
+        verify(productRepository).findById(productId);
+        verify(productRepository, never()).save(any(Product.class));
+    }
+
+    // ==================== Phase 2-3 Cycle 7: testUpdateProduct_InactiveProduct_ThrowsException ====================
+
+    @Test
+    @DisplayName("Should throw exception when updating inactive (soft deleted) product")
+    public void testUpdateProduct_InactiveProduct_ThrowsException() {
+        // Given
+        Long productId = 1L;
+        Product inactiveProduct = ProductTestFixture.createInactiveProduct(productId);
+        UpdateProductRequest updateRequest = ProductTestFixture.createUpdateRequest();
+
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(inactiveProduct));
+
+        // When & Then
+        assertThatThrownBy(() -> productService.updateProduct(productId, updateRequest))
+                .isInstanceOf(com.pms.exception.ResourceNotFoundException.class)
+                .hasMessageContaining("not found");
+
+        verify(productRepository).findById(productId);
+        verify(productRepository, never()).save(any(Product.class));
     }
 }

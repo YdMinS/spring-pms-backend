@@ -38,6 +38,7 @@ public class SecurityConfig {
                         .requestMatchers("PATCH", "/api/users/**").hasAnyRole("USER", "ADMIN")
                         .requestMatchers("DELETE", "/api/users/**").hasAnyRole("USER", "ADMIN")
                         .requestMatchers("POST", "/api/products").hasRole("ADMIN")
+                        .requestMatchers("PATCH", "/api/products/**").hasRole("ADMIN")
                         .anyRequest().authenticated()
                 )
                 .csrf(csrf -> csrf.disable())

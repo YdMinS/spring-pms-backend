@@ -1,6 +1,7 @@
 package com.pms.controller;
 
 import com.pms.dto.request.CreateProductRequest;
+import com.pms.dto.request.UpdateProductRequest;
 import com.pms.dto.response.ProductResponse;
 import com.pms.dto.common.ResponseDTO;
 import com.pms.service.ProductService;
@@ -99,6 +100,33 @@ public class ProductController {
             @RequestParam(name = "size", defaultValue = "20") int size,
             @RequestParam(name = "search", required = false) String search) {
         Page<ProductResponse> response = productService.getAllProducts(page, size, search);
+        return ResponseEntity.ok(ResponseDTO.success(response));
+    }
+
+    /**
+     * Update a product (ADMIN only)
+     *
+     * @param id Product ID
+     * @param request UpdateProductRequest with fields to update
+     * @return HTTP 200 OK with updated ProductResponse
+     */
+    @PatchMapping("/{id}")
+    @Operation(summary = "Update product", description = "Update a product (ADMIN role required)")
+    @SecurityRequirement(name = "bearerAuth")
+    @ApiResponse(responseCode = "200", description = "Product updated successfully",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "400", description = "Validation error",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "401", description = "Authentication required",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "403", description = "Permission denied (ADMIN role required)",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "404", description = "Product not found",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    public ResponseEntity<ResponseDTO<ProductResponse>> updateProduct(
+            @PathVariable(name = "id") Long id,
+            @Valid @RequestBody UpdateProductRequest request) {
+        ProductResponse response = productService.updateProduct(id, request);
         return ResponseEntity.ok(ResponseDTO.success(response));
     }
 }

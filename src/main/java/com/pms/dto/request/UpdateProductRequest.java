@@ -17,6 +17,9 @@ import java.math.BigDecimal;
 @Schema(description = "Update product request")
 public class UpdateProductRequest {
 
+    @Schema(description = "Barcode ID", example = "1234567890")
+    private Long barcodeId;
+
     @Schema(description = "Brand name", example = "Samsung")
     @Size(max = 255, message = "Brand must not exceed 255 characters")
     private String brand;

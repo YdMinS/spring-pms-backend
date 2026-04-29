@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.Product;
 import com.pms.dto.request.CreateProductRequest;
+import com.pms.dto.request.UpdateProductRequest;
 import com.pms.fixture.ProductTestFixture;
 import com.pms.repository.ProductRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -20,6 +21,7 @@ import java.math.BigDecimal;
 import static org.assertj.core.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -406,5 +408,206 @@ public class ProductControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.totalElements").value(1))
                 .andExpect(jsonPath("$.data.content.length()").value(1))
                 .andExpect(jsonPath("$.data.content[0].active").value(true));
+    }
+
+    // ==================== Phase 2-3 Integration (PATCH): testUpdateProduct_Success_Admin_200OK ====================
+
+    @Test
+    @DisplayName("Should update product with admin token - HTTP 200 OK")
+    public void testUpdateProduct_Success_Admin_200OK() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+        UpdateProductRequest updateRequest = ProductTestFixture.createUpdateRequest();
+        String requestBody = objectMapper.writeValueAsString(updateRequest);
+
+        // When & Then
+        mockMvc.perform(patch("/api/products/" + savedProduct.getId())
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.id").value(savedProduct.getId().intValue()));
+    }
+
+    // ==================== Phase 2-3 Integration (PATCH): testUpdateProduct_PartialUpdate ====================
+
+    @Test
+    @DisplayName("Should update only specified fields")
+    public void testUpdateProduct_PartialUpdate() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+        UpdateProductRequest partialUpdate = UpdateProductRequest.builder()
+                .brand("NewBrand")
+                .build();
+        String requestBody = objectMapper.writeValueAsString(partialUpdate);
+
+        // When & Then
+        mockMvc.perform(patch("/api/products/" + savedProduct.getId())
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.brand").value("NewBrand"));
+    }
+
+    // ==================== Phase 2-3 Integration (PATCH): testUpdateProduct_UserToken_403Forbidden ====================
+
+    @Test
+    @DisplayName("Should return 403 Forbidden when user (not admin) tries to update")
+    public void testUpdateProduct_UserToken_403Forbidden() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+        UpdateProductRequest updateRequest = ProductTestFixture.createUpdateRequest();
+        String requestBody = objectMapper.writeValueAsString(updateRequest);
+
+        // When & Then
+        mockMvc.perform(patch("/api/products/" + savedProduct.getId())
+                .header("Authorization", "Bearer " + userToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    // ==================== Phase 2-3 Integration (PATCH): testUpdateProduct_NoToken_401Unauthorized ====================
+
+    @Test
+    @DisplayName("Should return 401 Unauthorized when no token provided")
+    public void testUpdateProduct_NoToken_401Unauthorized() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+        UpdateProductRequest updateRequest = ProductTestFixture.createUpdateRequest();
+        String requestBody = objectMapper.writeValueAsString(updateRequest);
+
+        // When & Then
+        mockMvc.perform(patch("/api/products/" + savedProduct.getId())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody))
+                .andExpect(status().isUnauthorized());
+    }
+
+    // ==================== Phase 2-3 Integration (PATCH): testUpdateProduct_InvalidPrice_400BadRequest ====================
+
+    @Test
+    @DisplayName("Should return 400 Bad Request when price is invalid")
+    public void testUpdateProduct_InvalidPrice_400BadRequest() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+        UpdateProductRequest invalidPriceRequest = UpdateProductRequest.builder()
+                .price(java.math.BigDecimal.ZERO)
+                .build();
+        String requestBody = objectMapper.writeValueAsString(invalidPriceRequest);
+
+        // When & Then
+        mockMvc.perform(patch("/api/products/" + savedProduct.getId())
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").exists());
+    }
+
+    // ==================== Phase 2-3 Integration (PATCH): testUpdateProduct_InvalidUnit_400BadRequest ====================
+
+    @Test
+    @DisplayName("Should return 400 Bad Request when unit is invalid")
+    public void testUpdateProduct_InvalidUnit_400BadRequest() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+        UpdateProductRequest invalidUnitRequest = UpdateProductRequest.builder()
+                .unit("INVALID")
+                .build();
+        String requestBody = objectMapper.writeValueAsString(invalidUnitRequest);
+
+        // When & Then
+        mockMvc.perform(patch("/api/products/" + savedProduct.getId())
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").exists());
+    }
+
+    // ==================== Phase 2-3 Integration (PATCH): testUpdateProduct_NotFound_404 ====================
+
+    @Test
+    @DisplayName("Should return 404 Not Found when product doesn't exist")
+    public void testUpdateProduct_NotFound_404() throws Exception {
+        // Given
+        UpdateProductRequest updateRequest = ProductTestFixture.createUpdateRequest();
+        String requestBody = objectMapper.writeValueAsString(updateRequest);
+
+        // When & Then
+        mockMvc.perform(patch("/api/products/999")
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    // ==================== Phase 2-3 Integration (PATCH): testUpdateProduct_InactiveProduct_404 ====================
+
+    @Test
+    @DisplayName("Should return 404 when updating inactive (soft deleted) product")
+    public void testUpdateProduct_InactiveProduct_404() throws Exception {
+        // Given
+        Product inactiveProduct = productRepository.save(ProductTestFixture.createInactiveProduct(null));
+        UpdateProductRequest updateRequest = ProductTestFixture.createUpdateRequest();
+        String requestBody = objectMapper.writeValueAsString(updateRequest);
+
+        // When & Then
+        mockMvc.perform(patch("/api/products/" + inactiveProduct.getId())
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody))
+                .andExpect(status().isNotFound());
+    }
+
+    // ==================== Phase 2-3 Integration (PATCH): testUpdateProduct_ResponseStructure ====================
+
+    @Test
+    @DisplayName("Should return complete updated product response structure")
+    public void testUpdateProduct_ResponseStructure() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+        UpdateProductRequest updateRequest = ProductTestFixture.createUpdateRequest();
+        String requestBody = objectMapper.writeValueAsString(updateRequest);
+
+        // When & Then
+        mockMvc.perform(patch("/api/products/" + savedProduct.getId())
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.id").exists())
+                .andExpect(jsonPath("$.data.brand").exists())
+                .andExpect(jsonPath("$.data.modifiedDate").exists())
+                .andExpect(jsonPath("$.data.createdDate").exists());
+    }
+
+    // ==================== Phase 2-3 Integration (PATCH): testUpdateProduct_UpdatedAtTimestamp ====================
+
+    @Test
+    @DisplayName("Should update modifiedDate timestamp on update")
+    public void testUpdateProduct_UpdatedAtTimestamp() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+        java.time.LocalDateTime originalModifiedDate = savedProduct.getUpdatedAt();
+
+        UpdateProductRequest updateRequest = UpdateProductRequest.builder()
+                .brand("UpdatedBrand")
+                .build();
+        String requestBody = objectMapper.writeValueAsString(updateRequest);
+
+        // When & Then
+        mockMvc.perform(patch("/api/products/" + savedProduct.getId())
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.modifiedDate").exists());
     }
 }
