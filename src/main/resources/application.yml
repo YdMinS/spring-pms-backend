@@ -22,7 +22,7 @@ spring:
         format_sql: true
 
 jwt:
-  secret: YOUR_32_BYTE_SECRET_KEY_PLACEHOLDER_HERE_12345678
+  secret: ${JWT_SECRET}
   expiration: 86400000
   prefix: Bearer
 
