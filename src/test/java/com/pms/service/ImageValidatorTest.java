@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.exception.InvalidImageException;
 import com.pms.fixture.ProductTestFixture;
+import com.pms.config.ImageStorageProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -23,10 +24,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 public class ImageValidatorTest {
 
     private ImageValidator imageValidator;
+    private ImageStorageProperties properties;
 
     @BeforeEach
     void setUp() {
-        imageValidator = new ImageValidator();
+        properties = new ImageStorageProperties();
+        imageValidator = new ImageValidator(properties);
     }
 
     // ==================== Test 1: Valid JPEG ====================

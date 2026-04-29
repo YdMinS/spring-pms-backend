@@ -46,3 +46,6 @@ target/
 # Configuration Files
 application-dev.yml
 application-prod.yml
+
+# Uploads
+uploads/*

@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.config.ImageStorageProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -26,10 +27,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 public class ImageStorageServiceTest {
 
     private ImageStorageService imageStorageService;
+    private ImageValidator imageValidator;
+    private ImageStorageProperties properties;
 
     @BeforeEach
     void setUp() {
-        imageStorageService = new ImageStorageService();
+        properties = new ImageStorageProperties();
+        imageValidator = new ImageValidator(properties);
+        imageStorageService = new ImageStorageService(properties, imageValidator);
     }
 
     // ==================== Test 1: Upload image successfully ====================
@@ -85,7 +90,7 @@ public class ImageStorageServiceTest {
 
     @Test
     @DisplayName("Should retrieve image content as bytes")
-    void testGetImage_Success() {
+    void testGetImage_Success() throws Exception {
         // Given
         MockMultipartFile imageFile = createMockImageFile();
         String filename = imageStorageService.uploadImage(imageFile);

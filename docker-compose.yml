@@ -1,6 +1,20 @@
 version: '3.8'
 
 services:
+  app:
+    build: .
+    container_name: spring-pms-backend-dev
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8083:8083"
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+    volumes:
+      - /services/pms/uploads:/app/uploads
+    depends_on:
+      mysql:
+        condition: service_healthy
+
   mysql:
     image: mysql:8.0
     container_name: db-spring-pms-backend-dev

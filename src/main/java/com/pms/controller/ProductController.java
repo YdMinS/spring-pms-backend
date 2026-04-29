@@ -1,9 +1,14 @@
 package com.pms.controller;
 
+import com.pms.domain.Product;
 import com.pms.dto.request.CreateProductRequest;
 import com.pms.dto.request.UpdateProductRequest;
 import com.pms.dto.response.ProductResponse;
 import com.pms.dto.common.ResponseDTO;
+import com.pms.exception.ImageNotFoundException;
+import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.ProductRepository;
+import com.pms.service.ImageStorageService;
 import com.pms.service.ProductService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -15,6 +20,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -36,6 +42,8 @@ import org.springframework.web.multipart.MultipartFile;
 public class ProductController {
 
     private final ProductService productService;
+    private final ImageStorageService imageStorageService;
+    private final ProductRepository productRepository;
 
     /**
      * Create a new product (ADMIN only)
@@ -176,7 +184,43 @@ public class ProductController {
     public ResponseEntity<ResponseDTO<Void>> uploadImage(
             @PathVariable(name = "id") Long id,
             @RequestParam(name = "file") MultipartFile file) {
-        throw new UnsupportedOperationException("Not implemented yet");
+
+        // 1. Find product by ID
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Product", id));
+
+        // 2. Check product is active
+        if (!product.getActive()) {
+            throw new ResourceNotFoundException("Product", id);
+        }
+
+        // 3. Upload image via service
+        String imageFilename = imageStorageService.uploadImage(file, id);
+
+        // 4. Update product with new imageUrl
+        String imageUrl = imageFilename;
+        Product updatedProduct = product.builder()
+                .id(product.getId())
+                .barcodeId(product.getBarcodeId())
+                .brand(product.getBrand())
+                .price(product.getPrice())
+                .productName(product.getProductName())
+                .store(product.getStore())
+                .unit(product.getUnit())
+                .volumeHeight(product.getVolumeHeight())
+                .volumeLong(product.getVolumeLong())
+                .volumeShort(product.getVolumeShort())
+                .weight(product.getWeight())
+                .description(product.getDescription())
+                .name(product.getName())
+                .imageUrl(imageUrl)
+                .active(product.getActive())
+                .build();
+
+        productRepository.save(updatedProduct);
+
+        // 5. Return 200 OK
+        return ResponseEntity.ok(ResponseDTO.success(null));
     }
 
     /**
@@ -194,7 +238,31 @@ public class ProductController {
     @ApiResponse(responseCode = "404", description = "Image not found",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     public ResponseEntity<?> getImage(@PathVariable(name = "id") Long id) {
-        throw new UnsupportedOperationException("Not implemented yet");
+
+        // 1. Find product by ID
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Product", id));
+
+        // 2. Check if product is active
+        if (!product.getActive()) {
+            throw new ResourceNotFoundException("Product", id);
+        }
+
+        // 3. Check if product has image URL
+        if (product.getImageUrl() == null || product.getImageUrl().isEmpty()) {
+            return ResponseEntity.notFound().build(); // 404
+        }
+
+        // 4. Retrieve image bytes
+        try {
+            byte[] imageBytes = imageStorageService.getImage(product.getImageUrl());
+            return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                    .contentLength(imageBytes.length)
+                    .body(imageBytes);
+        } catch (java.io.FileNotFoundException e) {
+            return ResponseEntity.notFound().build(); // 404
+        }
     }
 
     /**
@@ -215,6 +283,43 @@ public class ProductController {
     @ApiResponse(responseCode = "404", description = "Product not found",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     public ResponseEntity<ResponseDTO<Void>> deleteImage(@PathVariable(name = "id") Long id) {
-        throw new UnsupportedOperationException("Not implemented yet");
+
+        // 1. Find product by ID
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Product", id));
+
+        // 2. Check product is active
+        if (!product.getActive()) {
+            throw new ResourceNotFoundException("Product", id);
+        }
+
+        // 3. Delete image file (graceful)
+        if (product.getImageUrl() != null && !product.getImageUrl().isEmpty()) {
+            imageStorageService.deleteImage(product.getImageUrl());
+        }
+
+        // 4. Update product to clear imageUrl
+        Product updatedProduct = product.builder()
+                .id(product.getId())
+                .barcodeId(product.getBarcodeId())
+                .brand(product.getBrand())
+                .price(product.getPrice())
+                .productName(product.getProductName())
+                .store(product.getStore())
+                .unit(product.getUnit())
+                .volumeHeight(product.getVolumeHeight())
+                .volumeLong(product.getVolumeLong())
+                .volumeShort(product.getVolumeShort())
+                .weight(product.getWeight())
+                .description(product.getDescription())
+                .name(product.getName())
+                .imageUrl(null)  // Clear image URL
+                .active(product.getActive())
+                .build();
+
+        productRepository.save(updatedProduct);
+
+        // 5. Return 200 OK
+        return ResponseEntity.ok(ResponseDTO.success(null));
     }
 }
