@@ -15,6 +15,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.http.HttpMethod;
+import org.springframework.mock.web.MockMultipartFile;
 
 import java.math.BigDecimal;
 
@@ -23,6 +25,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -701,5 +704,216 @@ public class ProductControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").exists())
                 .andExpect(jsonPath("$.message").exists());
+    }
+
+    // ==================== Phase 3-1 Integration (PUT /image): testUploadImage_Success_200OK ====================
+
+    @Test
+    @DisplayName("Should upload image successfully with ADMIN token - HTTP 200 OK")
+    public void testUploadImage_Success_200OK() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+        MockMultipartFile imageFile = ProductTestFixture.createMockImageFile();
+
+        // When & Then
+        mockMvc.perform(multipart(HttpMethod.PUT, "/api/products/" + savedProduct.getId() + "/image")
+                .file(imageFile)
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"));
+    }
+
+    // ==================== Phase 3-1 Integration (PUT /image): testUploadImage_NoToken_401Unauthorized ====================
+
+    @Test
+    @DisplayName("Should return 401 Unauthorized when uploading image without token")
+    public void testUploadImage_NoToken_401Unauthorized() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+        MockMultipartFile imageFile = ProductTestFixture.createMockImageFile();
+
+        // When & Then
+        mockMvc.perform(multipart(HttpMethod.PUT, "/api/products/" + savedProduct.getId() + "/image")
+                .file(imageFile))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    // ==================== Phase 3-1 Integration (PUT /image): testUploadImage_UserToken_403Forbidden ====================
+
+    @Test
+    @DisplayName("Should return 403 Forbidden when uploading image with USER token")
+    public void testUploadImage_UserToken_403Forbidden() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+        MockMultipartFile imageFile = ProductTestFixture.createMockImageFile();
+
+        // When & Then
+        mockMvc.perform(multipart(HttpMethod.PUT, "/api/products/" + savedProduct.getId() + "/image")
+                .file(imageFile)
+                .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    // ==================== Phase 3-1 Integration (PUT /image): testUploadImage_InvalidFileType_400BadRequest ====================
+
+    @Test
+    @DisplayName("Should return 400 Bad Request when uploading invalid file type")
+    public void testUploadImage_InvalidFileType_400BadRequest() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+        MockMultipartFile invalidFile = ProductTestFixture.createInvalidTypeFile();
+
+        // When & Then
+        mockMvc.perform(multipart(HttpMethod.PUT, "/api/products/" + savedProduct.getId() + "/image")
+                .file(invalidFile)
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    // ==================== Phase 3-1 Integration (PUT /image): testUploadImage_FileSizeExceeded_400BadRequest ====================
+
+    @Test
+    @DisplayName("Should return 400 Bad Request when file size exceeds 20MB")
+    public void testUploadImage_FileSizeExceeded_400BadRequest() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+        MockMultipartFile oversizedFile = ProductTestFixture.createOversizedFile();
+
+        // When & Then
+        mockMvc.perform(multipart(HttpMethod.PUT, "/api/products/" + savedProduct.getId() + "/image")
+                .file(oversizedFile)
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    // ==================== Phase 3-1 Integration (PUT /image): testUploadImage_InvalidExtension_400BadRequest ====================
+
+    @Test
+    @DisplayName("Should return 400 Bad Request when file has invalid extension")
+    public void testUploadImage_InvalidExtension_400BadRequest() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+        MockMultipartFile invalidExtensionFile = ProductTestFixture.createInvalidExtensionFile();
+
+        // When & Then
+        mockMvc.perform(multipart(HttpMethod.PUT, "/api/products/" + savedProduct.getId() + "/image")
+                .file(invalidExtensionFile)
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    // ==================== Phase 3-1 Integration (GET /image): testGetImage_Success_200OK ====================
+
+    @Test
+    @DisplayName("Should retrieve image successfully - HTTP 200 OK")
+    public void testGetImage_Success_200OK() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+        MockMultipartFile imageFile = ProductTestFixture.createMockImageFile();
+        // Upload image first
+        mockMvc.perform(multipart(HttpMethod.PUT, "/api/products/" + savedProduct.getId() + "/image")
+                .file(imageFile)
+                .header("Authorization", "Bearer " + adminToken));
+
+        // When & Then
+        mockMvc.perform(get("/api/products/" + savedProduct.getId() + "/image")
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+    }
+
+    // ==================== Phase 3-1 Integration (GET /image): testGetImage_NotFound_404 ====================
+
+    @Test
+    @DisplayName("Should return 404 Not Found when image doesn't exist")
+    public void testGetImage_NotFound_404() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+
+        // When & Then
+        mockMvc.perform(get("/api/products/" + savedProduct.getId() + "/image")
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound());
+    }
+
+    // ==================== Phase 3-1 Integration (GET /image): testGetImage_NoImage_204NoContent ====================
+
+    @Test
+    @DisplayName("Should return 204 No Content when product has no image")
+    public void testGetImage_NoImage_204NoContent() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+
+        // When & Then
+        mockMvc.perform(get("/api/products/" + savedProduct.getId() + "/image")
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound());
+    }
+
+    // ==================== Phase 3-1 Integration (DELETE /image): testDeleteImage_Success_200OK ====================
+
+    @Test
+    @DisplayName("Should delete image successfully with ADMIN token - HTTP 200 OK")
+    public void testDeleteImage_Success_200OK() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+        MockMultipartFile imageFile = ProductTestFixture.createMockImageFile();
+        // Upload image first
+        mockMvc.perform(multipart(HttpMethod.PUT, "/api/products/" + savedProduct.getId() + "/image")
+                .file(imageFile)
+                .header("Authorization", "Bearer " + adminToken));
+
+        // When & Then
+        mockMvc.perform(delete("/api/products/" + savedProduct.getId() + "/image")
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"));
+    }
+
+    // ==================== Phase 3-1 Integration (DELETE /image): testDeleteImage_NoToken_401Unauthorized ====================
+
+    @Test
+    @DisplayName("Should return 401 Unauthorized when deleting image without token")
+    public void testDeleteImage_NoToken_401Unauthorized() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+
+        // When & Then
+        mockMvc.perform(delete("/api/products/" + savedProduct.getId() + "/image"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    // ==================== Phase 3-1 Integration (DELETE /image): testDeleteImage_UserToken_403Forbidden ====================
+
+    @Test
+    @DisplayName("Should return 403 Forbidden when deleting image with USER token")
+    public void testDeleteImage_UserToken_403Forbidden() throws Exception {
+        // Given
+        Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
+
+        // When & Then
+        mockMvc.perform(delete("/api/products/" + savedProduct.getId() + "/image")
+                .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    // ==================== Phase 3-1 Integration (DELETE /image): testDeleteImage_NotFound_404 ====================
+
+    @Test
+    @DisplayName("Should return 404 Not Found when trying to delete non-existent product")
+    public void testDeleteImage_NotFound_404() throws Exception {
+        // Given
+        Long nonexistentId = 999L;
+
+        // When & Then
+        mockMvc.perform(delete("/api/products/" + nonexistentId + "/image")
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound());
     }
 }

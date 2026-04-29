@@ -17,6 +17,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 /**
  * ProductController - REST API endpoints for Product management
@@ -150,5 +151,70 @@ public class ProductController {
     public ResponseEntity<ResponseDTO<Void>> deleteProduct(@PathVariable(name = "id") Long id) {
         productService.deleteProduct(id);
         return ResponseEntity.ok(ResponseDTO.success(null));
+    }
+
+    /**
+     * Upload product image (ADMIN only)
+     *
+     * @param id Product ID
+     * @param file Image file (multipart/form-data)
+     * @return HTTP 200 OK with success message
+     */
+    @PutMapping("/{id}/image")
+    @Operation(summary = "Upload product image", description = "Upload image for a product (ADMIN role required)")
+    @SecurityRequirement(name = "bearerAuth")
+    @ApiResponse(responseCode = "200", description = "Image uploaded successfully",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "400", description = "Invalid image file",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "401", description = "Authentication required",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "403", description = "Permission denied (ADMIN role required)",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "404", description = "Product not found",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    public ResponseEntity<ResponseDTO<Void>> uploadImage(
+            @PathVariable(name = "id") Long id,
+            @RequestParam(name = "file") MultipartFile file) {
+        throw new UnsupportedOperationException("Not implemented yet");
+    }
+
+    /**
+     * Get product image (ADMIN only)
+     *
+     * @param id Product ID
+     * @return HTTP 200 OK with image content
+     */
+    @GetMapping("/{id}/image")
+    @Operation(summary = "Get product image", description = "Retrieve image for a product")
+    @SecurityRequirement(name = "bearerAuth")
+    @ApiResponse(responseCode = "200", description = "Image retrieved successfully")
+    @ApiResponse(responseCode = "401", description = "Authentication required",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "404", description = "Image not found",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    public ResponseEntity<?> getImage(@PathVariable(name = "id") Long id) {
+        throw new UnsupportedOperationException("Not implemented yet");
+    }
+
+    /**
+     * Delete product image (ADMIN only)
+     *
+     * @param id Product ID
+     * @return HTTP 200 OK with success message
+     */
+    @DeleteMapping("/{id}/image")
+    @Operation(summary = "Delete product image", description = "Delete image for a product (ADMIN role required)")
+    @SecurityRequirement(name = "bearerAuth")
+    @ApiResponse(responseCode = "200", description = "Image deleted successfully",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "401", description = "Authentication required",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "403", description = "Permission denied (ADMIN role required)",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "404", description = "Product not found",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    public ResponseEntity<ResponseDTO<Void>> deleteImage(@PathVariable(name = "id") Long id) {
+        throw new UnsupportedOperationException("Not implemented yet");
     }
 }

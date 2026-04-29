@@ -4,6 +4,7 @@ import com.pms.domain.Product;
 import com.pms.dto.request.CreateProductRequest;
 import com.pms.dto.request.UpdateProductRequest;
 import com.pms.dto.response.ProductResponse;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
@@ -391,5 +392,78 @@ public class ProductTestFixture {
      */
     public static String[] getInvalidUnits() {
         return new String[]{"INVALID", "KGS", "GRAM", "LITER", "ML2", "", " "};
+    }
+
+    // ==================== MockMultipartFile Builders for Image Tests ====================
+
+    /**
+     * Create a valid JPEG mock multipart file
+     */
+    public static MockMultipartFile createMockImageFile() {
+        // Valid JPEG magic bytes: FF D8 FF
+        byte[] jpegBytes = new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xE0,
+                0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00};
+        return new MockMultipartFile(
+                "file",
+                "test-image.jpg",
+                "image/jpeg",
+                jpegBytes
+        );
+    }
+
+    /**
+     * Create a valid PNG mock multipart file
+     */
+    public static MockMultipartFile createMockPngFile() {
+        // Valid PNG magic bytes: 89 50 4E 47
+        byte[] pngBytes = new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47,
+                0x0D, 0x0A, 0x1A, 0x0A};
+        return new MockMultipartFile(
+                "file",
+                "test-image.png",
+                "image/png",
+                pngBytes
+        );
+    }
+
+    /**
+     * Create an oversized file (21 MB, exceeds 20 MB limit)
+     */
+    public static MockMultipartFile createOversizedFile() {
+        byte[] largeBytes = new byte[21 * 1024 * 1024];
+        largeBytes[0] = (byte) 0xFF;
+        largeBytes[1] = (byte) 0xD8;
+        largeBytes[2] = (byte) 0xFF;
+        return new MockMultipartFile(
+                "file",
+                "oversized.jpg",
+                "image/jpeg",
+                largeBytes
+        );
+    }
+
+    /**
+     * Create an invalid type file (text/plain instead of image)
+     */
+    public static MockMultipartFile createInvalidTypeFile() {
+        return new MockMultipartFile(
+                "file",
+                "document.txt",
+                "text/plain",
+                "This is text, not an image".getBytes()
+        );
+    }
+
+    /**
+     * Create an invalid extension file (.exe with image MIME type)
+     */
+    public static MockMultipartFile createInvalidExtensionFile() {
+        byte[] jpegBytes = new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xE0};
+        return new MockMultipartFile(
+                "file",
+                "malware.exe",
+                "image/jpeg",
+                jpegBytes
+        );
     }
 }
