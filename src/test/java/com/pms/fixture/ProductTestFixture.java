@@ -31,7 +31,7 @@ public class ProductTestFixture {
     public static Product createProduct(Long id) {
         Product product = Product.builder()
                 .id(id)
-                .barcodeId(1234567890123L)
+                .barcodeId("1234567890123")
                 .brand("Samsung")
                 .price(new BigDecimal("999.99"))
                 .productName("Galaxy S21")
@@ -63,7 +63,7 @@ public class ProductTestFixture {
     public static Product createInactiveProduct(Long id) {
         Product product = Product.builder()
                 .id(id)
-                .barcodeId(1234567890123L)
+                .barcodeId("1234567890123")
                 .brand("Samsung")
                 .price(new BigDecimal("999.99"))
                 .productName("Galaxy S21")
@@ -105,7 +105,7 @@ public class ProductTestFixture {
      */
     public static CreateProductRequest createValidRequest() {
         return CreateProductRequest.builder()
-                .barcodeId(1234567890123L)
+                .barcodeId("1234567890123")
                 .brand("Samsung")
                 .price(new BigDecimal("999.99"))
                 .productName("Galaxy S21")
@@ -125,7 +125,7 @@ public class ProductTestFixture {
      */
     public static CreateProductRequest requestWithPrice(BigDecimal price) {
         return CreateProductRequest.builder()
-                .barcodeId(1234567890123L)
+                .barcodeId("1234567890123")
                 .brand("Samsung")
                 .price(price)
                 .productName("Galaxy S21")
@@ -145,7 +145,7 @@ public class ProductTestFixture {
      */
     public static CreateProductRequest requestWithUnit(String unit) {
         return CreateProductRequest.builder()
-                .barcodeId(1234567890123L)
+                .barcodeId("1234567890123")
                 .brand("Samsung")
                 .price(new BigDecimal("999.99"))
                 .productName("Galaxy S21")
@@ -242,7 +242,7 @@ public class ProductTestFixture {
     public static ProductResponse createProductResponse(Long id) {
         return ProductResponse.builder()
                 .id(id)
-                .barcodeId(1234567890123L)
+                .barcodeId("1234567890123")
                 .brand("Samsung")
                 .price(new BigDecimal("999.99"))
                 .productName("Galaxy S21")
@@ -275,7 +275,7 @@ public class ProductTestFixture {
     public static Product createLaptopProduct(Long id) {
         Product product = Product.builder()
                 .id(id)
-                .barcodeId(9876543210123L)
+                .barcodeId("9876543210123")
                 .brand("Dell")
                 .price(new BigDecimal("1299.99"))
                 .productName("XPS 15")
@@ -307,7 +307,7 @@ public class ProductTestFixture {
     public static Product createSmartphoneProduct(Long id) {
         Product product = Product.builder()
                 .id(id)
-                .barcodeId(1111111111111L)
+                .barcodeId("1111111111111")
                 .brand("Apple")
                 .price(new BigDecimal("999.99"))
                 .productName("iPhone 15")
@@ -331,7 +331,7 @@ public class ProductTestFixture {
      */
     public static CreateProductRequest createElectronicsProductRequest() {
         return CreateProductRequest.builder()
-                .barcodeId(2222222222222L)
+                .barcodeId("2222222222222")
                 .brand("Sony")
                 .price(new BigDecimal("299.99"))
                 .productName("WH-1000XM5")
@@ -359,7 +359,7 @@ public class ProductTestFixture {
     public static Product createElectronicsProduct(Long id) {
         Product product = Product.builder()
                 .id(id)
-                .barcodeId(2222222222222L)
+                .barcodeId("2222222222222")
                 .brand("Sony")
                 .price(new BigDecimal("299.99"))
                 .productName("WH-1000XM5")

@@ -18,8 +18,8 @@ public class Product extends BaseEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "barcode_id", nullable = false)
-    private Long barcodeId;
+    @Column(name = "barcode_id", nullable = false, length = 50)
+    private String barcodeId;
 
     @Column(name = "brand", nullable = false, length = 255)
     private String brand;
