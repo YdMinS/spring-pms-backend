@@ -24,11 +24,16 @@ public class JwtTokenProvider {
 
     public String generateToken(Authentication authentication) {
         String email = authentication.getName();
+        String role = authentication.getAuthorities().stream()
+                .findFirst()
+                .map(auth -> auth.getAuthority().replace("ROLE_", ""))
+                .orElse("GUEST");
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + expirationTime);
 
         return Jwts.builder()
                 .subject(email)
+                .claim("role", role)
                 .issuedAt(now)
                 .expiration(expiryDate)
                 .signWith(secretKey)
