@@ -129,4 +129,26 @@ public class ProductController {
         ProductResponse response = productService.updateProduct(id, request);
         return ResponseEntity.ok(ResponseDTO.success(response));
     }
+
+    /**
+     * Delete a product (soft delete, ADMIN only)
+     *
+     * @param id Product ID
+     * @return HTTP 200 OK with success message
+     */
+    @DeleteMapping("/{id}")
+    @Operation(summary = "Delete product", description = "Soft delete a product (ADMIN role required)")
+    @SecurityRequirement(name = "bearerAuth")
+    @ApiResponse(responseCode = "200", description = "Product deleted successfully",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "401", description = "Authentication required",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "403", description = "Permission denied (ADMIN role required)",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "404", description = "Product not found",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    public ResponseEntity<ResponseDTO<Void>> deleteProduct(@PathVariable(name = "id") Long id) {
+        productService.deleteProduct(id);
+        return ResponseEntity.ok(ResponseDTO.success(null));
+    }
 }

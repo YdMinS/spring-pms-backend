@@ -56,7 +56,7 @@ public class ProductControllerTest extends BaseIntegrationTest {
         productRepository.deleteAll();
     }
 
-    // ==================== Phase 3 Iteration 1: testCreateProduct_Success_Admin_201Created ====================
+    // ==================== gitPhase 3 Iteration 1: testCreateProduct_Success_Admin_201Created ====================
 
     /**
      * Test: Admin creates product with valid request → 201 Created

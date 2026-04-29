@@ -225,7 +225,37 @@ public class ProductServiceImpl implements ProductService {
     }
 
     @Override
+    @Transactional
     public void deleteProduct(Long id) {
-        throw new UnsupportedOperationException("Not implemented yet");
+        // Find product by ID
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Product", id));
+
+        // Check if product is active (already soft-deleted products cannot be deleted again)
+        if (!product.getActive()) {
+            throw new ResourceNotFoundException("Product", id);
+        }
+
+        // Soft delete using immutable pattern with Builder
+        Product deletedProduct = product.builder()
+                .id(product.getId())
+                .barcodeId(product.getBarcodeId())
+                .brand(product.getBrand())
+                .price(product.getPrice())
+                .productName(product.getProductName())
+                .store(product.getStore())
+                .unit(product.getUnit())
+                .volumeHeight(product.getVolumeHeight())
+                .volumeLong(product.getVolumeLong())
+                .volumeShort(product.getVolumeShort())
+                .weight(product.getWeight())
+                .description(product.getDescription())
+                .name(product.getName())
+                .imageUrl(product.getImageUrl())
+                .active(false)
+                .build();
+
+        // Save updated product
+        productRepository.save(deletedProduct);
     }
 }
