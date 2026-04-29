@@ -21,7 +21,7 @@ public class ProductResponse {
     private Long id;
 
     @Schema(description = "Barcode ID", example = "1234567890123")
-    private Long barcodeId;
+    private String barcodeId;
 
     @Schema(description = "Brand name", example = "Samsung")
     private String brand;
@@ -56,6 +56,9 @@ public class ProductResponse {
     @Schema(description = "Product name short", example = "Samsung Galaxy S21")
     private String name;
 
+    @Schema(description = "Product image URL (filename)", example = "product_1_1234567890_abc123.jpg")
+    private String imageUrl;
+
     @Schema(description = "Active status", example = "true")
     private Boolean active;
 
@@ -80,6 +83,7 @@ public class ProductResponse {
                 .weight(product.getWeight())
                 .description(product.getDescription())
                 .name(product.getName())
+                .imageUrl(product.getImageUrl())
                 .active(product.getActive())
                 .createdDate(product.getCreatedAt())
                 .modifiedDate(product.getUpdatedAt())

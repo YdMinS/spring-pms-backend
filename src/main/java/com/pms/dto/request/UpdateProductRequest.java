@@ -3,6 +3,7 @@ package com.pms.dto.request;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Size;
+import jakarta.validation.constraints.NotBlank;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -17,8 +18,9 @@ import java.math.BigDecimal;
 @Schema(description = "Update product request")
 public class UpdateProductRequest {
 
-    @Schema(description = "Barcode ID", example = "1234567890")
-    private Long barcodeId;
+    @Size(max = 50, message = "Barcode ID must not exceed 50 characters")
+    @Schema(description = "Barcode ID", example = "1234567890123")
+    private String barcodeId;
 
     @Schema(description = "Brand name", example = "Samsung")
     @Size(max = 255, message = "Brand must not exceed 255 characters")
