@@ -32,4 +32,9 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
            "OR LOWER(p.brand) LIKE LOWER(CONCAT('%', :keyword, '%')) " +
            "OR LOWER(p.description) LIKE LOWER(CONCAT('%', :keyword, '%')))")
     Page<Product> searchByKeyword(@Param("keyword") String keyword, Pageable pageable);
+
+    /**
+     * Check if a product with given barcode exists
+     */
+    boolean existsByBarcodeId(String barcodeId);
 }

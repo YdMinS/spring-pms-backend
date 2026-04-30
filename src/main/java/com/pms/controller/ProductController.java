@@ -70,6 +70,26 @@ public class ProductController {
     }
 
     /**
+     * Check if barcode already exists
+     *
+     * @param barcodeId Barcode ID to check
+     * @return HTTP 200 OK with exists flag
+     */
+    @GetMapping("/check-barcode")
+    @Operation(summary = "Check barcode existence", description = "Check if a barcode is already registered")
+    @SecurityRequirement(name = "bearerAuth")
+    @ApiResponse(responseCode = "200", description = "Check completed",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "401", description = "Authentication required",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    public ResponseEntity<ResponseDTO<java.util.Map<String, Boolean>>> checkBarcodeExists(
+            @RequestParam(name = "barcode") String barcodeId) {
+        boolean exists = productRepository.existsByBarcodeId(barcodeId);
+        java.util.Map<String, Boolean> result = java.util.Collections.singletonMap("exists", exists);
+        return ResponseEntity.ok(ResponseDTO.success(result));
+    }
+
+    /**
      * Get product by ID
      *
      * @param id Product ID
