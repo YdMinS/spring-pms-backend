@@ -25,7 +25,6 @@ public class CreateProductRequest {
     @Schema(description = "Brand name", example = "Samsung")
     private String brand;
 
-    @DecimalMin(value = "0.01", message = "Price must be greater than 0")
     @Schema(description = "Price", example = "999.99")
     private BigDecimal price;
 
