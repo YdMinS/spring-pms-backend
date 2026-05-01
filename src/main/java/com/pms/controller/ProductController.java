@@ -1,5 +1,6 @@
 package com.pms.controller;
 
+import com.pms.config.ImageStorageProperties;
 import com.pms.domain.Product;
 import com.pms.dto.request.CreateProductRequest;
 import com.pms.dto.request.UpdateProductRequest;
@@ -44,6 +45,7 @@ public class ProductController {
     private final ProductService productService;
     private final ImageStorageService imageStorageService;
     private final ProductRepository productRepository;
+    private final ImageStorageProperties imageStorageProperties;
 
     /**
      * Create a new product (ADMIN only)
@@ -201,7 +203,7 @@ public class ProductController {
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     @ApiResponse(responseCode = "404", description = "Product not found",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
-    public ResponseEntity<ResponseDTO<Void>> uploadImage(
+    public ResponseEntity<ResponseDTO<ProductResponse>> uploadImage(
             @PathVariable(name = "id") Long id,
             @RequestParam(name = "file") MultipartFile file) {
 
@@ -217,8 +219,8 @@ public class ProductController {
         // 3. Upload image via service
         String imageFilename = imageStorageService.uploadImage(file, id);
 
-        // 4. Update product with new imageUrl
-        String imageUrl = imageFilename;
+        // 4. Update product with new imageUrl (full path)
+        String imageUrl = imageStorageProperties.getUploadDir() + "/" + imageFilename;
         Product updatedProduct = product.builder()
                 .id(product.getId())
                 .barcodeId(product.getBarcodeId())
@@ -239,8 +241,8 @@ public class ProductController {
 
         productRepository.save(updatedProduct);
 
-        // 5. Return 200 OK
-        return ResponseEntity.ok(ResponseDTO.success(null));
+        // 5. Return 200 OK with updated product
+        return ResponseEntity.ok(ResponseDTO.success(ProductResponse.of(updatedProduct)));
     }
 
     /**
@@ -302,7 +304,7 @@ public class ProductController {
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     @ApiResponse(responseCode = "404", description = "Product not found",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
-    public ResponseEntity<ResponseDTO<Void>> deleteImage(@PathVariable(name = "id") Long id) {
+    public ResponseEntity<ResponseDTO<ProductResponse>> deleteImage(@PathVariable(name = "id") Long id) {
 
         // 1. Find product by ID
         Product product = productRepository.findById(id)
@@ -339,7 +341,7 @@ public class ProductController {
 
         productRepository.save(updatedProduct);
 
-        // 5. Return 200 OK
-        return ResponseEntity.ok(ResponseDTO.success(null));
+        // 5. Return 200 OK with updated product
+        return ResponseEntity.ok(ResponseDTO.success(ProductResponse.of(updatedProduct)));
     }
 }
