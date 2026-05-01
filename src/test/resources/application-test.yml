@@ -16,3 +16,14 @@ jwt:
   secret: test-secret-key-for-testing-only-must-be-32-bytes-long
   expiration: 3600000
   prefix: Bearer
+
+server:
+  tomcat:
+    max-http-post-size: 20971520
+    max-swallow-size: 20971520
+
+spring:
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
