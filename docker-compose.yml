@@ -10,7 +10,7 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: dev
     volumes:
-      - /services/pms/uploads:/app/uploads
+      - /services/oklyx/uploads:/app/uploads
     depends_on:
       mysql:
         condition: service_healthy
