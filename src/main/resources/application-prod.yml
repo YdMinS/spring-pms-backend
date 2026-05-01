@@ -31,6 +31,10 @@ jwt:
   expiration: 86400000
   prefix: Bearer
 
+image:
+  storage:
+    uploadDir: /app/uploads/products
+
 server:
   tomcat:
     max-http-post-size: 20971520

@@ -32,7 +32,7 @@ jwt:
 
 image:
   storage:
-    uploadDir: uploads/products
+    uploadDir: /app/uploads/products
     baseUrl: /api/products
     maxFileSize: 20971520
     allowedMimeTypes: image/jpeg,image/png
