@@ -63,7 +63,7 @@ jobs:
               --name spring-pms-backend \
               -p 8083:8083 \
               --network pms_network \
-              -v /services/pms/uploads:/app/uploads \
+              -v /services/oklyx/uploads:/app/uploads \
               -e SPRING_PROFILES_ACTIVE=${{ secrets.SPRING_PROFILES_ACTIVE }} \
               -e DB_URL=jdbc:mysql://db-pms:3306/pms_db \
               -e DB_USERNAME=${{ secrets.DB_USERNAME }} \
