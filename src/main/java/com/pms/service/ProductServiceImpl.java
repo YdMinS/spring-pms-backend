@@ -110,56 +110,27 @@ public class ProductServiceImpl implements ProductService {
             throw new ResourceNotFoundException("Product", id);
         }
 
-        // Validate and apply updates
-        if (request.getPrice() != null) {
-            validatePrice(request.getPrice());
-            product.setPrice(request.getPrice());
-        }
+        // Validate and apply updates using Optional
+        request.getPrice().ifPresent(price -> {
+            validatePrice(price);
+            product.setPrice(price);
+        });
 
-        if (request.getUnit() != null) {
-            validateUnit(request.getUnit());
-            product.setUnit(request.getUnit());
-        }
+        request.getUnit().ifPresent(unit -> {
+            validateUnit(unit);
+            product.setUnit(unit);
+        });
 
-        if (request.getBarcodeId() != null) {
-            product.setBarcodeId(request.getBarcodeId());
-        }
-
-        if (request.getBrand() != null) {
-            product.setBrand(request.getBrand());
-        }
-
-        if (request.getProductName() != null) {
-            product.setProductName(request.getProductName());
-        }
-
-        if (request.getStore() != null) {
-            product.setStore(request.getStore());
-        }
-
-        if (request.getVolumeHeight() != null) {
-            product.setVolumeHeight(request.getVolumeHeight());
-        }
-
-        if (request.getVolumeLong() != null) {
-            product.setVolumeLong(request.getVolumeLong());
-        }
-
-        if (request.getVolumeShort() != null) {
-            product.setVolumeShort(request.getVolumeShort());
-        }
-
-        if (request.getWeight() != null) {
-            product.setWeight(request.getWeight());
-        }
-
-        if (request.getDescription() != null) {
-            product.setDescription(request.getDescription());
-        }
-
-        if (request.getName() != null) {
-            product.setName(request.getName());
-        }
+        request.getBarcodeId().ifPresent(product::setBarcodeId);
+        request.getBrand().ifPresent(product::setBrand);
+        request.getProductName().ifPresent(product::setProductName);
+        request.getStore().ifPresent(product::setStore);
+        request.getVolumeHeight().ifPresent(product::setVolumeHeight);
+        request.getVolumeLong().ifPresent(product::setVolumeLong);
+        request.getVolumeShort().ifPresent(product::setVolumeShort);
+        request.getWeight().ifPresent(product::setWeight);
+        request.getDescription().ifPresent(product::setDescription);
+        request.getName().ifPresent(product::setName);
 
         // Save updated product
         Product updated = productRepository.save(product);
