@@ -51,10 +51,10 @@ public class ProductServiceImpl implements ProductService {
                 .productName(request.getProductName())
                 .store(request.getStore())
                 .unit(request.getUnit())
-                .volumeHeight(request.getVolumeHeight())
-                .volumeLong(request.getVolumeLong())
-                .volumeShort(request.getVolumeShort())
-                .weight(request.getWeight())
+                .volumeHeight(request.getVolumeHeight() != null ? new BigDecimal(request.getVolumeHeight()) : null)
+                .volumeLong(request.getVolumeLong() != null ? new BigDecimal(request.getVolumeLong()) : null)
+                .volumeShort(request.getVolumeShort() != null ? new BigDecimal(request.getVolumeShort()) : null)
+                .weight(request.getWeight() != null ? new BigDecimal(request.getWeight()) : null)
                 .description(request.getDescription())
                 .name(request.getName())
                 .active(true)
@@ -125,10 +125,10 @@ public class ProductServiceImpl implements ProductService {
         request.getBrand().ifPresent(product::setBrand);
         request.getProductName().ifPresent(product::setProductName);
         request.getStore().ifPresent(product::setStore);
-        request.getVolumeHeight().ifPresent(product::setVolumeHeight);
-        request.getVolumeLong().ifPresent(product::setVolumeLong);
-        request.getVolumeShort().ifPresent(product::setVolumeShort);
-        request.getWeight().ifPresent(product::setWeight);
+        request.getVolumeHeight().map(BigDecimal::new).ifPresent(product::setVolumeHeight);
+        request.getVolumeLong().map(BigDecimal::new).ifPresent(product::setVolumeLong);
+        request.getVolumeShort().map(BigDecimal::new).ifPresent(product::setVolumeShort);
+        request.getWeight().map(BigDecimal::new).ifPresent(product::setWeight);
         request.getDescription().ifPresent(product::setDescription);
         request.getName().ifPresent(product::setName);
 
