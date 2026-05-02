@@ -19,41 +19,54 @@ import java.util.Optional;
 public class UpdateProductRequest {
 
     @Schema(description = "Barcode ID", example = "1234567890123")
-    private Optional<String> barcodeId;
+    @Builder.Default
+    private Optional<String> barcodeId = Optional.empty();
 
     @Schema(description = "Brand name", example = "Samsung")
-    private Optional<String> brand;
+    @Builder.Default
+    private Optional<String> brand = Optional.empty();
 
     @Schema(description = "Price", example = "999.99")
-    private Optional<BigDecimal> price;
+    @Builder.Default
+    private Optional<BigDecimal> price = Optional.empty();
 
     @Schema(description = "Product name", example = "Galaxy S21")
-    private Optional<String> productName;
+    @Builder.Default
+    private Optional<String> productName = Optional.empty();
 
     @Schema(description = "Store name", example = "Best Buy")
-    private Optional<String> store;
+    @Builder.Default
+    private Optional<String> store = Optional.empty();
 
     @Schema(description = "Unit of measurement", example = "KG")
-    private Optional<String> unit;
+    @Builder.Default
+    private Optional<String> unit = Optional.empty();
 
     @Schema(description = "Volume height", example = "160mm")
-    private Optional<String> volumeHeight;
+    @Builder.Default
+    private Optional<String> volumeHeight = Optional.empty();
 
     @Schema(description = "Volume long", example = "75mm")
-    private Optional<String> volumeLong;
+    @Builder.Default
+    private Optional<String> volumeLong = Optional.empty();
 
     @Schema(description = "Volume short", example = "8.9mm")
-    private Optional<String> volumeShort;
+    @Builder.Default
+    private Optional<String> volumeShort = Optional.empty();
 
     @Schema(description = "Weight", example = "170g")
-    private Optional<String> weight;
+    @Builder.Default
+    private Optional<String> weight = Optional.empty();
 
     @Schema(description = "Product description")
-    private Optional<String> description;
+    @Builder.Default
+    private Optional<String> description = Optional.empty();
 
     @Schema(description = "Product name short", example = "Samsung Galaxy S21")
-    private Optional<String> name;
+    @Builder.Default
+    private Optional<String> name = Optional.empty();
 
     @Schema(description = "Active status", example = "true")
-    private Optional<Boolean> active;
+    @Builder.Default
+    private Optional<Boolean> active = Optional.empty();
 }
