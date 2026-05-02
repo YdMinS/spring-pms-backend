@@ -189,6 +189,7 @@ public class ProductServiceImpl implements ProductService {
                 .weight(product.getWeight())
                 .description(product.getDescription())
                 .name(product.getName())
+                .imageUrl(product.getImageUrl())
                 .active(product.getActive())
                 .createdDate(product.getCreatedAt())
                 .modifiedDate(product.getUpdatedAt())
