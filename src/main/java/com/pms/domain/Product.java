@@ -36,17 +36,17 @@ public class Product extends BaseEntity {
     @Column(name = "unit", nullable = true, length = 255)
     private String unit;
 
-    @Column(name = "volume_height", nullable = true)
-    private BigDecimal volumeHeight;
+    @Column(name = "volume_height", nullable = true, length = 255)
+    private String volumeHeight;
 
-    @Column(name = "volume_long", nullable = true)
-    private BigDecimal volumeLong;
+    @Column(name = "volume_long", nullable = true, length = 255)
+    private String volumeLong;
 
-    @Column(name = "volume_short", nullable = true)
-    private BigDecimal volumeShort;
+    @Column(name = "volume_short", nullable = true, length = 255)
+    private String volumeShort;
 
-    @Column(name = "weight", nullable = true)
-    private BigDecimal weight;
+    @Column(name = "weight", nullable = true, length = 255)
+    private String weight;
 
     @Column(name = "description", columnDefinition = "TEXT")
     private String description;
