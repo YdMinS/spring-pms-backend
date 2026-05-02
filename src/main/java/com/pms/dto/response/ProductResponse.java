@@ -38,17 +38,17 @@ public class ProductResponse {
     @Schema(description = "Unit of measurement", example = "KG")
     private String unit;
 
-    @Schema(description = "Volume height", example = "160mm")
-    private String volumeHeight;
+    @Schema(description = "Volume height", example = "160")
+    private BigDecimal volumeHeight;
 
-    @Schema(description = "Volume long", example = "75mm")
-    private String volumeLong;
+    @Schema(description = "Volume long", example = "75")
+    private BigDecimal volumeLong;
 
-    @Schema(description = "Volume short", example = "8.9mm")
-    private String volumeShort;
+    @Schema(description = "Volume short", example = "8.9")
+    private BigDecimal volumeShort;
 
-    @Schema(description = "Weight", example = "170g")
-    private String weight;
+    @Schema(description = "Weight", example = "170")
+    private BigDecimal weight;
 
     @Schema(description = "Product description")
     private String description;

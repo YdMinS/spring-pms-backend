@@ -21,32 +21,32 @@ public class Product extends BaseEntity {
     @Column(name = "barcode_id", nullable = false, length = 50)
     private String barcodeId;
 
-    @Column(name = "brand", nullable = false, length = 255)
+    @Column(name = "brand", nullable = true, length = 255)
     private String brand;
 
-    @Column(name = "price", nullable = false)
+    @Column(name = "price", nullable = true)
     private BigDecimal price;
 
     @Column(name = "product_name", nullable = false, length = 500)
     private String productName;
 
-    @Column(name = "store", nullable = false, length = 255)
+    @Column(name = "store", nullable = true, length = 255)
     private String store;
 
-    @Column(name = "unit", nullable = false, length = 255)
+    @Column(name = "unit", nullable = true, length = 255)
     private String unit;
 
-    @Column(name = "volume_height", length = 255)
-    private String volumeHeight;
+    @Column(name = "volume_height", nullable = true)
+    private BigDecimal volumeHeight;
 
-    @Column(name = "volume_long", length = 255)
-    private String volumeLong;
+    @Column(name = "volume_long", nullable = true)
+    private BigDecimal volumeLong;
 
-    @Column(name = "volume_short", length = 255)
-    private String volumeShort;
+    @Column(name = "volume_short", nullable = true)
+    private BigDecimal volumeShort;
 
-    @Column(name = "weight", nullable = false, length = 255)
-    private String weight;
+    @Column(name = "weight", nullable = true)
+    private BigDecimal weight;
 
     @Column(name = "description", columnDefinition = "TEXT")
     private String description;
