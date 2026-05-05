@@ -99,28 +99,31 @@ public class ImageStorageService {
     /**
      * Retrieve image content as bytes
      *
-     * @param filename Filename to retrieve
+     * @param filename Filename to retrieve (can be full path or filename only)
      * @return Image file content
      * @throws FileNotFoundException if file doesn't exist
      * @throws ImageStorageException if read fails
      */
     public byte[] getImage(String filename) throws FileNotFoundException {
-        // 1. Construct full path
-        Path filePath = Paths.get(properties.getUploadDir(), filename);
+        // 1. Extract filename only (remove path prefix if present)
+        String extractedFilename = extractFilename(filename);
 
-        // 2. Check if file exists
+        // 2. Construct full path
+        Path filePath = Paths.get(properties.getUploadDir(), extractedFilename);
+
+        // 3. Check if file exists
         if (!Files.exists(filePath)) {
-            log.warn("Image file not found: {}", filename);
-            throw new FileNotFoundException("Image file not found: " + filename);
+            log.warn("Image file not found: {}", extractedFilename);
+            throw new FileNotFoundException("Image file not found: " + extractedFilename);
         }
 
-        // 3. Read file content
+        // 4. Read file content
         try {
             byte[] content = Files.readAllBytes(filePath);
-            log.debug("Image retrieved successfully: {}", filename);
+            log.debug("Image retrieved successfully: {}", extractedFilename);
             return content;
         } catch (IOException e) {
-            log.error("Failed to read image file: {}", filename, e);
+            log.error("Failed to read image file: {}", extractedFilename, e);
             throw new ImageStorageException("Failed to read image file", e);
         }
     }
@@ -145,6 +148,23 @@ public class ImageStorageService {
             log.warn("Failed to delete image file: {}", filename, e);
             // Don't throw - handle gracefully per requirement
         }
+    }
+
+    /**
+     * Extract filename only from full path (removes directory prefix if present)
+     *
+     * @param path Full path or filename (e.g., "/app/uploads/products/file.jpg" or "file.jpg")
+     * @return Filename only (e.g., "file.jpg")
+     */
+    private String extractFilename(String path) {
+        if (path == null || path.isEmpty()) {
+            return path;
+        }
+        // If path contains "/", extract filename after last "/"
+        if (path.contains("/")) {
+            return path.substring(path.lastIndexOf("/") + 1);
+        }
+        return path;
     }
 
     /**
