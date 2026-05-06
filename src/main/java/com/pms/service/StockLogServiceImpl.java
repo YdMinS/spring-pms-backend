@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.StockLog;
 import com.pms.domain.StockType;
+import com.pms.dto.request.StockBatchRequest;
 import com.pms.dto.request.StockLogRequest;
 import com.pms.dto.response.CurrentStockResponse;
 import com.pms.dto.response.StockLogResponse;
@@ -13,6 +14,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -79,6 +82,13 @@ public class StockLogServiceImpl implements StockLogService {
         Page<StockLog> logs = stockLogRepository.findAllByBarcodeId(barcodeIdLong, pageable);
 
         return logs.map(this::mapToResponse);
+    }
+
+    @Override
+    @Transactional
+    public List<StockLogResponse> registerStockBatch(StockBatchRequest request) {
+        // TODO: Implementation pending
+        throw new UnsupportedOperationException("registerStockBatch not yet implemented");
     }
 
     private StockLogResponse mapToResponse(StockLog stockLog) {

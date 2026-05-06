@@ -1,6 +1,7 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.StockBatchRequest;
 import com.pms.dto.request.StockLogRequest;
 import com.pms.dto.response.CurrentStockResponse;
 import com.pms.dto.response.StockLogResponse;
@@ -19,6 +20,9 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/stock")
@@ -50,6 +54,30 @@ public class StockLogController {
         StockLogResponse response = stockLogService.registerStock(request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ResponseDTO.success(response));
+    }
+
+    /**
+     * Register batch stock IN/OUT for multiple products
+     *
+     * @param request StockBatchRequest with type (IN/OUT) and items list
+     * @return HTTP 201 Created with list of StockLogResponse
+     */
+    @PostMapping("/batch")
+    @Operation(summary = "Register stock batch", description = "Bulk register stock IN or OUT for multiple products (USER, ADMIN role required)")
+    @SecurityRequirement(name = "bearerAuth")
+    @ApiResponse(responseCode = "201", description = "Batch stock registered successfully",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "400", description = "Validation error or invalid enum type",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "401", description = "Authentication required",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "409", description = "Insufficient stock (OUT only)",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    public ResponseEntity<ResponseDTO<Map<String, List<StockLogResponse>>>> registerStockBatch(
+            @Valid @RequestBody StockBatchRequest request) {
+        List<StockLogResponse> responses = stockLogService.registerStockBatch(request);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ResponseDTO.success(Map.of("items", responses)));
     }
 
     /**

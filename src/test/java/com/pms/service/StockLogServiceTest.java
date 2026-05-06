@@ -2,6 +2,8 @@ package com.pms.service;
 
 import com.pms.domain.StockLog;
 import com.pms.domain.StockType;
+import com.pms.dto.request.StockBatchItem;
+import com.pms.dto.request.StockBatchRequest;
 import com.pms.dto.request.StockLogRequest;
 import com.pms.dto.response.CurrentStockResponse;
 import com.pms.dto.response.StockLogResponse;
@@ -309,5 +311,172 @@ public class StockLogServiceTest {
         // Then
         assertThat(response.getTotalElements()).isEqualTo(0);
         assertThat(response.getContent()).isEmpty();
+    }
+
+    // ==================== registerStockBatch - IN Type ====================
+
+    @Test
+    @DisplayName("Batch IN - Should register stock for 3 items with IN type")
+    public void testRegisterStockBatch_IN_Success() {
+        // Given
+        List<StockBatchItem> items = List.of(
+                StockBatchItem.builder().barcodeId("8801500152723").quantity(100).name("Product A").build(),
+                StockBatchItem.builder().barcodeId("8801500152724").quantity(50).name("Product B").build(),
+                StockBatchItem.builder().barcodeId("8801500152725").quantity(75).name("Product C").build()
+        );
+
+        StockBatchRequest request = StockBatchRequest.builder()
+                .type(StockType.IN)
+                .items(items)
+                .build();
+
+        List<StockLog> savedLogs = List.of(
+                StockLog.builder().stockId(1L).barcodeId(8801500152723L).inStock(100).name("Product A")
+                        .stockAdd(100).stockSub(0).createdDate(LocalDateTime.now()).build(),
+                StockLog.builder().stockId(2L).barcodeId(8801500152724L).inStock(50).name("Product B")
+                        .stockAdd(50).stockSub(0).createdDate(LocalDateTime.now()).build(),
+                StockLog.builder().stockId(3L).barcodeId(8801500152725L).inStock(75).name("Product C")
+                        .stockAdd(75).stockSub(0).createdDate(LocalDateTime.now()).build()
+        );
+
+        when(stockLogRepository.findTopByBarcodeIdOrderByCreatedDateDesc(8801500152723L)).thenReturn(Optional.empty());
+        when(stockLogRepository.findTopByBarcodeIdOrderByCreatedDateDesc(8801500152724L)).thenReturn(Optional.empty());
+        when(stockLogRepository.findTopByBarcodeIdOrderByCreatedDateDesc(8801500152725L)).thenReturn(Optional.empty());
+        when(stockLogRepository.save(any(StockLog.class))).thenReturn(savedLogs.get(0), savedLogs.get(1), savedLogs.get(2));
+
+        // When
+        List<StockLogResponse> responses = stockLogService.registerStockBatch(request);
+
+        // Then
+        assertThat(responses).hasSize(3);
+        assertThat(responses.get(0).getStockAdd()).isEqualTo(100);
+        assertThat(responses.get(0).getStockSub()).isEqualTo(0);
+        assertThat(responses.get(1).getStockAdd()).isEqualTo(50);
+        assertThat(responses.get(1).getStockSub()).isEqualTo(0);
+        assertThat(responses.get(2).getStockAdd()).isEqualTo(75);
+        assertThat(responses.get(2).getStockSub()).isEqualTo(0);
+
+        verify(stockLogRepository, times(3)).save(any(StockLog.class));
+    }
+
+    // ==================== registerStockBatch - OUT Type ====================
+
+    @Test
+    @DisplayName("Batch OUT - Should register stock OUT for 2 items with previous stock")
+    public void testRegisterStockBatch_OUT_Success() {
+        // Given
+        StockLog previousLog1 = StockLog.builder().stockId(1L).barcodeId(8801500152723L).inStock(100)
+                .name("Product A").stockAdd(100).stockSub(0).createdDate(LocalDateTime.now().minusHours(1)).build();
+        StockLog previousLog2 = StockLog.builder().stockId(2L).barcodeId(8801500152724L).inStock(50)
+                .name("Product B").stockAdd(50).stockSub(0).createdDate(LocalDateTime.now().minusHours(1)).build();
+
+        List<StockBatchItem> items = List.of(
+                StockBatchItem.builder().barcodeId("8801500152723").quantity(30).name("Product A").build(),
+                StockBatchItem.builder().barcodeId("8801500152724").quantity(20).name("Product B").build()
+        );
+
+        StockBatchRequest request = StockBatchRequest.builder()
+                .type(StockType.OUT)
+                .items(items)
+                .build();
+
+        List<StockLog> savedLogs = List.of(
+                StockLog.builder().stockId(3L).barcodeId(8801500152723L).inStock(70).name("Product A")
+                        .stockAdd(0).stockSub(30).createdDate(LocalDateTime.now()).build(),
+                StockLog.builder().stockId(4L).barcodeId(8801500152724L).inStock(30).name("Product B")
+                        .stockAdd(0).stockSub(20).createdDate(LocalDateTime.now()).build()
+        );
+
+        when(stockLogRepository.findTopByBarcodeIdOrderByCreatedDateDesc(8801500152723L)).thenReturn(Optional.of(previousLog1));
+        when(stockLogRepository.findTopByBarcodeIdOrderByCreatedDateDesc(8801500152724L)).thenReturn(Optional.of(previousLog2));
+        when(stockLogRepository.save(any(StockLog.class))).thenReturn(savedLogs.get(0), savedLogs.get(1));
+
+        // When
+        List<StockLogResponse> responses = stockLogService.registerStockBatch(request);
+
+        // Then
+        assertThat(responses).hasSize(2);
+        assertThat(responses.get(0).getInStock()).isEqualTo(70);
+        assertThat(responses.get(0).getStockAdd()).isEqualTo(0);
+        assertThat(responses.get(0).getStockSub()).isEqualTo(30);
+        assertThat(responses.get(1).getInStock()).isEqualTo(30);
+        assertThat(responses.get(1).getStockAdd()).isEqualTo(0);
+        assertThat(responses.get(1).getStockSub()).isEqualTo(20);
+
+        verify(stockLogRepository, times(2)).save(any(StockLog.class));
+    }
+
+    @Test
+    @DisplayName("Batch OUT - Insufficient stock in one item triggers rollback")
+    public void testRegisterStockBatch_OUT_InsufficientStock_Rollback() {
+        // Given
+        StockLog previousLog = StockLog.builder().stockId(1L).barcodeId(8801500152723L).inStock(50)
+                .name("Product A").stockAdd(50).stockSub(0).createdDate(LocalDateTime.now().minusHours(1)).build();
+
+        List<StockBatchItem> items = List.of(
+                StockBatchItem.builder().barcodeId("8801500152723").quantity(60).name("Product A").build(),
+                StockBatchItem.builder().barcodeId("8801500152724").quantity(20).name("Product B").build()
+        );
+
+        StockBatchRequest request = StockBatchRequest.builder()
+                .type(StockType.OUT)
+                .items(items)
+                .build();
+
+        when(stockLogRepository.findTopByBarcodeIdOrderByCreatedDateDesc(8801500152723L)).thenReturn(Optional.of(previousLog));
+
+        // When & Then
+        assertThatThrownBy(() -> stockLogService.registerStockBatch(request))
+                .isInstanceOf(InsufficientStockException.class);
+
+        verify(stockLogRepository, never()).save(any(StockLog.class));
+    }
+
+    @Test
+    @DisplayName("Batch IN - Duplicate barcode ID processed sequentially")
+    public void testRegisterStockBatch_IN_DuplicateBarcodeId() {
+        // Given
+        List<StockBatchItem> items = List.of(
+                StockBatchItem.builder().barcodeId("8801500152723").quantity(100).name("Product A").build(),
+                StockBatchItem.builder().barcodeId("8801500152723").quantity(50).name("Product A").build()
+        );
+
+        StockBatchRequest request = StockBatchRequest.builder()
+                .type(StockType.IN)
+                .items(items)
+                .build();
+
+        StockLog firstSave = StockLog.builder().stockId(1L).barcodeId(8801500152723L).inStock(100).name("Product A")
+                .stockAdd(100).stockSub(0).createdDate(LocalDateTime.now()).build();
+        StockLog secondSave = StockLog.builder().stockId(2L).barcodeId(8801500152723L).inStock(150).name("Product A")
+                .stockAdd(50).stockSub(0).createdDate(LocalDateTime.now()).build();
+
+        when(stockLogRepository.findTopByBarcodeIdOrderByCreatedDateDesc(8801500152723L))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(firstSave));
+        when(stockLogRepository.save(any(StockLog.class))).thenReturn(firstSave, secondSave);
+
+        // When
+        List<StockLogResponse> responses = stockLogService.registerStockBatch(request);
+
+        // Then
+        assertThat(responses).hasSize(2);
+        assertThat(responses.get(0).getInStock()).isEqualTo(100);
+        assertThat(responses.get(1).getInStock()).isEqualTo(150);
+        verify(stockLogRepository, times(2)).save(any(StockLog.class));
+    }
+
+    @Test
+    @DisplayName("Batch Request - Empty items list throws validation error")
+    public void testRegisterStockBatch_EmptyItems() {
+        // Given
+        StockBatchRequest request = StockBatchRequest.builder()
+                .type(StockType.IN)
+                .items(new ArrayList<>())  // Empty list
+                .build();
+
+        // When & Then
+        assertThatThrownBy(() -> stockLogService.registerStockBatch(request))
+                .isInstanceOf(Exception.class);  // Will be caught by validation
     }
 }
