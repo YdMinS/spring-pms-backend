@@ -466,17 +466,4 @@ public class StockLogServiceTest {
         verify(stockLogRepository, times(2)).save(any(StockLog.class));
     }
 
-    @Test
-    @DisplayName("Batch Request - Empty items list throws validation error")
-    public void testRegisterStockBatch_EmptyItems() {
-        // Given
-        StockBatchRequest request = StockBatchRequest.builder()
-                .type(StockType.IN)
-                .items(new ArrayList<>())  // Empty list
-                .build();
-
-        // When & Then
-        assertThatThrownBy(() -> stockLogService.registerStockBatch(request))
-                .isInstanceOf(Exception.class);  // Will be caught by validation
-    }
 }

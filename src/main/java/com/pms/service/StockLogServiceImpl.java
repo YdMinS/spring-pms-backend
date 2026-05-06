@@ -15,6 +15,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -87,8 +88,45 @@ public class StockLogServiceImpl implements StockLogService {
     @Override
     @Transactional
     public List<StockLogResponse> registerStockBatch(StockBatchRequest request) {
-        // TODO: Implementation pending
-        throw new UnsupportedOperationException("registerStockBatch not yet implemented");
+        List<StockLogResponse> responses = new ArrayList<>();
+        StockType batchType = request.getType();
+
+        // Process each item sequentially
+        for (var item : request.getItems()) {
+            Long barcodeIdLong = Long.parseLong(item.getBarcodeId());
+
+            // Find previous stock log
+            StockLog previousLog = stockLogRepository.findTopByBarcodeIdOrderByCreatedDateDesc(barcodeIdLong)
+                    .orElse(null);
+
+            // Calculate inStock
+            Integer currentInStock = previousLog != null ? previousLog.getInStock() : 0;
+            Integer newInStock;
+
+            if (StockType.IN.equals(batchType)) {
+                newInStock = currentInStock + item.getQuantity();
+            } else {
+                // OUT type
+                if (item.getQuantity() > currentInStock) {
+                    throw new InsufficientStockException();
+                }
+                newInStock = currentInStock - item.getQuantity();
+            }
+
+            // Create and save StockLog
+            StockLog stockLog = StockLog.builder()
+                    .barcodeId(barcodeIdLong)
+                    .inStock(newInStock)
+                    .name(item.getName())
+                    .stockAdd(StockType.IN.equals(batchType) ? item.getQuantity() : 0)
+                    .stockSub(StockType.OUT.equals(batchType) ? item.getQuantity() : 0)
+                    .build();
+
+            StockLog saved = stockLogRepository.save(stockLog);
+            responses.add(mapToResponse(saved));
+        }
+
+        return responses;
     }
 
     private StockLogResponse mapToResponse(StockLog stockLog) {
