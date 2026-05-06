@@ -442,7 +442,7 @@ public class ProductControllerTest extends BaseIntegrationTest {
         // Given
         Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
         UpdateProductRequest partialUpdate = UpdateProductRequest.builder()
-                .brand("NewBrand")
+                .brand(java.util.Optional.of("NewBrand"))
                 .build();
         String requestBody = objectMapper.writeValueAsString(partialUpdate);
 
@@ -500,7 +500,7 @@ public class ProductControllerTest extends BaseIntegrationTest {
         // Given
         Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
         UpdateProductRequest invalidPriceRequest = UpdateProductRequest.builder()
-                .price(java.math.BigDecimal.ZERO)
+                .price(java.util.Optional.of(java.math.BigDecimal.ZERO))
                 .build();
         String requestBody = objectMapper.writeValueAsString(invalidPriceRequest);
 
@@ -521,7 +521,7 @@ public class ProductControllerTest extends BaseIntegrationTest {
         // Given
         Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
         UpdateProductRequest invalidUnitRequest = UpdateProductRequest.builder()
-                .unit("INVALID")
+                .unit(java.util.Optional.of("INVALID"))
                 .build();
         String requestBody = objectMapper.writeValueAsString(invalidUnitRequest);
 
@@ -602,7 +602,7 @@ public class ProductControllerTest extends BaseIntegrationTest {
         java.time.LocalDateTime originalModifiedDate = savedProduct.getUpdatedAt();
 
         UpdateProductRequest updateRequest = UpdateProductRequest.builder()
-                .brand("UpdatedBrand")
+                .brand(java.util.Optional.of("UpdatedBrand"))
                 .build();
         String requestBody = objectMapper.writeValueAsString(updateRequest);
 

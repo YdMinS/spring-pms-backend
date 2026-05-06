@@ -14,6 +14,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.http.HttpMethod;
 import java.util.Arrays;
 
 @Configuration
@@ -31,23 +32,23 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .authorizeHttpRequests(authz -> authz
                         .requestMatchers("/api/auth/login").permitAll()
-                        .requestMatchers("POST", "/api/users").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/users").permitAll()
                         .requestMatchers("/api/health", "/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
-                        .requestMatchers("GET", "/api/products").authenticated()
-                        .requestMatchers("GET", "/api/products/{id}").authenticated()
-                        .requestMatchers("PATCH", "/api/users/*/role").hasRole("ADMIN")
-                        .requestMatchers("GET", "/api/users/**").authenticated()
-                        .requestMatchers("PATCH", "/api/users/**").hasAnyRole("USER", "ADMIN")
-                        .requestMatchers("DELETE", "/api/users/**").hasAnyRole("USER", "ADMIN")
-                        .requestMatchers("POST", "/api/products").hasRole("ADMIN")
-                        .requestMatchers("PATCH", "/api/products/**").hasRole("ADMIN")
-                        .requestMatchers("DELETE", "/api/products/**").hasRole("ADMIN")
-                        .requestMatchers("PUT", "/api/products/*/image").hasRole("ADMIN")
-                        .requestMatchers("GET", "/api/products/*/image").authenticated()
-                        .requestMatchers("DELETE", "/api/products/*/image").hasRole("ADMIN")
-                        .requestMatchers("POST", "/api/stock").hasAnyRole("USER", "ADMIN")
-                        .requestMatchers("GET", "/api/stock").hasAnyRole("USER", "ADMIN")
-                        .requestMatchers("GET", "/api/stock/**").hasAnyRole("USER", "ADMIN")
+                        .requestMatchers(HttpMethod.GET, "/api/products").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/products/{id}").authenticated()
+                        .requestMatchers(HttpMethod.PATCH, "/api/users/*/role").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.GET, "/api/users/**").authenticated()
+                        .requestMatchers(HttpMethod.PATCH, "/api/users/**").hasAnyRole("USER", "ADMIN")
+                        .requestMatchers(HttpMethod.DELETE, "/api/users/**").hasAnyRole("USER", "ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/products").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.PATCH, "/api/products/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.DELETE, "/api/products/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.PUT, "/api/products/*/image").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.GET, "/api/products/*/image").authenticated()
+                        .requestMatchers(HttpMethod.DELETE, "/api/products/*/image").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/stock").hasAnyRole("USER", "ADMIN")
+                        .requestMatchers(HttpMethod.GET, "/api/stock").hasAnyRole("USER", "ADMIN")
+                        .requestMatchers(HttpMethod.GET, "/api/stock/**").hasAnyRole("USER", "ADMIN")
                         .anyRequest().authenticated()
                 )
                 .csrf(csrf -> csrf.disable())

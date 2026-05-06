@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.StockType;
 import com.pms.dto.request.StockLogRequest;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -24,13 +23,6 @@ public class StockLogControllerTest extends BaseIntegrationTest {
 
     private static final String TEST_BARCODE_ID = "8801500152723";
     private static final String API_STOCK_BASE = "/api/stock";
-
-    @BeforeEach
-    public void setup() throws Exception {
-        registerTestUsers();
-        adminToken = generateAdminToken();
-        userToken = generateUserToken();
-    }
 
     // ==================== POST /api/stock - Register Stock IN ====================
 
