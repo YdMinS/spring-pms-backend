@@ -682,7 +682,7 @@ public class ProductServiceTest {
         Long productId = 1L;
         Product existingProduct = ProductTestFixture.createProduct(productId);
         UpdateProductRequest invalidPriceRequest = UpdateProductRequest.builder()
-                .price(java.math.BigDecimal.ZERO)
+                .price(java.util.Optional.of(java.math.BigDecimal.ZERO))
                 .build();
 
         when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(existingProduct));
@@ -704,7 +704,7 @@ public class ProductServiceTest {
         Long productId = 1L;
         Product existingProduct = ProductTestFixture.createProduct(productId);
         UpdateProductRequest invalidUnitRequest = UpdateProductRequest.builder()
-                .unit("INVALID")
+                .unit(java.util.Optional.of("INVALID"))
                 .build();
 
         when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(existingProduct));

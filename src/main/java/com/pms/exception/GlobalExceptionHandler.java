@@ -9,6 +9,8 @@ import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 
 import java.util.stream.Collectors;
 
@@ -47,6 +49,22 @@ public class GlobalExceptionHandler {
                 .collect(Collectors.joining(", "));
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ResponseDTO.failure(message));
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ResponseDTO<Void>> handleHttpMessageNotReadableException(
+            HttpMessageNotReadableException e) {
+        log.warn("HttpMessageNotReadableException: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ResponseDTO.failure("Invalid request format"));
+    }
+
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ResponseDTO<Void>> handleMissingServletRequestParameterException(
+            MissingServletRequestParameterException e) {
+        log.warn("MissingServletRequestParameterException: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ResponseDTO.failure("Missing required parameter: " + e.getParameterName()));
     }
 
     @ExceptionHandler(AccessDeniedException.class)

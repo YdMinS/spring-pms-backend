@@ -202,18 +202,18 @@ public class ProductTestFixture {
      */
     public static UpdateProductRequest createUpdateRequest() {
         return UpdateProductRequest.builder()
-                .brand("Apple")
-                .price(new BigDecimal("1299.99"))
-                .productName("iPhone 15")
-                .store("Apple Store")
-                .unit("G")
-                .volumeHeight("147.8mm")
-                .volumeLong("71.8mm")
-                .volumeShort("7.80mm")
-                .weight("171g")
-                .description("Latest iPhone")
-                .name("Apple iPhone 15")
-                .active(true)
+                .brand(java.util.Optional.of("Apple"))
+                .price(java.util.Optional.of(new BigDecimal("1299.99")))
+                .productName(java.util.Optional.of("iPhone 15"))
+                .store(java.util.Optional.of("Apple Store"))
+                .unit(java.util.Optional.of("G"))
+                .volumeHeight(java.util.Optional.of("147.8mm"))
+                .volumeLong(java.util.Optional.of("71.8mm"))
+                .volumeShort(java.util.Optional.of("7.80mm"))
+                .weight(java.util.Optional.of("171g"))
+                .description(java.util.Optional.of("Latest iPhone"))
+                .name(java.util.Optional.of("Apple iPhone 15"))
+                .active(java.util.Optional.of(true))
                 .build();
     }
 
@@ -222,8 +222,8 @@ public class ProductTestFixture {
      */
     public static UpdateProductRequest createPartialUpdateRequest() {
         return UpdateProductRequest.builder()
-                .brand("Apple")
-                .price(new BigDecimal("1299.99"))
+                .brand(java.util.Optional.of("Apple"))
+                .price(java.util.Optional.of(new BigDecimal("1299.99")))
                 .build();
     }
 
