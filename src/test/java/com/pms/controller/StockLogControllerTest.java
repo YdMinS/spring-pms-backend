@@ -3,11 +3,16 @@ package com.pms.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.StockType;
+import com.pms.dto.request.StockBatchItem;
+import com.pms.dto.request.StockBatchRequest;
 import com.pms.dto.request.StockLogRequest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -267,6 +272,172 @@ public class StockLogControllerTest extends BaseIntegrationTest {
     public void testGetCurrentStock_NoToken() throws Exception {
         // When & Then
         mockMvc.perform(get(API_STOCK_BASE + "/" + TEST_BARCODE_ID))
+                .andExpect(status().isUnauthorized());
+    }
+
+    // ==================== POST /api/stock/batch - Register Stock Batch ====================
+
+    @Test
+    @DisplayName("POST /api/stock/batch - Register batch IN with USER token - returns 201")
+    public void testRegisterStockBatch_IN_Success() throws Exception {
+        // Given
+        List<StockBatchItem> items = List.of(
+                StockBatchItem.builder().barcodeId("8801500152723").quantity(100).name("Product A").build(),
+                StockBatchItem.builder().barcodeId("8801500152724").quantity(50).name("Product B").build(),
+                StockBatchItem.builder().barcodeId("8801500152725").quantity(75).name("Product C").build()
+        );
+
+        StockBatchRequest request = StockBatchRequest.builder()
+                .type(StockType.IN)
+                .items(items)
+                .build();
+
+        // When & Then
+        mockMvc.perform(post(API_STOCK_BASE + "/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.items").isArray())
+                .andExpect(jsonPath("$.data.items.length()").value(3))
+                .andExpect(jsonPath("$.data.items[0].stockAdd").value(100))
+                .andExpect(jsonPath("$.data.items[0].stockSub").value(0));
+    }
+
+    @Test
+    @DisplayName("POST /api/stock/batch - Register batch OUT with USER token - returns 201")
+    public void testRegisterStockBatch_OUT_Success() throws Exception {
+        // Given - First register IN stock
+        List<StockBatchItem> inItems = List.of(
+                StockBatchItem.builder().barcodeId("8801500152723").quantity(100).name("Product A").build(),
+                StockBatchItem.builder().barcodeId("8801500152724").quantity(50).name("Product B").build()
+        );
+
+        StockBatchRequest inRequest = StockBatchRequest.builder()
+                .type(StockType.IN)
+                .items(inItems)
+                .build();
+
+        mockMvc.perform(post(API_STOCK_BASE + "/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(inRequest))
+                .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isCreated());
+
+        // Then register OUT batch
+        List<StockBatchItem> outItems = List.of(
+                StockBatchItem.builder().barcodeId("8801500152723").quantity(30).name("Product A").build(),
+                StockBatchItem.builder().barcodeId("8801500152724").quantity(20).name("Product B").build()
+        );
+
+        StockBatchRequest outRequest = StockBatchRequest.builder()
+                .type(StockType.OUT)
+                .items(outItems)
+                .build();
+
+        // When & Then
+        mockMvc.perform(post(API_STOCK_BASE + "/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(outRequest))
+                .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.items").isArray())
+                .andExpect(jsonPath("$.data.items.length()").value(2))
+                .andExpect(jsonPath("$.data.items[0].stockAdd").value(0))
+                .andExpect(jsonPath("$.data.items[0].stockSub").value(30));
+    }
+
+    @Test
+    @DisplayName("POST /api/stock/batch - OUT with insufficient stock - returns 409")
+    public void testRegisterStockBatch_OUT_InsufficientStock() throws Exception {
+        // Given - First register IN stock
+        List<StockBatchItem> inItems = List.of(
+                StockBatchItem.builder().barcodeId("8801500152723").quantity(50).name("Product A").build()
+        );
+
+        StockBatchRequest inRequest = StockBatchRequest.builder()
+                .type(StockType.IN)
+                .items(inItems)
+                .build();
+
+        mockMvc.perform(post(API_STOCK_BASE + "/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(inRequest))
+                .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isCreated());
+
+        // Then attempt OUT with insufficient stock
+        List<StockBatchItem> outItems = List.of(
+                StockBatchItem.builder().barcodeId("8801500152723").quantity(100).name("Product A").build()
+        );
+
+        StockBatchRequest outRequest = StockBatchRequest.builder()
+                .type(StockType.OUT)
+                .items(outItems)
+                .build();
+
+        // When & Then
+        mockMvc.perform(post(API_STOCK_BASE + "/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(outRequest))
+                .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    @DisplayName("POST /api/stock/batch - Empty items list - returns 400")
+    public void testRegisterStockBatch_EmptyItems() throws Exception {
+        // Given
+        StockBatchRequest request = StockBatchRequest.builder()
+                .type(StockType.IN)
+                .items(new ArrayList<>())  // Empty list
+                .build();
+
+        // When & Then
+        mockMvc.perform(post(API_STOCK_BASE + "/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("POST /api/stock/batch - Invalid type enum - returns 400")
+    public void testRegisterStockBatch_InvalidType() throws Exception {
+        // Given - Invalid JSON with invalid type value
+        String requestJson = "{" +
+                "\"type\":\"INVALID\"," +
+                "\"items\":[" +
+                "{\"barcodeId\":\"8801500152723\",\"quantity\":100,\"name\":\"Product A\"}" +
+                "]" +
+                "}";
+
+        // When & Then
+        mockMvc.perform(post(API_STOCK_BASE + "/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestJson)
+                .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("POST /api/stock/batch - Missing authentication token - returns 401")
+    public void testRegisterStockBatch_NoToken() throws Exception {
+        // Given
+        List<StockBatchItem> items = List.of(
+                StockBatchItem.builder().barcodeId("8801500152723").quantity(100).name("Product A").build()
+        );
+
+        StockBatchRequest request = StockBatchRequest.builder()
+                .type(StockType.IN)
+                .items(items)
+                .build();
+
+        // When & Then
+        mockMvc.perform(post(API_STOCK_BASE + "/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isUnauthorized());
     }
 }
