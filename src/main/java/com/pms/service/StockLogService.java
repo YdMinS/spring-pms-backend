@@ -7,6 +7,7 @@ import com.pms.dto.response.StockLogResponse;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
+import java.time.LocalDate;
 import java.util.List;
 
 public interface StockLogService {
@@ -15,7 +16,7 @@ public interface StockLogService {
 
     CurrentStockResponse getCurrentStock(String barcodeId);
 
-    Page<StockLogResponse> getStockLogs(String barcodeId, Pageable pageable);
+    Page<StockLogResponse> getStockLogs(String barcodeId, LocalDate startDate, LocalDate endDate, Pageable pageable);
 
     List<StockLogResponse> registerStockBatch(StockBatchRequest request);
 }

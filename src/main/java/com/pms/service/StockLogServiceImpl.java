@@ -17,6 +17,9 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -100,10 +103,14 @@ public class StockLogServiceImpl implements StockLogService {
     }
 
     @Override
-    public Page<StockLogResponse> getStockLogs(String barcodeId, Pageable pageable) {
-        Long barcodeIdLong = Long.parseLong(barcodeId);
+    public Page<StockLogResponse> getStockLogs(String barcodeId, LocalDate startDate, LocalDate endDate, Pageable pageable) {
+        Long barcodeIdLong = barcodeId != null ? Long.parseLong(barcodeId) : null;
 
-        Page<StockLog> logs = stockLogRepository.findAllByBarcodeId(barcodeIdLong, pageable);
+        LocalDateTime startDateTime = startDate != null ? startDate.atStartOfDay() : null;
+        LocalDateTime endDateTime = endDate != null ? endDate.atTime(LocalTime.MAX) : null;
+
+        Page<StockLog> logs = stockLogRepository.findByBarcodeIdAndDateRange(
+                barcodeIdLong, startDateTime, endDateTime, pageable);
 
         return logs.map(this::mapToResponse);
     }
