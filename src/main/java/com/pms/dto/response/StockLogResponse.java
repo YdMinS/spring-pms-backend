@@ -21,11 +21,11 @@ public class StockLogResponse {
     @Schema(description = "Barcode ID", example = "8801500152723")
     private String barcodeId;
 
+    @Schema(description = "Product name", example = "Test Product")
+    private String productName;
+
     @Schema(description = "Current in-stock quantity after transaction", example = "100")
     private Integer inStock;
-
-    @Schema(description = "Product name", example = "Test Product")
-    private String name;
 
     @Schema(description = "Quantity added (0 if OUT)", example = "100")
     private Integer stockAdd;

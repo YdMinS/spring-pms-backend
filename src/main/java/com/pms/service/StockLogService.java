@@ -16,7 +16,7 @@ public interface StockLogService {
 
     CurrentStockResponse getCurrentStock(String barcodeId);
 
-    Page<StockLogResponse> getStockLogs(String barcodeId, LocalDate startDate, LocalDate endDate, Pageable pageable);
+    Page<StockLogResponse> getStockLogs(String barcodeId, LocalDate startDate, LocalDate endDate, String productName, Pageable pageable);
 
     List<StockLogResponse> registerStockBatch(StockBatchRequest request);
 }

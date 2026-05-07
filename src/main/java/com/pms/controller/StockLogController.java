@@ -83,19 +83,20 @@ public class StockLogController {
     }
 
     /**
-     * Get stock logs with pagination and optional filtering by barcodeId and date range
+     * Get stock logs with pagination and optional filtering by barcodeId, date range, and product name
      *
      * @param barcodeId Barcode ID to filter (optional)
      * @param startDate Start date for filtering (optional, format: yyyy-MM-dd)
      *                  If provided without endDate, filters from startDate to today
      * @param endDate End date for filtering (optional, format: yyyy-MM-dd)
      *                If provided without startDate, filters from beginning to endDate
+     * @param productName Product name keyword to search (optional, case-insensitive partial match)
      * @param page Page number (0-indexed, default: 0)
      * @param size Page size (default: 20)
      * @return HTTP 200 OK with Page of StockLogResponse
      */
     @GetMapping
-    @Operation(summary = "Get stock logs", description = "Retrieve stock logs with optional filtering by barcodeId and date range")
+    @Operation(summary = "Get stock logs", description = "Retrieve stock logs with optional filtering by barcodeId, date range, and product name")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "200", description = "Stock logs retrieved successfully",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
@@ -105,10 +106,11 @@ public class StockLogController {
             @RequestParam(required = false) String barcodeId,
             @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate endDate,
+            @RequestParam(required = false) String productName,
             @RequestParam(name = "page", defaultValue = "0") int page,
             @RequestParam(name = "size", defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, size);
-        Page<StockLogResponse> response = stockLogService.getStockLogs(barcodeId, startDate, endDate, pageable);
+        Page<StockLogResponse> response = stockLogService.getStockLogs(barcodeId, startDate, endDate, productName, pageable);
         return ResponseEntity.ok(ResponseDTO.success(response));
     }
 

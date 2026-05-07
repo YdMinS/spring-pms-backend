@@ -229,6 +229,7 @@ public class StockLogControllerTest extends BaseIntegrationTest {
 
         // When & Then
         mockMvc.perform(get(API_STOCK_BASE)
+                .param("barcodeId", TEST_BARCODE_ID)
                 .param("page", "0")
                 .param("size", "10")
                 .header("Authorization", "Bearer " + userToken))
@@ -293,6 +294,35 @@ public class StockLogControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.content").isArray());
+    }
+
+    @Test
+    @DisplayName("GET /api/stock with productName filter - returns 200 with matching product logs")
+    public void testGetStockLogs_WithProductNameFilter() throws Exception {
+        // Given
+        StockLogRequest request = StockLogRequest.builder()
+                .barcodeId(TEST_BARCODE_ID)
+                .type(StockType.IN)
+                .quantity(100)
+                .name("Arabica Coffee")
+                .build();
+
+        mockMvc.perform(post(API_STOCK_BASE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isCreated());
+
+        // When & Then - Search with keyword "Coffee"
+        mockMvc.perform(get(API_STOCK_BASE)
+                .param("page", "0")
+                .param("size", "10")
+                .param("productName", "Coffee")
+                .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.content").isArray())
+                .andExpect(jsonPath("$.data.content[0].productName").value("Arabica Coffee"));
     }
 
     @Test

@@ -92,7 +92,7 @@ public class StockLogServiceTest {
         assertThat(response.getInStock()).isEqualTo(100);
         assertThat(response.getStockAdd()).isEqualTo(100);
         assertThat(response.getStockSub()).isEqualTo(0);
-        assertThat(response.getName()).isEqualTo("Test Product");
+        assertThat(response.getProductName()).isEqualTo("Test Product");
 
         verify(stockLogRepository, times(1)).save(any(StockLog.class));
     }
@@ -334,11 +334,12 @@ public class StockLogServiceTest {
                 TEST_BARCODE_ID_LONG,
                 startDate.atStartOfDay(),
                 endDate.atTime(LocalTime.MAX),
+                null,
                 pageable))
                 .thenReturn(pageResult);
 
         // When
-        Page<StockLogResponse> response = stockLogService.getStockLogs(TEST_BARCODE_ID, startDate, endDate, pageable);
+        Page<StockLogResponse> response = stockLogService.getStockLogs(TEST_BARCODE_ID, startDate, endDate, null, pageable);
 
         // Then
         assertThat(response).isNotNull();
@@ -373,11 +374,12 @@ public class StockLogServiceTest {
                 TEST_BARCODE_ID_LONG,
                 startDate.atStartOfDay(),
                 today.atTime(LocalTime.MAX),
+                null,
                 pageable))
                 .thenReturn(pageResult);
 
         // When
-        Page<StockLogResponse> response = stockLogService.getStockLogs(TEST_BARCODE_ID, startDate, null, pageable);
+        Page<StockLogResponse> response = stockLogService.getStockLogs(TEST_BARCODE_ID, startDate, null, null, pageable);
 
         // Then
         assertThat(response).isNotNull();
@@ -409,11 +411,12 @@ public class StockLogServiceTest {
                 TEST_BARCODE_ID_LONG,
                 null,
                 endDate.atTime(LocalTime.MAX),
+                null,
                 pageable))
                 .thenReturn(pageResult);
 
         // When
-        Page<StockLogResponse> response = stockLogService.getStockLogs(TEST_BARCODE_ID, null, endDate, pageable);
+        Page<StockLogResponse> response = stockLogService.getStockLogs(TEST_BARCODE_ID, null, endDate, null, pageable);
 
         // Then
         assertThat(response).isNotNull();
@@ -449,11 +452,11 @@ public class StockLogServiceTest {
 
         Page<StockLog> pageResult = new PageImpl<>(stockLogs, pageable, 2);
 
-        when(stockLogRepository.findByBarcodeIdAndDateRange(null, null, null, pageable))
+        when(stockLogRepository.findByBarcodeIdAndDateRange(null, null, null, null, pageable))
                 .thenReturn(pageResult);
 
         // When
-        Page<StockLogResponse> response = stockLogService.getStockLogs(null, null, null, pageable);
+        Page<StockLogResponse> response = stockLogService.getStockLogs(null, null, null, null, pageable);
 
         // Then
         assertThat(response).isNotNull();
@@ -468,11 +471,11 @@ public class StockLogServiceTest {
         Pageable pageable = PageRequest.of(0, 10);
         Page<StockLog> emptyPage = new PageImpl<>(new ArrayList<>(), pageable, 0);
 
-        when(stockLogRepository.findByBarcodeIdAndDateRange(null, null, null, pageable))
+        when(stockLogRepository.findByBarcodeIdAndDateRange(null, null, null, null, pageable))
                 .thenReturn(emptyPage);
 
         // When
-        Page<StockLogResponse> response = stockLogService.getStockLogs(null, null, null, pageable);
+        Page<StockLogResponse> response = stockLogService.getStockLogs(null, null, null, null, pageable);
 
         // Then
         assertThat(response.getTotalElements()).isEqualTo(0);
