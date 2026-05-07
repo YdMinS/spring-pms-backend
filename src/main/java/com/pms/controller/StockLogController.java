@@ -118,20 +118,22 @@ public class StockLogController {
      * Get current stock for a product by barcodeId
      *
      * @param barcodeId Barcode ID
-     * @return HTTP 200 OK with CurrentStockResponse
+     * @return HTTP 200 OK with CurrentStockResponse or FAILURE if product not found
      */
     @GetMapping("/{barcodeId}")
     @Operation(summary = "Get current stock", description = "Retrieve current stock quantity for a product")
     @SecurityRequirement(name = "bearerAuth")
-    @ApiResponse(responseCode = "200", description = "Current stock retrieved successfully",
+    @ApiResponse(responseCode = "200", description = "Current stock retrieved successfully or product not found",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     @ApiResponse(responseCode = "401", description = "Authentication required",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
-    @ApiResponse(responseCode = "404", description = "Stock not found",
-            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     public ResponseEntity<ResponseDTO<CurrentStockResponse>> getCurrentStock(
             @PathVariable(name = "barcodeId") String barcodeId) {
-        CurrentStockResponse response = stockLogService.getCurrentStock(barcodeId);
-        return ResponseEntity.ok(ResponseDTO.success(response));
+        try {
+            CurrentStockResponse response = stockLogService.getCurrentStock(barcodeId);
+            return ResponseEntity.ok(ResponseDTO.success(response));
+        } catch (com.pms.exception.ResourceNotFoundException e) {
+            return ResponseEntity.ok(ResponseDTO.failure("Product not found for barcode: " + barcodeId));
+        }
     }
 }

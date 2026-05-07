@@ -363,12 +363,14 @@ public class StockLogControllerTest extends BaseIntegrationTest {
     }
 
     @Test
-    @DisplayName("GET /api/stock/{barcodeId} - Invalid barcodeId (not found) - returns 404")
+    @DisplayName("GET /api/stock/{barcodeId} - Invalid barcodeId (not found) - returns 200 with FAILURE status")
     public void testGetCurrentStock_NotFound() throws Exception {
         // When & Then
         mockMvc.perform(get(API_STOCK_BASE + "/9999999999999")
                 .header("Authorization", "Bearer " + userToken))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("FAILURE"))
+                .andExpect(jsonPath("$.message").exists());
     }
 
     @Test
