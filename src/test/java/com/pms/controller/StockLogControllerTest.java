@@ -239,7 +239,7 @@ public class StockLogControllerTest extends BaseIntegrationTest {
     }
 
     @Test
-    @DisplayName("GET /api/stock with date range filter - returns 200 with filtered results")
+    @DisplayName("GET /api/stock with startDate and endDate - returns 200 with filtered results")
     public void testGetStockLogs_WithDateRange() throws Exception {
         // Given
         StockLogRequest request = StockLogRequest.builder()
@@ -261,6 +261,34 @@ public class StockLogControllerTest extends BaseIntegrationTest {
                 .param("size", "10")
                 .param("startDate", "2026-05-01")
                 .param("endDate", "2026-05-07")
+                .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.content").isArray());
+    }
+
+    @Test
+    @DisplayName("GET /api/stock with startDate only - returns 200 with logs from startDate to today")
+    public void testGetStockLogs_WithStartDateOnly() throws Exception {
+        // Given
+        StockLogRequest request = StockLogRequest.builder()
+                .barcodeId(TEST_BARCODE_ID)
+                .type(StockType.IN)
+                .quantity(100)
+                .name("Test Product")
+                .build();
+
+        mockMvc.perform(post(API_STOCK_BASE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isCreated());
+
+        // When & Then
+        mockMvc.perform(get(API_STOCK_BASE)
+                .param("page", "0")
+                .param("size", "10")
+                .param("startDate", "2026-05-01")
                 .header("Authorization", "Bearer " + userToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUCCESS"))

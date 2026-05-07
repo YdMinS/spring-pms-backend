@@ -87,7 +87,9 @@ public class StockLogController {
      *
      * @param barcodeId Barcode ID to filter (optional)
      * @param startDate Start date for filtering (optional, format: yyyy-MM-dd)
+     *                  If provided without endDate, filters from startDate to today
      * @param endDate End date for filtering (optional, format: yyyy-MM-dd)
+     *                If provided without startDate, filters from beginning to endDate
      * @param page Page number (0-indexed, default: 0)
      * @param size Page size (default: 20)
      * @return HTTP 200 OK with Page of StockLogResponse

@@ -106,8 +106,16 @@ public class StockLogServiceImpl implements StockLogService {
     public Page<StockLogResponse> getStockLogs(String barcodeId, LocalDate startDate, LocalDate endDate, Pageable pageable) {
         Long barcodeIdLong = barcodeId != null ? Long.parseLong(barcodeId) : null;
 
-        LocalDateTime startDateTime = startDate != null ? startDate.atStartOfDay() : null;
-        LocalDateTime endDateTime = endDate != null ? endDate.atTime(LocalTime.MAX) : null;
+        LocalDateTime startDateTime = null;
+        LocalDateTime endDateTime = null;
+
+        if (startDate != null) {
+            startDateTime = startDate.atStartOfDay();
+            // If endDate is not provided, use today
+            endDateTime = (endDate != null ? endDate : LocalDate.now()).atTime(LocalTime.MAX);
+        } else if (endDate != null) {
+            endDateTime = endDate.atTime(LocalTime.MAX);
+        }
 
         Page<StockLog> logs = stockLogRepository.findByBarcodeIdAndDateRange(
                 barcodeIdLong, startDateTime, endDateTime, pageable);
