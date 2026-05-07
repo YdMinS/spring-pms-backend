@@ -103,7 +103,7 @@ public class StockLogServiceImpl implements StockLogService {
     }
 
     @Override
-    public Page<StockLogResponse> getStockLogs(String barcodeId, LocalDate startDate, LocalDate endDate, Pageable pageable) {
+    public Page<StockLogResponse> getStockLogs(String barcodeId, LocalDate startDate, LocalDate endDate, String productName, Pageable pageable) {
         Long barcodeIdLong = barcodeId != null ? Long.parseLong(barcodeId) : null;
 
         LocalDateTime startDateTime = null;
@@ -118,7 +118,7 @@ public class StockLogServiceImpl implements StockLogService {
         }
 
         Page<StockLog> logs = stockLogRepository.findByBarcodeIdAndDateRange(
-                barcodeIdLong, startDateTime, endDateTime, pageable);
+                barcodeIdLong, startDateTime, endDateTime, productName, pageable);
 
         return logs.map(this::mapToResponse);
     }
@@ -171,8 +171,8 @@ public class StockLogServiceImpl implements StockLogService {
         return StockLogResponse.builder()
                 .stockId(stockLog.getStockId())
                 .barcodeId(String.valueOf(stockLog.getBarcodeId()))
+                .productName(stockLog.getName())
                 .inStock(stockLog.getInStock())
-                .name(stockLog.getName())
                 .stockAdd(stockLog.getStockAdd())
                 .stockSub(stockLog.getStockSub())
                 .createdDate(stockLog.getCreatedDate())

@@ -21,11 +21,13 @@ public interface StockLogRepository extends JpaRepository<StockLog, Long> {
     @Query("SELECT s FROM StockLog s WHERE " +
            "(:barcodeId IS NULL OR s.barcodeId = :barcodeId) AND " +
            "(:startDate IS NULL OR s.createdDate >= :startDate) AND " +
-           "(:endDate IS NULL OR s.createdDate <= :endDate) " +
+           "(:endDate IS NULL OR s.createdDate <= :endDate) AND " +
+           "(:productName IS NULL OR LOWER(s.name) LIKE LOWER(CONCAT('%', :productName, '%'))) " +
            "ORDER BY s.createdDate DESC")
     Page<StockLog> findByBarcodeIdAndDateRange(
             @Param("barcodeId") Long barcodeId,
             @Param("startDate") LocalDateTime startDate,
             @Param("endDate") LocalDateTime endDate,
+            @Param("productName") String productName,
             Pageable pageable);
 }
