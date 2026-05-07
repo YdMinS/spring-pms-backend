@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.Product;
 import com.pms.domain.StockLog;
 import com.pms.domain.StockType;
 import com.pms.dto.request.StockBatchRequest;
@@ -8,6 +9,7 @@ import com.pms.dto.response.CurrentStockResponse;
 import com.pms.dto.response.StockLogResponse;
 import com.pms.exception.InsufficientStockException;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.ProductRepository;
 import com.pms.repository.StockLogRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -24,6 +26,7 @@ import java.util.List;
 public class StockLogServiceImpl implements StockLogService {
 
     private final StockLogRepository stockLogRepository;
+    private final ProductRepository productRepository;
 
     @Override
     @Transactional
@@ -67,13 +70,33 @@ public class StockLogServiceImpl implements StockLogService {
     public CurrentStockResponse getCurrentStock(String barcodeId) {
         Long barcodeIdLong = Long.parseLong(barcodeId);
 
-        StockLog latestLog = stockLogRepository.findTopByBarcodeIdOrderByCreatedDateDesc(barcodeIdLong)
-                .orElseThrow(() -> new ResourceNotFoundException("Stock log", barcodeIdLong));
+        var latestLog = stockLogRepository.findTopByBarcodeIdOrderByCreatedDateDesc(barcodeIdLong);
+        var product = productRepository.findByBarcodeId(barcodeId);
 
-        return CurrentStockResponse.builder()
-                .barcodeId(barcodeId)
-                .inStock(latestLog.getInStock())
-                .build();
+        if (latestLog.isPresent()) {
+            // Stock log exists - use current product name
+            String productName = product
+                    .map(Product::getProductName)
+                    .orElse(latestLog.get().getName());
+
+            return CurrentStockResponse.builder()
+                    .barcodeId(barcodeId)
+                    .productName(productName)
+                    .inStock(latestLog.get().getInStock())
+                    .build();
+        }
+
+        // No stock log - fallback to product with zero stock
+        if (product.isPresent()) {
+            return CurrentStockResponse.builder()
+                    .barcodeId(barcodeId)
+                    .productName(product.get().getProductName())
+                    .inStock(0)
+                    .build();
+        }
+
+        // Neither stock log nor product exists
+        throw new ResourceNotFoundException("Product", barcodeIdLong);
     }
 
     @Override

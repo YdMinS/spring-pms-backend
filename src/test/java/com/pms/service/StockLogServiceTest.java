@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.Product;
 import com.pms.domain.StockLog;
 import com.pms.domain.StockType;
 import com.pms.dto.request.StockBatchItem;
@@ -9,6 +10,7 @@ import com.pms.dto.response.CurrentStockResponse;
 import com.pms.dto.response.StockLogResponse;
 import com.pms.exception.InsufficientStockException;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.ProductRepository;
 import com.pms.repository.StockLogRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -41,6 +43,9 @@ public class StockLogServiceTest {
 
     @Mock
     private StockLogRepository stockLogRepository;
+
+    @Mock
+    private ProductRepository productRepository;
 
     @InjectMocks
     private StockLogServiceImpl stockLogService;
@@ -221,14 +226,24 @@ public class StockLogServiceTest {
                 .stockId(1L)
                 .barcodeId(TEST_BARCODE_ID_LONG)
                 .inStock(100)
-                .name("Test Product")
+                .name("Old Product Name")
                 .stockAdd(100)
                 .stockSub(0)
                 .createdDate(LocalDateTime.now())
                 .build();
 
+        Product product = Product.builder()
+                .id(1L)
+                .barcodeId(TEST_BARCODE_ID)
+                .productName("Current Product Name")
+                .name("Test")
+                .active(true)
+                .build();
+
         when(stockLogRepository.findTopByBarcodeIdOrderByCreatedDateDesc(TEST_BARCODE_ID_LONG))
                 .thenReturn(Optional.of(latestLog));
+        when(productRepository.findByBarcodeId(TEST_BARCODE_ID))
+                .thenReturn(Optional.of(product));
 
         // When
         CurrentStockResponse response = stockLogService.getCurrentStock(TEST_BARCODE_ID);
@@ -236,19 +251,49 @@ public class StockLogServiceTest {
         // Then
         assertThat(response).isNotNull();
         assertThat(response.getBarcodeId()).isEqualTo(TEST_BARCODE_ID);
+        assertThat(response.getProductName()).isEqualTo("Current Product Name");
         assertThat(response.getInStock()).isEqualTo(100);
     }
 
     @Test
-    @DisplayName("Should throw ResourceNotFoundException when no stock log found")
+    @DisplayName("Should throw ResourceNotFoundException when no stock log and no product found")
     public void testGetCurrentStock_NotFound() {
         // Given
         when(stockLogRepository.findTopByBarcodeIdOrderByCreatedDateDesc(TEST_BARCODE_ID_LONG))
+                .thenReturn(Optional.empty());
+        when(productRepository.findByBarcodeId(TEST_BARCODE_ID))
                 .thenReturn(Optional.empty());
 
         // When & Then
         assertThatThrownBy(() -> stockLogService.getCurrentStock(TEST_BARCODE_ID))
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    @DisplayName("Should return zero stock when no stock log but product exists")
+    public void testGetCurrentStock_NoStockLog_ProductExists() {
+        // Given
+        Product product = Product.builder()
+                .id(1L)
+                .barcodeId(TEST_BARCODE_ID)
+                .productName("New Product")
+                .name("Test")
+                .active(true)
+                .build();
+
+        when(stockLogRepository.findTopByBarcodeIdOrderByCreatedDateDesc(TEST_BARCODE_ID_LONG))
+                .thenReturn(Optional.empty());
+        when(productRepository.findByBarcodeId(TEST_BARCODE_ID))
+                .thenReturn(Optional.of(product));
+
+        // When
+        CurrentStockResponse response = stockLogService.getCurrentStock(TEST_BARCODE_ID);
+
+        // Then
+        assertThat(response).isNotNull();
+        assertThat(response.getBarcodeId()).isEqualTo(TEST_BARCODE_ID);
+        assertThat(response.getProductName()).isEqualTo("New Product");
+        assertThat(response.getInStock()).isEqualTo(0);
     }
 
     // ==================== getStockLogs ====================

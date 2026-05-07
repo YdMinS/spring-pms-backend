@@ -37,4 +37,9 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
      * Check if a product with given barcode exists
      */
     boolean existsByBarcodeId(String barcodeId);
+
+    /**
+     * Find product by barcode ID
+     */
+    Optional<Product> findByBarcodeId(String barcodeId);
 }
