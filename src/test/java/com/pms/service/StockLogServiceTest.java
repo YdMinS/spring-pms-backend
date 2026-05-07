@@ -23,7 +23,9 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -299,10 +301,12 @@ public class StockLogServiceTest {
     // ==================== getStockLogs ====================
 
     @Test
-    @DisplayName("Should return paged stock logs filtered by barcodeId")
-    public void testGetStockLogs_Success() {
+    @DisplayName("Should return paged stock logs filtered by startDate and endDate")
+    public void testGetStockLogs_WithStartAndEndDate() {
         // Given
         Pageable pageable = PageRequest.of(0, 10);
+        LocalDate startDate = LocalDate.of(2026, 5, 1);
+        LocalDate endDate = LocalDate.of(2026, 5, 7);
 
         List<StockLog> stockLogs = new ArrayList<>();
         stockLogs.add(StockLog.builder()
@@ -312,7 +316,7 @@ public class StockLogServiceTest {
                 .name("Test Product")
                 .stockAdd(100)
                 .stockSub(0)
-                .createdDate(LocalDateTime.now().minusHours(2))
+                .createdDate(LocalDateTime.of(2026, 5, 3, 10, 0))
                 .build());
         stockLogs.add(StockLog.builder()
                 .stockId(2L)
@@ -321,16 +325,20 @@ public class StockLogServiceTest {
                 .name("Test Product")
                 .stockAdd(0)
                 .stockSub(50)
-                .createdDate(LocalDateTime.now().minusHours(1))
+                .createdDate(LocalDateTime.of(2026, 5, 4, 15, 30))
                 .build());
 
         Page<StockLog> pageResult = new PageImpl<>(stockLogs, pageable, 2);
 
-        when(stockLogRepository.findAllByBarcodeId(TEST_BARCODE_ID_LONG, pageable))
+        when(stockLogRepository.findByBarcodeIdAndDateRange(
+                TEST_BARCODE_ID_LONG,
+                startDate.atStartOfDay(),
+                endDate.atTime(LocalTime.MAX),
+                pageable))
                 .thenReturn(pageResult);
 
         // When
-        Page<StockLogResponse> response = stockLogService.getStockLogs(TEST_BARCODE_ID, pageable);
+        Page<StockLogResponse> response = stockLogService.getStockLogs(TEST_BARCODE_ID, startDate, endDate, pageable);
 
         // Then
         assertThat(response).isNotNull();
@@ -341,17 +349,130 @@ public class StockLogServiceTest {
     }
 
     @Test
+    @DisplayName("Should return stock logs from startDate to today when endDate not provided")
+    public void testGetStockLogs_WithStartDateOnly() {
+        // Given
+        Pageable pageable = PageRequest.of(0, 10);
+        LocalDate startDate = LocalDate.of(2026, 5, 1);
+        LocalDate today = LocalDate.now();
+
+        List<StockLog> stockLogs = new ArrayList<>();
+        stockLogs.add(StockLog.builder()
+                .stockId(1L)
+                .barcodeId(TEST_BARCODE_ID_LONG)
+                .inStock(100)
+                .name("Test Product")
+                .stockAdd(100)
+                .stockSub(0)
+                .createdDate(LocalDateTime.of(2026, 5, 3, 10, 0))
+                .build());
+
+        Page<StockLog> pageResult = new PageImpl<>(stockLogs, pageable, 1);
+
+        when(stockLogRepository.findByBarcodeIdAndDateRange(
+                TEST_BARCODE_ID_LONG,
+                startDate.atStartOfDay(),
+                today.atTime(LocalTime.MAX),
+                pageable))
+                .thenReturn(pageResult);
+
+        // When
+        Page<StockLogResponse> response = stockLogService.getStockLogs(TEST_BARCODE_ID, startDate, null, pageable);
+
+        // Then
+        assertThat(response).isNotNull();
+        assertThat(response.getTotalElements()).isEqualTo(1);
+        assertThat(response.getContent()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("Should return stock logs from beginning to endDate when startDate not provided")
+    public void testGetStockLogs_WithEndDateOnly() {
+        // Given
+        Pageable pageable = PageRequest.of(0, 10);
+        LocalDate endDate = LocalDate.of(2026, 5, 7);
+
+        List<StockLog> stockLogs = new ArrayList<>();
+        stockLogs.add(StockLog.builder()
+                .stockId(1L)
+                .barcodeId(TEST_BARCODE_ID_LONG)
+                .inStock(100)
+                .name("Test Product")
+                .stockAdd(100)
+                .stockSub(0)
+                .createdDate(LocalDateTime.of(2026, 5, 3, 10, 0))
+                .build());
+
+        Page<StockLog> pageResult = new PageImpl<>(stockLogs, pageable, 1);
+
+        when(stockLogRepository.findByBarcodeIdAndDateRange(
+                TEST_BARCODE_ID_LONG,
+                null,
+                endDate.atTime(LocalTime.MAX),
+                pageable))
+                .thenReturn(pageResult);
+
+        // When
+        Page<StockLogResponse> response = stockLogService.getStockLogs(TEST_BARCODE_ID, null, endDate, pageable);
+
+        // Then
+        assertThat(response).isNotNull();
+        assertThat(response.getTotalElements()).isEqualTo(1);
+        assertThat(response.getContent()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("Should return all stock logs without barcodeId filter")
+    public void testGetStockLogs_AllLogs() {
+        // Given
+        Pageable pageable = PageRequest.of(0, 10);
+
+        List<StockLog> stockLogs = new ArrayList<>();
+        stockLogs.add(StockLog.builder()
+                .stockId(1L)
+                .barcodeId(123L)
+                .inStock(100)
+                .name("Product A")
+                .stockAdd(100)
+                .stockSub(0)
+                .createdDate(LocalDateTime.now().minusHours(2))
+                .build());
+        stockLogs.add(StockLog.builder()
+                .stockId(2L)
+                .barcodeId(456L)
+                .inStock(50)
+                .name("Product B")
+                .stockAdd(0)
+                .stockSub(50)
+                .createdDate(LocalDateTime.now().minusHours(1))
+                .build());
+
+        Page<StockLog> pageResult = new PageImpl<>(stockLogs, pageable, 2);
+
+        when(stockLogRepository.findByBarcodeIdAndDateRange(null, null, null, pageable))
+                .thenReturn(pageResult);
+
+        // When
+        Page<StockLogResponse> response = stockLogService.getStockLogs(null, null, null, pageable);
+
+        // Then
+        assertThat(response).isNotNull();
+        assertThat(response.getTotalElements()).isEqualTo(2);
+        assertThat(response.getContent()).hasSize(2);
+    }
+
+    @Test
     @DisplayName("Should return empty page when no stock logs exist")
     public void testGetStockLogs_EmptyResult() {
         // Given
         Pageable pageable = PageRequest.of(0, 10);
         Page<StockLog> emptyPage = new PageImpl<>(new ArrayList<>(), pageable, 0);
 
-        when(stockLogRepository.findAllByBarcodeId(TEST_BARCODE_ID_LONG, pageable))
+        when(stockLogRepository.findByBarcodeIdAndDateRange(null, null, null, pageable))
                 .thenReturn(emptyPage);
 
         // When
-        Page<StockLogResponse> response = stockLogService.getStockLogs(TEST_BARCODE_ID, pageable);
+        Page<StockLogResponse> response = stockLogService.getStockLogs(null, null, null, pageable);
 
         // Then
         assertThat(response.getTotalElements()).isEqualTo(0);
