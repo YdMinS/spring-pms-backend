@@ -10,6 +10,10 @@ import com.pms.exception.DuplicateEmailException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,6 +24,7 @@ public class UserServiceImpl implements UserService {
 
     private final UserRepository userRepository;
     private final BCryptPasswordEncoder passwordEncoder;
+    private static final int DEFAULT_PAGE_SIZE = 20;
 
     @Override
     @Transactional
@@ -89,5 +94,24 @@ public class UserServiceImpl implements UserService {
     @Transactional(readOnly = true)
     public boolean checkEmailExists(String email) {
         return userRepository.existsByEmail(email);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<UserResponse> listUsers(int page, int size, String search) {
+        if (size <= 0) {
+            size = DEFAULT_PAGE_SIZE;
+        }
+
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+
+        Page<User> userPage;
+        if (search == null || search.trim().isEmpty()) {
+            userPage = userRepository.findAll(pageable);
+        } else {
+            userPage = userRepository.searchByKeyword(search.trim(), pageable);
+        }
+
+        return userPage.map(UserResponse::of);
     }
 }

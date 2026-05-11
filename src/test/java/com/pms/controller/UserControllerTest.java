@@ -194,4 +194,58 @@ public class UserControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.status").value("FAILURE"))
                 .andExpect(jsonPath("$.message").value("Access denied"));
     }
+
+    @Test
+    public void testListUsersWithValidToken() throws Exception {
+        mockMvc.perform(get("/api/users")
+                .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.content").isArray())
+                .andExpect(jsonPath("$.data.totalElements").isNumber())
+                .andExpect(jsonPath("$.data.number").value(0))
+                .andExpect(jsonPath("$.data.size").value(20));
+    }
+
+    @Test
+    public void testListUsersWithPagination() throws Exception {
+        mockMvc.perform(get("/api/users?page=0&size=10")
+                .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.size").value(10));
+    }
+
+    @Test
+    public void testListUsersWithSearch() throws Exception {
+        mockMvc.perform(get("/api/users?search=" + USER_EMAIL)
+                .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.content").isArray());
+    }
+
+    @Test
+    public void testListUsersWithoutToken() throws Exception {
+        mockMvc.perform(get("/api/users"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value("FAILURE"))
+                .andExpect(jsonPath("$.message").value("Authentication required"));
+    }
+
+    @Test
+    public void testCheckEmailExists() throws Exception {
+        mockMvc.perform(get("/api/users/check-email?email=" + USER_EMAIL))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.exists").value(true));
+    }
+
+    @Test
+    public void testCheckEmailNotExists() throws Exception {
+        mockMvc.perform(get("/api/users/check-email?email=nonexistent@example.com"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.exists").value(false));
+    }
 }

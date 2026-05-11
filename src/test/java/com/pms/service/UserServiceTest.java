@@ -15,12 +15,19 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
+import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -165,5 +172,69 @@ public class UserServiceTest {
         when(userRepository.findById(9999L)).thenReturn(Optional.empty());
 
         assertThrows(ResourceNotFoundException.class, () -> userService.updateRole(9999L, request));
+    }
+
+    @Test
+    public void testCheckEmailExists() {
+        when(userRepository.existsByEmail("test@example.com")).thenReturn(true);
+
+        boolean exists = userService.checkEmailExists("test@example.com");
+
+        assertTrue(exists);
+        verify(userRepository, times(1)).existsByEmail("test@example.com");
+    }
+
+    @Test
+    public void testCheckEmailNotExists() {
+        when(userRepository.existsByEmail("notfound@example.com")).thenReturn(false);
+
+        boolean exists = userService.checkEmailExists("notfound@example.com");
+
+        assertFalse(exists);
+    }
+
+    @Test
+    public void testListUsersWithoutSearch() {
+        User user2 = User.builder()
+                .id(2L)
+                .email("user2@example.com")
+                .password("encodedPassword")
+                .name("User Two")
+                .role(Role.USER)
+                .build();
+
+        Page<User> userPage = new PageImpl<>(Arrays.asList(testUser, user2), PageRequest.of(0, 20), 2);
+        when(userRepository.findAll(any(Pageable.class))).thenReturn(userPage);
+
+        Page<UserResponse> response = userService.listUsers(0, 20, null);
+
+        assertNotNull(response);
+        assertEquals(2, response.getTotalElements());
+        assertEquals(2, response.getContent().size());
+        verify(userRepository, times(1)).findAll(any(Pageable.class));
+    }
+
+    @Test
+    public void testListUsersWithSearch() {
+        Page<User> userPage = new PageImpl<>(Arrays.asList(testUser), PageRequest.of(0, 20), 1);
+        when(userRepository.searchByKeyword(eq("Test"), any(Pageable.class))).thenReturn(userPage);
+
+        Page<UserResponse> response = userService.listUsers(0, 20, "Test");
+
+        assertNotNull(response);
+        assertEquals(1, response.getTotalElements());
+        assertEquals("Test User", response.getContent().get(0).getName());
+        verify(userRepository, times(1)).searchByKeyword(eq("Test"), any(Pageable.class));
+    }
+
+    @Test
+    public void testListUsersWithInvalidPageSize() {
+        Page<User> userPage = new PageImpl<>(Arrays.asList(testUser), PageRequest.of(0, 20), 1);
+        when(userRepository.findAll(any(Pageable.class))).thenReturn(userPage);
+
+        Page<UserResponse> response = userService.listUsers(0, -1, null);
+
+        assertNotNull(response);
+        verify(userRepository, times(1)).findAll(any(Pageable.class));
     }
 }

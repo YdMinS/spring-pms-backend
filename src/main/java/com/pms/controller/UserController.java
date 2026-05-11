@@ -14,6 +14,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -49,6 +50,21 @@ public class UserController {
         boolean exists = userService.checkEmailExists(email);
         java.util.Map<String, Boolean> result = java.util.Collections.singletonMap("exists", exists);
         return ResponseEntity.ok(ResponseDTO.success(result));
+    }
+
+    @GetMapping
+    @Operation(summary = "List users", description = "Get all users with pagination and search")
+    @SecurityRequirement(name = "bearerAuth")
+    @ApiResponse(responseCode = "200", description = "Users retrieved successfully",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "401", description = "Authentication required",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    public ResponseEntity<ResponseDTO<Page<UserResponse>>> listUsers(
+            @RequestParam(name = "page", defaultValue = "0") int page,
+            @RequestParam(name = "size", defaultValue = "20") int size,
+            @RequestParam(name = "search", required = false) String search) {
+        Page<UserResponse> response = userService.listUsers(page, size, search);
+        return ResponseEntity.ok(ResponseDTO.success(response));
     }
 
     @GetMapping("/{id}")

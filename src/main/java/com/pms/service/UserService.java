@@ -4,6 +4,7 @@ import com.pms.dto.request.RegisterRequest;
 import com.pms.dto.request.UpdateRoleRequest;
 import com.pms.dto.request.UpdateUserRequest;
 import com.pms.dto.response.UserResponse;
+import org.springframework.data.domain.Page;
 
 public interface UserService {
     UserResponse register(RegisterRequest request);
@@ -17,4 +18,6 @@ public interface UserService {
     UserResponse updateRole(Long id, UpdateRoleRequest request);
 
     boolean checkEmailExists(String email);
+
+    Page<UserResponse> listUsers(int page, int size, String search);
 }
