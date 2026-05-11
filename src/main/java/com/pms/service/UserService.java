@@ -15,4 +15,6 @@ public interface UserService {
     void deleteUser(Long id);
 
     UserResponse updateRole(Long id, UpdateRoleRequest request);
+
+    boolean checkEmailExists(String email);
 }

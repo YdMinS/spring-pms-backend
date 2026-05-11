@@ -84,4 +84,10 @@ public class UserServiceImpl implements UserService {
         User updatedUser = userRepository.save(user);
         return UserResponse.of(updatedUser);
     }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean checkEmailExists(String email) {
+        return userRepository.existsByEmail(email);
+    }
 }

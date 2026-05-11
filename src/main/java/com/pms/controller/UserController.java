@@ -40,6 +40,17 @@ public class UserController {
                 .body(ResponseDTO.success(response));
     }
 
+    @GetMapping("/check-email")
+    @Operation(summary = "Check email existence", description = "Check if an email is already registered")
+    @ApiResponse(responseCode = "200", description = "Check completed",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    public ResponseEntity<ResponseDTO<java.util.Map<String, Boolean>>> checkEmailExists(
+            @RequestParam(name = "email") String email) {
+        boolean exists = userService.checkEmailExists(email);
+        java.util.Map<String, Boolean> result = java.util.Collections.singletonMap("exists", exists);
+        return ResponseEntity.ok(ResponseDTO.success(result));
+    }
+
     @GetMapping("/{id}")
     @Operation(summary = "Get user", description = "Get user information by ID")
     @SecurityRequirement(name = "bearerAuth")
