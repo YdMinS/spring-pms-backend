@@ -1,8 +1,10 @@
 package com.pms.common;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.pms.domain.CarrierRate;
 import com.pms.domain.Role;
 import com.pms.domain.User;
+import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.UserRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,6 +16,9 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
@@ -39,6 +44,9 @@ public abstract class BaseIntegrationTest {
 
     @Autowired
     protected UserRepository userRepository;
+
+    @Autowired
+    protected CarrierRateRepository carrierRateRepository;
 
     @Autowired
     protected BCryptPasswordEncoder passwordEncoder;
@@ -77,6 +85,20 @@ public abstract class BaseIntegrationTest {
         return objectMapper.readTree(response).get("data").get("token").asText();
     }
 
+    protected void registerTestCarrierRates() {
+        // Create a default test carrier rate with ID 1
+        // This is used by tests that expect pre-existing data
+        CarrierRate carrierRate = CarrierRate.builder()
+                .id(1L)
+                .carrier("DHL")
+                .type("EXPRESS")
+                .cost(new BigDecimal("15.50"))
+                .effectiveDate(LocalDate.now())
+                .isDefault(false)
+                .build();
+        carrierRateRepository.saveAndFlush(carrierRate);
+    }
+
     protected void cleanupTestData() {
         userRepository.deleteByEmail(ADMIN_EMAIL);
         userRepository.deleteByEmail(USER_EMAIL);
@@ -85,6 +107,7 @@ public abstract class BaseIntegrationTest {
     @BeforeEach
     public void setUpBase() throws Exception {
         registerTestUsers();
+        registerTestCarrierRates();
         adminToken = generateAdminToken();
         userToken = generateUserToken();
     }
