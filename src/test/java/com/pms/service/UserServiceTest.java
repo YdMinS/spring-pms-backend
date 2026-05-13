@@ -106,7 +106,7 @@ public class UserServiceTest {
     }
 
     @Test
-    public void testUpdateUserWithValidRequest() {
+    public void testUpdateUserNameWithValidRequest() {
         UpdateUserRequest request = UpdateUserRequest.builder()
                 .name("Updated Name")
                 .build();
@@ -119,6 +119,98 @@ public class UserServiceTest {
 
         assertNotNull(response);
         assertEquals("Updated Name", response.getName());
+    }
+
+    @Test
+    public void testUpdateUserEmailWithValidRequest() {
+        UpdateUserRequest request = UpdateUserRequest.builder()
+                .email("newemail@example.com")
+                .build();
+
+        User updatedUser = testUser.toBuilder().email("newemail@example.com").build();
+        when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
+        when(userRepository.existsByEmail("newemail@example.com")).thenReturn(false);
+        when(userRepository.save(any(User.class))).thenReturn(updatedUser);
+
+        UserResponse response = userService.updateUser(1L, request);
+
+        assertNotNull(response);
+        assertEquals("newemail@example.com", response.getEmail());
+    }
+
+    @Test
+    public void testUpdateUserEmailWithDuplicateEmail() {
+        UpdateUserRequest request = UpdateUserRequest.builder()
+                .email("other@example.com")
+                .build();
+
+        when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
+        when(userRepository.existsByEmail("other@example.com")).thenReturn(true);
+
+        assertThrows(DuplicateEmailException.class, () -> userService.updateUser(1L, request));
+    }
+
+    @Test
+    public void testUpdateUserRoleWithValidRequest() {
+        UpdateUserRequest request = UpdateUserRequest.builder()
+                .role(Role.ADMIN)
+                .build();
+
+        User updatedUser = testUser.toBuilder().role(Role.ADMIN).build();
+        when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
+        when(userRepository.save(any(User.class))).thenReturn(updatedUser);
+
+        UserResponse response = userService.updateUser(1L, request);
+
+        assertNotNull(response);
+        assertEquals(Role.ADMIN, response.getRole());
+    }
+
+    @Test
+    public void testUpdateUserPasswordWithValidRequest() {
+        UpdateUserRequest request = UpdateUserRequest.builder()
+                .password("newPassword123")
+                .build();
+
+        User updatedUser = testUser.toBuilder().password("encodedNewPassword").build();
+        when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
+        when(bCryptPasswordEncoder.encode("newPassword123")).thenReturn("encodedNewPassword");
+        when(userRepository.save(any(User.class))).thenReturn(updatedUser);
+
+        UserResponse response = userService.updateUser(1L, request);
+
+        assertNotNull(response);
+        verify(bCryptPasswordEncoder, times(1)).encode("newPassword123");
+        verify(userRepository, times(1)).save(any(User.class));
+    }
+
+    @Test
+    public void testUpdateUserMultipleFields() {
+        UpdateUserRequest request = UpdateUserRequest.builder()
+                .name("New Name")
+                .email("newemail@example.com")
+                .password("newPassword123")
+                .role(Role.ADMIN)
+                .build();
+
+        User updatedUser = testUser.toBuilder()
+                .name("New Name")
+                .email("newemail@example.com")
+                .password("encodedNewPassword")
+                .role(Role.ADMIN)
+                .build();
+        when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
+        when(userRepository.existsByEmail("newemail@example.com")).thenReturn(false);
+        when(bCryptPasswordEncoder.encode("newPassword123")).thenReturn("encodedNewPassword");
+        when(userRepository.save(any(User.class))).thenReturn(updatedUser);
+
+        UserResponse response = userService.updateUser(1L, request);
+
+        assertNotNull(response);
+        assertEquals("New Name", response.getName());
+        assertEquals("newemail@example.com", response.getEmail());
+        assertEquals(Role.ADMIN, response.getRole());
+        verify(bCryptPasswordEncoder, times(1)).encode("newPassword123");
     }
 
     @Test

@@ -91,7 +91,7 @@ public class UserControllerTest extends BaseIntegrationTest {
     }
 
     @Test
-    public void testUpdateOwnUser() throws Exception {
+    public void testUpdateOwnUserName() throws Exception {
         String updateJson = objectMapper.writeValueAsString(
                 Map.of("name", "Updated User")
         );
@@ -103,6 +103,92 @@ public class UserControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.name").value("Updated User"));
+    }
+
+    @Test
+    public void testUpdateUserEmailWithUserToken() throws Exception {
+        String updateJson = objectMapper.writeValueAsString(
+                Map.of("email", "newemail@example.com")
+        );
+
+        mockMvc.perform(patch("/api/users/{id}", testUserId)
+                .header("Authorization", "Bearer " + userToken)
+                .contentType("application/json")
+                .content(updateJson))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    @Test
+    public void testUpdateUserEmailWithAdminToken() throws Exception {
+        String updateJson = objectMapper.writeValueAsString(
+                Map.of("email", "newemail@example.com")
+        );
+
+        mockMvc.perform(patch("/api/users/{id}", testUserId)
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType("application/json")
+                .content(updateJson))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.email").value("newemail@example.com"));
+    }
+
+    @Test
+    public void testUpdateUserRoleWithAdminToken() throws Exception {
+        String updateJson = objectMapper.writeValueAsString(
+                Map.of("role", Role.ADMIN)
+        );
+
+        mockMvc.perform(patch("/api/users/{id}", testUserId)
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType("application/json")
+                .content(updateJson))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.role").value("ADMIN"));
+    }
+
+    @Test
+    public void testUpdateUserRoleWithUserToken() throws Exception {
+        String updateJson = objectMapper.writeValueAsString(
+                Map.of("role", Role.ADMIN)
+        );
+
+        mockMvc.perform(patch("/api/users/{id}", testUserId)
+                .header("Authorization", "Bearer " + userToken)
+                .contentType("application/json")
+                .content(updateJson))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    @Test
+    public void testUpdateUserPasswordWithUserToken() throws Exception {
+        String updateJson = objectMapper.writeValueAsString(
+                Map.of("password", "newPassword123")
+        );
+
+        mockMvc.perform(patch("/api/users/{id}", testUserId)
+                .header("Authorization", "Bearer " + userToken)
+                .contentType("application/json")
+                .content(updateJson))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    @Test
+    public void testUpdateUserPasswordWithAdminToken() throws Exception {
+        String updateJson = objectMapper.writeValueAsString(
+                Map.of("password", "newPassword123")
+        );
+
+        mockMvc.perform(patch("/api/users/{id}", testUserId)
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType("application/json")
+                .content(updateJson))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"));
     }
 
     @Test

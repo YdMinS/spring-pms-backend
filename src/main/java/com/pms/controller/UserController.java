@@ -17,6 +17,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -82,17 +85,31 @@ public class UserController {
     }
 
     @PatchMapping("/{id}")
-    @Operation(summary = "Update user", description = "Update user name")
+    @Operation(summary = "Update user", description = "Update user name, email, or role (ADMIN role required to change email or role)")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "200", description = "User updated successfully",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "400", description = "Validation error or duplicate email",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     @ApiResponse(responseCode = "401", description = "Authentication required",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "403", description = "Access denied - ADMIN role required to change email or role",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     @ApiResponse(responseCode = "404", description = "User not found",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     public ResponseEntity<ResponseDTO<UserResponse>> updateUser(
             @PathVariable Long id,
             @Valid @RequestBody UpdateUserRequest request) {
+        if ((request.getEmail() != null && !request.getEmail().isBlank()) ||
+            (request.getPassword() != null && !request.getPassword().isBlank()) ||
+            (request.getRole() != null)) {
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            boolean isAdmin = auth.getAuthorities().stream()
+                    .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+            if (!isAdmin) {
+                throw new AccessDeniedException("Access denied");
+            }
+        }
         UserResponse response = userService.updateUser(id, request);
         return ResponseEntity.ok(ResponseDTO.success(response));
     }

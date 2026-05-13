@@ -13,3 +13,14 @@ CREATE TABLE stock_log (
 
 CREATE INDEX idx_stock_log_barcode_id ON stock_log(barcode_id);
 CREATE INDEX idx_stock_log_created_date ON stock_log(created_date);
+
+CREATE TABLE carrier_rate (
+    id             BIGINT AUTO_INCREMENT PRIMARY KEY,
+    carrier        VARCHAR(100)   NOT NULL,
+    type           VARCHAR(50)    NOT NULL,
+    cost           DECIMAL(10, 2) NOT NULL,
+    effective_date DATE           NOT NULL,
+    is_default     BOOLEAN        NOT NULL DEFAULT FALSE
+);
+
+CREATE INDEX idx_carrier_rate_is_default ON carrier_rate(is_default);
