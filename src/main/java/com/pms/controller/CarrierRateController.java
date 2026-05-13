@@ -5,6 +5,7 @@ import com.pms.dto.request.CarrierRateRequest;
 import com.pms.dto.response.CarrierRateResponse;
 import com.pms.service.CarrierRateService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -69,7 +70,10 @@ public class CarrierRateController {
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     @ApiResponse(responseCode = "404", description = "Carrier rate not found",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
-    public ResponseEntity<ResponseDTO<CarrierRateResponse>> getCarrierRate(@PathVariable Long id) {
+    public ResponseEntity<ResponseDTO<CarrierRateResponse>> getCarrierRate(
+            @PathVariable
+            @Parameter(description = "Carrier rate ID")
+            Long id) {
         CarrierRateResponse response = carrierRateService.getCarrierRate(id);
         return ResponseEntity.ok(ResponseDTO.success(response));
     }
@@ -88,7 +92,9 @@ public class CarrierRateController {
     @ApiResponse(responseCode = "404", description = "Carrier rate not found",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     public ResponseEntity<ResponseDTO<CarrierRateResponse>> updateCarrierRate(
-            @PathVariable Long id,
+            @PathVariable
+            @Parameter(description = "Carrier rate ID")
+            Long id,
             @Valid @RequestBody CarrierRateRequest request) {
         CarrierRateResponse response = carrierRateService.updateCarrierRate(id, request);
         return ResponseEntity.ok(ResponseDTO.success(response));
@@ -105,7 +111,10 @@ public class CarrierRateController {
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     @ApiResponse(responseCode = "404", description = "Carrier rate not found",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
-    public ResponseEntity<ResponseDTO<Void>> deleteCarrierRate(@PathVariable Long id) {
+    public ResponseEntity<ResponseDTO<Void>> deleteCarrierRate(
+            @PathVariable
+            @Parameter(description = "Carrier rate ID")
+            Long id) {
         carrierRateService.deleteCarrierRate(id);
         return ResponseEntity.ok(ResponseDTO.success(null));
     }

@@ -16,11 +16,11 @@ import java.time.LocalDate;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-@Schema(description = "Carrier rate request")
+@Schema(description = "Carrier rate creation/update request")
 public class CarrierRateRequest {
 
     @NotBlank(message = "Carrier is required")
-    @Schema(description = "Carrier name", example = "DHL")
+    @Schema(description = "Carrier company name", example = "DHL")
     private String carrier;
 
     @NotBlank(message = "Type is required")
@@ -28,12 +28,12 @@ public class CarrierRateRequest {
     private String type;
 
     @NotNull(message = "Cost is required")
-    @DecimalMin(value = "0", inclusive = true, message = "Cost must be >= 0")
-    @Schema(description = "Delivery cost", example = "15.50")
+    @DecimalMin(value = "0", inclusive = false, message = "Cost must be > 0")
+    @Schema(description = "Delivery cost in currency", example = "15.50")
     private BigDecimal cost;
 
     @NotNull(message = "effectiveDate is required")
-    @Schema(description = "Effective date", example = "2026-05-13")
+    @Schema(description = "Date when rate becomes effective", example = "2026-05-13")
     private LocalDate effectiveDate;
 
     @NotNull(message = "isDefault is required")

@@ -16,21 +16,21 @@ import java.time.LocalDate;
 @Schema(description = "Carrier rate response")
 public class CarrierRateResponse {
 
-    @Schema(description = "Carrier rate ID", example = "1")
+    @Schema(description = "Unique identifier for the carrier rate", example = "1")
     private Long id;
 
-    @Schema(description = "Carrier name", example = "DHL")
+    @Schema(description = "Carrier company name", example = "DHL")
     private String carrier;
 
     @Schema(description = "Delivery type", example = "EXPRESS")
     private String type;
 
-    @Schema(description = "Delivery cost", example = "15.50")
+    @Schema(description = "Delivery cost in currency", example = "15.50")
     private BigDecimal cost;
 
-    @Schema(description = "Effective date", example = "2026-05-13")
+    @Schema(description = "Date when rate becomes effective", example = "2026-05-13")
     private LocalDate effectiveDate;
 
-    @Schema(description = "Whether this is the default carrier rate", example = "false")
+    @Schema(description = "Whether this is the default carrier rate globally", example = "false")
     private Boolean isDefault;
 }
