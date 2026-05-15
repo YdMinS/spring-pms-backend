@@ -49,3 +49,8 @@ application-prod.yml
 
 # Uploads
 uploads/*
+
+# Claude
+CLAUDE.md
+
+CLAUDE.md
