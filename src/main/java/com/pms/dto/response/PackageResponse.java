@@ -9,25 +9,27 @@ import lombok.NoArgsConstructor;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
+/**
+ * Response DTO for package information. Contains all fields of a Package entity.
+ */
 @Getter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-@Schema(description = "Package response")
 public class PackageResponse {
 
-    @Schema(description = "Unique identifier for the package", example = "1")
+    @Schema(description = "Unique identifier (auto-generated)", example = "1")
     private Long id;
 
-    @Schema(description = "Package type", example = "S")
+    @Schema(description = "Package type/category", example = "STANDARD", maxLength = 50)
     private String type;
 
-    @Schema(description = "Package cost in currency", example = "2.50")
+    @Schema(description = "Shipping cost", example = "15.50", type = "number")
     private BigDecimal cost;
 
-    @Schema(description = "Date when package rate becomes effective", example = "2026-05-13")
+    @Schema(description = "Date from which package is valid (ISO)", example = "2026-05-16", format = "date")
     private LocalDate effectiveDate;
 
-    @Schema(description = "Whether this is the default package globally", example = "false")
+    @Schema(description = "Is default package type? (Only one can be true)", example = "false")
     private Boolean isDefault;
 }

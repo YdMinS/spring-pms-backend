@@ -11,6 +11,17 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
+/**
+ * Service implementation for Package management.
+ *
+ * Handles all business logic including:
+ * - isDefault uniqueness maintenance
+ * - Data persistence via PackageRepository
+ * - Transactional boundaries
+ *
+ * @see PackageService for interface contract
+ * @see PackageRepository for data access
+ */
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
