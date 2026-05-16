@@ -856,11 +856,7 @@ public class ProductServiceTest {
                 .thenReturn(java.util.Optional.of(existingProduct))  // First call in deleteProduct
                 .thenReturn(java.util.Optional.of(existingProduct.builder().active(false).build()));  // After soft delete
 
-        when(productRepository.save(any(Product.class))).thenAnswer(invocation -> {
-            Product product = invocation.getArgument(0);
-            product.setActive(false);
-            return product;
-        });
+        when(productRepository.save(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         // When - delete the product
         productService.deleteProduct(productId);

@@ -55,7 +55,6 @@ public class PackageServiceTest {
                 .effectiveDate(LocalDate.now())
                 .isDefault(false)
                 .build();
-        given(packageRepository.findByIsDefaultTrue()).willReturn(Optional.empty());
         given(packageRepository.save(any())).willReturn(newPackage);
 
         PackageResponse response = packageService.createPackage(testRequest);
@@ -109,14 +108,6 @@ public class PackageServiceTest {
 
     @Test
     public void testCreatePackageSetIsDefaultFalse() {
-        Package existingDefault = Package.builder()
-                .id(1L)
-                .type("S")
-                .cost(new BigDecimal("2.50"))
-                .effectiveDate(LocalDate.now())
-                .isDefault(true)
-                .build();
-
         Package newPackage = Package.builder()
                 .id(2L)
                 .type("M")
@@ -125,7 +116,6 @@ public class PackageServiceTest {
                 .isDefault(false)
                 .build();
 
-        given(packageRepository.findByIsDefaultTrue()).willReturn(Optional.of(existingDefault));
         given(packageRepository.save(any())).willReturn(newPackage);
 
         PackageResponse response = packageService.createPackage(testRequest);
@@ -134,7 +124,7 @@ public class PackageServiceTest {
         assertThat(response.getIsDefault()).isFalse();
 
         verify(packageRepository, times(1)).save(any());
-        verify(packageRepository, never()).findByIsDefaultTrue().ifPresent(any());
+        verify(packageRepository, never()).findByIsDefaultTrue();
     }
 
     // getPackage tests
@@ -219,7 +209,6 @@ public class PackageServiceTest {
                 .build();
 
         given(packageRepository.findById(1L)).willReturn(Optional.of(existingPackage));
-        given(packageRepository.findByIsDefaultTrue()).willReturn(Optional.empty());
         given(packageRepository.save(any())).willReturn(updatedPackage);
 
         PackageResponse response = packageService.updatePackage(1L, updateRequest);

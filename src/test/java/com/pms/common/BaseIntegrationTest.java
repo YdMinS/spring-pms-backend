@@ -2,9 +2,11 @@ package com.pms.common;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.domain.CarrierRate;
+import com.pms.domain.Package;
 import com.pms.domain.Role;
 import com.pms.domain.User;
 import com.pms.repository.CarrierRateRepository;
+import com.pms.repository.PackageRepository;
 import com.pms.repository.UserRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -47,6 +49,9 @@ public abstract class BaseIntegrationTest {
 
     @Autowired
     protected CarrierRateRepository carrierRateRepository;
+
+    @Autowired
+    protected PackageRepository packageRepository;
 
     @Autowired
     protected BCryptPasswordEncoder passwordEncoder;
@@ -99,7 +104,22 @@ public abstract class BaseIntegrationTest {
         carrierRateRepository.saveAndFlush(carrierRate);
     }
 
+    protected void registerTestPackages() {
+        // Create a default test package with ID 1
+        // This is used by tests that expect pre-existing data
+        Package pkg = Package.builder()
+                .id(1L)
+                .type("S")
+                .cost(new BigDecimal("2.50"))
+                .effectiveDate(LocalDate.now())
+                .isDefault(true)
+                .build();
+        packageRepository.saveAndFlush(pkg);
+    }
+
     protected void cleanupTestData() {
+        packageRepository.deleteAll();
+        carrierRateRepository.deleteAll();
         userRepository.deleteByEmail(ADMIN_EMAIL);
         userRepository.deleteByEmail(USER_EMAIL);
     }
@@ -108,6 +128,7 @@ public abstract class BaseIntegrationTest {
     public void setUpBase() throws Exception {
         registerTestUsers();
         registerTestCarrierRates();
+        registerTestPackages();
         adminToken = generateAdminToken();
         userToken = generateUserToken();
     }

@@ -24,8 +24,15 @@ public class CarrierRateServiceImpl implements CarrierRateService {
         if (request.getIsDefault()) {
             carrierRateRepository.findByIsDefaultTrue()
                     .ifPresent(existing -> {
-                        existing.setIsDefault(false);
-                        carrierRateRepository.save(existing);
+                        CarrierRate updated = CarrierRate.builder()
+                                .id(existing.getId())
+                                .carrier(existing.getCarrier())
+                                .type(existing.getType())
+                                .cost(existing.getCost())
+                                .effectiveDate(existing.getEffectiveDate())
+                                .isDefault(false)
+                                .build();
+                        carrierRateRepository.save(updated);
                     });
         }
 
@@ -66,20 +73,30 @@ public class CarrierRateServiceImpl implements CarrierRateService {
             carrierRateRepository.findByIsDefaultTrue()
                     .ifPresent(existing -> {
                         if (!existing.getId().equals(id)) {
-                            existing.setIsDefault(false);
-                            carrierRateRepository.save(existing);
+                            CarrierRate updated = CarrierRate.builder()
+                                    .id(existing.getId())
+                                    .carrier(existing.getCarrier())
+                                    .type(existing.getType())
+                                    .cost(existing.getCost())
+                                    .effectiveDate(existing.getEffectiveDate())
+                                    .isDefault(false)
+                                    .build();
+                            carrierRateRepository.save(updated);
                         }
                     });
         }
 
-        carrierRate.setCarrier(request.getCarrier());
-        carrierRate.setType(request.getType());
-        carrierRate.setCost(request.getCost());
-        carrierRate.setEffectiveDate(request.getEffectiveDate());
-        carrierRate.setIsDefault(request.getIsDefault());
+        CarrierRate updated = CarrierRate.builder()
+                .id(carrierRate.getId())
+                .carrier(request.getCarrier())
+                .type(request.getType())
+                .cost(request.getCost())
+                .effectiveDate(request.getEffectiveDate())
+                .isDefault(request.getIsDefault())
+                .build();
 
-        CarrierRate updated = carrierRateRepository.save(carrierRate);
-        return mapToResponse(updated);
+        CarrierRate saved = carrierRateRepository.save(updated);
+        return mapToResponse(saved);
     }
 
     @Override

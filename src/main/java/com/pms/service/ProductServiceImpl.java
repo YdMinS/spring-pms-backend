@@ -110,31 +110,29 @@ public class ProductServiceImpl implements ProductService {
             throw new ResourceNotFoundException("Product", id);
         }
 
-        // Validate and apply updates using Optional
-        request.getPrice().ifPresent(price -> {
-            validatePrice(price);
-            product.setPrice(price);
-        });
+        // Validate updates
+        request.getPrice().ifPresent(this::validatePrice);
+        request.getUnit().ifPresent(this::validateUnit);
 
-        request.getUnit().ifPresent(unit -> {
-            validateUnit(unit);
-            product.setUnit(unit);
-        });
-
-        request.getBarcodeId().ifPresent(product::setBarcodeId);
-        request.getBrand().ifPresent(product::setBrand);
-        request.getProductName().ifPresent(product::setProductName);
-        request.getStore().ifPresent(product::setStore);
-        request.getVolumeHeight().ifPresent(product::setVolumeHeight);
-        request.getVolumeLong().ifPresent(product::setVolumeLong);
-        request.getVolumeShort().ifPresent(product::setVolumeShort);
-        request.getWeight().ifPresent(product::setWeight);
-        request.getDescription().ifPresent(product::setDescription);
-        request.getName().ifPresent(product::setName);
+        // Build updated product using immutable pattern - use toBuilder to preserve audit fields
+        Product updated = product.toBuilder()
+                .barcodeId(request.getBarcodeId().orElse(product.getBarcodeId()))
+                .brand(request.getBrand().orElse(product.getBrand()))
+                .price(request.getPrice().orElse(product.getPrice()))
+                .productName(request.getProductName().orElse(product.getProductName()))
+                .store(request.getStore().orElse(product.getStore()))
+                .unit(request.getUnit().orElse(product.getUnit()))
+                .volumeHeight(request.getVolumeHeight().orElse(product.getVolumeHeight()))
+                .volumeLong(request.getVolumeLong().orElse(product.getVolumeLong()))
+                .volumeShort(request.getVolumeShort().orElse(product.getVolumeShort()))
+                .weight(request.getWeight().orElse(product.getWeight()))
+                .description(request.getDescription().orElse(product.getDescription()))
+                .name(request.getName().orElse(product.getName()))
+                .build();
 
         // Save updated product
-        Product updated = productRepository.save(product);
-        return mapToResponse(updated);
+        Product saved = productRepository.save(updated);
+        return mapToResponse(saved);
     }
 
     /**
@@ -208,22 +206,8 @@ public class ProductServiceImpl implements ProductService {
             throw new ResourceNotFoundException("Product", id);
         }
 
-        // Soft delete using immutable pattern with Builder
-        Product deletedProduct = product.builder()
-                .id(product.getId())
-                .barcodeId(product.getBarcodeId())
-                .brand(product.getBrand())
-                .price(product.getPrice())
-                .productName(product.getProductName())
-                .store(product.getStore())
-                .unit(product.getUnit())
-                .volumeHeight(product.getVolumeHeight())
-                .volumeLong(product.getVolumeLong())
-                .volumeShort(product.getVolumeShort())
-                .weight(product.getWeight())
-                .description(product.getDescription())
-                .name(product.getName())
-                .imageUrl(product.getImageUrl())
+        // Soft delete using immutable pattern with Builder - use toBuilder to preserve audit fields
+        Product deletedProduct = product.toBuilder()
                 .active(false)
                 .build();
 

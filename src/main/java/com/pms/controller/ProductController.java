@@ -221,22 +221,8 @@ public class ProductController {
 
         // 4. Update product with new imageUrl (full path)
         String imageUrl = imageStorageProperties.getUploadDir() + "/" + imageFilename;
-        Product updatedProduct = product.builder()
-                .id(product.getId())
-                .barcodeId(product.getBarcodeId())
-                .brand(product.getBrand())
-                .price(product.getPrice())
-                .productName(product.getProductName())
-                .store(product.getStore())
-                .unit(product.getUnit())
-                .volumeHeight(product.getVolumeHeight())
-                .volumeLong(product.getVolumeLong())
-                .volumeShort(product.getVolumeShort())
-                .weight(product.getWeight())
-                .description(product.getDescription())
-                .name(product.getName())
+        Product updatedProduct = product.toBuilder()
                 .imageUrl(imageUrl)
-                .active(product.getActive())
                 .build();
 
         productRepository.save(updatedProduct);
@@ -321,22 +307,8 @@ public class ProductController {
         }
 
         // 4. Update product to clear imageUrl
-        Product updatedProduct = product.builder()
-                .id(product.getId())
-                .barcodeId(product.getBarcodeId())
-                .brand(product.getBrand())
-                .price(product.getPrice())
-                .productName(product.getProductName())
-                .store(product.getStore())
-                .unit(product.getUnit())
-                .volumeHeight(product.getVolumeHeight())
-                .volumeLong(product.getVolumeLong())
-                .volumeShort(product.getVolumeShort())
-                .weight(product.getWeight())
-                .description(product.getDescription())
-                .name(product.getName())
+        Product updatedProduct = product.toBuilder()
                 .imageUrl(null)  // Clear image URL
-                .active(product.getActive())
                 .build();
 
         productRepository.save(updatedProduct);

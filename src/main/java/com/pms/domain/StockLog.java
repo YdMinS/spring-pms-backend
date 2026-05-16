@@ -8,7 +8,6 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "stock_log")
 @Getter
-@Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder

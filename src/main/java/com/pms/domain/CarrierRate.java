@@ -11,7 +11,7 @@ import java.time.LocalDate;
 @Getter
 @NoArgsConstructor
 @AllArgsConstructor
-@Builder
+@Builder(toBuilder = true)
 public class CarrierRate {
 
     @Id
@@ -32,24 +32,4 @@ public class CarrierRate {
 
     @Column(name = "is_default", nullable = false)
     private Boolean isDefault;
-
-    public void setCarrier(String carrier) {
-        this.carrier = carrier;
-    }
-
-    public void setType(String type) {
-        this.type = type;
-    }
-
-    public void setCost(BigDecimal cost) {
-        this.cost = cost;
-    }
-
-    public void setEffectiveDate(LocalDate effectiveDate) {
-        this.effectiveDate = effectiveDate;
-    }
-
-    public void setIsDefault(Boolean isDefault) {
-        this.isDefault = isDefault;
-    }
 }

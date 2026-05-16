@@ -1,7 +1,9 @@
 package com.pms.service;
 
+import com.pms.domain.Package;
 import com.pms.dto.request.PackageRequest;
 import com.pms.dto.response.PackageResponse;
+import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.PackageRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -19,28 +21,93 @@ public class PackageServiceImpl implements PackageService {
     @Override
     @Transactional
     public PackageResponse createPackage(PackageRequest request) {
-        throw new UnsupportedOperationException();
+        if (request.getIsDefault()) {
+            packageRepository.findByIsDefaultTrue().ifPresent(existing -> {
+                Package updated = Package.builder()
+                    .id(existing.getId())
+                    .type(existing.getType())
+                    .cost(existing.getCost())
+                    .effectiveDate(existing.getEffectiveDate())
+                    .isDefault(false)
+                    .build();
+                packageRepository.save(updated);
+            });
+        }
+
+        Package pkg = Package.builder()
+            .type(request.getType())
+            .cost(request.getCost())
+            .effectiveDate(request.getEffectiveDate())
+            .isDefault(request.getIsDefault())
+            .build();
+
+        Package saved = packageRepository.save(pkg);
+        return toResponse(saved);
     }
 
     @Override
     public PackageResponse getPackage(Long id) {
-        throw new UnsupportedOperationException();
+        Package pkg = packageRepository.findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Package", id));
+        return toResponse(pkg);
     }
 
     @Override
     public List<PackageResponse> getPackages() {
-        throw new UnsupportedOperationException();
+        return packageRepository.findAll()
+            .stream()
+            .map(this::toResponse)
+            .toList();
     }
 
     @Override
     @Transactional
     public PackageResponse updatePackage(Long id, PackageRequest request) {
-        throw new UnsupportedOperationException();
+        Package pkg = packageRepository.findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Package", id));
+
+        if (request.getIsDefault()) {
+            packageRepository.findByIsDefaultTrue().ifPresent(existing -> {
+                if (!existing.getId().equals(id)) {
+                    Package updated = Package.builder()
+                        .id(existing.getId())
+                        .type(existing.getType())
+                        .cost(existing.getCost())
+                        .effectiveDate(existing.getEffectiveDate())
+                        .isDefault(false)
+                        .build();
+                    packageRepository.save(updated);
+                }
+            });
+        }
+
+        Package updated = Package.builder()
+            .id(pkg.getId())
+            .type(request.getType())
+            .cost(request.getCost())
+            .effectiveDate(request.getEffectiveDate())
+            .isDefault(request.getIsDefault())
+            .build();
+
+        Package saved = packageRepository.save(updated);
+        return toResponse(saved);
     }
 
     @Override
     @Transactional
     public void deletePackage(Long id) {
-        throw new UnsupportedOperationException();
+        Package pkg = packageRepository.findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Package", id));
+        packageRepository.delete(pkg);
+    }
+
+    private PackageResponse toResponse(Package pkg) {
+        return PackageResponse.builder()
+            .id(pkg.getId())
+            .type(pkg.getType())
+            .cost(pkg.getCost())
+            .effectiveDate(pkg.getEffectiveDate())
+            .isDefault(pkg.getIsDefault())
+            .build();
     }
 }
