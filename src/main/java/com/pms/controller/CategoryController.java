@@ -31,7 +31,7 @@ import java.util.List;
  * @see CategoryService for business logic
  */
 @RestController
-@RequestMapping("/api/admin/categories")
+@RequestMapping("/api/admin/category")
 @RequiredArgsConstructor
 @PreAuthorize("hasRole('ADMIN')")
 @Tag(name = "Category Management", description = "Hierarchical category management APIs")
