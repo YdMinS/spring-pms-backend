@@ -25,6 +25,13 @@ public class GlobalExceptionHandler {
                 .body(ResponseDTO.failure(e.getMessage()));
     }
 
+    @ExceptionHandler(ResourceNotFoundException.class)
+    public ResponseEntity<ResponseDTO<Void>> handleResourceNotFoundException(ResourceNotFoundException e) {
+        log.warn("ResourceNotFoundException: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ResponseDTO.failure(e.getMessage()));
+    }
+
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ResponseDTO<Void>> handleBusinessException(BusinessException e) {
         log.warn("BusinessException: {}", e.getMessage());
