@@ -21,7 +21,7 @@ import lombok.*;
  * @see com.pms.dto.response.CategoryResponse for API output
  */
 @Entity
-@Table(name = "categories")
+@Table(name = "category")
 @Getter
 @NoArgsConstructor
 @AllArgsConstructor

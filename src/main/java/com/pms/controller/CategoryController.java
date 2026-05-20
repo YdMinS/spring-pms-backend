@@ -34,7 +34,7 @@ import java.util.List;
 @RequestMapping("/api/admin/categories")
 @RequiredArgsConstructor
 @PreAuthorize("hasRole('ADMIN')")
-@Tag(name = "Categories", description = "Category management API (ADMIN only)")
+@Tag(name = "Category Management", description = "Hierarchical category management APIs")
 public class CategoryController {
 
     private final CategoryService categoryService;
@@ -46,7 +46,7 @@ public class CategoryController {
      * @return 201 CREATED with CategoryResponse
      */
     @PostMapping
-    @Operation(summary = "Create a new category")
+    @Operation(summary = "Create category", description = "Creates new category with optional parent for hierarchy")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "201", description = "Created", content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     @ApiResponse(responseCode = "400", description = "Validation error", content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
@@ -67,7 +67,7 @@ public class CategoryController {
      * @return 200 OK with list of CategoryResponse
      */
     @GetMapping
-    @Operation(summary = "Retrieve all categories")
+    @Operation(summary = "List all categories", description = "Retrieves all categories in system")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "200", description = "Success", content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     @ApiResponse(responseCode = "401", description = "Unauthorized", content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
@@ -84,7 +84,7 @@ public class CategoryController {
      * @return 200 OK with CategoryResponse
      */
     @GetMapping("/{id}")
-    @Operation(summary = "Retrieve a specific category by ID")
+    @Operation(summary = "Get category by ID", description = "Retrieves specific category details")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "200", description = "Success", content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     @ApiResponse(responseCode = "401", description = "Unauthorized", content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
@@ -106,7 +106,7 @@ public class CategoryController {
      * @return 200 OK with updated CategoryResponse
      */
     @PatchMapping("/{id}")
-    @Operation(summary = "Update an existing category")
+    @Operation(summary = "Update category", description = "Updates category fields including parent relationship")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "200", description = "Success", content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     @ApiResponse(responseCode = "400", description = "Validation error or self-reference", content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
@@ -130,7 +130,7 @@ public class CategoryController {
      * @return 200 OK with null data
      */
     @DeleteMapping("/{id}")
-    @Operation(summary = "Delete a category")
+    @Operation(summary = "Delete category", description = "Deletes category (children become top-level)")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "200", description = "Success", content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     @ApiResponse(responseCode = "401", description = "Unauthorized", content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
