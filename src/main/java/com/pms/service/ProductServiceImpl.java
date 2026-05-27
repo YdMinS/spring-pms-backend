@@ -43,7 +43,7 @@ public class ProductServiceImpl implements ProductService {
         if (request.getPrice() != null) {
             validatePrice(request.getPrice());
         }
-        validateUnit(request.getUnit());
+        validateUnitWithWeight(request.getUnit(), request.getWeight());
 
         // Build product using immutable pattern
         Product product = Product.builder()
@@ -114,7 +114,11 @@ public class ProductServiceImpl implements ProductService {
 
         // Validate updates
         request.getPrice().ifPresent(this::validatePrice);
-        request.getUnit().ifPresent(this::validateUnit);
+
+        // Get final unit and weight after merging with existing product
+        String finalUnit = request.getUnit().orElse(product.getUnit());
+        String finalWeight = request.getWeight().orElse(product.getWeight());
+        validateUnitWithWeight(finalUnit, finalWeight);
 
         // Build updated product using immutable pattern - use toBuilder to preserve audit fields
         Product updated = product.toBuilder()
@@ -150,21 +154,33 @@ public class ProductServiceImpl implements ProductService {
     }
 
     /**
-     * Validate that unit is one of the allowed units: KG, G, L, ML
+     * Validate unit with weight dependency
+     * If weight is provided, unit becomes required
      *
      * @param unit the unit to validate
-     * @throws IllegalArgumentException if unit is not valid
+     * @param weight the weight value
+     * @throws IllegalArgumentException if validation fails
      */
-    private void validateUnit(String unit) {
-        boolean isValid = false;
-        for (String validUnit : VALID_UNITS) {
-            if (validUnit.equals(unit)) {
-                isValid = true;
-                break;
+    private void validateUnitWithWeight(String unit, String weight) {
+        // If weight is provided, unit is required
+        if (weight != null && !weight.trim().isEmpty()) {
+            if (unit == null || unit.trim().isEmpty()) {
+                throw new IllegalArgumentException("Unit is required when Weight is provided");
             }
         }
-        if (!isValid) {
-            throw new IllegalArgumentException("Unit must be one of: KG, G, L, ML");
+
+        // If unit is provided, validate it
+        if (unit != null && !unit.trim().isEmpty()) {
+            boolean isValid = false;
+            for (String validUnit : VALID_UNITS) {
+                if (validUnit.equals(unit)) {
+                    isValid = true;
+                    break;
+                }
+            }
+            if (!isValid) {
+                throw new IllegalArgumentException("Unit must be one of: KG, G, L, ML");
+            }
         }
     }
 
