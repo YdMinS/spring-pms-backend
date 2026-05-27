@@ -40,7 +40,9 @@ public class ProductServiceImpl implements ProductService {
     @Transactional
     public ProductResponse create(CreateProductRequest request) {
         // Validate request
-        validatePrice(request.getPrice());
+        if (request.getPrice() != null) {
+            validatePrice(request.getPrice());
+        }
         validateUnit(request.getUnit());
 
         // Build product using immutable pattern
