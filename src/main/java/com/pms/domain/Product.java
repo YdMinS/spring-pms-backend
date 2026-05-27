@@ -28,7 +28,7 @@ public class Product extends BaseEntity {
     @Column(name = "modified_date")
     private LocalDateTime updatedAt;
 
-    @Column(name = "barcode_id", nullable = false, length = 50)
+    @Column(name = "barcode_id", nullable = true, length = 50)
     private String barcodeId;
 
     @Column(name = "brand", nullable = true, length = 255)

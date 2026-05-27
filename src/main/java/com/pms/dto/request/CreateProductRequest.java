@@ -16,9 +16,8 @@ import java.math.BigDecimal;
 @Schema(description = "Create product request")
 public class CreateProductRequest {
 
-    @NotBlank(message = "Barcode ID cannot be blank")
     @Size(max = 50, message = "Barcode ID must not exceed 50 characters")
-    @Schema(description = "Barcode ID", example = "1234567890123")
+    @Schema(description = "Barcode ID (optional)", example = "1234567890123")
     private String barcodeId;
 
     @Size(max = 255, message = "Brand must not exceed 255 characters")
