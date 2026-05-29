@@ -8,6 +8,14 @@ import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 
+/**
+ * Response DTO for commission rate queries.
+ *
+ * Contains all commission rate data returned from API endpoints.
+ * Maps 1:1 with CommissionRate entity fields.
+ *
+ * @see CommissionRateRequest
+ */
 @Getter
 @NoArgsConstructor
 @AllArgsConstructor
@@ -15,15 +23,42 @@ import java.math.BigDecimal;
 @Schema(description = "Commission rate response")
 public class CommissionRateResponse {
 
-    @Schema(description = "Unique identifier for the commission rate", example = "1")
+    @Schema(
+        description = "Unique identifier for the commission rate",
+        example = "1"
+    )
     private Long id;
 
-    @Schema(description = "Platform name", example = "COUPANG")
+    @Schema(
+        description = "Platform name",
+        example = "COUPANG"
+    )
     private String platform;
 
-    @Schema(description = "Category ID (null for platform default)", example = "5")
+    @Schema(
+        description = "Category ID (null indicates platform default rate)",
+        example = "5",
+        nullable = true
+    )
     private Long categoryId;
 
-    @Schema(description = "Commission rate between 0 and 1.0", example = "0.05")
+    @Schema(
+        description = "Commission rate as decimal (0.00 - 1.00). " +
+                      "Example: 0.05 = 5% commission",
+        example = "0.05"
+    )
     private BigDecimal rate;
+
+    @Schema(
+        description = "Flag indicating if this is the default rate for the platform",
+        example = "true"
+    )
+    private Boolean isDefault;
+
+    @Schema(
+        description = "Category name (null if platform default rate)",
+        example = "Electronics",
+        nullable = true
+    )
+    private String categoryName;
 }

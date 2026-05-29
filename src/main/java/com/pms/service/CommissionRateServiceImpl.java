@@ -1,9 +1,11 @@
 package com.pms.service;
 
+import com.pms.domain.Category;
 import com.pms.domain.CommissionRate;
 import com.pms.dto.request.CommissionRateRequest;
 import com.pms.dto.response.CommissionRateResponse;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.CategoryRepository;
 import com.pms.repository.CommissionRateRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -12,20 +14,37 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.util.List;
 
+/**
+ * Implementation of CommissionRateService with JPA persistence.
+ *
+ * Handles CRUD operations for commission rates with fallback logic support.
+ * Transactional boundaries: readOnly=true on class, @Transactional on write methods.
+ *
+ * @see CommissionRateService
+ * @see CommissionRateRepository
+ */
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class CommissionRateServiceImpl implements CommissionRateService {
 
     private final CommissionRateRepository commissionRateRepository;
+    private final CategoryRepository categoryRepository;
 
     @Override
     @Transactional
     public CommissionRateResponse create(CommissionRateRequest request) {
+        Category category = null;
+        if (request.getCategoryId() != null) {
+            category = categoryRepository.findById(request.getCategoryId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Category", request.getCategoryId()));
+        }
+
         CommissionRate commissionRate = CommissionRate.builder()
                 .platform(request.getPlatform())
-                .categoryId(request.getCategoryId())
+                .category(category)
                 .rate(request.getRate())
+                .isDefault(request.getIsDefault() != null ? request.getIsDefault() : false)
                 .build();
 
         CommissionRate saved = commissionRateRepository.save(commissionRate);
@@ -53,11 +72,18 @@ public class CommissionRateServiceImpl implements CommissionRateService {
         CommissionRate commissionRate = commissionRateRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("CommissionRate", id));
 
+        Category category = null;
+        if (request.getCategoryId() != null) {
+            category = categoryRepository.findById(request.getCategoryId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Category", request.getCategoryId()));
+        }
+
         CommissionRate updated = CommissionRate.builder()
                 .id(commissionRate.getId())
                 .platform(request.getPlatform())
-                .categoryId(request.getCategoryId())
+                .category(category)
                 .rate(request.getRate())
+                .isDefault(request.getIsDefault() != null ? request.getIsDefault() : false)
                 .build();
 
         CommissionRate saved = commissionRateRepository.save(updated);
@@ -84,11 +110,21 @@ public class CommissionRateServiceImpl implements CommissionRateService {
     }
 
     private CommissionRateResponse mapToResponse(CommissionRate commissionRate) {
+        String categoryName = null;
+        Long categoryId = null;
+
+        if (commissionRate.getCategory() != null) {
+            categoryName = commissionRate.getCategory().getName();
+            categoryId = commissionRate.getCategory().getId();
+        }
+
         return CommissionRateResponse.builder()
                 .id(commissionRate.getId())
                 .platform(commissionRate.getPlatform())
-                .categoryId(commissionRate.getCategoryId())
+                .categoryId(categoryId)
                 .rate(commissionRate.getRate())
+                .isDefault(commissionRate.getIsDefault())
+                .categoryName(categoryName)
                 .build();
     }
 }

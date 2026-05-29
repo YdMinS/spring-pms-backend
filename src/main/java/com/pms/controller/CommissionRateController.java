@@ -20,6 +20,19 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+/**
+ * REST controller for Commission Rate management.
+ *
+ * All endpoints require ADMIN role authentication.
+ * Base path: /api/admin/commission-rate
+ *
+ * Fallback logic: When querying rates via service.findRate(),
+ * system first checks category-specific rate, then falls back to platform default.
+ *
+ * @see CommissionRateService
+ * @see CommissionRateRequest
+ * @see CommissionRateResponse
+ */
 @RestController
 @RequestMapping("/api/admin/commission-rate")
 @RequiredArgsConstructor
