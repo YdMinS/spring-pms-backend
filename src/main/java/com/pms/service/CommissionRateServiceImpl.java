@@ -109,6 +109,14 @@ public class CommissionRateServiceImpl implements CommissionRateService {
                         .orElseThrow(() -> new IllegalArgumentException("No commission rate found for platform: " + platform)));
     }
 
+    @Override
+    public List<CommissionRateResponse> getCommissionRatesByPlatform(String platform) {
+        return commissionRateRepository.findByPlatform(platform)
+                .stream()
+                .map(this::mapToResponse)
+                .toList();
+    }
+
     private CommissionRateResponse mapToResponse(CommissionRate commissionRate) {
         String categoryName = null;
         Long categoryId = null;

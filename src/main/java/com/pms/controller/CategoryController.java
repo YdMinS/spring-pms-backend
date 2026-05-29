@@ -62,18 +62,24 @@ public class CategoryController {
     }
 
     /**
-     * Retrieve all categories.
+     * Retrieve all categories, optionally filtered by platform.
      *
+     * @param platform Optional platform filter (e.g., "COUPANG", "SMARTSTORE")
      * @return 200 OK with list of CategoryResponse
      */
     @GetMapping
-    @Operation(summary = "List all categories", description = "Retrieves all categories in system")
+    @Operation(summary = "List categories", description = "Retrieves categories in system, optionally filtered by platform")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "200", description = "Success", content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     @ApiResponse(responseCode = "401", description = "Unauthorized", content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     @ApiResponse(responseCode = "403", description = "Forbidden", content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
-    public ResponseEntity<ResponseDTO<List<CategoryResponse>>> getAllCategories() {
-        List<CategoryResponse> responses = categoryService.getAllCategories();
+    public ResponseEntity<ResponseDTO<List<CategoryResponse>>> getCategories(
+        @Parameter(description = "Platform filter (optional)", example = "COUPANG")
+        @RequestParam(required = false) String platform
+    ) {
+        List<CategoryResponse> responses = platform != null
+            ? categoryService.getCategoriesByPlatform(platform)
+            : categoryService.getAllCategories();
         return ResponseEntity.ok(ResponseDTO.success(responses));
     }
 

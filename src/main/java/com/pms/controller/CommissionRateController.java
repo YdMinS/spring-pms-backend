@@ -61,7 +61,7 @@ public class CommissionRateController {
     }
 
     @GetMapping
-    @Operation(summary = "List commission rates", description = "Get all commission rates (ADMIN role required)")
+    @Operation(summary = "List commission rates", description = "Get all commission rates, optionally filtered by platform (ADMIN role required)")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "200", description = "Commission rates retrieved successfully",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
@@ -69,8 +69,12 @@ public class CommissionRateController {
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     @ApiResponse(responseCode = "403", description = "Permission denied (ADMIN role required)",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
-    public ResponseEntity<ResponseDTO<List<CommissionRateResponse>>> findAll() {
-        List<CommissionRateResponse> response = commissionRateService.findAll();
+    public ResponseEntity<ResponseDTO<List<CommissionRateResponse>>> findAll(
+            @Parameter(description = "Platform filter (optional)", example = "COUPANG")
+            @RequestParam(required = false) String platform) {
+        List<CommissionRateResponse> response = platform != null
+                ? commissionRateService.getCommissionRatesByPlatform(platform)
+                : commissionRateService.findAll();
         return ResponseEntity.ok(ResponseDTO.success(response));
     }
 

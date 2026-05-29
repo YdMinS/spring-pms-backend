@@ -103,6 +103,14 @@ public class CategoryServiceImpl implements CategoryService {
         categoryRepository.delete(category);
     }
 
+    @Override
+    public List<CategoryResponse> getCategoriesByPlatform(String platform) {
+        return categoryRepository.findByPlatform(platform)
+            .stream()
+            .map(this::toResponse)
+            .toList();
+    }
+
     private CategoryResponse toResponse(Category category) {
         return CategoryResponse.builder()
             .id(category.getId())

@@ -58,4 +58,12 @@ public interface CategoryService {
      * @throws com.pms.exception.ResourceNotFoundException if category not found
      */
     void deleteCategory(Long id);
+
+    /**
+     * Retrieve all categories for a specific platform.
+     *
+     * @param platform Platform name (e.g., "COUPANG", "SMARTSTORE")
+     * @return List of categories for the platform
+     */
+    List<CategoryResponse> getCategoriesByPlatform(String platform);
 }
