@@ -24,6 +24,12 @@
         </rollingPolicy>
     </appender>
 
+    <!-- Default configuration (no profile) -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+    <logger name="com.pms" level="DEBUG"/>
+
     <!-- Spring profiles -->
     <springProfile name="dev">
         <root level="INFO">
