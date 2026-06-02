@@ -1,5 +1,6 @@
 package com.pms.controller;
 
+import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.CreateSellerRequest;
 import com.pms.dto.request.UpdateSellerRequest;
 import com.pms.dto.response.SellerResponse;
@@ -21,39 +22,39 @@ public class SellerController {
 
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<SellerResponse> createSeller(@Valid @RequestBody CreateSellerRequest request) {
+    public ResponseEntity<ResponseDTO<SellerResponse>> createSeller(@Valid @RequestBody CreateSellerRequest request) {
         SellerResponse response = sellerService.createSeller(request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        return ResponseEntity.status(HttpStatus.CREATED).body(ResponseDTO.success(response));
     }
 
     @GetMapping
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<List<SellerResponse>> getAllSellers() {
+    public ResponseEntity<ResponseDTO<List<SellerResponse>>> getAllSellers() {
         List<SellerResponse> sellers = sellerService.getAllSellers();
-        return ResponseEntity.ok(sellers);
+        return ResponseEntity.ok(ResponseDTO.success(sellers));
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<SellerResponse> getSellerById(@PathVariable Long id) {
+    public ResponseEntity<ResponseDTO<SellerResponse>> getSellerById(@PathVariable Long id) {
         SellerResponse response = sellerService.getSellerById(id);
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(ResponseDTO.success(response));
     }
 
     @PatchMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<SellerResponse> updateSeller(
+    public ResponseEntity<ResponseDTO<SellerResponse>> updateSeller(
         @PathVariable Long id,
         @Valid @RequestBody UpdateSellerRequest request
     ) {
         SellerResponse response = sellerService.updateSeller(id, request);
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(ResponseDTO.success(response));
     }
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<Void> deleteSeller(@PathVariable Long id) {
+    public ResponseEntity<ResponseDTO<Void>> deleteSeller(@PathVariable Long id) {
         sellerService.deleteSeller(id);
-        return ResponseEntity.noContent().build();
+        return ResponseEntity.ok(ResponseDTO.success((Void) null));
     }
 }
