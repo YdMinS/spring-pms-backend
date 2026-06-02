@@ -59,6 +59,17 @@ public class ProductListing {
     private String platformProductId;
 
     /**
+     * Seller who registered this product listing.
+     * Required field - every listing must belong to a seller.
+     *
+     * @see com.pms.domain.Seller
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "seller_id", nullable = false)
+    @Schema(description = "Seller who registered this listing")
+    private Seller seller;
+
+    /**
      * Category for commission rate lookup.
      * Lazy-loaded. Can be null if platform has default commission rate.
      *
