@@ -3,7 +3,10 @@ package com.pms.service;
 import com.pms.domain.Category;
 import com.pms.domain.CarrierRate;
 import com.pms.domain.Package;
+import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
+import com.pms.domain.ProductListingOption;
+import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.request.CreateProductListingRequest;
 import com.pms.dto.response.ProductListingResponse;
@@ -12,6 +15,9 @@ import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductListingRepository;
+import com.pms.repository.ProductListingOptionRepository;
+import com.pms.repository.ProductListingProductRepository;
+import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -46,6 +52,9 @@ import org.springframework.transaction.annotation.Transactional;
 public class ProductListingServiceImpl implements ProductListingService {
 
     private final ProductListingRepository productListingRepository;
+    private final ProductListingOptionRepository productListingOptionRepository;
+    private final ProductListingProductRepository productListingProductRepository;
+    private final ProductRepository productRepository;
     private final CategoryRepository categoryRepository;
     private final CarrierRateRepository carrierRateRepository;
     private final PackageRepository packageRepository;
@@ -53,16 +62,17 @@ public class ProductListingServiceImpl implements ProductListingService {
     private static final int DEFAULT_PAGE_SIZE = 20;
 
     /**
-     * Create a new product listing with validation.
+     * Create a new product listing with options and products in a single transaction.
      *
      * Validates:
      * 1. platformProductId is not already in use
      * 2. All optional references (category, delivery, package) exist if provided
+     * 3. All options have at least one product
      *
      * Throws IllegalArgumentException if platformProductId exists.
      * Throws ResourceNotFoundException if any reference entity not found.
      *
-     * @param request CreateProductListingRequest
+     * @param request CreateProductListingRequest with options and products
      * @return ProductListingResponse with created listing
      */
     @Override
@@ -98,7 +108,7 @@ public class ProductListingServiceImpl implements ProductListingService {
                     .orElseThrow(() -> new ResourceNotFoundException("Package", request.getPackageId()));
         }
 
-        // Build and save
+        // Build and save listing
         ProductListing listing = ProductListing.builder()
                 .seller(seller)
                 .platform(request.getPlatform())
@@ -109,6 +119,35 @@ public class ProductListingServiceImpl implements ProductListingService {
                 .build();
 
         ProductListing saved = productListingRepository.save(listing);
+
+        // Create options and products if provided
+        if (request.getOptions() != null && !request.getOptions().isEmpty()) {
+            for (CreateProductListingRequest.OptionRequest optionReq : request.getOptions()) {
+                ProductListingOption option = ProductListingOption.builder()
+                        .productListing(saved)
+                        .optionName(optionReq.getOptionName())
+                        .sellingPrice(optionReq.getSellingPrice())
+                        .platformOptionId(optionReq.getPlatformOptionId())
+                        .build();
+                ProductListingOption savedOption = productListingOptionRepository.save(option);
+
+                // Add products to option
+                if (optionReq.getProducts() != null && !optionReq.getProducts().isEmpty()) {
+                    for (CreateProductListingRequest.OptionRequest.ProductRequest prodReq : optionReq.getProducts()) {
+                        Product referencedProduct = productRepository.findById(prodReq.getProductId())
+                                .orElseThrow(() -> new ResourceNotFoundException("Product", prodReq.getProductId()));
+
+                        ProductListingProduct product = ProductListingProduct.builder()
+                                .productListingOption(savedOption)
+                                .product(referencedProduct)
+                                .quantity(prodReq.getQuantity())
+                                .build();
+                        productListingProductRepository.save(product);
+                    }
+                }
+            }
+        }
+
         return ProductListingResponse.of(saved);
     }
 
