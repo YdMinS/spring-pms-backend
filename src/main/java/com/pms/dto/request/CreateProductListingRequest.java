@@ -14,6 +14,10 @@ import lombok.NoArgsConstructor;
 @Schema(description = "Create product listing request")
 public class CreateProductListingRequest {
 
+    @NotNull(message = "Seller ID cannot be null")
+    @Schema(description = "Seller ID (who registers this listing)", example = "1")
+    private Long sellerId;
+
     @NotBlank(message = "Platform cannot be blank")
     @Size(max = 50, message = "Platform must not exceed 50 characters")
     @Schema(description = "Platform identifier", example = "COUPANG")

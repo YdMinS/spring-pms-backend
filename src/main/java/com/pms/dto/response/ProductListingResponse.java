@@ -17,6 +17,12 @@ public class ProductListingResponse {
     @Schema(description = "Product listing ID", example = "1")
     private Long id;
 
+    @Schema(description = "Seller ID", example = "1")
+    private Long sellerId;
+
+    @Schema(description = "Seller name", example = "John's Shop")
+    private String sellerName;
+
     @Schema(description = "Platform identifier", example = "COUPANG")
     private String platform;
 
@@ -44,6 +50,8 @@ public class ProductListingResponse {
     public static ProductListingResponse of(ProductListing listing) {
         return ProductListingResponse.builder()
                 .id(listing.getId())
+                .sellerId(listing.getSeller() != null ? listing.getSeller().getId() : null)
+                .sellerName(listing.getSeller() != null ? listing.getSeller().getSellerName() : null)
                 .platform(listing.getPlatform())
                 .platformProductId(listing.getPlatformProductId())
                 .categoryId(listing.getCategory() != null ? listing.getCategory().getId() : null)

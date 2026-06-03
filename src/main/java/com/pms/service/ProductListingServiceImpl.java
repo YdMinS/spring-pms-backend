@@ -4,6 +4,7 @@ import com.pms.domain.Category;
 import com.pms.domain.CarrierRate;
 import com.pms.domain.Package;
 import com.pms.domain.ProductListing;
+import com.pms.domain.Seller;
 import com.pms.dto.request.CreateProductListingRequest;
 import com.pms.dto.response.ProductListingResponse;
 import com.pms.exception.ResourceNotFoundException;
@@ -11,6 +12,7 @@ import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductListingRepository;
+import com.pms.repository.SellerRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -47,6 +49,7 @@ public class ProductListingServiceImpl implements ProductListingService {
     private final CategoryRepository categoryRepository;
     private final CarrierRateRepository carrierRateRepository;
     private final PackageRepository packageRepository;
+    private final SellerRepository sellerRepository;
     private static final int DEFAULT_PAGE_SIZE = 20;
 
     /**
@@ -72,6 +75,10 @@ public class ProductListingServiceImpl implements ProductListingService {
             );
         }
 
+        // Resolve seller (required)
+        Seller seller = sellerRepository.findById(request.getSellerId())
+                .orElseThrow(() -> new ResourceNotFoundException("Seller", request.getSellerId()));
+
         // Resolve optional references
         Category category = null;
         if (request.getCategoryId() != null) {
@@ -93,6 +100,7 @@ public class ProductListingServiceImpl implements ProductListingService {
 
         // Build and save
         ProductListing listing = ProductListing.builder()
+                .seller(seller)
                 .platform(request.getPlatform())
                 .platformProductId(request.getPlatformProductId())
                 .category(category)
@@ -170,6 +178,13 @@ public class ProductListingServiceImpl implements ProductListingService {
             }
         }
 
+        // Resolve seller if changed
+        Seller seller = listing.getSeller();
+        if (!listing.getSeller().getId().equals(request.getSellerId())) {
+            seller = sellerRepository.findById(request.getSellerId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Seller", request.getSellerId()));
+        }
+
         // Resolve optional references
         Category category = null;
         if (request.getCategoryId() != null) {
@@ -191,6 +206,7 @@ public class ProductListingServiceImpl implements ProductListingService {
 
         // Update using immutable pattern
         ProductListing updated = listing.toBuilder()
+                .seller(seller)
                 .platform(request.getPlatform())
                 .platformProductId(request.getPlatformProductId())
                 .category(category)
