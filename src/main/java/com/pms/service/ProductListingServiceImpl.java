@@ -10,6 +10,8 @@ import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.request.CreateProductListingRequest;
 import com.pms.dto.response.ProductListingResponse;
+import com.pms.dto.response.ProductListingOptionResponse;
+import com.pms.dto.response.ProductListingProductResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.CategoryRepository;
@@ -26,6 +28,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
 
 /**
  * ProductListingServiceImpl - Product listing service implementation
@@ -148,21 +152,21 @@ public class ProductListingServiceImpl implements ProductListingService {
             }
         }
 
-        return ProductListingResponse.of(saved);
+        return loadProductListingWithOptions(saved);
     }
 
     /**
      * Retrieve a product listing by ID.
      *
      * @param id Product listing ID
-     * @return ProductListingResponse with all listing details
+     * @return ProductListingResponse with all listing details and options
      * @throws ResourceNotFoundException if listing not found
      */
     @Override
     public ProductListingResponse getById(Long id) {
         ProductListing listing = productListingRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("ProductListing", id));
-        return ProductListingResponse.of(listing);
+        return loadProductListingWithOptions(listing);
     }
 
     /**
@@ -174,7 +178,7 @@ public class ProductListingServiceImpl implements ProductListingService {
      * @param platform Platform identifier
      * @param page Page number (0-indexed)
      * @param size Page size
-     * @return Page of ProductListingResponse
+     * @return Page of ProductListingResponse with options
      */
     @Override
     public Page<ProductListingResponse> getByPlatform(String platform, int page, int size) {
@@ -184,7 +188,7 @@ public class ProductListingServiceImpl implements ProductListingService {
 
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "id"));
         Page<ProductListing> listingPage = productListingRepository.findByPlatform(platform, pageable);
-        return listingPage.map(ProductListingResponse::of);
+        return listingPage.map(this::loadProductListingWithOptions);
     }
 
     /**
@@ -198,7 +202,7 @@ public class ProductListingServiceImpl implements ProductListingService {
      *
      * @param id Product listing ID
      * @param request CreateProductListingRequest with updated values
-     * @return Updated ProductListingResponse
+     * @return Updated ProductListingResponse with options
      * @throws ResourceNotFoundException if listing not found
      * @throws IllegalArgumentException if new platformProductId already exists
      */
@@ -254,7 +258,7 @@ public class ProductListingServiceImpl implements ProductListingService {
                 .build();
 
         ProductListing saved = productListingRepository.save(updated);
-        return ProductListingResponse.of(saved);
+        return loadProductListingWithOptions(saved);
     }
 
     /**
@@ -272,5 +276,28 @@ public class ProductListingServiceImpl implements ProductListingService {
         ProductListing listing = productListingRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("ProductListing", id));
         productListingRepository.delete(listing);
+    }
+
+    /**
+     * Helper method to load a ProductListing with all its options and products.
+     * Constructs a ProductListingResponse with nested option and product information.
+     *
+     * @param listing The ProductListing to load options for
+     * @return ProductListingResponse with populated options and products
+     */
+    private ProductListingResponse loadProductListingWithOptions(ProductListing listing) {
+        List<ProductListingOption> options = productListingOptionRepository.findByProductListingId(listing.getId());
+
+        java.util.List<ProductListingOptionResponse> optionResponses = options.stream()
+                .map(option -> {
+                    List<ProductListingProduct> products = productListingProductRepository.findByProductListingOptionId(option.getId());
+                    java.util.List<ProductListingProductResponse> productResponses = products.stream()
+                            .map(ProductListingProductResponse::of)
+                            .toList();
+                    return ProductListingOptionResponse.of(option, productResponses);
+                })
+                .toList();
+
+        return ProductListingResponse.of(listing, optionResponses);
     }
 }

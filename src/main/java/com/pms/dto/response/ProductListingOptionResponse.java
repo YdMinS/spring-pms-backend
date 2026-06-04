@@ -8,6 +8,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 @Getter
 @NoArgsConstructor
@@ -31,6 +32,9 @@ public class ProductListingOptionResponse {
     @Schema(description = "Platform option ID", example = "opt_12345")
     private String platformOptionId;
 
+    @Schema(description = "Products in this option")
+    private List<ProductListingProductResponse> products;
+
     public static ProductListingOptionResponse of(ProductListingOption option) {
         return ProductListingOptionResponse.builder()
                 .id(option.getId())
@@ -38,6 +42,17 @@ public class ProductListingOptionResponse {
                 .optionName(option.getOptionName())
                 .sellingPrice(option.getSellingPrice())
                 .platformOptionId(option.getPlatformOptionId())
+                .build();
+    }
+
+    public static ProductListingOptionResponse of(ProductListingOption option, List<ProductListingProductResponse> products) {
+        return ProductListingOptionResponse.builder()
+                .id(option.getId())
+                .productListingId(option.getProductListing() != null ? option.getProductListing().getId() : null)
+                .optionName(option.getOptionName())
+                .sellingPrice(option.getSellingPrice())
+                .platformOptionId(option.getPlatformOptionId())
+                .products(products)
                 .build();
     }
 }

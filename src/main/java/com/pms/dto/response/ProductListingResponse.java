@@ -7,6 +7,8 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 @Getter
 @NoArgsConstructor
 @AllArgsConstructor
@@ -47,6 +49,9 @@ public class ProductListingResponse {
     @Schema(description = "Package type", example = "Box_Standard")
     private String packageType;
 
+    @Schema(description = "Product listing options")
+    private List<ProductListingOptionResponse> options;
+
     public static ProductListingResponse of(ProductListing listing) {
         return ProductListingResponse.builder()
                 .id(listing.getId())
@@ -60,6 +65,23 @@ public class ProductListingResponse {
                 .carrierName(listing.getDelivery() != null ? listing.getDelivery().getCarrier() : null)
                 .packageId(listing.getPackage_() != null ? listing.getPackage_().getId() : null)
                 .packageType(listing.getPackage_() != null ? listing.getPackage_().getType() : null)
+                .build();
+    }
+
+    public static ProductListingResponse of(ProductListing listing, List<ProductListingOptionResponse> options) {
+        return ProductListingResponse.builder()
+                .id(listing.getId())
+                .sellerId(listing.getSeller() != null ? listing.getSeller().getId() : null)
+                .sellerName(listing.getSeller() != null ? listing.getSeller().getSellerName() : null)
+                .platform(listing.getPlatform())
+                .platformProductId(listing.getPlatformProductId())
+                .categoryId(listing.getCategory() != null ? listing.getCategory().getId() : null)
+                .categoryName(listing.getCategory() != null ? listing.getCategory().getName() : null)
+                .deliveryId(listing.getDelivery() != null ? listing.getDelivery().getId() : null)
+                .carrierName(listing.getDelivery() != null ? listing.getDelivery().getCarrier() : null)
+                .packageId(listing.getPackage_() != null ? listing.getPackage_().getId() : null)
+                .packageType(listing.getPackage_() != null ? listing.getPackage_().getType() : null)
+                .options(options)
                 .build();
     }
 }
