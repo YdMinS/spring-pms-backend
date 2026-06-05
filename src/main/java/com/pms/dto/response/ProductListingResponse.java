@@ -31,6 +31,9 @@ public class ProductListingResponse {
     @Schema(description = "Platform product ID", example = "12345678")
     private String platformProductId;
 
+    @Schema(description = "Product listing name", example = "Galaxy S21 Bundle")
+    private String name;
+
     @Schema(description = "Category ID", example = "1")
     private Long categoryId;
 
@@ -59,6 +62,7 @@ public class ProductListingResponse {
                 .sellerName(listing.getSeller() != null ? listing.getSeller().getSellerName() : null)
                 .platform(listing.getPlatform())
                 .platformProductId(listing.getPlatformProductId())
+                .name(listing.getName())
                 .categoryId(listing.getCategory() != null ? listing.getCategory().getId() : null)
                 .categoryName(listing.getCategory() != null ? listing.getCategory().getName() : null)
                 .deliveryId(listing.getDelivery() != null ? listing.getDelivery().getId() : null)
@@ -75,6 +79,7 @@ public class ProductListingResponse {
                 .sellerName(listing.getSeller() != null ? listing.getSeller().getSellerName() : null)
                 .platform(listing.getPlatform())
                 .platformProductId(listing.getPlatformProductId())
+                .name(listing.getName())
                 .categoryId(listing.getCategory() != null ? listing.getCategory().getId() : null)
                 .categoryName(listing.getCategory() != null ? listing.getCategory().getName() : null)
                 .deliveryId(listing.getDelivery() != null ? listing.getDelivery().getId() : null)

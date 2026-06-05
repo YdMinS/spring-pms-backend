@@ -32,6 +32,11 @@ public class CreateProductListingRequest {
     @Schema(description = "Platform's product ID (업체상품 ID)", example = "12345678")
     private String platformProductId;
 
+    @NotBlank(message = "Name cannot be blank")
+    @Size(max = 255, message = "Name must not exceed 255 characters")
+    @Schema(description = "Product listing name", example = "Galaxy S21 Bundle")
+    private String name;
+
     @Schema(description = "Category ID (optional)", example = "1")
     private Long categoryId;
 

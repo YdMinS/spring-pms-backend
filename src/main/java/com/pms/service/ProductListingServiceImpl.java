@@ -117,6 +117,7 @@ public class ProductListingServiceImpl implements ProductListingService {
                 .seller(seller)
                 .platform(request.getPlatform())
                 .platformProductId(request.getPlatformProductId())
+                .name(request.getName())
                 .category(category)
                 .delivery(delivery)
                 .package_(pkg)

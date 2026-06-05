@@ -24,6 +24,7 @@ import org.springframework.web.bind.annotation.*;
  * ProductListing represents a product registered on a platform with:
  * - Platform ID (e.g., "COUPANG")
  * - Platform Product ID (업체상품 ID)
+ * - Listing Name (for list view disambiguation)
  * - Default Category, Carrier Rate, Package for margin calculation
  *
  * Base path: /api/product-listings
@@ -49,11 +50,11 @@ public class ProductListingController {
     /**
      * Create a new product listing on a platform.
      *
-     * Creates a ProductListing with platform and platformProductId.
+     * Creates a ProductListing with platform, platformProductId, and name.
      * Optional fields (category, delivery, package) are used for margin calculation.
      * platformProductId must be unique.
      *
-     * @param request CreateProductListingRequest (platform, platformProductId required)
+     * @param request CreateProductListingRequest (platform, platformProductId, name required)
      * @return HTTP 201 Created with ProductListingResponse
      * @throws IllegalArgumentException if platformProductId already exists
      * @throws ResourceNotFoundException if category/delivery/package not found

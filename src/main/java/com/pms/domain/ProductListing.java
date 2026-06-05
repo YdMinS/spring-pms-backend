@@ -59,6 +59,16 @@ public class ProductListing {
     private String platformProductId;
 
     /**
+     * Product listing name (max 255 chars).
+     * Display name for the listing shown in list views.
+     * Examples: "Galaxy S21 Bundle", "iPhone 13 Pro 3종"
+     * Required field.
+     */
+    @Column(length = 255, nullable = false)
+    @Schema(description = "Product listing name", example = "Galaxy S21 Bundle")
+    private String name;
+
+    /**
      * Seller who registered this product listing.
      * Required field - every listing must belong to a seller.
      *
