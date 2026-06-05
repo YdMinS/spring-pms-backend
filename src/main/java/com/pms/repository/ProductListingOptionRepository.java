@@ -38,4 +38,12 @@ public interface ProductListingOptionRepository extends JpaRepository<ProductLis
      * @return true if exists, false otherwise
      */
     boolean existsByPlatformOptionId(String platformOptionId);
+
+    /**
+     * Delete all options for a specific product listing.
+     *
+     * @param productListingId ID of the parent ProductListing
+     * @return Number of records deleted
+     */
+    long deleteByProductListingId(Long productListingId);
 }

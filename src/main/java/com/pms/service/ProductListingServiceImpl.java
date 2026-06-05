@@ -253,12 +253,45 @@ public class ProductListingServiceImpl implements ProductListingService {
                 .seller(seller)
                 .platform(request.getPlatform())
                 .platformProductId(request.getPlatformProductId())
+                .name(request.getName())
                 .category(category)
                 .delivery(delivery)
                 .package_(pkg)
                 .build();
 
         ProductListing saved = productListingRepository.save(updated);
+
+        // Update options: delete old ones and create new ones
+        productListingOptionRepository.deleteByProductListingId(saved.getId());
+        productListingProductRepository.deleteByProductListingId(saved.getId());
+
+        if (request.getOptions() != null && !request.getOptions().isEmpty()) {
+            for (CreateProductListingRequest.OptionRequest optionReq : request.getOptions()) {
+                ProductListingOption option = ProductListingOption.builder()
+                        .productListing(saved)
+                        .optionName(optionReq.getOptionName())
+                        .sellingPrice(optionReq.getSellingPrice())
+                        .platformOptionId(optionReq.getPlatformOptionId())
+                        .build();
+                ProductListingOption savedOption = productListingOptionRepository.save(option);
+
+                // Add products to option
+                if (optionReq.getProducts() != null && !optionReq.getProducts().isEmpty()) {
+                    for (CreateProductListingRequest.OptionRequest.ProductRequest prodReq : optionReq.getProducts()) {
+                        Product referencedProduct = productRepository.findById(prodReq.getProductId())
+                                .orElseThrow(() -> new ResourceNotFoundException("Product", prodReq.getProductId()));
+
+                        ProductListingProduct product = ProductListingProduct.builder()
+                                .productListingOption(savedOption)
+                                .product(referencedProduct)
+                                .quantity(prodReq.getQuantity())
+                                .build();
+                        productListingProductRepository.save(product);
+                    }
+                }
+            }
+        }
+
         return loadProductListingWithOptions(saved);
     }
 

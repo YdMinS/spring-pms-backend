@@ -2,6 +2,9 @@ package com.pms.repository;
 
 import com.pms.domain.ProductListingProduct;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -29,4 +32,15 @@ public interface ProductListingProductRepository extends JpaRepository<ProductLi
      * @param productListingOptionId ID of the parent ProductListingOption
      */
     void deleteByProductListingOptionId(Long productListingOptionId);
+
+    /**
+     * Delete all product compositions for a specific product listing.
+     * Used when updating a listing's options.
+     *
+     * @param productListingId ID of the parent ProductListing
+     * @return Number of records deleted
+     */
+    @Modifying
+    @Query("DELETE FROM ProductListingProduct p WHERE p.productListingOption.productListing.id = :productListingId")
+    long deleteByProductListingId(@Param("productListingId") Long productListingId);
 }
