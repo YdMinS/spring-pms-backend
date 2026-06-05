@@ -262,8 +262,9 @@ public class ProductListingServiceImpl implements ProductListingService {
         ProductListing saved = productListingRepository.save(updated);
 
         // Update options: delete old ones and create new ones
-        productListingOptionRepository.deleteByProductListingId(saved.getId());
+        // Delete products first (due to FK constraint from ProductListingProduct -> ProductListingOption)
         productListingProductRepository.deleteByProductListingId(saved.getId());
+        productListingOptionRepository.deleteByProductListingId(saved.getId());
 
         if (request.getOptions() != null && !request.getOptions().isEmpty()) {
             for (CreateProductListingRequest.OptionRequest optionReq : request.getOptions()) {
