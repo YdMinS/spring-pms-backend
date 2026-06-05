@@ -38,9 +38,8 @@ public interface ProductListingProductRepository extends JpaRepository<ProductLi
      * Used when updating a listing's options.
      *
      * @param productListingId ID of the parent ProductListing
-     * @return Number of records deleted
      */
     @Modifying
     @Query("DELETE FROM ProductListingProduct p WHERE p.productListingOption.productListing.id = :productListingId")
-    long deleteByProductListingId(@Param("productListingId") Long productListingId);
+    void deleteByProductListingId(@Param("productListingId") Long productListingId);
 }

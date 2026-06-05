@@ -43,7 +43,6 @@ public interface ProductListingOptionRepository extends JpaRepository<ProductLis
      * Delete all options for a specific product listing.
      *
      * @param productListingId ID of the parent ProductListing
-     * @return Number of records deleted
      */
-    long deleteByProductListingId(Long productListingId);
+    void deleteByProductListingId(Long productListingId);
 }
