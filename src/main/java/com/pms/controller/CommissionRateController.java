@@ -36,13 +36,13 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/admin/commission-rate")
 @RequiredArgsConstructor
-@PreAuthorize("hasRole('ADMIN')")
-@Tag(name = "Commission Rate", description = "Commission rate management API (ADMIN only)")
+@Tag(name = "Commission Rate", description = "Commission rate management API")
 public class CommissionRateController {
 
     private final CommissionRateService commissionRateService;
 
     @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Create commission rate", description = "Create a new commission rate (ADMIN role required)")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "201", description = "Commission rate created successfully",
@@ -98,6 +98,7 @@ public class CommissionRateController {
     }
 
     @PatchMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Update commission rate", description = "Update commission rate (ADMIN role required)")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "200", description = "Commission rate updated successfully",
@@ -120,6 +121,7 @@ public class CommissionRateController {
     }
 
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Delete commission rate", description = "Delete commission rate permanently (ADMIN role required)")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "200", description = "Commission rate deleted successfully",

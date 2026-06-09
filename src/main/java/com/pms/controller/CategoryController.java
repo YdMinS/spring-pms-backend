@@ -33,7 +33,6 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/admin/category")
 @RequiredArgsConstructor
-@PreAuthorize("hasRole('ADMIN')")
 @Tag(name = "Category Management", description = "Hierarchical category management APIs")
 public class CategoryController {
 
@@ -46,6 +45,7 @@ public class CategoryController {
      * @return 201 CREATED with CategoryResponse
      */
     @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Create category", description = "Creates new category with optional parent for hierarchy")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "201", description = "Created", content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
@@ -112,6 +112,7 @@ public class CategoryController {
      * @return 200 OK with updated CategoryResponse
      */
     @PatchMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Update category", description = "Updates category fields including parent relationship")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "200", description = "Success", content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
@@ -136,6 +137,7 @@ public class CategoryController {
      * @return 200 OK with null data
      */
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Delete category", description = "Deletes category (children become top-level)")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "200", description = "Success", content = @Content(schema = @Schema(implementation = ResponseDTO.class)))

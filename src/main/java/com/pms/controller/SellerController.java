@@ -28,7 +28,6 @@ public class SellerController {
     }
 
     @GetMapping
-    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ResponseDTO<List<SellerResponse>>> getAllSellers() {
         List<SellerResponse> sellers = sellerService.getAllSellers();
         return ResponseEntity.ok(ResponseDTO.success(sellers));

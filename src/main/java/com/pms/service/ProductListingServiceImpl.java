@@ -299,8 +299,9 @@ public class ProductListingServiceImpl implements ProductListingService {
     /**
      * Delete a product listing.
      *
-     * Removes the listing and optionally cascades to related entities
-     * depending on database FK constraints.
+     * Cascades to child rows in FK order (composition → options → listing).
+     * Note: Product master records are NOT deleted - only the
+     * ProductListingProduct composition rows are removed.
      *
      * @param id Product listing ID
      * @throws ResourceNotFoundException if listing not found
@@ -310,6 +311,11 @@ public class ProductListingServiceImpl implements ProductListingService {
     public void delete(Long id) {
         ProductListing listing = productListingRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("ProductListing", id));
+
+        // Delete in FK order: composition rows -> options -> listing
+        // (Product master is untouched - composition rows are the child of Product)
+        productListingProductRepository.deleteByProductListingId(id);
+        productListingOptionRepository.deleteByProductListingId(id);
         productListingRepository.delete(listing);
     }
 
