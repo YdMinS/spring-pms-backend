@@ -40,8 +40,7 @@ public class MarketplaceAccountRequest {
     @Schema(description = "Coupang access key", required = true)
     private String accessKey;
 
-    @NotBlank(message = "secretKey is required")
-    @Schema(description = "Coupang secret key (write-only, stored encrypted)", required = true)
+    @Schema(description = "Coupang secret key (write-only, stored encrypted). Required on create; blank on update keeps existing.")
     private String secretKey;
 
     @Schema(description = "Active flag (null defaults to true on create)", example = "true")

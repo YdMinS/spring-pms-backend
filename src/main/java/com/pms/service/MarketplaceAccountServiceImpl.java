@@ -33,6 +33,11 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
     @Override
     @Transactional
     public MarketplaceAccountResponse create(MarketplaceAccountRequest req) {
+        // secretKey is optional on update (blank keeps existing) but required on create
+        if (!StringUtils.hasText(req.getSecretKey())) {
+            throw new IllegalArgumentException("secretKey is required");
+        }
+
         Seller seller = sellerRepository.findById(req.getSellerId())
                 .orElseThrow(() -> new ResourceNotFoundException("Seller", req.getSellerId()));
 
