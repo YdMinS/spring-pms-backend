@@ -21,6 +21,11 @@ jwt:
   expiration: 3600000
   prefix: Bearer
 
+oklyx:
+  crypto:
+    # Fixed AES-256 key for tests (32-byte Base64)
+    master-key: tsUz8XJ4zD1cfE6SCdKlpbvt/p0a8axnDaicVLugPw4=
+
 server:
   tomcat:
     max-http-post-size: 20971520

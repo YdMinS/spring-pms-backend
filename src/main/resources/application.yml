@@ -30,6 +30,12 @@ jwt:
   expiration: 86400000
   prefix: Bearer
 
+oklyx:
+  crypto:
+    # AES-256 마스터키 (32바이트 Base64). 운영/개발은 OKLYX_CRYPTO_MASTER_KEY 환경변수로 주입.
+    # 아래 기본값은 부팅용 placeholder — 실제 비밀은 환경변수로 반드시 덮어쓸 것.
+    master-key: ${OKLYX_CRYPTO_MASTER_KEY:P5m4nQbR+G+j8ekvlzQpnRgmSWgGSQWdJCzZCndLNew=}
+
 image:
   storage:
     uploadDir: /app/uploads/products
