@@ -59,6 +59,11 @@ jobs:
             docker stop spring-pms-backend || true
             docker rm spring-pms-backend || true
             docker pull ${{ env.IMAGE_NAME }}:latest
+
+            # Ensure required networks exist (idempotent)
+            docker network inspect pms_network >/dev/null 2>&1 || docker network create pms_network
+            docker network inspect ydmins_proxy_network >/dev/null 2>&1 || docker network create ydmins_proxy_network
+
             docker run -d \
               --name spring-pms-backend \
               -p 8083:8083 \
@@ -72,6 +77,10 @@ jobs:
               -e OKLYX_CRYPTO_MASTER_KEY=${{ secrets.OKLYX_CRYPTO_MASTER_KEY }} \
               --restart unless-stopped \
               ${{ env.IMAGE_NAME }}:latest
+
+            # Attach to the reverse-proxy network so nginx (api.oclyx.com) can reach the backend
+            docker network connect ydmins_proxy_network spring-pms-backend
+
             docker logout ghcr.io
 
       - name: Verify deployment
