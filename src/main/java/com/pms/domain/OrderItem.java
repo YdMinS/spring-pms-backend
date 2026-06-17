@@ -2,6 +2,8 @@ package com.pms.domain;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
 
@@ -15,7 +17,8 @@ import java.time.LocalDateTime;
  * 파생: 발주가능수량 = order_count − (cancel_count + hold_count). {@link #purchasableQty()} 참고.
  *
  * ⚠️ ddl-auto=validate(운영) → @Column 정의가 실제 order_item DDL 과 일치해야 한다.
- *    raw 는 운영(MySQL) JSON 컬럼이지만, 테스트(H2) 호환을 위해 엔티티는 @Lob 로 두고 dialect 에 맡긴다.
+ *    raw 는 운영(MySQL) JSON 컬럼(JDBC LONGVARCHAR)이다. @Lob 은 CLOB 을 기대해 검증에 실패하므로
+ *    @JdbcTypeCode(LONGVARCHAR) 로 매핑해 json 컬럼과 일치시킨다(H2 create-drop 호환).
  */
 @Entity
 @Table(name = "order_item",
@@ -65,7 +68,7 @@ public class OrderItem extends BaseEntity {
     @Column(name = "item_name", length = 500)
     private String itemName;                 // 표시용
 
-    @Lob
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
     @Column(name = "raw")
     private String raw;                      // 원본 orderItem JSON (플랫폼별 특이 필드 흡수)
 
