@@ -10,4 +10,6 @@ public interface MarketplaceAccountRepository extends JpaRepository<MarketplaceA
     List<MarketplaceAccount> findByIsActiveTrue();          // 동기화 대상(Phase 2~3)
 
     List<MarketplaceAccount> findBySeller_Id(Long sellerId);
+
+    List<MarketplaceAccount> findBySeller_IdAndIsActiveTrue(Long sellerId);  // 셀러 단위 동기화(Phase 3)
 }

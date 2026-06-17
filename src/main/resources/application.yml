@@ -35,6 +35,15 @@ oklyx:
     # AES-256 마스터키 (32바이트 Base64). 운영/개발은 OKLYX_CRYPTO_MASTER_KEY 환경변수로 주입.
     # 아래 기본값은 부팅용 placeholder — 실제 비밀은 환경변수로 반드시 덮어쓸 것.
     master-key: ${OKLYX_CRYPTO_MASTER_KEY:P5m4nQbR+G+j8ekvlzQpnRgmSWgGSQWdJCzZCndLNew=}
+  coupang:
+    # 발주서 목록 조회(일단위 페이징) GET_ORDERSHEET. {vendorId} 는 계정 vendorId 로 치환.
+    ordersheets-path: /v2/providers/openapi/apis/api/v5/vendors/{vendorId}/ordersheets
+    # ordersheets 조회 기간(일): createdAtFrom = 오늘 − sync-days. 쿠팡 최대 31일 제한.
+    sync-days: 5
+    # 반품/취소 요청 목록 조회 GET_RETURN_REQUEST_BY_QUERY (cancelType=CANCEL 으로 결제완료 취소 보정).
+    returnrequests-path: /v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests
+    # 취소 보정 조회 기간(일): 취소 지연 처리 대비 ordersheets 보다 넉넉히. 쿠팡 최대 31일.
+    cancel-sync-days: 7
 
 image:
   storage:

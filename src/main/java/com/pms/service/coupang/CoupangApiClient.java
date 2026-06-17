@@ -4,6 +4,8 @@ import com.pms.domain.MarketplaceAccount;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.net.URI;
+
 /**
  * 쿠팡 OpenAPI 게이트웨이에 서명된 요청을 보내는 클라이언트 (Spring RestClient).
  *
@@ -35,7 +37,9 @@ public class CoupangApiClient {
         String auth = signer.authorization("GET", path, query,
                 account.getAccessKey(), account.getSecretKey());
         String uri = query.isEmpty() ? path : path + "?" + query;
-        return restClient.get().uri(uri)
+        // URI.create 로 전송: 이미 인코딩된 쿼리(%2B 등)가 RestClient 템플릿 인코딩으로 재인코딩되지
+        // 않게 해, 서명 대상 query 와 실제 전송 query 를 동일하게 유지한다.
+        return restClient.get().uri(URI.create(HOST + uri))
                 .header("Authorization", auth)
                 .header("Content-Type", "application/json")
                 .retrieve().body(String.class);
