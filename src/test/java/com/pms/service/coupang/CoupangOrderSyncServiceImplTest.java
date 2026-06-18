@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -70,7 +71,7 @@ class CoupangOrderSyncServiceImplTest {
 
     @Test
     void sync_insertsNewOrderItems() {
-        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(twoBoxesThreeLines());
+        givenAcceptReturns(twoBoxesThreeLines());
 
         SyncResult result = service.syncAccount(account);
 
@@ -88,7 +89,7 @@ class CoupangOrderSyncServiceImplTest {
 
     @Test
     void sync_isIdempotent_noDuplicateOnSecondRun() {
-        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(twoBoxesThreeLines());
+        givenAcceptReturns(twoBoxesThreeLines());
 
         service.syncAccount(account);                 // 1회차: 3 insert
         SyncResult second = service.syncAccount(account); // 2회차: 모두 update
@@ -100,7 +101,8 @@ class CoupangOrderSyncServiceImplTest {
 
     @Test
     void sync_updatesMutableFields_onExisting() {
-        given(coupangApiClient.get(anyString(), anyString(), any()))
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(emptyPage());
+        given(coupangApiClient.get(anyString(), argThat(CoupangOrderSyncServiceImplTest::isAccept), any()))
                 .willReturn(twoBoxesThreeLines(), twoBoxesThreeLinesCancelChanged());
 
         service.syncAccount(account);   // 1회차: cancelCount=0
@@ -115,14 +117,17 @@ class CoupangOrderSyncServiceImplTest {
 
     @Test
     void sync_paginates_untilNextTokenBlank() {
-        given(coupangApiClient.get(anyString(), anyString(), any()))
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(emptyPage());
+        given(coupangApiClient.get(anyString(), argThat(CoupangOrderSyncServiceImplTest::isAccept), any()))
                 .willReturn(pageWithToken("t"), pageWithToken(""));
 
         SyncResult result = service.syncAccount(account);
 
-        verify(coupangApiClient, times(2)).get(anyString(), anyString(), any());
-        assertThat(result.pages()).isEqualTo(2);
-        assertThat(store).hasSize(2);                 // 페이지당 1줄 × 2
+        // ACCEPT 만 2페이지(token t→"") 페이징 — 그 외 상태는 빈 1페이지씩
+        verify(coupangApiClient, times(2)).get(anyString(), argThat(CoupangOrderSyncServiceImplTest::isAccept), any());
+        // 상태당 1페이지 + ACCEPT 추가 1페이지 (enum 개수에 종속되지 않게 계산)
+        assertThat(result.pages()).isEqualTo(CoupangOrderStatus.values().length + 1);
+        assertThat(store).hasSize(2);                 // ACCEPT 페이지당 1줄 × 2
         assertThat(result.newCount()).isEqualTo(2);
     }
 
@@ -133,6 +138,22 @@ class CoupangOrderSyncServiceImplTest {
     }
 
     // --- helpers ---
+
+    // sync 가 상태별로 각각 호출하므로, ACCEPT 조회만 골라낸다 (값은 enum 으로 관리).
+    private static boolean isAccept(String query) {
+        return query != null && query.contains("status=" + CoupangOrderStatus.ACCEPT.name());
+    }
+
+    /** ACCEPT 조회는 주어진 응답을, 그 외 모든 상태 조회는 빈 페이지를 반환하도록 스텁. */
+    private void givenAcceptReturns(String acceptResponse) {
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(emptyPage());
+        given(coupangApiClient.get(anyString(), argThat(CoupangOrderSyncServiceImplTest::isAccept), any()))
+                .willReturn(acceptResponse);
+    }
+
+    private static String emptyPage() {
+        return "{\"data\":[],\"nextToken\":\"\"}";
+    }
 
     private static OrderItem orderItem(int order, int cancel, int hold) {
         return OrderItem.builder().orderCount(order).cancelCount(cancel).holdCount(hold).build();

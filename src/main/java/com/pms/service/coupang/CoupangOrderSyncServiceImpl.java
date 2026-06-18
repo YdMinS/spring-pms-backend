@@ -17,6 +17,7 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -35,7 +36,10 @@ import java.util.Optional;
 public class CoupangOrderSyncServiceImpl implements CoupangOrderSyncService {
 
     private static final String PLATFORM_COUPANG = "COUPANG";
-    private static final String STATUS_ACCEPT = "ACCEPT";
+    // 전체 상태를 상태별로 조회한다. status 는 단일값 파라미터라, 한 상태만 조회하면 주문이
+    // 다음 단계로 넘어갔을 때(예: ACCEPT→INSTRUCT) 그 필터에 안 잡혀 status 갱신이 누락된다.
+    // 모든 상태를 돌면 박스 누락 없이 현재 상태가 항상 최신으로 반영된다.
+    private static final List<CoupangOrderStatus> SYNC_STATUSES = List.of(CoupangOrderStatus.values());
     private static final int MAX_PER_PAGE = 50;
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final String KST_OFFSET = "%2B09:00";        // +09:00, URL-encoded (+ → %2B)
@@ -62,48 +66,52 @@ public class CoupangOrderSyncServiceImpl implements CoupangOrderSyncService {
     @Override
     public SyncResult syncAccount(MarketplaceAccount account) {
         String path = coupangProperties.getOrdersheetsPath().replace("{vendorId}", account.getVendorId());
-        String baseQuery = baseQuery();
 
         int newCount = 0;
         int updatedCount = 0;
         int pages = 0;
-        String nextToken = null;
 
-        do {
-            String query = (nextToken == null || nextToken.isBlank())
-                    ? baseQuery
-                    : baseQuery + "&nextToken=" + nextToken;
+        // status 는 단일값 파라미터 → 대상 상태별로 각각 페이징 조회. upsert 는 멱등이라 중복 안전.
+        for (CoupangOrderStatus status : SYNC_STATUSES) {
+            String baseQuery = baseQuery(status);
+            String nextToken = null;
 
-            JsonNode parsed = readTree(coupangApiClient.get(path, query, account));
-            pages++;
+            do {
+                String query = (nextToken == null || nextToken.isBlank())
+                        ? baseQuery
+                        : baseQuery + "&nextToken=" + nextToken;
 
-            for (JsonNode box : parsed.path("data")) {
-                for (JsonNode item : box.path("orderItems")) {
-                    if (upsert(account, box, item)) {
-                        newCount++;
-                    } else {
-                        updatedCount++;
+                JsonNode parsed = readTree(coupangApiClient.get(path, query, account));
+                pages++;
+
+                for (JsonNode box : parsed.path("data")) {
+                    for (JsonNode item : box.path("orderItems")) {
+                        if (upsert(account, box, item)) {
+                            newCount++;
+                        } else {
+                            updatedCount++;
+                        }
                     }
                 }
-            }
-            nextToken = parsed.path("nextToken").asText("");
-        } while (nextToken != null && !nextToken.isBlank());
+                nextToken = parsed.path("nextToken").asText("");
+            } while (nextToken != null && !nextToken.isBlank());
+        }
 
-        log.info("Coupang sync done: account={} pages={} new={} updated={}",
-                account.getId(), pages, newCount, updatedCount);
+        log.info("Coupang sync done: account={} statuses={} pages={} new={} updated={}",
+                account.getId(), SYNC_STATUSES, pages, newCount, updatedCount);
         return new SyncResult(newCount, updatedCount, pages);
     }
 
     /**
-     * 최근 sync-days 의 결제완료(ACCEPT) 주문서 기본 쿼리 (nextToken 제외).
+     * 최근 sync-days 의 주문서 기본 쿼리 (지정 status, nextToken 제외).
      * 날짜는 ISO-8601 KST: "yyyy-MM-dd+09:00" (+ 는 %2B 로 인코딩, 서명/전송 동일 문자열 사용).
      */
-    private String baseQuery() {
+    private String baseQuery(CoupangOrderStatus status) {
         LocalDate to = LocalDate.now();
         LocalDate from = to.minusDays(coupangProperties.getSyncDays());
         return "createdAtFrom=" + from.format(DATE) + KST_OFFSET
                 + "&createdAtTo=" + to.format(DATE) + KST_OFFSET
-                + "&status=" + STATUS_ACCEPT
+                + "&status=" + status.name()
                 + "&maxPerPage=" + MAX_PER_PAGE;
     }
 
