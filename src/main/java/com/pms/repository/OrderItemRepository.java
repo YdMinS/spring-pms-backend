@@ -17,4 +17,10 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
 
     /** 전체 주문 목록 (최신 결제순) — GET /api/orders. */
     List<OrderItem> findAllByOrderByPaidAtDesc();
+
+    /** 상태별 주문 라인 (구매 목록 추출 — status="ACCEPT"). */
+    List<OrderItem> findByStatus(String status);
+
+    /** 셀러 + 상태별 주문 라인 (셀러 필터 구매 목록 추출). */
+    List<OrderItem> findByStatusAndMarketplaceAccount_Seller_Id(String status, Long sellerId);
 }
