@@ -87,6 +87,23 @@ public class PurchaseListServiceImpl implements PurchaseListService {
 
     @Override
     public PurchaseListResponse getList(Long sellerId) {
+        // 아직 사야 할 것: 잔여 > 0.
+        List<PurchaseProductGroup> groups = buildGroups(g -> g.remainingQty() > 0);
+        return new PurchaseListResponse(groups, buildUnmapped(sellerId));
+    }
+
+    @Override
+    public List<PurchaseProductGroup> getCompletedList(Long sellerId) {
+        // 구매 완료: 잔여 <= 0 이면서 실제 구매가 있었던 것만.
+        // (필요=0 & 구매=0 인 유령 라인은 산 적 없으므로 제외.)
+        return buildGroups(g -> g.remainingQty() <= 0 && g.purchasedQty() > 0);
+    }
+
+    /**
+     * 전체 shopping_list_item 을 product 로 합산해 그룹을 만들고 {@code keep} 을 통과한 것만 반환.
+     * 필요수량 = Σ(autoQty+manualQty), 구매수량 = Σ(purchase_record.quantity), 잔여 = 필요 − 구매.
+     */
+    private List<PurchaseProductGroup> buildGroups(java.util.function.Predicate<PurchaseProductGroup> keep) {
         List<ShoppingListItem> items = shoppingListItemRepository.findAll();
 
         // itemId 별 구매수량 합 (records 도 함께 보유).
@@ -113,15 +130,14 @@ public class PurchaseListServiceImpl implements PurchaseListService {
                 lines.add(toLine(li, linePurchased, recs));
             }
 
-            int remaining = needed - purchased;
-            if (remaining > 0) {
-                Product p = lineItems.get(0).getProduct();
-                groups.add(new PurchaseProductGroup(
-                        p.getId(), p.getProductName(), needed, purchased, remaining, lines));
+            Product p = lineItems.get(0).getProduct();
+            PurchaseProductGroup group = new PurchaseProductGroup(
+                    p.getId(), p.getProductName(), needed, purchased, needed - purchased, lines);
+            if (keep.test(group)) {
+                groups.add(group);
             }
         }
-
-        return new PurchaseListResponse(groups, buildUnmapped(sellerId));
+        return groups;
     }
 
     @Override

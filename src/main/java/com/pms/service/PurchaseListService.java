@@ -4,6 +4,9 @@ import com.pms.dto.request.ManualAdjustRequest;
 import com.pms.dto.request.ManualItemRequest;
 import com.pms.dto.request.PurchaseRecordRequest;
 import com.pms.dto.response.PurchaseListResponse;
+import com.pms.dto.response.PurchaseProductGroup;
+
+import java.util.List;
 
 /**
  * "오늘 구매 목록"(사입 리스트) 비즈니스 로직.
@@ -22,6 +25,9 @@ public interface PurchaseListService {
 
     /** 라인을 product 로 합산한 구매 목록(잔여>0) + 미매핑 주문. 저장 없음. */
     PurchaseListResponse getList(Long sellerId);
+
+    /** 구매 완료 목록(잔여<=0 && 구매>0)을 product 로 합산. 저장 없음. */
+    List<PurchaseProductGroup> getCompletedList(Long sellerId);
 
     /** 라인에 구매 기록 추가(부분구매/정정). */
     void addPurchase(Long itemId, PurchaseRecordRequest request);

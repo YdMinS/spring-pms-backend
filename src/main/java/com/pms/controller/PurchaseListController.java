@@ -5,6 +5,7 @@ import com.pms.dto.request.ManualAdjustRequest;
 import com.pms.dto.request.ManualItemRequest;
 import com.pms.dto.request.PurchaseRecordRequest;
 import com.pms.dto.response.PurchaseListResponse;
+import com.pms.dto.response.PurchaseProductGroup;
 import com.pms.service.PurchaseListService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -12,6 +13,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 /**
  * "오늘 구매 목록"(사입 리스트) API — ADMIN 전용.
@@ -33,6 +36,13 @@ public class PurchaseListController {
     public ResponseEntity<ResponseDTO<PurchaseListResponse>> getList(
             @RequestParam(required = false) Long sellerId) {
         return ResponseEntity.ok(ResponseDTO.success(purchaseListService.getList(sellerId)));
+    }
+
+    /** 구매 완료 목록 조회(잔여<=0 && 구매>0). */
+    @GetMapping("/completed")
+    public ResponseEntity<ResponseDTO<List<PurchaseProductGroup>>> getCompletedList(
+            @RequestParam(required = false) Long sellerId) {
+        return ResponseEntity.ok(ResponseDTO.success(purchaseListService.getCompletedList(sellerId)));
     }
 
     /** 추출(재적재) 후 갱신된 목록 반환. */
