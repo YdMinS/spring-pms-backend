@@ -25,11 +25,13 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 /**
@@ -88,23 +90,48 @@ public class PurchaseListServiceImpl implements PurchaseListService {
     @Override
     public PurchaseListResponse getList(Long sellerId) {
         // 아직 사야 할 것: 잔여 > 0.
-        List<PurchaseProductGroup> groups = buildGroups(g -> g.remainingQty() > 0);
+        List<PurchaseProductGroup> groups = buildGroups(i -> true, g -> g.remainingQty() > 0);
         return new PurchaseListResponse(groups, buildUnmapped(sellerId));
     }
 
     @Override
-    public List<PurchaseProductGroup> getCompletedList(Long sellerId) {
-        // 구매 완료: 잔여 <= 0 이면서 실제 구매가 있었던 것만.
-        // (필요=0 & 구매=0 인 유령 라인은 산 적 없으므로 제외.)
-        return buildGroups(g -> g.remainingQty() <= 0 && g.purchasedQty() > 0);
+    public List<PurchaseProductGroup> getCompletedList(Long sellerId, LocalDate from, LocalDate to) {
+        // 판매자 필터: 주문 라인의 판매자가 일치하는 라인만(수동 라인은 판매자 없으므로 제외).
+        Predicate<ShoppingListItem> itemFilter = sellerId == null
+                ? i -> true
+                : i -> i.getOrderItem() != null
+                        && i.getOrderItem().getMarketplaceAccount() != null
+                        && sellerId.equals(i.getOrderItem().getMarketplaceAccount().getSeller().getId());
+
+        // 구매 완료: 잔여 <= 0 이면서 실제 구매가 있었던 것만. (필요=0 & 구매=0 유령 라인 제외.)
+        // 기간 필터: 그룹 안에 구매일이 [from, to] 에 드는 구매 기록이 하나라도 있으면 포함.
+        Predicate<PurchaseProductGroup> keep = g -> g.remainingQty() <= 0
+                && g.purchasedQty() > 0
+                && hasRecordInRange(g, from, to);
+
+        return buildGroups(itemFilter, keep);
+    }
+
+    /** 그룹의 구매 기록 중 구매일이 [from, to](경계 포함)에 드는 것이 있는지. 둘 다 null 이면 항상 통과. */
+    private boolean hasRecordInRange(PurchaseProductGroup g, LocalDate from, LocalDate to) {
+        if (from == null && to == null) return true;
+        return g.lines().stream()
+                .flatMap(l -> l.records().stream())
+                .anyMatch(r -> (from == null || !r.purchasedOn().isBefore(from))
+                        && (to == null || !r.purchasedOn().isAfter(to)));
     }
 
     /**
-     * 전체 shopping_list_item 을 product 로 합산해 그룹을 만들고 {@code keep} 을 통과한 것만 반환.
+     * shopping_list_item 중 {@code itemFilter} 통과분을 product 로 합산해 그룹을 만들고
+     * {@code keep} 을 통과한 것만 반환.
      * 필요수량 = Σ(autoQty+manualQty), 구매수량 = Σ(purchase_record.quantity), 잔여 = 필요 − 구매.
      */
-    private List<PurchaseProductGroup> buildGroups(java.util.function.Predicate<PurchaseProductGroup> keep) {
-        List<ShoppingListItem> items = shoppingListItemRepository.findAll();
+    private List<PurchaseProductGroup> buildGroups(
+            Predicate<ShoppingListItem> itemFilter,
+            Predicate<PurchaseProductGroup> keep) {
+        List<ShoppingListItem> items = shoppingListItemRepository.findAll().stream()
+                .filter(itemFilter)
+                .toList();
 
         // itemId 별 구매수량 합 (records 도 함께 보유).
         List<Long> itemIds = items.stream().map(ShoppingListItem::getId).toList();

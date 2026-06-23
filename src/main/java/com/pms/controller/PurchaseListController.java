@@ -9,11 +9,13 @@ import com.pms.dto.response.PurchaseProductGroup;
 import com.pms.service.PurchaseListService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -38,11 +40,17 @@ public class PurchaseListController {
         return ResponseEntity.ok(ResponseDTO.success(purchaseListService.getList(sellerId)));
     }
 
-    /** 구매 완료 목록 조회(잔여<=0 && 구매>0). */
+    /**
+     * 구매 완료 목록 조회(잔여<=0 && 구매>0).
+     * sellerId: 주문 라인의 판매자로 필터(수동 라인은 판매자 없으므로 제외). 선택.
+     * from/to: 구매일(purchase_record.purchasedOn) 기준 기간 필터(경계 포함). 선택.
+     */
     @GetMapping("/completed")
     public ResponseEntity<ResponseDTO<List<PurchaseProductGroup>>> getCompletedList(
-            @RequestParam(required = false) Long sellerId) {
-        return ResponseEntity.ok(ResponseDTO.success(purchaseListService.getCompletedList(sellerId)));
+            @RequestParam(required = false) Long sellerId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return ResponseEntity.ok(ResponseDTO.success(purchaseListService.getCompletedList(sellerId, from, to)));
     }
 
     /** 추출(재적재) 후 갱신된 목록 반환. */

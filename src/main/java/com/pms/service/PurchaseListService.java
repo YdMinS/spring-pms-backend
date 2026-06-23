@@ -6,6 +6,7 @@ import com.pms.dto.request.PurchaseRecordRequest;
 import com.pms.dto.response.PurchaseListResponse;
 import com.pms.dto.response.PurchaseProductGroup;
 
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -26,8 +27,12 @@ public interface PurchaseListService {
     /** 라인을 product 로 합산한 구매 목록(잔여>0) + 미매핑 주문. 저장 없음. */
     PurchaseListResponse getList(Long sellerId);
 
-    /** 구매 완료 목록(잔여<=0 && 구매>0)을 product 로 합산. 저장 없음. */
-    List<PurchaseProductGroup> getCompletedList(Long sellerId);
+    /**
+     * 구매 완료 목록(잔여<=0 && 구매>0)을 product 로 합산. 저장 없음.
+     * sellerId: 주문 라인의 판매자로 필터(수동 라인 제외). null=전체.
+     * from/to: 구매일 기준 기간 필터(경계 포함). null=무제한.
+     */
+    List<PurchaseProductGroup> getCompletedList(Long sellerId, LocalDate from, LocalDate to);
 
     /** 라인에 구매 기록 추가(부분구매/정정). */
     void addPurchase(Long itemId, PurchaseRecordRequest request);
