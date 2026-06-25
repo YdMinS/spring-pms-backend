@@ -28,7 +28,8 @@ spring:
 
 jwt:
   secret: ${JWT_SECRET}
-  expiration: 86400000
+  expiration: 1800000          # 30m
+  refresh-expiration: 1209600000   # 14d
   prefix: Bearer
 
 image:

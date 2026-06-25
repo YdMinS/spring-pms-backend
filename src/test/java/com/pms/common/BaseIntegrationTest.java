@@ -7,6 +7,7 @@ import com.pms.domain.Role;
 import com.pms.domain.User;
 import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.PackageRepository;
+import com.pms.repository.RefreshTokenRepository;
 import com.pms.repository.UserRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -52,6 +53,9 @@ public abstract class BaseIntegrationTest {
 
     @Autowired
     protected PackageRepository packageRepository;
+
+    @Autowired
+    protected RefreshTokenRepository refreshTokenRepository;
 
     @Autowired
     protected BCryptPasswordEncoder passwordEncoder;
@@ -118,6 +122,8 @@ public abstract class BaseIntegrationTest {
     }
 
     protected void cleanupTestData() {
+        // Delete refresh tokens first: they FK-reference member rows.
+        refreshTokenRepository.deleteAll();
         packageRepository.deleteAll();
         carrierRateRepository.deleteAll();
         userRepository.deleteByEmail(ADMIN_EMAIL);

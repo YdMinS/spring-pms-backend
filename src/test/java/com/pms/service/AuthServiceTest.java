@@ -5,6 +5,7 @@ import com.pms.domain.User;
 import com.pms.dto.request.LoginRequest;
 import com.pms.dto.response.AuthResponse;
 import com.pms.exception.UnauthorizedException;
+import com.pms.repository.RefreshTokenRepository;
 import com.pms.repository.UserRepository;
 import com.pms.security.JwtTokenProvider;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,6 +27,9 @@ public class AuthServiceTest {
 
     @Mock
     private UserRepository userRepository;
+
+    @Mock
+    private RefreshTokenRepository refreshTokenRepository;
 
     @Mock
     private BCryptPasswordEncoder passwordEncoder;
@@ -73,11 +77,13 @@ public class AuthServiceTest {
         when(passwordEncoder.matches("testpass123", "encodedPassword")).thenReturn(true);
         when(jwtTokenProvider.generateToken(org.mockito.ArgumentMatchers.any())).thenReturn("test.jwt.token");
         when(jwtTokenProvider.getExpirationTime()).thenReturn(3600000L);
+        when(jwtTokenProvider.generateRefreshTokenValue()).thenReturn("test-refresh-token");
 
         AuthResponse response = authService.login(validRequest);
 
         assertNotNull(response);
         assertNotNull(response.getToken());
+        assertEquals("test-refresh-token", response.getRefreshToken());
         assertEquals("Bearer", response.getTokenType());
         assertEquals("user@test.com", response.getEmail());
         assertEquals("Test User", response.getName());

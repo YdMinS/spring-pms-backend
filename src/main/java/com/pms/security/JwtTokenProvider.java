@@ -9,17 +9,21 @@ import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.util.Date;
+import java.util.UUID;
 
 @Component
 public class JwtTokenProvider {
 
     private final SecretKey secretKey;
     private final long expirationTime;
+    private final long refreshExpirationTime;
 
     public JwtTokenProvider(@Value("${jwt.secret}") String secret,
-                           @Value("${jwt.expiration}") long expiration) {
+                           @Value("${jwt.expiration}") long expiration,
+                           @Value("${jwt.refresh-expiration}") long refreshExpiration) {
         this.secretKey = Keys.hmacShaKeyFor(secret.getBytes());
         this.expirationTime = expiration;
+        this.refreshExpirationTime = refreshExpiration;
     }
 
     public String generateToken(Authentication authentication) {
@@ -63,5 +67,14 @@ public class JwtTokenProvider {
 
     public long getExpirationTime() {
         return expirationTime;
+    }
+
+    // Opaque refresh token value (UUID, not a JWT). Stored DB-side.
+    public String generateRefreshTokenValue() {
+        return UUID.randomUUID().toString();
+    }
+
+    public long getRefreshExpirationTime() {
+        return refreshExpirationTime;
     }
 }

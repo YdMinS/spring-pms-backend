@@ -17,6 +17,9 @@ public class AuthResponse {
     @Schema(description = "JWT access token", example = "eyJhbGciOiJIUzI1NiJ9...")
     private String token;
 
+    @Schema(description = "Refresh token (opaque UUID)", example = "550e8400-e29b-41d4-a716-446655440000")
+    private String refreshToken;
+
     @Schema(description = "Token type", example = "Bearer")
     private String tokenType;
 
