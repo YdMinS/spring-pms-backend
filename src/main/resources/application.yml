@@ -40,7 +40,9 @@ oklyx:
     # Ordersheet list query (daily paging) GET_ORDERSHEET. {vendorId} is replaced with the account vendorId.
     ordersheets-path: /v2/providers/openapi/apis/api/v5/vendors/{vendorId}/ordersheets
     # Ordersheet query window (days): createdAtFrom = today − sync-days. Coupang max 31 days.
-    sync-days: 5
+    # Widened to 14: delivery-status transitions (e.g. → FINAL_DELIVERY) land days after order
+    # creation, so a narrow window froze orders at ACCEPT once they aged out before a sync ran.
+    sync-days: 14
     # Return/cancel request list query GET_RETURN_REQUEST_BY_QUERY (cancelType=CANCEL to reconcile paid-order cancellations).
     returnrequests-path: /v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests
     # Cancel reconciliation window (days): wider than ordersheets to cover delayed cancellations. Coupang max 31 days.

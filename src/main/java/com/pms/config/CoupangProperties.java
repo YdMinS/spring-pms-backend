@@ -20,7 +20,7 @@ public class CoupangProperties {
     private String ordersheetsPath = "/v2/providers/openapi/apis/api/v5/vendors/{vendorId}/ordersheets";
 
     /** ordersheets 조회 기간(일). createdAtFrom = 오늘 − syncDays. 쿠팡 최대 31일. */
-    private int syncDays = 5;
+    private int syncDays = 14;
 
     /** returnRequests(반품/취소 요청 목록) 조회 경로. {vendorId} 치환. */
     private String returnrequestsPath = "/v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests";
