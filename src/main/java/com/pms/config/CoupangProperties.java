@@ -22,6 +22,13 @@ public class CoupangProperties {
     /** ordersheets 조회 기간(일). createdAtFrom = 오늘 − syncDays. 쿠팡 최대 31일. */
     private int syncDays = 14;
 
+    /**
+     * INSTRUCT(상품준비중) 조회 윈도우(일). 송장 접수시트 생성 전용.
+     * createdAtFrom = 오늘 − instructDays. INSTRUCT 는 결제 후 며칠 정체 가능하므로 syncDays 와 분리한다.
+     * 쿠팡 최대 31일.
+     */
+    private int instructDays = 14;
+
     /** returnRequests(반품/취소 요청 목록) 조회 경로. {vendorId} 치환. */
     private String returnrequestsPath = "/v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests";
 
