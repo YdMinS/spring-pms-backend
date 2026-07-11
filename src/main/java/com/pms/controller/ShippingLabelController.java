@@ -44,6 +44,7 @@ public class ShippingLabelController {
     @ApiResponse(responseCode = "200", description = "xlsx file")
     @ApiResponse(responseCode = "401", description = "Authentication required")
     @ApiResponse(responseCode = "403", description = "Permission denied (ADMIN role required)")
+    @ApiResponse(responseCode = "500", description = "Coupang ordersheets fetch/parse failed")
     public ResponseEntity<byte[]> downloadSpreadsheet(
             @RequestParam(required = false)
             @Parameter(description = "Seller ID filter (optional; all active accounts if omitted)")
