@@ -2,10 +2,13 @@ package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.Carrier;
+import com.pms.domain.CarrierRate;
 import com.pms.repository.CarrierRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.Map;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -87,6 +90,24 @@ public class CarrierControllerTest extends BaseIntegrationTest {
         mockMvc.perform(delete("/api/admin/carriers/9999")
                 .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    @Test
+    public void deleteCarrier_referencedByRate_409() throws Exception {
+        Carrier carrier = carrierRepository.save(
+                Carrier.builder().name("롯데택배").isActive(true).build());
+        carrierRateRepository.saveAndFlush(CarrierRate.builder()
+                .carrier(carrier)
+                .type("EXPRESS")
+                .cost(new BigDecimal("15.50"))
+                .effectiveDate(LocalDate.now())
+                .isDefault(false)
+                .build());
+
+        mockMvc.perform(delete("/api/admin/carriers/" + carrier.getId())
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.status").value("FAILURE"));
     }
 

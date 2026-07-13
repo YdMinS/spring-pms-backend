@@ -4,7 +4,9 @@ import com.pms.domain.Carrier;
 import com.pms.dto.request.CarrierRequest;
 import com.pms.dto.response.CarrierResponse;
 import com.pms.exception.CarrierNotFoundException;
+import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.CarrierRepository;
+import com.pms.repository.PlatformCarrierCodeRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -25,6 +27,12 @@ public class CarrierServiceImplTest {
 
     @Mock
     private CarrierRepository carrierRepository;
+
+    @Mock
+    private CarrierRateRepository carrierRateRepository;
+
+    @Mock
+    private PlatformCarrierCodeRepository platformCarrierCodeRepository;
 
     @InjectMocks
     private CarrierServiceImpl carrierService;
@@ -78,5 +86,18 @@ public class CarrierServiceImplTest {
         given(carrierRepository.findById(99L)).willReturn(Optional.empty());
 
         assertThrows(CarrierNotFoundException.class, () -> carrierService.deleteCarrier(99L));
+    }
+
+    @Test
+    public void deleteCarrier_cascadesPlatformCodes() {
+        Carrier existing = Carrier.builder().id(1L).name("롯데택배").isActive(true).build();
+        given(carrierRepository.findById(1L)).willReturn(Optional.of(existing));
+        given(carrierRateRepository.existsByCarrierId(1L)).willReturn(false);
+
+        carrierService.deleteCarrier(1L);
+
+        // 자식 플랫폼 코드 cascade 삭제 후 carrier 삭제.
+        verify(platformCarrierCodeRepository).deleteByCarrier_Id(1L);
+        verify(carrierRepository).delete(existing);
     }
 }

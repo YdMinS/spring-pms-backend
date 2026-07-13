@@ -1,10 +1,13 @@
 package com.pms.service;
 
+import com.pms.domain.Carrier;
 import com.pms.domain.CarrierRate;
 import com.pms.dto.request.CarrierRateRequest;
 import com.pms.dto.response.CarrierRateResponse;
+import com.pms.exception.CarrierNotFoundException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CarrierRateRepository;
+import com.pms.repository.CarrierRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,6 +20,7 @@ import java.util.List;
 public class CarrierRateServiceImpl implements CarrierRateService {
 
     private final CarrierRateRepository carrierRateRepository;
+    private final CarrierRepository carrierRepository;
 
     @Override
     @Transactional
@@ -36,8 +40,11 @@ public class CarrierRateServiceImpl implements CarrierRateService {
                     });
         }
 
+        Carrier carrier = carrierRepository.findById(request.getCarrierId())
+                .orElseThrow(() -> new CarrierNotFoundException(request.getCarrierId()));
+
         CarrierRate carrierRate = CarrierRate.builder()
-                .carrier(request.getCarrier())
+                .carrier(carrier)
                 .type(request.getType())
                 .cost(request.getCost())
                 .effectiveDate(request.getEffectiveDate())
@@ -86,9 +93,13 @@ public class CarrierRateServiceImpl implements CarrierRateService {
                     });
         }
 
+        // carrierId 항상 재조회하여 연결 (요율의 소속 택배사 변경 허용).
+        Carrier carrier = carrierRepository.findById(request.getCarrierId())
+                .orElseThrow(() -> new CarrierNotFoundException(request.getCarrierId()));
+
         CarrierRate updated = CarrierRate.builder()
                 .id(carrierRate.getId())
-                .carrier(request.getCarrier())
+                .carrier(carrier)
                 .type(request.getType())
                 .cost(request.getCost())
                 .effectiveDate(request.getEffectiveDate())
@@ -108,9 +119,11 @@ public class CarrierRateServiceImpl implements CarrierRateService {
     }
 
     private CarrierRateResponse mapToResponse(CarrierRate carrierRate) {
+        // carrier is LAZY → call within @Transactional scope to avoid LazyInitializationException.
         return CarrierRateResponse.builder()
                 .id(carrierRate.getId())
-                .carrier(carrierRate.getCarrier())
+                .carrierId(carrierRate.getCarrier().getId())
+                .carrier(carrierRate.getCarrier().getName())
                 .type(carrierRate.getType())
                 .cost(carrierRate.getCost())
                 .effectiveDate(carrierRate.getEffectiveDate())

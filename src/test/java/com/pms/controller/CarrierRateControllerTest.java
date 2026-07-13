@@ -1,6 +1,7 @@
 package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
+import com.pms.domain.Carrier;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -12,11 +13,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 public class CarrierRateControllerTest extends BaseIntegrationTest {
 
+    private Long createCarrierId(String name) {
+        return carrierRepository.save(
+                Carrier.builder().name(name).isActive(true).build()).getId();
+    }
+
     @Test
     public void testCreateCarrierRateWithValidRequestAndAdminToken() throws Exception {
+        Long carrierId = createCarrierId("롯데택배");
         String requestJson = objectMapper.writeValueAsString(
                 Map.of(
-                        "carrier", "DHL",
+                        "carrierId", carrierId,
                         "type", "EXPRESS",
                         "cost", new BigDecimal("15.50"),
                         "effectiveDate", LocalDate.now().toString(),
@@ -29,14 +36,16 @@ public class CarrierRateControllerTest extends BaseIntegrationTest {
                 .contentType("application/json")
                 .content(requestJson))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.status").value("SUCCESS"));
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.carrierId").value(carrierId))
+                .andExpect(jsonPath("$.data.carrier").value("롯데택배"));
     }
 
     @Test
     public void testCreateCarrierRateWithUserToken() throws Exception {
         String requestJson = objectMapper.writeValueAsString(
                 Map.of(
-                        "carrier", "DHL",
+                        "carrierId", 1,
                         "type", "EXPRESS",
                         "cost", new BigDecimal("15.50"),
                         "effectiveDate", LocalDate.now().toString(),
@@ -56,7 +65,7 @@ public class CarrierRateControllerTest extends BaseIntegrationTest {
     public void testCreateCarrierRateWithoutToken() throws Exception {
         String requestJson = objectMapper.writeValueAsString(
                 Map.of(
-                        "carrier", "DHL",
+                        "carrierId", 1,
                         "type", "EXPRESS",
                         "cost", new BigDecimal("15.50"),
                         "effectiveDate", LocalDate.now().toString(),
@@ -72,7 +81,7 @@ public class CarrierRateControllerTest extends BaseIntegrationTest {
     }
 
     @Test
-    public void testCreateCarrierRateWithMissingCarrier() throws Exception {
+    public void testCreateCarrierRateWithMissingCarrierId() throws Exception {
         String requestJson = objectMapper.writeValueAsString(
                 Map.of(
                         "type", "EXPRESS",
@@ -91,9 +100,10 @@ public class CarrierRateControllerTest extends BaseIntegrationTest {
 
     @Test
     public void testCreateCarrierRateSetIsDefaultTrue() throws Exception {
+        Long carrierId = createCarrierId("FedEx");
         String requestJson = objectMapper.writeValueAsString(
                 Map.of(
-                        "carrier", "FedEx",
+                        "carrierId", carrierId,
                         "type", "STANDARD",
                         "cost", new BigDecimal("10.00"),
                         "effectiveDate", LocalDate.now().toString(),
@@ -135,10 +145,12 @@ public class CarrierRateControllerTest extends BaseIntegrationTest {
 
     @Test
     public void testGetCarrierRateWithValidIdAndAdminToken() throws Exception {
-        mockMvc.perform(get("/api/admin/carrier-rate/1")
+        mockMvc.perform(get("/api/admin/carrier-rate/" + seededCarrierRateId)
                 .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("SUCCESS"));
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.carrierId").isNumber())
+                .andExpect(jsonPath("$.data.carrier").value("DHL"));
     }
 
     @Test
@@ -158,9 +170,10 @@ public class CarrierRateControllerTest extends BaseIntegrationTest {
 
     @Test
     public void testUpdateCarrierRateWithValidRequestAndAdminToken() throws Exception {
+        Long carrierId = createCarrierId("한진택배");
         String requestJson = objectMapper.writeValueAsString(
                 Map.of(
-                        "carrier", "DHL Updated",
+                        "carrierId", carrierId,
                         "type", "EXPRESS",
                         "cost", new BigDecimal("20.00"),
                         "effectiveDate", LocalDate.now().toString(),
@@ -168,19 +181,20 @@ public class CarrierRateControllerTest extends BaseIntegrationTest {
                 )
         );
 
-        mockMvc.perform(patch("/api/admin/carrier-rate/1")
+        mockMvc.perform(patch("/api/admin/carrier-rate/" + seededCarrierRateId)
                 .header("Authorization", "Bearer " + adminToken)
                 .contentType("application/json")
                 .content(requestJson))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("SUCCESS"));
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.carrierId").value(carrierId));
     }
 
     @Test
     public void testUpdateCarrierRateWithInvalidId() throws Exception {
         String requestJson = objectMapper.writeValueAsString(
                 Map.of(
-                        "carrier", "DHL",
+                        "carrierId", 1,
                         "type", "EXPRESS",
                         "cost", new BigDecimal("15.50"),
                         "effectiveDate", LocalDate.now().toString(),
@@ -200,7 +214,7 @@ public class CarrierRateControllerTest extends BaseIntegrationTest {
     public void testUpdateCarrierRateWithUserToken() throws Exception {
         String requestJson = objectMapper.writeValueAsString(
                 Map.of(
-                        "carrier", "DHL",
+                        "carrierId", 1,
                         "type", "EXPRESS",
                         "cost", new BigDecimal("15.50"),
                         "effectiveDate", LocalDate.now().toString(),
@@ -220,7 +234,7 @@ public class CarrierRateControllerTest extends BaseIntegrationTest {
     public void testUpdateCarrierRateWithoutToken() throws Exception {
         String requestJson = objectMapper.writeValueAsString(
                 Map.of(
-                        "carrier", "DHL",
+                        "carrierId", 1,
                         "type", "EXPRESS",
                         "cost", new BigDecimal("15.50"),
                         "effectiveDate", LocalDate.now().toString(),
@@ -237,7 +251,7 @@ public class CarrierRateControllerTest extends BaseIntegrationTest {
 
     @Test
     public void testDeleteCarrierRateWithValidIdAndAdminToken() throws Exception {
-        mockMvc.perform(delete("/api/admin/carrier-rate/1")
+        mockMvc.perform(delete("/api/admin/carrier-rate/" + seededCarrierRateId)
                 .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUCCESS"));

@@ -39,6 +39,29 @@ public class GlobalExceptionHandler {
                 .body(ResponseDTO.failure(e.getMessage()));
     }
 
+    @ExceptionHandler(CarrierInUseException.class)
+    public ResponseEntity<ResponseDTO<Void>> handleCarrierInUseException(CarrierInUseException e) {
+        log.warn("CarrierInUseException: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ResponseDTO.failure(e.getMessage()));
+    }
+
+    @ExceptionHandler(PlatformCarrierCodeNotFoundException.class)
+    public ResponseEntity<ResponseDTO<Void>> handlePlatformCarrierCodeNotFoundException(
+            PlatformCarrierCodeNotFoundException e) {
+        log.warn("PlatformCarrierCodeNotFoundException: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ResponseDTO.failure(e.getMessage()));
+    }
+
+    @ExceptionHandler(DuplicatePlatformCarrierCodeException.class)
+    public ResponseEntity<ResponseDTO<Void>> handleDuplicatePlatformCarrierCodeException(
+            DuplicatePlatformCarrierCodeException e) {
+        log.warn("DuplicatePlatformCarrierCodeException: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ResponseDTO.failure(e.getMessage()));
+    }
+
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ResponseDTO<Void>> handleBusinessException(BusinessException e) {
         log.warn("BusinessException: {}", e.getMessage());

@@ -66,7 +66,8 @@ public class ProductListingResponse {
                 .categoryId(listing.getCategory() != null ? listing.getCategory().getId() : null)
                 .categoryName(listing.getCategory() != null ? listing.getCategory().getName() : null)
                 .deliveryId(listing.getDelivery() != null ? listing.getDelivery().getId() : null)
-                .carrierName(listing.getDelivery() != null ? listing.getDelivery().getCarrier() : null)
+                .carrierName(listing.getDelivery() != null && listing.getDelivery().getCarrier() != null
+                        ? listing.getDelivery().getCarrier().getName() : null)
                 .packageId(listing.getPackage_() != null ? listing.getPackage_().getId() : null)
                 .packageType(listing.getPackage_() != null ? listing.getPackage_().getType() : null)
                 .build();
@@ -83,7 +84,8 @@ public class ProductListingResponse {
                 .categoryId(listing.getCategory() != null ? listing.getCategory().getId() : null)
                 .categoryName(listing.getCategory() != null ? listing.getCategory().getName() : null)
                 .deliveryId(listing.getDelivery() != null ? listing.getDelivery().getId() : null)
-                .carrierName(listing.getDelivery() != null ? listing.getDelivery().getCarrier() : null)
+                .carrierName(listing.getDelivery() != null && listing.getDelivery().getCarrier() != null
+                        ? listing.getDelivery().getCarrier().getName() : null)
                 .packageId(listing.getPackage_() != null ? listing.getPackage_().getId() : null)
                 .packageType(listing.getPackage_() != null ? listing.getPackage_().getType() : null)
                 .options(options)

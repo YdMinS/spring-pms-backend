@@ -28,7 +28,8 @@ public class CarrierRateController {
     private final CarrierRateService carrierRateService;
 
     @PostMapping
-    @Operation(summary = "Create carrier rate", description = "Create a new carrier rate (ADMIN role required)")
+    @Operation(summary = "Create carrier rate",
+            description = "Create a new carrier rate. carrierId(택배사 마스터 FK) 필수 (ADMIN role required)")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "201", description = "Carrier rate created successfully",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
@@ -37,6 +38,8 @@ public class CarrierRateController {
     @ApiResponse(responseCode = "401", description = "Authentication required",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     @ApiResponse(responseCode = "403", description = "Permission denied (ADMIN role required)",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "404", description = "Carrier not found (carrierId)",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     public ResponseEntity<ResponseDTO<CarrierRateResponse>> createCarrierRate(
             @Valid @RequestBody CarrierRateRequest request) {
@@ -79,7 +82,8 @@ public class CarrierRateController {
     }
 
     @PatchMapping("/{id}")
-    @Operation(summary = "Update carrier rate", description = "Update carrier rate (ADMIN role required)")
+    @Operation(summary = "Update carrier rate",
+            description = "Update carrier rate. carrierId(택배사 마스터 FK) 필수 — 재지정 시 소속 택배사 변경 (ADMIN role required)")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "200", description = "Carrier rate updated successfully",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
@@ -89,7 +93,7 @@ public class CarrierRateController {
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     @ApiResponse(responseCode = "403", description = "Permission denied (ADMIN role required)",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
-    @ApiResponse(responseCode = "404", description = "Carrier rate not found",
+    @ApiResponse(responseCode = "404", description = "Carrier rate not found, or Carrier not found (carrierId)",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     public ResponseEntity<ResponseDTO<CarrierRateResponse>> updateCarrierRate(
             @PathVariable

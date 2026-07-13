@@ -35,4 +35,15 @@ public class PlatformCarrierCode {
 
     @Column(name = "delivery_company_code", nullable = false, length = 50)
     private String deliveryCompanyCode;      // 예: 쿠팡 "CJGLS"
+
+    /**
+     * full-replace 수정용 도메인 변경 메서드.
+     *
+     * 영속 엔티티에 직접 호출해 dirty checking 으로 반영한다(별도 save 불필요).
+     * carrier 소속은 바꾸지 않는다(중첩 리소스라 경로의 carrierId 로 고정).
+     */
+    public void updateCode(String platform, String deliveryCompanyCode) {
+        this.platform = platform;
+        this.deliveryCompanyCode = deliveryCompanyCode;
+    }
 }

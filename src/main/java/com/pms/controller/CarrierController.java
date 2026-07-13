@@ -98,7 +98,8 @@ public class CarrierController {
     }
 
     @DeleteMapping("/{id}")
-    @Operation(summary = "Delete carrier", description = "Delete carrier permanently (ADMIN role required)")
+    @Operation(summary = "Delete carrier",
+            description = "Delete carrier permanently. CarrierRate가 참조 중이면 409 (ADMIN role required)")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "200", description = "Carrier deleted successfully",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
@@ -107,6 +108,8 @@ public class CarrierController {
     @ApiResponse(responseCode = "403", description = "Permission denied (ADMIN role required)",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     @ApiResponse(responseCode = "404", description = "Carrier not found",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "409", description = "Carrier in use — referenced by CarrierRate",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     public ResponseEntity<ResponseDTO<Void>> deleteCarrier(
             @PathVariable

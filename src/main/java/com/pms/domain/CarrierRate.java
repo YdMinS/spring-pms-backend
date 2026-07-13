@@ -18,8 +18,10 @@ public class CarrierRate {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(length = 100, nullable = false)
-    private String carrier;
+    // FK to Carrier master (was: String carrier name). Normalized in FEATURE_CARRIER_03.
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "carrier_id", nullable = false)
+    private Carrier carrier;
 
     @Column(length = 50, nullable = false)
     private String type;

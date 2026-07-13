@@ -19,7 +19,13 @@ public class CarrierRateResponse {
     @Schema(description = "Unique identifier for the carrier rate", example = "1")
     private Long id;
 
-    @Schema(description = "Carrier company name", example = "DHL")
+    @Schema(description = "Carrier master ID", example = "4")
+    private Long carrierId;
+
+    // Display name (= carrier.getName()). TEMPORARY backward-compat until front(04)/mobile(05)
+    // migrate to carrierId; removed in a later cleanup prompt.
+    @Schema(description = "택배사명(표시용, 하위호환). carrierId 사용 권장",
+            example = "롯데택배", deprecated = true)
     private String carrier;
 
     @Schema(description = "Delivery type", example = "EXPRESS")

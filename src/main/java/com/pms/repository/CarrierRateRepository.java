@@ -7,4 +7,7 @@ import java.util.Optional;
 
 public interface CarrierRateRepository extends JpaRepository<CarrierRate, Long> {
     Optional<CarrierRate> findByIsDefaultTrue();
+
+    /** True if any rate references the given carrier (FK guard for carrier deletion). */
+    boolean existsByCarrierId(Long carrierId);
 }

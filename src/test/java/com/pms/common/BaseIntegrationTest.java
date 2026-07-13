@@ -1,11 +1,13 @@
 package com.pms.common;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.pms.domain.Carrier;
 import com.pms.domain.CarrierRate;
 import com.pms.domain.Package;
 import com.pms.domain.Role;
 import com.pms.domain.User;
 import com.pms.repository.CarrierRateRepository;
+import com.pms.repository.CarrierRepository;
 import com.pms.repository.PackageRepository;
 import com.pms.repository.RefreshTokenRepository;
 import com.pms.repository.UserRepository;
@@ -39,6 +41,9 @@ public abstract class BaseIntegrationTest {
     protected String adminToken;
     protected String userToken;
 
+    /** Real DB id of the carrier rate seeded in setUp (H2 IDENTITY is not deterministic across tests). */
+    protected Long seededCarrierRateId;
+
     @Autowired
     protected MockMvc mockMvc;
 
@@ -50,6 +55,9 @@ public abstract class BaseIntegrationTest {
 
     @Autowired
     protected CarrierRateRepository carrierRateRepository;
+
+    @Autowired
+    protected CarrierRepository carrierRepository;
 
     @Autowired
     protected PackageRepository packageRepository;
@@ -95,17 +103,18 @@ public abstract class BaseIntegrationTest {
     }
 
     protected void registerTestCarrierRates() {
-        // Create a default test carrier rate with ID 1
-        // This is used by tests that expect pre-existing data
+        // Carrier master must exist first (carrier_rate.carrier is now an FK).
+        Carrier carrier = carrierRepository.save(
+                Carrier.builder().name("DHL").isActive(true).build());
+        // Seed a carrier rate; capture the real id (H2 IDENTITY climbs across tests).
         CarrierRate carrierRate = CarrierRate.builder()
-                .id(1L)
-                .carrier("DHL")
+                .carrier(carrier)
                 .type("EXPRESS")
                 .cost(new BigDecimal("15.50"))
                 .effectiveDate(LocalDate.now())
                 .isDefault(false)
                 .build();
-        carrierRateRepository.saveAndFlush(carrierRate);
+        seededCarrierRateId = carrierRateRepository.saveAndFlush(carrierRate).getId();
     }
 
     protected void registerTestPackages() {
@@ -126,6 +135,7 @@ public abstract class BaseIntegrationTest {
         refreshTokenRepository.deleteAll();
         packageRepository.deleteAll();
         carrierRateRepository.deleteAll();
+        carrierRepository.deleteAll();           // after rates: FK dependency
         userRepository.deleteByEmail(ADMIN_EMAIL);
         userRepository.deleteByEmail(USER_EMAIL);
     }

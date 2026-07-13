@@ -19,9 +19,9 @@ import java.time.LocalDate;
 @Schema(description = "Carrier rate creation/update request")
 public class CarrierRateRequest {
 
-    @NotBlank(message = "Carrier is required")
-    @Schema(description = "Carrier company name", example = "DHL")
-    private String carrier;
+    @NotNull(message = "carrierId is required")
+    @Schema(description = "Carrier master ID", example = "4")
+    private Long carrierId;
 
     @NotBlank(message = "Type is required")
     @Schema(description = "Delivery type", example = "EXPRESS")

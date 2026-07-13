@@ -3,8 +3,11 @@ package com.pms.service;
 import com.pms.domain.Carrier;
 import com.pms.dto.request.CarrierRequest;
 import com.pms.dto.response.CarrierResponse;
+import com.pms.exception.CarrierInUseException;
 import com.pms.exception.CarrierNotFoundException;
+import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.CarrierRepository;
+import com.pms.repository.PlatformCarrierCodeRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -18,6 +21,8 @@ import java.util.List;
 public class CarrierServiceImpl implements CarrierService {
 
     private final CarrierRepository carrierRepository;
+    private final CarrierRateRepository carrierRateRepository;
+    private final PlatformCarrierCodeRepository platformCarrierCodeRepository;
 
     @Override
     @Transactional
@@ -66,6 +71,12 @@ public class CarrierServiceImpl implements CarrierService {
     public void deleteCarrier(Long id) {
         Carrier carrier = carrierRepository.findById(id)
                 .orElseThrow(() -> new CarrierNotFoundException(id));
+        // FK 가드: 요율이 참조 중이면 삭제 불가 → 409. (요율은 cascade 대상 아님)
+        if (carrierRateRepository.existsByCarrierId(id)) {
+            throw new CarrierInUseException(id);
+        }
+        // 소유 자식인 플랫폼 코드는 cascade 삭제 후 carrier 삭제(FK 위반 방지).
+        platformCarrierCodeRepository.deleteByCarrier_Id(id);
         carrierRepository.delete(carrier);
     }
 
