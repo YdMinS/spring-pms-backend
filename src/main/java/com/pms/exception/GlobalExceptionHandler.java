@@ -32,6 +32,13 @@ public class GlobalExceptionHandler {
                 .body(ResponseDTO.failure(e.getMessage()));
     }
 
+    @ExceptionHandler(CarrierNotFoundException.class)
+    public ResponseEntity<ResponseDTO<Void>> handleCarrierNotFoundException(CarrierNotFoundException e) {
+        log.warn("CarrierNotFoundException: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ResponseDTO.failure(e.getMessage()));
+    }
+
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ResponseDTO<Void>> handleBusinessException(BusinessException e) {
         log.warn("BusinessException: {}", e.getMessage());
