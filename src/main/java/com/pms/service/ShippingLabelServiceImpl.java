@@ -22,8 +22,9 @@ import java.util.List;
 /**
  * {@link ShippingLabelService} 구현 — 쿠팡 ordersheets(INSTRUCT) 조회 → 행 펼침 → xlsx.
  *
- * 쿼리 빌드는 {@code CoupangOrderSyncServiceImpl} 패턴을 따르되 status=INSTRUCT 고정, DB 미접근이다.
- * @Transactional 불필요(DB 미접근).
+ * 쿼리 빌드는 {@code CoupangOrderSyncServiceImpl} 패턴을 따른다(status=INSTRUCT 고정).
+ * 계정·seller 는 리포지토리에서 {@code @EntityGraph} 로 eager fetch 하므로, 외부 HTTP 루프를
+ * 도는 이 서비스는 @Transactional 없이도 seller.sellerName 접근이 안전하다(open-in-view=false).
  */
 @Slf4j
 @Service
