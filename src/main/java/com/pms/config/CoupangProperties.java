@@ -19,8 +19,12 @@ public class CoupangProperties {
     /** ordersheets(발주서 목록) 조회 경로. {vendorId} 치환. */
     private String ordersheetsPath = "/v2/providers/openapi/apis/api/v5/vendors/{vendorId}/ordersheets";
 
-    /** ordersheets 조회 기간(일). createdAtFrom = 오늘 − syncDays. 쿠팡 최대 31일. */
-    private int syncDays = 14;
+    /**
+     * ordersheets 조회 기간(일). createdAtFrom = 오늘 − syncDays. 쿠팡은 범위 상한 < 31일.
+     * status 는 이 윈도우(주문 생성일 기준) 안의 주문만 갱신된다 — 좁으면 아직 진행 중(ACCEPT 등)인
+     * 주문이 윈도우를 벗어나며 마지막 상태(결제완료)로 얼어붙는다. 그래서 상한(30)으로 넓게 잡는다.
+     */
+    private int syncDays = 30;
 
     /**
      * INSTRUCT(상품준비중) 조회 윈도우(일). 송장 접수시트 생성 전용.
