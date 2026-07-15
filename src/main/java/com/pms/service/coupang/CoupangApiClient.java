@@ -44,4 +44,23 @@ public class CoupangApiClient {
                 .header("Content-Type", "application/json")
                 .retrieve().body(String.class);
     }
+
+    /**
+     * 서명된 POST 요청 (JSON 바디).
+     *
+     * 쿠팡 HMAC 은 method+path+query 만 서명(바디 제외)하므로 query="" 로 서명한다.
+     *
+     * @param path    쿼리 제외 경로
+     * @param body    JSON 바디 문자열
+     * @param account 호출 주체 계정 (자격증명 제공)
+     * @return 응답 바디 (raw JSON 문자열)
+     */
+    public String post(String path, String body, MarketplaceAccount account) {
+        String auth = signer.authorization("POST", path, "",
+                account.getAccessKey(), account.getSecretKey());
+        return restClient.post().uri(URI.create(HOST + path))
+                .header("Authorization", auth)
+                .header("Content-Type", "application/json")
+                .body(body).retrieve().body(String.class);
+    }
 }

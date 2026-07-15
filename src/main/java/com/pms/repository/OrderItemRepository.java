@@ -23,4 +23,7 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
 
     /** 셀러 + 상태별 주문 라인 (셀러 필터 구매 목록 추출). */
     List<OrderItem> findByStatusAndMarketplaceAccount_Seller_Id(String status, Long sellerId);
+
+    /** 주문번호(쿠팡 orderId)로 그 주문의 모든 라인(박스의 전체 vendorItemId) 조회 — 발송처리 전개용. */
+    List<OrderItem> findByExternalOrderId(String externalOrderId);
 }
