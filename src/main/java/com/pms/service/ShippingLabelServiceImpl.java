@@ -53,17 +53,26 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
                 : marketplaceAccountRepository.findBySeller_IdAndIsActiveTrue(sellerId);
 
         List<ShippingLabelRow> rows = new ArrayList<>();
+        int targetAccounts = 0;
+        int failedAccounts = 0;
         for (MarketplaceAccount account : accounts) {
             if (!PLATFORM_COUPANG.equals(account.getPlatform())) {
                 continue;
             }
+            targetAccounts++;
             try {
                 rows.addAll(collectAccountRows(account));
             } catch (Exception e) {
                 // 한 계정 오류가 전체를 막지 않는다 — 로그 후 계속.
+                failedAccounts++;
                 log.warn("송장 접수시트 계정 조회 실패: account={} platform={}",
                         account.getId(), account.getPlatform(), e);
             }
+        }
+        // 대상 쿠팡 계정 전체가 실패해 한 행도 못 모았으면 빈 파일로 감추지 말고 오류를 드러낸다
+        // (컨트롤러가 500 으로 매핑 — "정상인데 INSTRUCT 주문 0건" 과 "조회 실패" 를 구분).
+        if (rows.isEmpty() && targetAccounts > 0 && failedAccounts == targetAccounts) {
+            throw new IllegalStateException("쿠팡 ordersheets 조회 실패 — 대상 계정 전체 오류");
         }
         return rows;
     }

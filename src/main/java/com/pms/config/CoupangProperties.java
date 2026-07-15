@@ -24,10 +24,11 @@ public class CoupangProperties {
 
     /**
      * INSTRUCT(상품준비중) 조회 윈도우(일). 송장 접수시트 생성 전용.
-     * createdAtFrom = 오늘 − instructDays. INSTRUCT 는 결제 후 며칠 정체 가능하므로 syncDays 와 분리한다.
-     * 쿠팡 최대 31일.
+     * createdAtFrom = 오늘 − instructDays. INSTRUCT 는 결제완료(ACCEPT) 후 사용자가 나중에 수동 전환하므로
+     * 주문 생성일(createdAt)이 오래됐을 수 있다 — 좁은 윈도우면 현재 INSTRUCT 주문이 조회에서 누락된다.
+     * 그래서 syncDays 와 분리하고 쿠팡 상한(range < 31일)에 맞춰 최대치(30)로 넓게 잡는다.
      */
-    private int instructDays = 14;
+    private int instructDays = 30;
 
     /** returnRequests(반품/취소 요청 목록) 조회 경로. {vendorId} 치환. */
     private String returnrequestsPath = "/v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests";

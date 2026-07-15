@@ -43,6 +43,11 @@ oklyx:
     # Widened to 14: delivery-status transitions (e.g. → FINAL_DELIVERY) land days after order
     # creation, so a narrow window froze orders at ACCEPT once they aged out before a sync ran.
     sync-days: 14
+    # INSTRUCT (상품준비중) query window (days) for the shipping-label spreadsheet only.
+    # INSTRUCT orders are transitioned manually (by the seller in Coupang WING) well after the order
+    # was created, so their createdAt is old — a narrow window drops current INSTRUCT orders and the
+    # download comes back empty. Kept wide (Coupang caps the range at < 31 days).
+    instruct-days: 30
     # Return/cancel request list query GET_RETURN_REQUEST_BY_QUERY (cancelType=CANCEL to reconcile paid-order cancellations).
     returnrequests-path: /v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests
     # Cancel reconciliation window (days): wider than ordersheets to cover delayed cancellations. Coupang max 31 days.
