@@ -24,6 +24,7 @@ import org.springframework.http.MediaType;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -69,7 +70,8 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
                 .marketplaceAccount(account).platform("COUPANG")
                 .externalOrderId("O1").externalBoxId("B1").externalItemId("OPT1")
                 .itemName("양말세트").orderCount(3).cancelCount(0).holdCount(0)
-                .status("ACCEPT").build());   // 발주가능 3 × BOM 2 = autoQty 6
+                .status("ACCEPT").paidAt(LocalDateTime.now())   // 추출 윈도우(syncDays) 안에 들도록
+                .build());   // 발주가능 3 × BOM 2 = autoQty 6
     }
 
     @Test

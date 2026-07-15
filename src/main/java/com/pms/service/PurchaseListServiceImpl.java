@@ -14,6 +14,7 @@ import com.pms.dto.response.PurchaseListResponse;
 import com.pms.dto.response.PurchaseProductGroup;
 import com.pms.dto.response.PurchaseRecordView;
 import com.pms.dto.response.UnmappedOrder;
+import com.pms.config.CoupangProperties;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.OrderItemRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -26,6 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -53,6 +55,7 @@ public class PurchaseListServiceImpl implements PurchaseListService {
     private final ProductListingOptionRepository productListingOptionRepository;
     private final ProductListingProductRepository productListingProductRepository;
     private final ProductRepository productRepository;
+    private final CoupangProperties coupangProperties;
 
     @Override
     @Transactional
@@ -213,9 +216,12 @@ public class PurchaseListServiceImpl implements PurchaseListService {
     // --- helpers ---
 
     private List<OrderItem> acceptOrders(Long sellerId) {
+        // 동기화 윈도우(syncDays) 밖 주문은 status 가 갱신되지 않아 stale ACCEPT 로 남을 수 있으므로,
+        // 구매목록 추출도 같은 윈도우(paidAt 기준)로 제한한다.
+        LocalDateTime from = LocalDate.now().minusDays(coupangProperties.getSyncDays()).atStartOfDay();
         return sellerId == null
-                ? orderItemRepository.findByStatus(STATUS_ACCEPT)
-                : orderItemRepository.findByStatusAndMarketplaceAccount_Seller_Id(STATUS_ACCEPT, sellerId);
+                ? orderItemRepository.findRecentByStatus(STATUS_ACCEPT, from)
+                : orderItemRepository.findRecentByStatusAndSeller(STATUS_ACCEPT, sellerId, from);
     }
 
     private PurchaseLine toLine(ShoppingListItem li, int linePurchased, List<PurchaseRecord> recs) {

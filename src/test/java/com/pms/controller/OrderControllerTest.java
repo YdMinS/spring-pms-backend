@@ -13,6 +13,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 
+import java.time.LocalDateTime;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
@@ -47,7 +49,8 @@ class OrderControllerTest extends BaseIntegrationTest {
                 .marketplaceAccount(account).platform("COUPANG")
                 .externalOrderId("O1").externalBoxId("B1").externalItemId("I1")
                 .itemName("양말").orderCount(10).cancelCount(2).holdCount(1)
-                .status("ACCEPT").raw("{\"secret\":\"should-not-leak\"}").build());
+                .status("ACCEPT").paidAt(LocalDateTime.now())   // 조회 윈도우(syncDays) 안에 들도록
+                .raw("{\"secret\":\"should-not-leak\"}").build());
     }
 
     @Test

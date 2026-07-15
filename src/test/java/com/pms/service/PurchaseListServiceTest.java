@@ -5,6 +5,7 @@ import com.pms.domain.Product;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
 import com.pms.domain.PurchaseRecord;
+import com.pms.config.CoupangProperties;
 import com.pms.domain.ShoppingListItem;
 import com.pms.dto.request.ManualItemRequest;
 import com.pms.dto.response.PurchaseListResponse;
@@ -22,12 +23,14 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -46,6 +49,7 @@ class PurchaseListServiceTest {
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private ProductListingProductRepository productListingProductRepository;
     @Mock private ProductRepository productRepository;
+    @Mock private CoupangProperties coupangProperties;
 
     @InjectMocks private PurchaseListServiceImpl service;
 
@@ -67,7 +71,7 @@ class PurchaseListServiceTest {
         Product b = product(200L, "B");
         ProductListingOption option = ProductListingOption.builder().id(1L).platformOptionId("OPT1").build();
 
-        given(orderItemRepository.findByStatus("ACCEPT")).willReturn(List.of(oi));
+        given(orderItemRepository.findRecentByStatus(eq("ACCEPT"), any(LocalDateTime.class))).willReturn(List.of(oi));
         given(productListingOptionRepository.findByPlatformOptionId("OPT1")).willReturn(Optional.of(option));
         given(productListingProductRepository.findByProductListingOptionId(1L)).willReturn(List.of(
                 ProductListingProduct.builder().id(1L).product(a).quantity(2).build(),   // A×2 → 6
@@ -93,7 +97,7 @@ class PurchaseListServiceTest {
         ShoppingListItem existing = ShoppingListItem.builder()
                 .id(5L).orderItem(oi).product(a).autoQty(0).manualQty(4).build();
 
-        given(orderItemRepository.findByStatus("ACCEPT")).willReturn(List.of(oi));
+        given(orderItemRepository.findRecentByStatus(eq("ACCEPT"), any(LocalDateTime.class))).willReturn(List.of(oi));
         given(productListingOptionRepository.findByPlatformOptionId("OPT1")).willReturn(Optional.of(option));
         given(productListingProductRepository.findByProductListingOptionId(1L)).willReturn(List.of(
                 ProductListingProduct.builder().id(1L).product(a).quantity(2).build()    // 3×2 = 6
@@ -112,7 +116,7 @@ class PurchaseListServiceTest {
     @Test
     void extract_옵션미매핑_save호출안함() {
         OrderItem oi = acceptOrder(10L, "UNKNOWN", 3);
-        given(orderItemRepository.findByStatus("ACCEPT")).willReturn(List.of(oi));
+        given(orderItemRepository.findRecentByStatus(eq("ACCEPT"), any(LocalDateTime.class))).willReturn(List.of(oi));
         given(productListingOptionRepository.findByPlatformOptionId("UNKNOWN")).willReturn(Optional.empty());
 
         service.extract(null);
@@ -131,7 +135,7 @@ class PurchaseListServiceTest {
         given(purchaseRecordRepository.findByItem_IdIn(List.of(1L))).willReturn(List.of(
                 PurchaseRecord.builder().id(1L).item(sli).purchasedOn(LocalDate.now()).quantity(5).build()
         ));
-        given(orderItemRepository.findByStatus("ACCEPT")).willReturn(List.of());
+        given(orderItemRepository.findRecentByStatus(eq("ACCEPT"), any(LocalDateTime.class))).willReturn(List.of());
 
         PurchaseListResponse res = service.getList(null);
 
@@ -151,7 +155,7 @@ class PurchaseListServiceTest {
         given(purchaseRecordRepository.findByItem_IdIn(List.of(1L))).willReturn(List.of(
                 PurchaseRecord.builder().id(1L).item(sli).purchasedOn(LocalDate.now()).quantity(5).build()
         ));
-        given(orderItemRepository.findByStatus("ACCEPT")).willReturn(List.of());
+        given(orderItemRepository.findRecentByStatus(eq("ACCEPT"), any(LocalDateTime.class))).willReturn(List.of());
 
         PurchaseListResponse res = service.getList(null);
 
@@ -162,7 +166,7 @@ class PurchaseListServiceTest {
     void getList_ACCEPT인데옵션미매핑_unmappedOrders집계() {
         OrderItem oi = acceptOrder(10L, "X", 5);
         given(shoppingListItemRepository.findAll()).willReturn(List.of());
-        given(orderItemRepository.findByStatus("ACCEPT")).willReturn(List.of(oi));
+        given(orderItemRepository.findRecentByStatus(eq("ACCEPT"), any(LocalDateTime.class))).willReturn(List.of(oi));
         given(productListingOptionRepository.findByPlatformOptionId("X")).willReturn(Optional.empty());
 
         PurchaseListResponse res = service.getList(null);

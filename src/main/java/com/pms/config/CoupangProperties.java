@@ -21,10 +21,13 @@ public class CoupangProperties {
 
     /**
      * ordersheets 조회 기간(일). createdAtFrom = 오늘 − syncDays. 쿠팡은 범위 상한 < 31일.
-     * status 는 이 윈도우(주문 생성일 기준) 안의 주문만 갱신된다 — 좁으면 아직 진행 중(ACCEPT 등)인
-     * 주문이 윈도우를 벗어나며 마지막 상태(결제완료)로 얼어붙는다. 그래서 상한(30)으로 넓게 잡는다.
+     *
+     * status 는 이 윈도우(주문 생성일 기준) 안의 주문만 갱신된다 — 윈도우를 벗어난 주문은 다시 조회되지
+     * 않아 마지막 상태(예: 결제완료)로 얼어붙는다. 넓히면 쿠팡이 504(Gateway Timeout)를 자주 내므로,
+     * 대신 조회/구매목록 화면도 같은 윈도우(syncDays)로 제한해 stale 행이 노출되지 않게 한다.
+     * (표시 필터는 order_item.paidAt 기준 — 주문 createdAt 은 저장하지 않음.)
      */
-    private int syncDays = 30;
+    private int syncDays = 14;
 
     /**
      * INSTRUCT(상품준비중) 조회 윈도우(일). 송장 접수시트 생성 전용.

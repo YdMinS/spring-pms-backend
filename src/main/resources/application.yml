@@ -40,10 +40,11 @@ oklyx:
     # Ordersheet list query (daily paging) GET_ORDERSHEET. {vendorId} is replaced with the account vendorId.
     ordersheets-path: /v2/providers/openapi/apis/api/v5/vendors/{vendorId}/ordersheets
     # Ordersheet query window (days): createdAtFrom = today − sync-days. Coupang caps the range at < 31 days.
-    # Widened to 30: order status is only refreshed for orders whose createdAt falls inside this window.
-    # Delivery-status transitions (e.g. → FINAL_DELIVERY) land days after order creation, so a narrow
-    # window froze orders at ACCEPT (결제완료) once they aged out of the window before progressing.
-    sync-days: 30
+    # Status is only refreshed for orders whose createdAt falls inside this window; orders that age out
+    # freeze at their last status (e.g. ACCEPT/결제완료). Widening triggers Coupang 504s, so instead the
+    # order-history & purchase-list views are also bounded to this same window (by paidAt) so stale rows
+    # are never shown. Keep this in sync with the display filter in OrderQueryService/PurchaseListService.
+    sync-days: 14
     # INSTRUCT (상품준비중) query window (days) for the shipping-label spreadsheet only.
     # INSTRUCT orders are transitioned manually (by the seller in Coupang WING) well after the order
     # was created, so their createdAt is old — a narrow window drops current INSTRUCT orders and the
