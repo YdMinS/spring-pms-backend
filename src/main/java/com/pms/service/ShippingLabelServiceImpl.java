@@ -146,10 +146,20 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
             }
             rows.add(new ShippingLabelRow(
                     receiverName, receiverPhone, postCode, address,
-                    item.path("vendorItemName").asText(""), quantity,
+                    productName(item), quantity,
                     orderId, deliveryMessage, shipmentBoxId,
                     sellerName, platform));
         }
+    }
+
+    /**
+     * 상품명 컬럼 값 결정.
+     * 노출상품명(vendorItemPackageName) 우선 — 옵션(용량·개입수)이 빠진 상품 단위 이름이라 시트가 깔끔하다.
+     * 값이 비어 오면 노출옵션명(vendorItemName)으로 폴백해 빈 상품명을 방지한다.
+     */
+    private String productName(JsonNode item) {
+        String packageName = item.path("vendorItemPackageName").asText("");
+        return packageName.isBlank() ? item.path("vendorItemName").asText("") : packageName;
     }
 
     /**

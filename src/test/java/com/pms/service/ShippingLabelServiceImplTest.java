@@ -69,7 +69,8 @@ class ShippingLabelServiceImplTest {
         assertThat(first.receiverPhone()).isEqualTo("01012345678");        // E.164 → 국내
         assertThat(first.postCode()).isEqualTo("06133");
         assertThat(first.address()).isEqualTo("서울시 강남구 테헤란로 1 101동 202호");
-        assertThat(first.productName()).isEqualTo("양말 블랙 L");
+        assertThat(first.productName()).isEqualTo("양말세트");            // 노출상품명(vendorItemPackageName) 우선
+        assertThat(rows.get(1).productName()).isEqualTo("양말 화이트 M");  // 노출상품명 없으면 노출옵션명 폴백
         assertThat(first.quantity()).isEqualTo(2);
         assertThat(first.orderId()).isEqualTo("4000019469460");            // Number → String
         assertThat(first.deliveryMessage()).isEqualTo("문앞");
@@ -152,7 +153,7 @@ class ShippingLabelServiceImplTest {
                 "receiver":{"name":"김철수","safeNumber":"+821012345678",
                             "addr1":"서울시 강남구 테헤란로 1","addr2":"101동 202호","postCode":"06133"},
                 "orderItems":[
-                  {"vendorItemId":3823839899,"vendorItemName":"양말 블랙 L","shippingCount":2,"cancelCount":0,"holdCountForCancel":0},
+                  {"vendorItemId":3823839899,"vendorItemPackageName":"양말세트","vendorItemName":"양말 블랙 L","shippingCount":2,"cancelCount":0,"holdCountForCancel":0},
                   {"vendorItemId":3823839900,"vendorItemName":"양말 화이트 M","shippingCount":1,"cancelCount":0,"holdCountForCancel":0},
                   {"vendorItemId":3823839901,"vendorItemName":"취소된옵션","shippingCount":1,"cancelCount":1,"holdCountForCancel":0}
                 ]}
