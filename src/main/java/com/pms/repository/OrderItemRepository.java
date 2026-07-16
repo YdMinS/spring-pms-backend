@@ -1,6 +1,7 @@
 package com.pms.repository;
 
 import com.pms.domain.OrderItem;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -36,6 +37,12 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
     @Query("SELECT o FROM OrderItem o WHERE o.status = :status AND o.marketplaceAccount.seller.id = :sellerId AND o.paidAt >= :from")
     List<OrderItem> findRecentByStatusAndSeller(@Param("status") String status, @Param("sellerId") Long sellerId, @Param("from") LocalDateTime from);
 
-    /** 주문번호(쿠팡 orderId)로 그 주문의 모든 라인(박스의 전체 vendorItemId) 조회 — 발송처리 전개용. */
+    /**
+     * 주문번호(쿠팡 orderId)로 그 주문의 모든 라인(박스의 전체 vendorItemId) 조회 — 발송처리 전개용.
+     *
+     * 발송처리 서비스는 @Transactional 없이(open-in-view=false) account.getPlatform()/getVendorId()/
+     * getAccessKey() 등을 읽으므로, marketplaceAccount 를 즉시 로딩해 LazyInitializationException 방지.
+     */
+    @EntityGraph(attributePaths = "marketplaceAccount")
     List<OrderItem> findByExternalOrderId(String externalOrderId);
 }
