@@ -154,12 +154,12 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
 
     /**
      * 상품명 컬럼 값 결정.
-     * 노출상품명(vendorItemPackageName) 우선 — 옵션(용량·개입수)이 빠진 상품 단위 이름이라 시트가 깔끔하다.
+     * 등록상품명(sellerProductName) 우선 — 판매자가 상품 등록 시 지은 이름을 그대로 노출한다.
      * 값이 비어 오면 노출옵션명(vendorItemName)으로 폴백해 빈 상품명을 방지한다.
      */
     private String productName(JsonNode item) {
-        String packageName = item.path("vendorItemPackageName").asText("");
-        return packageName.isBlank() ? item.path("vendorItemName").asText("") : packageName;
+        String sellerProductName = item.path("sellerProductName").asText("");
+        return sellerProductName.isBlank() ? item.path("vendorItemName").asText("") : sellerProductName;
     }
 
     /**
