@@ -37,8 +37,11 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final String KST_OFFSET = "%2B09:00";        // +09:00, URL-encoded (+ → %2B)
 
+    /** 택배수량(박스·라벨 수) 기본값 — 라인당 1박스. 추후 사용자 조정 가능하게 확장 예정. */
+    private static final int DEFAULT_PARCEL_QUANTITY = 1;
+
     private static final String[] HEADERS = {
-            "받는사람 이름", "전화번호", "우편번호", "주소", "상품명", "수량",
+            "받는사람 이름", "전화번호", "우편번호", "주소", "상품명", "택배수량",
             "내품수량", "주문번호", "배송메시지", "관리코드", "판매자", "플랫폼"
     };
 
@@ -210,8 +213,10 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
                 dataRow.createCell(2).setCellValue(row.postCode());
                 dataRow.createCell(3).setCellValue(row.address());
                 dataRow.createCell(4).setCellValue(row.productName());
-                dataRow.createCell(5).setCellValue(row.quantity());          // 수량
-                dataRow.createCell(6).setCellValue(row.quantity());          // 내품수량(라인 단위라 동일)
+                // 택배수량(박스 수)은 항상 1 — 택배사가 이 값만큼 라벨을 발번하므로 라인당 1장.
+                // 실제 주문 개수는 내품수량에만 노출(한 송장에 "N개" 표기).
+                dataRow.createCell(5).setCellValue(DEFAULT_PARCEL_QUANTITY);  // 택배수량
+                dataRow.createCell(6).setCellValue(row.quantity());          // 내품수량(주문 개수)
                 dataRow.createCell(7).setCellValue(row.orderId());
                 dataRow.createCell(8).setCellValue(row.deliveryMessage());
                 dataRow.createCell(9).setCellValue(row.shipmentBoxId());     // 관리코드(업로드 레그 매칭 키)

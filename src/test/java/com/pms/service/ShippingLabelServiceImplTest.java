@@ -136,8 +136,8 @@ class ShippingLabelServiceImplTest {
 
             Row row1 = sheet.getRow(1);
             assertThat(row1.getCell(1).getStringCellValue()).isEqualTo("01012345678");
-            assertThat(row1.getCell(5).getNumericCellValue()).isEqualTo(2.0);      // 수량
-            assertThat(row1.getCell(6).getNumericCellValue()).isEqualTo(2.0);      // 내품수량
+            assertThat(row1.getCell(5).getNumericCellValue()).isEqualTo(1.0);      // 택배수량(항상 1)
+            assertThat(row1.getCell(6).getNumericCellValue()).isEqualTo(2.0);      // 내품수량(주문 개수)
             assertThat(row1.getCell(9).getStringCellValue()).isEqualTo("302012345678");
             assertThat(sheet.getRow(2).getCell(0).getStringCellValue()).isEqualTo("이영희");
         }
