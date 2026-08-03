@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Seller;
+import com.pms.dto.response.ShippingLabelPreviewRow;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import org.apache.poi.ss.usermodel.Row;
@@ -118,12 +119,26 @@ class ShippingLabelServiceImplTest {
     }
 
     @Test
-    void toXlsx_headerAndData() throws Exception {
+    void previewRows_mapsRowKeyAndDefaults() {
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(coupangAccount));
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(oneBoxThreeLines());
+
+        List<ShippingLabelPreviewRow> rows = service.previewRows(null);
+
+        assertThat(rows).hasSize(2);                                        // 취소분(발주가능 0) 제외
+        assertThat(rows.get(0).rowKey()).isEqualTo("302012345678:3823839899");
+        assertThat(rows.get(0).parcelQuantity()).isEqualTo(1);             // 기본 택배수량
+    }
+
+    @Test
+    void toXlsx_writesParcelAndInnerQuantity() throws Exception {
         List<ShippingLabelRow> rows = List.of(
                 new ShippingLabelRow("김철수", "01012345678", "06133", "서울시 강남구 테헤란로 1 101동 202호",
-                        "양말 블랙 L", 2, "4000019469460", "문앞", "302012345678", "셀러A", "COUPANG"),
+                        "양말 블랙 L", 2, 1, "3823839899",
+                        "4000019469460", "문앞", "302012345678", "셀러A", "COUPANG"),
                 new ShippingLabelRow("이영희", "01099998888", "07001", "서울시 서초구 1",
-                        "양말 화이트 M", 1, "4000019469461", "", "302012345679", "셀러A", "COUPANG"));
+                        "양말 화이트 M", 1, 1, "3823839900",
+                        "4000019469461", "", "302012345679", "셀러A", "COUPANG"));
 
         byte[] xlsx = service.toXlsx(rows);
 
@@ -136,10 +151,26 @@ class ShippingLabelServiceImplTest {
 
             Row row1 = sheet.getRow(1);
             assertThat(row1.getCell(1).getStringCellValue()).isEqualTo("01012345678");
-            assertThat(row1.getCell(5).getNumericCellValue()).isEqualTo(1.0);      // 택배수량(항상 1)
+            assertThat(row1.getCell(5).getNumericCellValue()).isEqualTo(1.0);      // 택배수량(기본 1)
             assertThat(row1.getCell(6).getNumericCellValue()).isEqualTo(2.0);      // 내품수량(주문 개수)
             assertThat(row1.getCell(9).getStringCellValue()).isEqualTo("302012345678");
             assertThat(sheet.getRow(2).getCell(0).getStringCellValue()).isEqualTo("이영희");
+        }
+    }
+
+    @Test
+    void toXlsx_honorsEditedParcelQuantity() throws Exception {
+        List<ShippingLabelRow> rows = List.of(
+                new ShippingLabelRow("김철수", "01012345678", "06133", "서울시 강남구 테헤란로 1 101동 202호",
+                        "양말 블랙 L", 2, 3, "3823839899",
+                        "4000019469460", "문앞", "302012345678", "셀러A", "COUPANG"));
+
+        byte[] xlsx = service.toXlsx(rows);
+
+        try (XSSFWorkbook wb = new XSSFWorkbook(new ByteArrayInputStream(xlsx))) {
+            Row row1 = wb.getSheetAt(0).getRow(1);
+            assertThat(row1.getCell(5).getNumericCellValue()).isEqualTo(3.0);      // 편집 택배수량 반영
+            assertThat(row1.getCell(6).getNumericCellValue()).isEqualTo(2.0);      // 내품수량 유지
         }
     }
 

@@ -1,5 +1,8 @@
 package com.pms.service;
 
+import com.pms.dto.request.ShippingLabelExportRequest.ExportRow;
+import com.pms.dto.response.ShippingLabelPreviewRow;
+
 import java.util.List;
 
 /**
@@ -34,4 +37,17 @@ public interface ShippingLabelService {
      * 행 0건이어도 헤더만 있는 빈 시트를 반환한다.
      */
     byte[] toXlsx(List<ShippingLabelRow> rows);
+
+    /**
+     * 대상 계정의 쿠팡 ordersheets(INSTRUCT)를 조회·펼쳐 편집용 미리보기 행으로 반환한다 (V2).
+     *
+     * @param sellerId null 이면 활성 전체 계정, 지정 시 해당 셀러의 활성 계정만
+     */
+    List<ShippingLabelPreviewRow> previewRows(Long sellerId);
+
+    /**
+     * 사용자가 편집한 export rows 를 택배사 접수 xlsx bytes 로 변환한다 (V2).
+     * 편집분(주로 parcelQuantity)을 그대로 반영한다.
+     */
+    byte[] toXlsxFromExport(List<ExportRow> rows);
 }

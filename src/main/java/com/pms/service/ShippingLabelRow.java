@@ -10,7 +10,14 @@ package com.pms.service;
  */
 public record ShippingLabelRow(
         String receiverName, String receiverPhone, String postCode, String address,
-        String productName, int quantity,
+        String productName, int quantity,          // inner quantity (order count)
+        int parcelQuantity,                          // parcel count (boxes), default 1
+        String vendorItemId,                         // used to build rowKey
         String orderId, String deliveryMessage, String shipmentBoxId,
         String sellerName, String platform) {
+
+    /** Edit matching key: shipmentBoxId + ":" + vendorItemId. */
+    public String rowKey() {
+        return shipmentBoxId + ":" + vendorItemId;
+    }
 }

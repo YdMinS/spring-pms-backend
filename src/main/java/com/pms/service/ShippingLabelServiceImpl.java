@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.dto.request.ShippingLabelExportRequest.ExportRow;
+import com.pms.dto.response.ShippingLabelPreviewRow;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import lombok.RequiredArgsConstructor;
@@ -81,6 +83,30 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
         return rows;
     }
 
+    @Override
+    public List<ShippingLabelPreviewRow> previewRows(Long sellerId) {
+        return collectRows(sellerId).stream().map(ShippingLabelPreviewRow::from).toList();
+    }
+
+    /**
+     * 편집된 export rows 를 xlsx bytes 로 변환한다.
+     *
+     * <p>편집분 재매칭 없이 posted rows 그대로 {@link #toXlsx}로 넘긴다(비대칭 의도 — rowKey 는
+     * xlsx 미출력이라 vendorItemId 는 ""로 채운다).
+     */
+    @Override
+    public byte[] toXlsxFromExport(List<ExportRow> rows) {
+        List<ShippingLabelRow> mapped = rows.stream()
+                .map(e -> new ShippingLabelRow(
+                        e.receiverName(), e.receiverPhone(), e.postCode(), e.address(),
+                        e.productName(), e.quantity(),
+                        e.parcelQuantity(), "",
+                        e.orderId(), e.deliveryMessage(), e.shipmentBoxId(),
+                        e.sellerName(), e.platform()))
+                .toList();
+        return toXlsx(mapped);
+    }
+
     /** 단일 쿠팡 계정의 INSTRUCT ordersheets 를 페이징 조회하며 행으로 펼친다. */
     private List<ShippingLabelRow> collectAccountRows(MarketplaceAccount account) {
         String path = coupangProperties.getOrdersheetsPath().replace("{vendorId}", account.getVendorId());
@@ -147,9 +173,11 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
             if (quantity <= 0) {
                 continue;                                       // 취소분 미발송
             }
+            String vendorItemId = item.path("vendorItemId").asText("");
             rows.add(new ShippingLabelRow(
                     receiverName, receiverPhone, postCode, address,
                     productName(item), quantity,
+                    DEFAULT_PARCEL_QUANTITY, vendorItemId,
                     orderId, deliveryMessage, shipmentBoxId,
                     sellerName, platform));
         }
@@ -213,9 +241,9 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
                 dataRow.createCell(2).setCellValue(row.postCode());
                 dataRow.createCell(3).setCellValue(row.address());
                 dataRow.createCell(4).setCellValue(row.productName());
-                // 택배수량(박스 수)은 항상 1 — 택배사가 이 값만큼 라벨을 발번하므로 라인당 1장.
+                // 택배수량(박스·라벨 수) — 기본 1이며 V2 편집 시 사용자 조정값이 반영된다.
                 // 실제 주문 개수는 내품수량에만 노출(한 송장에 "N개" 표기).
-                dataRow.createCell(5).setCellValue(DEFAULT_PARCEL_QUANTITY);  // 택배수량
+                dataRow.createCell(5).setCellValue(row.parcelQuantity());     // 택배수량
                 dataRow.createCell(6).setCellValue(row.quantity());          // 내품수량(주문 개수)
                 dataRow.createCell(7).setCellValue(row.orderId());
                 dataRow.createCell(8).setCellValue(row.deliveryMessage());
