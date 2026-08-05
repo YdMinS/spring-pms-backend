@@ -26,7 +26,9 @@ spring:
       max-request-size: 20MB
 
 jwt:
-  secret: ${JWT_SECRET}
+  # Sentinel default(__UNSET__): env 미주입 시 placeholder resolution 단계에서 죽지 않고
+  # StartupEnvironmentValidator 까지 도달해 "JWT_SECRET 필요" 라는 명확한 메시지로 중단시킨다.
+  secret: ${JWT_SECRET:__UNSET__}
   expiration: 1800000          # 30m
   refresh-expiration: 1209600000   # 14d
   prefix: Bearer

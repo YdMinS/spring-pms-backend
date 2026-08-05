@@ -1,0 +1,22 @@
+{
+  "code": 200,
+  "message": "OK",
+  "nextToken": "",
+  "data": [
+    {
+      "orderId": 300000012345,
+      "shipmentBoxId": 700000012345,
+      "status": "ACCEPT",
+      "paidAt": "2026-08-05T14:17:13.973885+09:00",
+      "orderItems": [
+        {
+          "vendorItemId": 800000012345,
+          "vendorItemName": "테스트상품 옵션A",
+          "shippingCount": 2,
+          "cancelCount": 0,
+          "holdCountForCancel": 0
+        }
+      ]
+    }
+  ]
+}
