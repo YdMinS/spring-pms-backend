@@ -7,6 +7,10 @@ spring:
     username: ${DB_USERNAME:__UNSET__}
     password: ${DB_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
+  liquibase:
+    # Liquibase owns the schema. On the pre-existing prod DB the baseline is marked applied ONCE via
+    # `changelogSync` (see 03_BACKEND_PROD_CHANGELOGSYNC.md) — never executed. Later changesets auto-apply at boot.
+    enabled: true
   jpa:
     database-platform: org.hibernate.dialect.MySQLDialect
     hibernate:
