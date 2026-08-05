@@ -1,4 +1,4 @@
-# Production Profile
+git # Production Profile
 spring:
   datasource:
     # Sentinel defaults: env 미주입 시 context 로드 단계에서 죽지 않고 StartupEnvironmentValidator 가
