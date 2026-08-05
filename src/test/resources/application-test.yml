@@ -1,6 +1,6 @@
 spring:
   datasource:
-    url: jdbc:h2:mem:testdb
+    url: jdbc:h2:mem:testdb-${random.uuid};DB_CLOSE_DELAY=-1;MODE=MySQL
     driver-class-name: org.h2.Driver
     username: sa
     password:
@@ -26,6 +26,13 @@ oklyx:
   crypto:
     # Fixed AES-256 key for tests (32-byte Base64)
     master-key: tsUz8XJ4zD1cfE6SCdKlpbvt/p0a8axnDaicVLugPw4=
+
+# Override image storage to a writable, build-local dir for tests.
+# Prod default (/app/uploads/products) is not writable in the test sandbox.
+image:
+  storage:
+    uploadDir: build/test-uploads/products
+    baseUrl: /api/products
 
 server:
   tomcat:
