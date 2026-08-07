@@ -1,0 +1,35 @@
+# Local Profile — env 없이 즉시 부팅. H2 인메모리 + 더미 secret + 마켓 Mock(@Profile("local")).
+# 여기 secret 은 '비밀'이 아니라 로컬 편의용 더미다. prod 에서 쓰이면 StartupEnvironmentValidator 가 부팅 중단.
+spring:
+  datasource:
+    # H2 MySQL 호환모드, 세션 종료 후에도 스키마 유지(DB_CLOSE_DELAY=-1)
+    url: jdbc:h2:mem:oklyx_local;DB_CLOSE_DELAY=-1;MODE=MySQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  h2:
+    console:
+      enabled: true          # http://localhost:8083/h2-console
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: create-drop  # 로컬은 매번 엔티티→스키마 새로 생성
+    show-sql: true
+    open-in-view: false
+  # 주의(A): local 은 create-drop(Hibernate 생성)만 사용. schema.sql 이 있으면 이중 생성 충돌
+  # (예: STOCK_LOG already exists) → sql.init 을 꺼 스키마 생성을 Hibernate 로 일원화한다.
+  sql:
+    init:
+      mode: never
+
+jwt:
+  # 로컬 전용 더미(32byte 이상). 비밀 아님.
+  secret: local-dev-dummy-jwt-secret-please-override-in-real-envs
+  expiration: 1800000          # 30m
+  refresh-expiration: 1209600000   # 14d
+  prefix: Bearer
+
+oklyx:
+  crypto:
+    # 로컬 전용 더미 AES-256 master key(32-byte Base64). 비밀 아님 — prod 에선 절대 사용 금지.
+    master-key: Fwa3r5YgZBZG8UAJ3GJo6SnpMGc8XOv7fvitDLTK5zs=

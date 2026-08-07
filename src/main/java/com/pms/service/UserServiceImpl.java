@@ -8,6 +8,7 @@ import com.pms.dto.request.UpdateUserRequest;
 import com.pms.dto.response.UserResponse;
 import com.pms.exception.DuplicateEmailException;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.RefreshTokenRepository;
 import com.pms.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -23,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class UserServiceImpl implements UserService {
 
     private final UserRepository userRepository;
+    private final RefreshTokenRepository refreshTokenRepository;
     private final BCryptPasswordEncoder passwordEncoder;
     private static final int DEFAULT_PAGE_SIZE = 20;
 
@@ -91,6 +93,8 @@ public class UserServiceImpl implements UserService {
     public void deleteUser(Long id) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User", id));
+        // Remove dependent refresh tokens first (refresh_token.user_id is NOT NULL).
+        refreshTokenRepository.deleteByUser(user);
         userRepository.delete(user);
     }
 

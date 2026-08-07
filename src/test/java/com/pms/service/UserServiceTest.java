@@ -8,6 +8,7 @@ import com.pms.dto.request.UpdateUserRequest;
 import com.pms.dto.response.UserResponse;
 import com.pms.exception.DuplicateEmailException;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.RefreshTokenRepository;
 import com.pms.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,6 +36,9 @@ public class UserServiceTest {
 
     @Mock
     private UserRepository userRepository;
+
+    @Mock
+    private RefreshTokenRepository refreshTokenRepository;
 
     @Mock
     private BCryptPasswordEncoder bCryptPasswordEncoder;
@@ -229,6 +233,7 @@ public class UserServiceTest {
         when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
 
         assertDoesNotThrow(() -> userService.deleteUser(1L));
+        verify(refreshTokenRepository, times(1)).deleteByUser(testUser);
         verify(userRepository, times(1)).delete(testUser);
     }
 

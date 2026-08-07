@@ -1,0 +1,103 @@
+# DEV 배포 (develop → :dev). PROD 배포(deploy.yml, main → :latest)는 별도·무손상.
+# 방식: 기존과 동일한 raw docker run(compose 아님). PROD 와 컨테이너 이름/호스트포트/nginx vhost 로 완전 분리.
+#
+# ⚠️ 서버 사전작업(수동, 이 워크플로가 만들지 않음):
+#   - db-pms-dev 컨테이너(mysql:8.0, pms_network, named volume, persistent) — DEV DB
+#   - /services/oclyx-dev/uploads/products 디렉토리
+#   - nginx: api-dev.oclyx.com → spring-pms-backend-dev:8083 (ydmins_proxy_network) + 인증서
+# ⚠️ GitHub Secrets:
+#   - 기존 재사용: SERVER_HOST / SERVER_USER / SSH_PRIVATE_KEY / TAILSCALE_AUTH_KEY / GITHUB_TOKEN
+#   - 신규(DEV 런타임, PROD와 동일하게 -e 로 주입): DEV_DB_USERNAME / DEV_DB_PASSWORD /
+#     DEV_JWT_SECRET / DEV_OKLYX_CRYPTO_MASTER_KEY
+#   (SPRING_PROFILES_ACTIVE=dev, DB_URL 은 비밀 아님 → 아래에 하드코딩)
+
+name: Deploy spring-pms-backend to DEV
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/ydmins/spring-pms-backend
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image (:dev)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:dev
+            ${{ env.IMAGE_NAME }}:dev-${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache-dev
+          cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache-dev,mode=max
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
+
+      - name: Deploy DEV to server via SSH
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
+            docker stop spring-pms-backend-dev || true
+            docker rm spring-pms-backend-dev || true
+            docker pull ${{ env.IMAGE_NAME }}:dev
+
+            # Ensure required networks exist (idempotent)
+            docker network inspect pms_network >/dev/null 2>&1 || docker network create pms_network
+            docker network inspect ydmins_proxy_network >/dev/null 2>&1 || docker network create ydmins_proxy_network
+
+            # 런타임 secret 은 GitHub Secrets(DEV_*) 에서 -e 로 주입(PROD deploy.yml 과 동일 방식).
+            # db-pms-dev 는 recreate 안 함(persistent). SPRING_PROFILES_ACTIVE/DB_URL 은 비밀 아님 → 하드코딩.
+            docker run -d \
+              --name spring-pms-backend-dev \
+              -p 8084:8083 \
+              --network pms_network \
+              -v /services/oclyx-dev/uploads/products:/app/uploads/products \
+              -e SPRING_PROFILES_ACTIVE=dev \
+              -e DB_URL=jdbc:mysql://db-pms-dev:3306/pms_db \
+              -e DB_USERNAME=${{ secrets.DEV_DB_USERNAME }} \
+              -e DB_PASSWORD=${{ secrets.DEV_DB_PASSWORD }} \
+              -e JWT_SECRET=${{ secrets.DEV_JWT_SECRET }} \
+              -e OKLYX_CRYPTO_MASTER_KEY=${{ secrets.DEV_OKLYX_CRYPTO_MASTER_KEY }} \
+              --restart unless-stopped \
+              ${{ env.IMAGE_NAME }}:dev
+
+            # nginx(api-dev.oclyx.com) 가 도달하도록 proxy 네트워크에 연결
+            docker network connect ydmins_proxy_network spring-pms-backend-dev
+
+            docker logout ghcr.io
+            sleep 5
+            docker ps --filter "name=spring-pms-backend-dev" --filter "status=running" | grep spring-pms-backend-dev
+
+      - name: Verify deployment
+        run: echo "DEV deploy (spring-pms-backend:dev) completed"

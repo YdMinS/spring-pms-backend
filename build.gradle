@@ -42,6 +42,9 @@ dependencies {
     implementation "org.springdoc:springdoc-openapi-starter-webmvc-ui:${springdocVersion}"
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
 
+    // DB migration (version managed by Spring Boot 3.3.0)
+    implementation 'org.liquibase:liquibase-core'
+
     // xlsx generation (shipping label spreadsheet)
     implementation 'org.apache.poi:poi-ooxml:5.2.5'
 
@@ -56,6 +59,14 @@ dependencies {
 
 bootJar {
     archiveFileName = "app.jar"
+}
+
+tasks.named('bootRun') {
+    // Local convenience: `./gradlew bootRun` defaults to the `local` profile (H2 + 마켓 Mock + 더미 secret + 시드)
+    // so it boots with no env. If SPRING_PROFILES_ACTIVE is set, that wins.
+    // This only affects the bootRun task on a dev machine — the packaged jar keeps NO default, so a
+    // misconfigured prod/dev deploy still fail-fasts via StartupEnvironmentValidator.
+    systemProperty 'spring.profiles.active', System.getenv('SPRING_PROFILES_ACTIVE') ?: 'local'
 }
 
 tasks.named('test') {

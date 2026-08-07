@@ -88,7 +88,7 @@ public class PackageControllerTest extends BaseIntegrationTest {
     // GET /api/admin/package/{id} tests
     @Test
     public void testGetPackageSuccess() throws Exception {
-        mockMvc.perform(get("/api/admin/package/1")
+        mockMvc.perform(get("/api/admin/package/" + seededPackageId)
                 .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUCCESS"));
@@ -96,7 +96,7 @@ public class PackageControllerTest extends BaseIntegrationTest {
 
     @Test
     public void testGetPackageUnauthorized() throws Exception {
-        mockMvc.perform(get("/api/admin/package/1"))
+        mockMvc.perform(get("/api/admin/package/" + seededPackageId))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.status").value("FAILURE"));
     }
@@ -113,7 +113,7 @@ public class PackageControllerTest extends BaseIntegrationTest {
                 )
         );
 
-        mockMvc.perform(patch("/api/admin/package/1")
+        mockMvc.perform(patch("/api/admin/package/" + seededPackageId)
                 .header("Authorization", "Bearer " + adminToken)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(requestJson))
@@ -132,14 +132,14 @@ public class PackageControllerTest extends BaseIntegrationTest {
                 )
         );
 
-        mockMvc.perform(patch("/api/admin/package/1")
+        mockMvc.perform(patch("/api/admin/package/" + seededPackageId)
                 .header("Authorization", "Bearer " + adminToken)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(requestJson))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUCCESS"));
 
-        mockMvc.perform(get("/api/admin/package/1")
+        mockMvc.perform(get("/api/admin/package/" + seededPackageId)
                 .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.isDefault").value(true));
@@ -156,7 +156,7 @@ public class PackageControllerTest extends BaseIntegrationTest {
                 )
         );
 
-        mockMvc.perform(patch("/api/admin/package/1")
+        mockMvc.perform(patch("/api/admin/package/" + seededPackageId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(requestJson))
                 .andExpect(status().isUnauthorized())
@@ -166,12 +166,12 @@ public class PackageControllerTest extends BaseIntegrationTest {
     // DELETE /api/admin/package/{id} tests
     @Test
     public void testDeletePackageSuccess() throws Exception {
-        mockMvc.perform(delete("/api/admin/package/1")
+        mockMvc.perform(delete("/api/admin/package/" + seededPackageId)
                 .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUCCESS"));
 
-        mockMvc.perform(get("/api/admin/package/1")
+        mockMvc.perform(get("/api/admin/package/" + seededPackageId)
                 .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isNotFound());
     }
@@ -186,7 +186,7 @@ public class PackageControllerTest extends BaseIntegrationTest {
 
     @Test
     public void testDeletePackageUnauthorized() throws Exception {
-        mockMvc.perform(delete("/api/admin/package/1"))
+        mockMvc.perform(delete("/api/admin/package/" + seededPackageId))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.status").value("FAILURE"));
     }

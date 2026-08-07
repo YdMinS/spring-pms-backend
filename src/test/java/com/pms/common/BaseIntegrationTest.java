@@ -44,6 +44,9 @@ public abstract class BaseIntegrationTest {
     /** Real DB id of the carrier rate seeded in setUp (H2 IDENTITY is not deterministic across tests). */
     protected Long seededCarrierRateId;
 
+    /** Real DB id of the package seeded in setUp (H2 IDENTITY climbs across tests; do not hardcode 1). */
+    protected Long seededPackageId;
+
     @Autowired
     protected MockMvc mockMvc;
 
@@ -118,16 +121,16 @@ public abstract class BaseIntegrationTest {
     }
 
     protected void registerTestPackages() {
-        // Create a default test package with ID 1
-        // This is used by tests that expect pre-existing data
+        // Seed a default test package; capture the real id.
+        // IDENTITY ignores any provided id and deleteAll does not reset the counter,
+        // so the id is not deterministic across tests — tests must use seededPackageId.
         Package pkg = Package.builder()
-                .id(1L)
                 .type("S")
                 .cost(new BigDecimal("2.50"))
                 .effectiveDate(LocalDate.now())
                 .isDefault(true)
                 .build();
-        packageRepository.saveAndFlush(pkg);
+        seededPackageId = packageRepository.saveAndFlush(pkg).getId();
     }
 
     protected void cleanupTestData() {

@@ -39,6 +39,9 @@ logs/
 .env.local
 *.pid
 
+# make up 런타임 pidfile 디렉토리
+.run/
+
 # Misc
 target/
 *.iml
