@@ -291,7 +291,9 @@ public class ProductServiceTest {
      *   - All throw IllegalArgumentException
      */
     @ParameterizedTest
-    @ValueSource(strings = {"INVALID", "KGS", "GRAM", "LITER", "ML2", "", " "})
+    // Empty/blank units are NOT tested here: with a weight present they hit the
+    // "Unit is required when Weight is provided" branch, a different validation path.
+    @ValueSource(strings = {"INVALID", "KGS", "GRAM", "LITER", "ML2"})
     @DisplayName("Should throw exception for all invalid units")
     public void testCreateProduct_InvalidUnits_Fail(String invalidUnit) {
         // Given

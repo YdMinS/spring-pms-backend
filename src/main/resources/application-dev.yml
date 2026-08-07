@@ -7,10 +7,14 @@ spring:
     username: ${DB_USERNAME:__UNSET__}
     password: ${DB_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
+  liquibase:
+    # Liquibase owns the schema on dev/prod. Baseline + future changesets applied at boot.
+    enabled: true
   jpa:
     database-platform: org.hibernate.dialect.MySQLDialect
     hibernate:
-      ddl-auto: update
+      # Liquibase owns the schema now; Hibernate only validates (was: update).
+      ddl-auto: validate
     show-sql: true
     properties:
       hibernate:

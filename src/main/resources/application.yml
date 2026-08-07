@@ -20,6 +20,10 @@ spring:
     properties:
       hibernate:
         format_sql: true
+  liquibase:
+    # Default OFF. Schema owner is Hibernate on local/test (create-drop); Liquibase only owns dev/prod.
+    enabled: false
+    change-log: classpath:db/changelog/db.changelog-master.yaml
   servlet:
     multipart:
       max-file-size: 20MB

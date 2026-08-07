@@ -1,0 +1,439 @@
+# Baseline snapshot of the pre-Liquibase schema (2026-08).
+# Derived mechanically from Hibernate's authoritative CREATE DDL (18 tables + FK + unique).
+# Structured tags only (no raw SQL) for H2<->MySQL portability.
+# Multi-changeSet form (one per table + one for FKs); all ids prefixed 001-baseline-*.
+# NOTE: On existing prod DB this file is NOT executed — it is marked applied via `changelogSync`
+#       (see 03_BACKEND_PROD_CHANGELOGSYNC.md). Fresh dev DB executes it normally.
+databaseChangeLog:
+
+  # ---- carrier ----
+  - changeSet:
+      id: 001-baseline-carrier
+      author: oklyx
+      comment: "Baseline: carrier (택배사 마스터 lookup)"
+      changes:
+        - createTable:
+            tableName: carrier
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: name, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: is_active, type: BOOLEAN, constraints: { nullable: false } }
+
+  # ---- seller ----
+  - changeSet:
+      id: 001-baseline-seller
+      author: oklyx
+      comment: "Baseline: seller"
+      changes:
+        - createTable:
+            tableName: seller
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: business_registration, type: VARCHAR(50), constraints: { nullable: false, unique: true, uniqueConstraintName: uq_seller_business_registration } }
+              - column: { name: seller_name, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+
+  # ---- member ----
+  - changeSet:
+      id: 001-baseline-member
+      author: oklyx
+      comment: "Baseline: member (User)"
+      changes:
+        - createTable:
+            tableName: member
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: email, type: VARCHAR(255), constraints: { nullable: false, unique: true, uniqueConstraintName: uq_member_email } }
+              - column: { name: password, type: VARCHAR(60), constraints: { nullable: false } }
+              - column: { name: name, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: role, type: "enum('ADMIN','GUEST','USER')", constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+
+  # ---- category ----
+  - changeSet:
+      id: 001-baseline-category
+      author: oklyx
+      comment: "Baseline: category (self-referencing parent_id)"
+      changes:
+        - createTable:
+            tableName: category
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: name, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: platform, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: platform_category_id, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: parent_id, type: BIGINT }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+
+  # ---- carrier_rate ----
+  - changeSet:
+      id: 001-baseline-carrier-rate
+      author: oklyx
+      comment: "Baseline: carrier_rate"
+      changes:
+        - createTable:
+            tableName: carrier_rate
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: carrier_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: type, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: cost, type: "DECIMAL(10,2)", constraints: { nullable: false } }
+              - column: { name: effective_date, type: DATE, constraints: { nullable: false } }
+              - column: { name: is_default, type: BOOLEAN, constraints: { nullable: false } }
+
+  # ---- commission_rate ----
+  - changeSet:
+      id: 001-baseline-commission-rate
+      author: oklyx
+      comment: "Baseline: commission_rate"
+      changes:
+        - createTable:
+            tableName: commission_rate
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: platform, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: category_id, type: BIGINT }
+              - column: { name: rate, type: "DECIMAL(5,4)", constraints: { nullable: false } }
+              - column: { name: is_default, type: BOOLEAN, constraints: { nullable: false } }
+
+  # ---- package ----
+  - changeSet:
+      id: 001-baseline-package
+      author: oklyx
+      comment: "Baseline: package"
+      changes:
+        - createTable:
+            tableName: package
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: type, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: cost, type: "DECIMAL(10,2)", constraints: { nullable: false } }
+              - column: { name: effective_date, type: DATE, constraints: { nullable: false } }
+              - column: { name: is_default, type: BOOLEAN, constraints: { nullable: false } }
+
+  # ---- platform_carrier_code ----
+  - changeSet:
+      id: 001-baseline-platform-carrier-code
+      author: oklyx
+      comment: "Baseline: platform_carrier_code (UNIQUE carrier_id+platform)"
+      changes:
+        - createTable:
+            tableName: platform_carrier_code
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: carrier_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: platform, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: delivery_company_code, type: VARCHAR(50), constraints: { nullable: false } }
+        - addUniqueConstraint:
+            tableName: platform_carrier_code
+            columnNames: carrier_id, platform
+            constraintName: uq_platform_carrier_code
+
+  # ---- marketplace_account ----
+  - changeSet:
+      id: 001-baseline-marketplace-account
+      author: oklyx
+      comment: "Baseline: marketplace_account (secret_key encrypted at app layer)"
+      changes:
+        - createTable:
+            tableName: marketplace_account
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: seller_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: platform, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: account_alias, type: VARCHAR(255) }
+              - column: { name: vendor_id, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: access_key, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: secret_key, type: VARCHAR(512), constraints: { nullable: false } }
+              - column: { name: is_active, type: BOOLEAN, constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+
+  # ---- order_item ----
+  - changeSet:
+      id: 001-baseline-order-item
+      author: oklyx
+      comment: "Baseline: order_item (idempotent upsert key). raw = JSON on MySQL / VARCHAR(32600) on H2 (see DECISIONS)"
+      changes:
+        - createTable:
+            tableName: order_item
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: marketplace_account_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: platform, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: external_order_id, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: external_box_id, type: VARCHAR(100) }
+              - column: { name: external_item_id, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: order_count, type: INT, constraints: { nullable: false } }
+              - column: { name: cancel_count, type: INT, constraints: { nullable: false } }
+              - column: { name: hold_count, type: INT, constraints: { nullable: false } }
+              - column: { name: status, type: VARCHAR(30), constraints: { nullable: false } }
+              - column: { name: paid_at, type: TIMESTAMP }
+              - column: { name: item_name, type: VARCHAR(500) }
+              # Large-text: portable CLOB (H2 CLOB / MySQL LONGTEXT). Entity maps it LONGVARCHAR;
+              # on MySQL the live column is JSON. H2 validate reads CLOB vs VARCHAR — documented divergence (DECISIONS).
+              - column: { name: raw, type: CLOB }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addUniqueConstraint:
+            tableName: order_item
+            columnNames: marketplace_account_id, external_box_id, external_order_id, external_item_id
+            constraintName: uq_order_item
+
+  # ---- products ----
+  - changeSet:
+      id: 001-baseline-products
+      author: oklyx
+      comment: "Baseline: products (Product)"
+      changes:
+        - createTable:
+            tableName: products
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: barcode_id, type: VARCHAR(50) }
+              - column: { name: brand, type: VARCHAR(255) }
+              - column: { name: price, type: "DECIMAL(38,2)" }
+              - column: { name: product_name, type: VARCHAR(500), constraints: { nullable: false } }
+              - column: { name: store, type: VARCHAR(255) }
+              - column: { name: unit, type: VARCHAR(255) }
+              - column: { name: volume_height, type: VARCHAR(255) }
+              - column: { name: volume_long, type: VARCHAR(255) }
+              - column: { name: volume_short, type: VARCHAR(255) }
+              - column: { name: weight, type: VARCHAR(255) }
+              # Large-text: portable CLOB (H2 CLOB / MySQL LONGTEXT). Entity columnDefinition=TEXT.
+              - column: { name: description, type: CLOB }
+              - column: { name: name, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: image_url, type: VARCHAR(500) }
+              - column: { name: active, type: BOOLEAN }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+
+  # ---- product_listing ----
+  - changeSet:
+      id: 001-baseline-product-listing
+      author: oklyx
+      comment: "Baseline: product_listing"
+      changes:
+        - createTable:
+            tableName: product_listing
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: platform, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: platform_product_id, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: name, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: seller_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: category_id, type: BIGINT }
+              - column: { name: delivery_id, type: BIGINT }
+              - column: { name: package_id, type: BIGINT }
+
+  # ---- product_listing_option ----
+  - changeSet:
+      id: 001-baseline-product-listing-option
+      author: oklyx
+      comment: "Baseline: product_listing_option"
+      changes:
+        - createTable:
+            tableName: product_listing_option
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: product_listing_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: option_name, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: platform_option_id, type: VARCHAR(255) }
+              - column: { name: selling_price, type: "DECIMAL(10,2)", constraints: { nullable: false } }
+
+  # ---- product_listing_product ----
+  - changeSet:
+      id: 001-baseline-product-listing-product
+      author: oklyx
+      comment: "Baseline: product_listing_product (join)"
+      changes:
+        - createTable:
+            tableName: product_listing_product
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: product_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: product_listing_option_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: quantity, type: INT, constraints: { nullable: false } }
+
+  # ---- shopping_list_item ----
+  - changeSet:
+      id: 001-baseline-shopping-list-item
+      author: oklyx
+      comment: "Baseline: shopping_list_item (UNIQUE order_item_id+product_id)"
+      changes:
+        - createTable:
+            tableName: shopping_list_item
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: order_item_id, type: BIGINT }
+              - column: { name: product_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: auto_qty, type: INT, constraints: { nullable: false } }
+              - column: { name: manual_qty, type: INT, constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addUniqueConstraint:
+            tableName: shopping_list_item
+            columnNames: order_item_id, product_id
+            constraintName: uq_shopping_list_item
+
+  # ---- purchase_record ----
+  - changeSet:
+      id: 001-baseline-purchase-record
+      author: oklyx
+      comment: "Baseline: purchase_record"
+      changes:
+        - createTable:
+            tableName: purchase_record
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: shopping_list_item_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: quantity, type: INT, constraints: { nullable: false } }
+              - column: { name: purchased_on, type: DATE, constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+
+  # ---- refresh_token ----
+  - changeSet:
+      id: 001-baseline-refresh-token
+      author: oklyx
+      comment: "Baseline: refresh_token"
+      changes:
+        - createTable:
+            tableName: refresh_token
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: user_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: token, type: VARCHAR(36), constraints: { nullable: false, unique: true, uniqueConstraintName: uq_refresh_token_token } }
+              - column: { name: device_info, type: VARCHAR(255) }
+              - column: { name: expires_at, type: TIMESTAMP, constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+
+  # ---- stock_log ----
+  - changeSet:
+      id: 001-baseline-stock-log
+      author: oklyx
+      comment: "Baseline: stock_log (PK stock_id, created_date NOT NULL, no modified_date)"
+      changes:
+        - createTable:
+            tableName: stock_log
+            columns:
+              - column: { name: stock_id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: barcode_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: in_stock, type: INT, constraints: { nullable: false } }
+              - column: { name: stock_add, type: INT, constraints: { nullable: false } }
+              - column: { name: stock_sub, type: INT, constraints: { nullable: false } }
+              - column: { name: name, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP, constraints: { nullable: false } }
+
+  # ---- foreign keys (all tables now exist) ----
+  - changeSet:
+      id: 001-baseline-foreign-keys
+      author: oklyx
+      comment: "Baseline: foreign key constraints"
+      changes:
+        - addForeignKeyConstraint:
+            constraintName: fk_carrier_rate_carrier
+            baseTableName: carrier_rate
+            baseColumnNames: carrier_id
+            referencedTableName: carrier
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_category_parent
+            baseTableName: category
+            baseColumnNames: parent_id
+            referencedTableName: category
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_commission_rate_category
+            baseTableName: commission_rate
+            baseColumnNames: category_id
+            referencedTableName: category
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_marketplace_account_seller
+            baseTableName: marketplace_account
+            baseColumnNames: seller_id
+            referencedTableName: seller
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_order_item_account
+            baseTableName: order_item
+            baseColumnNames: marketplace_account_id
+            referencedTableName: marketplace_account
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_platform_carrier_code_carrier
+            baseTableName: platform_carrier_code
+            baseColumnNames: carrier_id
+            referencedTableName: carrier
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_product_listing_category
+            baseTableName: product_listing
+            baseColumnNames: category_id
+            referencedTableName: category
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_product_listing_delivery
+            baseTableName: product_listing
+            baseColumnNames: delivery_id
+            referencedTableName: carrier_rate
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_product_listing_package
+            baseTableName: product_listing
+            baseColumnNames: package_id
+            referencedTableName: package
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_product_listing_seller
+            baseTableName: product_listing
+            baseColumnNames: seller_id
+            referencedTableName: seller
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_pl_option_listing
+            baseTableName: product_listing_option
+            baseColumnNames: product_listing_id
+            referencedTableName: product_listing
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_plp_product
+            baseTableName: product_listing_product
+            baseColumnNames: product_id
+            referencedTableName: products
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_plp_option
+            baseTableName: product_listing_product
+            baseColumnNames: product_listing_option_id
+            referencedTableName: product_listing_option
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_purchase_record_sli
+            baseTableName: purchase_record
+            baseColumnNames: shopping_list_item_id
+            referencedTableName: shopping_list_item
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_refresh_token_member
+            baseTableName: refresh_token
+            baseColumnNames: user_id
+            referencedTableName: member
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_sli_order_item
+            baseTableName: shopping_list_item
+            baseColumnNames: order_item_id
+            referencedTableName: order_item
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_sli_product
+            baseTableName: shopping_list_item
+            baseColumnNames: product_id
+            referencedTableName: products
+            referencedColumnNames: id
