@@ -28,6 +28,11 @@ public class PurchaseRecord extends BaseEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // Tenant dimension (changeset 002). TODO(02): remove `= 1L` default when @TenantId resolver is added.
+    @Builder.Default
+    @Column(name = "tenant_id", nullable = false)
+    private Long tenantId = 1L;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "shopping_list_item_id", nullable = false)
     private ShoppingListItem item;

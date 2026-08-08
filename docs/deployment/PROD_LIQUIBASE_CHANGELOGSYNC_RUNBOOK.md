@@ -124,3 +124,34 @@ prod 에 sync 하기 전, **빈 dev MySQL 에 baseline 을 실제로 한 번 실
 - `src/main/resources/application-prod.yml` — `spring.liquibase.enabled=true`, `ddl-auto: validate` (해당 블록 주석이 이 런북을 참조).
 - `oklyx-context/decisions/backend/DECISIONS.md` (Liquibase 도입 02) — 상위 설계.
 - 향후 새 환경 온보딩 시 §1 판별표부터 다시 적용.
+
+---
+
+## 10. 실전 교훈 (2026-08-07 dev·prod 최초 적용에서 실제 겪은 것)
+
+이 절차를 서버 docker 환경에서 처음 돌리며 부딪힌 것들. 다음 환경 온보딩 때 바로 참고.
+
+### 실행 환경 (이 프로젝트 서버)
+- dev DB 컨테이너 `db-pms-dev`, prod DB 컨테이너 `db-pms` (둘 다 mysql:8.0, schema `pms_db`, `pms_network`).
+- 앱 컨테이너: dev `spring-pms-backend-dev`(:dev, 8084), prod `spring-pms-backend`(:latest, 8083).
+- 자격증명은 앱 컨테이너 env에서 추출: `docker exec <app> printenv DB_URL|DB_USERNAME|DB_PASSWORD`.
+
+### Liquibase 컨테이너 실행 시 걸린 것 (순서대로)
+1. **드라이버 없음**: `liquibase/liquibase:4.27` 이미지엔 MySQL 드라이버 미포함 → `Cannot find database driver`. 해결 = `mysql-connector-j-8.4.0.jar` 를 `-v .../mysql-connector-j.jar:/liquibase/lib/mysql-connector-j.jar` 마운트 + `--driver=com.mysql.cj.jdbc.Driver`(신 클래스; `com.mysql.jdbc.Driver` 아님).
+2. **드라이버 jar 다운로드 깨짐**: `curl` 명령이 줄바꿈되며 URL이 잘려 554B 에러페이지 저장 → 같은 드라이버 에러. **jar 크기 2.4M 확인**(`ls -lh`) 필수. curl은 한 줄로.
+3. **changelog 경로**: 컨테이너 작업경로가 `/liquibase`. `-v $PWD/db:/liquibase/db` 로 마운트하고 `--changeLogFile=db/changelog/db.changelog-master.yaml`. (`/liquibase/changelog/db` 로 마운트하면 `does not exist`.)
+4. **url host**: 같은 네트워크의 **DB 컨테이너명**(`db-pms`)을 host로. `127.0.0.1`/`localhost` 는 liquibase 컨테이너 기준이라 못 붙음. `--network pms_network` 로 DB 컨테이너와 동일 네트워크 연결.
+
+### 백업 시
+- `mysqldump` 가 `Access denied; you need PROCESS privilege ... dump tablespaces` → **`--no-tablespaces`** 플래그로 해결(테이블·데이터엔 영향 없음).
+
+### 미리보기(`changelogSyncSQL`) 판독
+- 정상 출력엔 `DATABASECHANGELOG`/`DATABASECHANGELOGLOCK` 두 개 CREATE(= Liquibase 자체 이력 테이블)만 있고, **도메인 18테이블엔 CREATE/ALTER 가 없어야** 함. baseline 은 다중 changeSet 이라 `DATABASECHANGELOG` INSERT 가 **19행**(테이블 18 + FK 1).
+
+### ⚠️ 별개 사고 — prod 전용 설정 오류는 dev 부팅으로 못 거른다
+- prod 릴리스본 `application-prod.yml` **1행에 `git ` 오타**가 섞여 snakeyaml 파싱 실패 → prod 부팅 실패·크래시 루프. dev 는 `application-dev.yml` 을 읽어 **무사히 떠서 사고를 못 잡았다**.
+- 교훈: **프로필별 설정 파일은 그 프로필로 실제 부팅**해봐야 검증됨. sync 검증(§4)과 별개로, prod 이미지 스모크 기동 또는 CI 의 프로필별 YAML lint 를 두면 조기 차단.
+- 이때 baseline sync 는 스키마 무변경이라 **무관**하게 유효했고, 설정만 고쳐 재배포하니 `Previously run 19` 로 정상 통과.
+
+### 헬스체크 해석
+- prod `/actuator/health` 가 **401** 이면 실패가 아님 — Security 필터가 막는 것(앱은 up·응답 중). 연결거부/500 이 진짜 실패.

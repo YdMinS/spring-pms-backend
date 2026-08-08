@@ -20,6 +20,11 @@ public class Product extends BaseEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // Tenant dimension (changeset 002). TODO(02): remove `= 1L` default when @TenantId resolver is added.
+    @Builder.Default
+    @Column(name = "tenant_id", nullable = false)
+    private Long tenantId = 1L;
+
     @CreatedDate
     @Column(name = "created_date", updatable = false)
     private LocalDateTime createdAt;

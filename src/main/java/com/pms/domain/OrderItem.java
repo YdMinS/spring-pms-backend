@@ -34,6 +34,11 @@ public class OrderItem extends BaseEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // Tenant dimension (changeset 002). TODO(02): remove `= 1L` default when @TenantId resolver is added.
+    @Builder.Default
+    @Column(name = "tenant_id", nullable = false)
+    private Long tenantId = 1L;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "marketplace_account_id", nullable = false)
     private MarketplaceAccount marketplaceAccount;

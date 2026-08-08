@@ -32,6 +32,11 @@ public class ShoppingListItem extends BaseEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // Tenant dimension (changeset 002). TODO(02): remove `= 1L` default when @TenantId resolver is added.
+    @Builder.Default
+    @Column(name = "tenant_id", nullable = false)
+    private Long tenantId = 1L;
+
     /** 추출 출처 주문 라인. NULL = 수동 추가 라인. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "order_item_id")

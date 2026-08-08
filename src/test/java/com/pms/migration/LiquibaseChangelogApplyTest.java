@@ -49,4 +49,21 @@ class LiquibaseChangelogApplyTest {
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM seller", Integer.class)).isZero();
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM order_item", Integer.class)).isZero();
     }
+
+    @Test
+    void tenantDimensionApplied() {
+        // changeset 002: tenant table created + seeded with the default tenant (id=1).
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tenant", Integer.class)).isEqualTo(1);
+
+        // tenant_id column exists on every tenant-owned table (a successful count proves the column).
+        // No rows yet, but WHERE tenant_id IS NULL also proves backfill left nothing null.
+        for (String table : new String[]{
+                "products", "seller", "product_listing", "marketplace_account", "member",
+                "order_item", "shopping_list_item", "purchase_record", "carrier_rate", "package"}) {
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM " + table + " WHERE tenant_id IS NULL", Integer.class))
+                    .as("tenant_id column present and non-null on %s", table)
+                    .isZero();
+        }
+    }
 }

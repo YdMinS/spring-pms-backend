@@ -40,6 +40,11 @@ public class ProductListing {
     @Schema(description = "Product listing ID", example = "1")
     private Long id;
 
+    // Tenant dimension (changeset 002). TODO(02): remove `= 1L` default when @TenantId resolver is added.
+    @Builder.Default
+    @Column(name = "tenant_id", nullable = false)
+    private Long tenantId = 1L;
+
     /**
      * Platform identifier (max 50 chars).
      * Examples: "COUPANG", "AMAZON", "NAVER"
