@@ -3,6 +3,7 @@ package com.pms.domain;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.TenantId;
 
 /**
  * ProductListing entity representing a product registered on a platform (e.g., Coupang).
@@ -40,10 +41,11 @@ public class ProductListing {
     @Schema(description = "Product listing ID", example = "1")
     private Long id;
 
-    // Tenant dimension (changeset 002). TODO(02): remove `= 1L` default when @TenantId resolver is added.
-    @Builder.Default
+    // Tenant dimension (changeset 002). Hibernate auto-sets this on INSERT and auto-filters
+    // SELECTs from TenantIdentifierResolver — do NOT add manual tenant conditions to queries.
+    @TenantId
     @Column(name = "tenant_id", nullable = false)
-    private Long tenantId = 1L;
+    private Long tenantId;
 
     /**
      * Platform identifier (max 50 chars).

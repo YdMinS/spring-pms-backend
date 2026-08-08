@@ -2,6 +2,7 @@ package com.pms.domain;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.TenantId;
 
 /**
  * 구매 필요 라인 (order_item × 구성품). "오늘 구매 목록"의 SSOT 라인.
@@ -32,10 +33,11 @@ public class ShoppingListItem extends BaseEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // Tenant dimension (changeset 002). TODO(02): remove `= 1L` default when @TenantId resolver is added.
-    @Builder.Default
+    // Tenant dimension (changeset 002). Hibernate auto-sets this on INSERT and auto-filters
+    // SELECTs from TenantIdentifierResolver — do NOT add manual tenant conditions to queries.
+    @TenantId
     @Column(name = "tenant_id", nullable = false)
-    private Long tenantId = 1L;
+    private Long tenantId;
 
     /** 추출 출처 주문 라인. NULL = 수동 추가 라인. */
     @ManyToOne(fetch = FetchType.LAZY)

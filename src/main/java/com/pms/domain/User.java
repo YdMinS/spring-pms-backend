@@ -17,7 +17,11 @@ public class User extends BaseEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // Tenant dimension (changeset 002). TODO(02): remove `= 1L` default when @TenantId resolver is added.
+    // Tenant dimension (changeset 002). User is INTENTIONALLY excluded from @TenantId:
+    // login resolves by email BEFORE the token is parsed, so TenantContext is empty at
+    // authentication time — a tenant filter here would make findByEmail return 0 rows.
+    // Tenant is carried via the JWT claim instead; keep the `= 1L` default since Hibernate
+    // does not auto-set this column. email unique is tenant-scoped (uq_member_tenant_email).
     @Builder.Default
     @Column(name = "tenant_id", nullable = false)
     private Long tenantId = 1L;
