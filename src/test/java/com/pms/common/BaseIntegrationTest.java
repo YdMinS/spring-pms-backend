@@ -11,6 +11,7 @@ import com.pms.repository.CarrierRepository;
 import com.pms.repository.PackageRepository;
 import com.pms.repository.RefreshTokenRepository;
 import com.pms.repository.UserRepository;
+import com.pms.security.TenantContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -134,6 +135,11 @@ public abstract class BaseIntegrationTest {
     }
 
     protected void cleanupTestData() {
+        // JPA deleteAll (not native SQL) so it stays consistent with the persistence context:
+        // a native delete would strand managed @TenantId entities (package/carrier_rate) that a
+        // later autoflush then fails to update (stale-object). These tests are @Transactional, so
+        // rollback already wipes every tenant's rows — the tenant filter leaving residue is a
+        // non-issue here; setUpBase pins the tenant to 1 so deleteAll targets the seeded rows.
         // Delete refresh tokens first: they FK-reference member rows.
         refreshTokenRepository.deleteAll();
         packageRepository.deleteAll();
@@ -145,6 +151,11 @@ public abstract class BaseIntegrationTest {
 
     @BeforeEach
     public void setUpBase() throws Exception {
+        // Seed under tenant 1 so @TenantId entities (carrier_rate, package) get tenant_id=1,
+        // matching the tenant claim of the seeded admin/user (User.tenantId default = 1L). Without
+        // this, seeding runs with no context (NO_TENANT) and the tenant-1 API requests would not
+        // see the seeded rows. See tenant/ProductTenantIsolationTest for the isolation mechanism.
+        TenantContext.set(1L);
         registerTestUsers();
         registerTestCarrierRates();
         registerTestPackages();
@@ -155,5 +166,6 @@ public abstract class BaseIntegrationTest {
     @AfterEach
     public void tearDownBase() {
         cleanupTestData();
+        TenantContext.clear();
     }
 }

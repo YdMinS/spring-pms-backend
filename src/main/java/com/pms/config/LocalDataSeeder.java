@@ -15,6 +15,7 @@ import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.UserRepository;
+import com.pms.security.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
@@ -61,10 +62,18 @@ public class LocalDataSeeder implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
-        seedUsers();
-        Seller seller = seedSellerAndAccount();
-        List<Product> products = seedProducts();
-        seedProductListings(seller, products);
+        // Startup runner has no SecurityContext → TenantContext is empty (NO_TENANT). Set tenant 1
+        // explicitly so @TenantId entities (Seller/MarketplaceAccount/Product/ProductListing) seed
+        // under tenant 1 instead of failing the tenant FK. Clear afterwards (thread-pool hygiene).
+        TenantContext.set(1L);
+        try {
+            seedUsers();
+            Seller seller = seedSellerAndAccount();
+            List<Product> products = seedProducts();
+            seedProductListings(seller, products);
+        } finally {
+            TenantContext.clear();
+        }
     }
 
     private void seedUsers() {

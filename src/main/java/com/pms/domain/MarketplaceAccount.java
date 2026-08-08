@@ -3,6 +3,7 @@ package com.pms.domain;
 import com.pms.security.crypto.AesAttributeConverter;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.TenantId;
 
 /**
  * 외부 판매 플랫폼(쿠팡 등)의 셀러 계정 + API 자격증명.
@@ -25,6 +26,12 @@ public class MarketplaceAccount extends BaseEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    // Tenant dimension (changeset 002). Hibernate auto-sets this on INSERT and auto-filters
+    // SELECTs from TenantIdentifierResolver — do NOT add manual tenant conditions to queries.
+    @TenantId
+    @Column(name = "tenant_id", nullable = false)
+    private Long tenantId;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "seller_id", nullable = false)

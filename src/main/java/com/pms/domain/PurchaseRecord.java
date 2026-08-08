@@ -2,6 +2,7 @@ package com.pms.domain;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.TenantId;
 
 import java.time.LocalDate;
 
@@ -27,6 +28,12 @@ public class PurchaseRecord extends BaseEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    // Tenant dimension (changeset 002). Hibernate auto-sets this on INSERT and auto-filters
+    // SELECTs from TenantIdentifierResolver — do NOT add manual tenant conditions to queries.
+    @TenantId
+    @Column(name = "tenant_id", nullable = false)
+    private Long tenantId;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "shopping_list_item_id", nullable = false)
