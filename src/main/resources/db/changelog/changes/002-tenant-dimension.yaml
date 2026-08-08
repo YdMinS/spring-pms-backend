@@ -274,10 +274,38 @@ databaseChangeLog:
   # ---- tenantize existing single unique constraints -> composite (tenant_id, ...) ----
   # Only member.email and seller.business_registration have single-column unique constraints.
   # order_item / shopping_list_item uniques already sit under a tenant-owned FK parent -> unchanged.
+  #
+  # ⚠️ The existing single-column unique has a DIFFERENT name per environment:
+  #   - empty H2 (LiquibaseChangelogApplyTest): baseline 001 runs and creates it as the explicit
+  #     uq_member_email / uq_seller_business_registration.
+  #   - dev/prod MySQL: baseline was changelogSync'd (NOT executed), so the real unique was created
+  #     earlier by Hibernate ddl-auto with a generated name (e.g. UKxx…) -> dropping by the baseline
+  #     name fails with "Can't DROP 'uq_member_email'". So the MySQL path drops by the ACTUAL name
+  #     discovered from information_schema (name-agnostic, robust across dev/prod), while the H2 path
+  #     drops by the known baseline name. dbms split keeps each environment on its correct changeset.
   - changeSet:
-      id: 002-tenant-unique-member-email
+      id: 002-tenant-unique-member-email-mysql
       author: oclyx
-      comment: "member.email unique -> tenant-scoped: same email allowed in different tenants"
+      dbms: mysql
+      comment: "member.email unique -> tenant-scoped (MySQL: drop existing single unique by discovered name)"
+      changes:
+        - sql: >-
+            SET @old_uq := (SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'member'
+            AND CONSTRAINT_TYPE = 'UNIQUE' AND CONSTRAINT_NAME <> 'uq_member_tenant_email' LIMIT 1)
+        - sql: "SET @ddl := IF(@old_uq IS NULL, 'DO 0', CONCAT('ALTER TABLE member DROP KEY `', @old_uq, '`'))"
+        - sql: "PREPARE stmt FROM @ddl"
+        - sql: "EXECUTE stmt"
+        - sql: "DEALLOCATE PREPARE stmt"
+        - addUniqueConstraint:
+            tableName: member
+            columnNames: "tenant_id, email"
+            constraintName: uq_member_tenant_email
+  - changeSet:
+      id: 002-tenant-unique-member-email-h2
+      author: oclyx
+      dbms: h2
+      comment: "member.email unique -> tenant-scoped (H2 empty-DB apply check: baseline name is known)"
       changes:
         - dropUniqueConstraint: { tableName: member, constraintName: uq_member_email }
         - addUniqueConstraint:
@@ -286,9 +314,28 @@ databaseChangeLog:
             constraintName: uq_member_tenant_email
 
   - changeSet:
-      id: 002-tenant-unique-seller-biz
+      id: 002-tenant-unique-seller-biz-mysql
       author: oclyx
-      comment: "seller.business_registration unique -> tenant-scoped"
+      dbms: mysql
+      comment: "seller.business_registration unique -> tenant-scoped (MySQL: drop by discovered name)"
+      changes:
+        - sql: >-
+            SET @old_uq := (SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'seller'
+            AND CONSTRAINT_TYPE = 'UNIQUE' AND CONSTRAINT_NAME <> 'uq_seller_tenant_biz' LIMIT 1)
+        - sql: "SET @ddl := IF(@old_uq IS NULL, 'DO 0', CONCAT('ALTER TABLE seller DROP KEY `', @old_uq, '`'))"
+        - sql: "PREPARE stmt FROM @ddl"
+        - sql: "EXECUTE stmt"
+        - sql: "DEALLOCATE PREPARE stmt"
+        - addUniqueConstraint:
+            tableName: seller
+            columnNames: "tenant_id, business_registration"
+            constraintName: uq_seller_tenant_biz
+  - changeSet:
+      id: 002-tenant-unique-seller-biz-h2
+      author: oclyx
+      dbms: h2
+      comment: "seller.business_registration unique -> tenant-scoped (H2 empty-DB apply check)"
       changes:
         - dropUniqueConstraint: { tableName: seller, constraintName: uq_seller_business_registration }
         - addUniqueConstraint:
