@@ -28,25 +28,36 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                                     FilterChain filterChain)
             throws ServletException, IOException {
         try {
-            String jwt = getJwtFromRequest(request);
+            try {
+                String jwt = getJwtFromRequest(request);
 
-            if (jwt != null && jwtTokenProvider.validateToken(jwt)) {
-                String email = jwtTokenProvider.getEmailFromToken(jwt);
-                UserDetails userDetails = userDetailsService.loadUserByUsername(email);
+                if (jwt != null && jwtTokenProvider.validateToken(jwt)) {
+                    String email = jwtTokenProvider.getEmailFromToken(jwt);
+                    UserDetails userDetails = userDetailsService.loadUserByUsername(email);
 
-                UsernamePasswordAuthenticationToken authentication =
-                        new UsernamePasswordAuthenticationToken(
-                                userDetails, null, userDetails.getAuthorities());
-                authentication.setDetails(
-                        new WebAuthenticationDetailsSource().buildDetails(request));
+                    UsernamePasswordAuthenticationToken authentication =
+                            new UsernamePasswordAuthenticationToken(
+                                    userDetails, null, userDetails.getAuthorities());
+                    authentication.setDetails(
+                            new WebAuthenticationDetailsSource().buildDetails(request));
 
-                SecurityContextHolder.getContext().setAuthentication(authentication);
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
+
+                    // Feed the tenant to Hibernate's @TenantId pipeline (TenantIdentifierResolver).
+                    Long tenantId = jwtTokenProvider.getTenantIdFromToken(jwt);
+                    if (tenantId != null) {
+                        TenantContext.set(tenantId);
+                    }
+                }
+            } catch (Exception ex) {
+                logger.error("Could not set user authentication", ex);
             }
-        } catch (Exception ex) {
-            logger.error("Could not set user authentication", ex);
-        }
 
-        filterChain.doFilter(request, response);
+            filterChain.doFilter(request, response);
+        } finally {
+            // Thread-pool reuse: always clear to prevent cross-tenant leakage.
+            TenantContext.clear();
+        }
     }
 
     private String getJwtFromRequest(HttpServletRequest request) {
