@@ -32,12 +32,14 @@ public class JwtTokenProvider {
                 .findFirst()
                 .map(auth -> auth.getAuthority().replace("ROLE_", ""))
                 .orElse("GUEST");
+        Long tenantId = ((CustomUserDetails) authentication.getPrincipal()).getTenantId();
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + expirationTime);
 
         return Jwts.builder()
                 .subject(email)
                 .claim("role", role)
+                .claim("tenantId", tenantId)
                 .issuedAt(now)
                 .expiration(expiryDate)
                 .signWith(secretKey)
@@ -63,6 +65,18 @@ public class JwtTokenProvider {
                 .parseSignedClaims(token)
                 .getPayload();
         return claims.getSubject();
+    }
+
+    public Long getTenantIdFromToken(String token) {
+        Claims claims = Jwts.parser()
+                .verifyWith(secretKey)
+                .build()
+                .parseSignedClaims(token)
+                .getPayload();
+        // JJWT deserializes numeric claims as Integer when small; read via Number to avoid
+        // ClassCastException from a direct get("tenantId", Long.class).
+        Number tenantId = claims.get("tenantId", Number.class);
+        return tenantId == null ? null : tenantId.longValue();
     }
 
     public long getExpirationTime() {

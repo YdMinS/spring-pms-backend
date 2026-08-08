@@ -8,11 +8,11 @@ import com.pms.dto.response.AuthResponse;
 import com.pms.exception.UnauthorizedException;
 import com.pms.repository.RefreshTokenRepository;
 import com.pms.repository.UserRepository;
+import com.pms.security.CustomUserDetails;
 import com.pms.security.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -96,13 +96,10 @@ public class AuthServiceImpl implements AuthService {
     }
 
     private Authentication buildAuthentication(User user) {
+        // Principal = CustomUserDetails so generateToken can read tenantId (JWT claim).
+        CustomUserDetails principal = new CustomUserDetails(user);
         return new UsernamePasswordAuthenticationToken(
-                user.getEmail(),
-                null,
-                java.util.Collections.singletonList(
-                        new SimpleGrantedAuthority("ROLE_" + user.getRole().getKey())
-                )
-        );
+                principal, null, principal.getAuthorities());
     }
 
     private AuthResponse buildAuthResponse(User user, String token, String refreshToken) {

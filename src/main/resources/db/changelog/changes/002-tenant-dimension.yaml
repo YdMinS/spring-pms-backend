@@ -1,0 +1,344 @@
+# Tenant dimension (SaaS Step -1): tenant table + tenant_id on tenant-owned tables.
+# Schema only — Hibernate @TenantId isolation filter comes in changeset-adjacent code (02/03).
+# Structured tags only (no raw SQL) for H2<->MySQL portability. Ids prefixed 002-tenant-*.
+# Expand-contract order: tenant table+seed first, then per-table (nullable add -> backfill=1 ->
+# NOT NULL -> FK), then tenantize existing single unique constraints into composite (tenant_id, ...).
+# Backfill = PLAN §10 scenario A (all existing rows -> tenant 1), so UPDATE has no WHERE clause.
+databaseChangeLog:
+
+  # ---- tenant table + default seed ----
+  - changeSet:
+      id: 002-tenant-table
+      author: oclyx
+      comment: "Step -1: tenant table (minimal: id/name/created_date). Billing/quota columns intentionally omitted (YAGNI)."
+      changes:
+        - createTable:
+            tableName: tenant
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: name, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+
+  - changeSet:
+      id: 002-tenant-seed-default
+      author: oclyx
+      comment: "Default tenant row 1 (internal team dogfooding). name is a placeholder (UPDATE later)."
+      changes:
+        - insert:
+            tableName: tenant
+            columns:
+              - column: { name: id, valueNumeric: 1 }
+              - column: { name: name, value: "Default Tenant" }
+
+  # ---- tenant_id on each tenant-owned table: nullable add -> backfill=1 -> NOT NULL -> FK ----
+  - changeSet:
+      id: 002-tenant-col-products
+      author: oclyx
+      comment: "products.tenant_id: nullable add -> backfill=1 -> NOT NULL -> FK"
+      changes:
+        - addColumn:
+            tableName: products
+            columns:
+              - column: { name: tenant_id, type: BIGINT }
+        - update:
+            tableName: products
+            columns:
+              - column: { name: tenant_id, valueNumeric: 1 }
+        - addNotNullConstraint:
+            tableName: products
+            columnName: tenant_id
+            columnDataType: BIGINT
+        - addForeignKeyConstraint:
+            constraintName: fk_products_tenant
+            baseTableName: products
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+
+  - changeSet:
+      id: 002-tenant-col-seller
+      author: oclyx
+      comment: "seller.tenant_id: nullable add -> backfill=1 -> NOT NULL -> FK"
+      changes:
+        - addColumn:
+            tableName: seller
+            columns:
+              - column: { name: tenant_id, type: BIGINT }
+        - update:
+            tableName: seller
+            columns:
+              - column: { name: tenant_id, valueNumeric: 1 }
+        - addNotNullConstraint:
+            tableName: seller
+            columnName: tenant_id
+            columnDataType: BIGINT
+        - addForeignKeyConstraint:
+            constraintName: fk_seller_tenant
+            baseTableName: seller
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+
+  - changeSet:
+      id: 002-tenant-col-product-listing
+      author: oclyx
+      comment: "product_listing.tenant_id: nullable add -> backfill=1 -> NOT NULL -> FK"
+      changes:
+        - addColumn:
+            tableName: product_listing
+            columns:
+              - column: { name: tenant_id, type: BIGINT }
+        - update:
+            tableName: product_listing
+            columns:
+              - column: { name: tenant_id, valueNumeric: 1 }
+        - addNotNullConstraint:
+            tableName: product_listing
+            columnName: tenant_id
+            columnDataType: BIGINT
+        - addForeignKeyConstraint:
+            constraintName: fk_product_listing_tenant
+            baseTableName: product_listing
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+
+  - changeSet:
+      id: 002-tenant-col-marketplace-account
+      author: oclyx
+      comment: "marketplace_account.tenant_id: nullable add -> backfill=1 -> NOT NULL -> FK"
+      changes:
+        - addColumn:
+            tableName: marketplace_account
+            columns:
+              - column: { name: tenant_id, type: BIGINT }
+        - update:
+            tableName: marketplace_account
+            columns:
+              - column: { name: tenant_id, valueNumeric: 1 }
+        - addNotNullConstraint:
+            tableName: marketplace_account
+            columnName: tenant_id
+            columnDataType: BIGINT
+        - addForeignKeyConstraint:
+            constraintName: fk_marketplace_account_tenant
+            baseTableName: marketplace_account
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+
+  - changeSet:
+      id: 002-tenant-col-member
+      author: oclyx
+      comment: "member.tenant_id: nullable add -> backfill=1 -> NOT NULL -> FK. Includes accounts dechallintier@gmail.com / njh870908@naver.com -> tenant 1"
+      changes:
+        - addColumn:
+            tableName: member
+            columns:
+              - column: { name: tenant_id, type: BIGINT }
+        - update:
+            tableName: member
+            columns:
+              - column: { name: tenant_id, valueNumeric: 1 }
+        - addNotNullConstraint:
+            tableName: member
+            columnName: tenant_id
+            columnDataType: BIGINT
+        - addForeignKeyConstraint:
+            constraintName: fk_member_tenant
+            baseTableName: member
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+
+  - changeSet:
+      id: 002-tenant-col-order-item
+      author: oclyx
+      comment: "order_item.tenant_id: nullable add -> backfill=1 -> NOT NULL -> FK"
+      changes:
+        - addColumn:
+            tableName: order_item
+            columns:
+              - column: { name: tenant_id, type: BIGINT }
+        - update:
+            tableName: order_item
+            columns:
+              - column: { name: tenant_id, valueNumeric: 1 }
+        - addNotNullConstraint:
+            tableName: order_item
+            columnName: tenant_id
+            columnDataType: BIGINT
+        - addForeignKeyConstraint:
+            constraintName: fk_order_item_tenant
+            baseTableName: order_item
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+
+  - changeSet:
+      id: 002-tenant-col-shopping-list-item
+      author: oclyx
+      comment: "shopping_list_item.tenant_id: nullable add -> backfill=1 -> NOT NULL -> FK"
+      changes:
+        - addColumn:
+            tableName: shopping_list_item
+            columns:
+              - column: { name: tenant_id, type: BIGINT }
+        - update:
+            tableName: shopping_list_item
+            columns:
+              - column: { name: tenant_id, valueNumeric: 1 }
+        - addNotNullConstraint:
+            tableName: shopping_list_item
+            columnName: tenant_id
+            columnDataType: BIGINT
+        - addForeignKeyConstraint:
+            constraintName: fk_shopping_list_item_tenant
+            baseTableName: shopping_list_item
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+
+  - changeSet:
+      id: 002-tenant-col-purchase-record
+      author: oclyx
+      comment: "purchase_record.tenant_id: nullable add -> backfill=1 -> NOT NULL -> FK"
+      changes:
+        - addColumn:
+            tableName: purchase_record
+            columns:
+              - column: { name: tenant_id, type: BIGINT }
+        - update:
+            tableName: purchase_record
+            columns:
+              - column: { name: tenant_id, valueNumeric: 1 }
+        - addNotNullConstraint:
+            tableName: purchase_record
+            columnName: tenant_id
+            columnDataType: BIGINT
+        - addForeignKeyConstraint:
+            constraintName: fk_purchase_record_tenant
+            baseTableName: purchase_record
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+
+  - changeSet:
+      id: 002-tenant-col-carrier-rate
+      author: oclyx
+      comment: "carrier_rate.tenant_id: nullable add -> backfill=1 -> NOT NULL -> FK (per-tenant negotiated rate)"
+      changes:
+        - addColumn:
+            tableName: carrier_rate
+            columns:
+              - column: { name: tenant_id, type: BIGINT }
+        - update:
+            tableName: carrier_rate
+            columns:
+              - column: { name: tenant_id, valueNumeric: 1 }
+        - addNotNullConstraint:
+            tableName: carrier_rate
+            columnName: tenant_id
+            columnDataType: BIGINT
+        - addForeignKeyConstraint:
+            constraintName: fk_carrier_rate_tenant
+            baseTableName: carrier_rate
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+
+  - changeSet:
+      id: 002-tenant-col-package
+      author: oclyx
+      comment: "package.tenant_id: nullable add -> backfill=1 -> NOT NULL -> FK (per-tenant box cost)"
+      changes:
+        - addColumn:
+            tableName: package
+            columns:
+              - column: { name: tenant_id, type: BIGINT }
+        - update:
+            tableName: package
+            columns:
+              - column: { name: tenant_id, valueNumeric: 1 }
+        - addNotNullConstraint:
+            tableName: package
+            columnName: tenant_id
+            columnDataType: BIGINT
+        - addForeignKeyConstraint:
+            constraintName: fk_package_tenant
+            baseTableName: package
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+
+  # ---- tenantize existing single unique constraints -> composite (tenant_id, ...) ----
+  # Only member.email and seller.business_registration have single-column unique constraints.
+  # order_item / shopping_list_item uniques already sit under a tenant-owned FK parent -> unchanged.
+  #
+  # ⚠️ The existing single-column unique has a DIFFERENT name per environment:
+  #   - empty H2 (LiquibaseChangelogApplyTest): baseline 001 runs and creates it as the explicit
+  #     uq_member_email / uq_seller_business_registration.
+  #   - dev/prod MySQL: baseline was changelogSync'd (NOT executed), so the real unique was created
+  #     earlier by Hibernate ddl-auto with a generated name (e.g. UKxx…) -> dropping by the baseline
+  #     name fails with "Can't DROP 'uq_member_email'". So the MySQL path drops by the ACTUAL name
+  #     discovered from information_schema (name-agnostic, robust across dev/prod), while the H2 path
+  #     drops by the known baseline name. dbms split keeps each environment on its correct changeset.
+  - changeSet:
+      id: 002-tenant-unique-member-email-mysql
+      author: oclyx
+      dbms: mysql
+      comment: "member.email unique -> tenant-scoped (MySQL: drop existing single unique by discovered name)"
+      changes:
+        - sql: >-
+            SET @old_uq := (SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'member'
+            AND CONSTRAINT_TYPE = 'UNIQUE' AND CONSTRAINT_NAME <> 'uq_member_tenant_email' LIMIT 1)
+        - sql: "SET @ddl := IF(@old_uq IS NULL, 'DO 0', CONCAT('ALTER TABLE member DROP KEY `', @old_uq, '`'))"
+        - sql: "PREPARE stmt FROM @ddl"
+        - sql: "EXECUTE stmt"
+        - sql: "DEALLOCATE PREPARE stmt"
+        - addUniqueConstraint:
+            tableName: member
+            columnNames: "tenant_id, email"
+            constraintName: uq_member_tenant_email
+  - changeSet:
+      id: 002-tenant-unique-member-email-h2
+      author: oclyx
+      dbms: h2
+      comment: "member.email unique -> tenant-scoped (H2 empty-DB apply check: baseline name is known)"
+      changes:
+        - dropUniqueConstraint: { tableName: member, constraintName: uq_member_email }
+        - addUniqueConstraint:
+            tableName: member
+            columnNames: "tenant_id, email"
+            constraintName: uq_member_tenant_email
+
+  - changeSet:
+      id: 002-tenant-unique-seller-biz-mysql
+      author: oclyx
+      dbms: mysql
+      comment: "seller.business_registration unique -> tenant-scoped (MySQL: drop by discovered name)"
+      changes:
+        - sql: >-
+            SET @old_uq := (SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'seller'
+            AND CONSTRAINT_TYPE = 'UNIQUE' AND CONSTRAINT_NAME <> 'uq_seller_tenant_biz' LIMIT 1)
+        - sql: "SET @ddl := IF(@old_uq IS NULL, 'DO 0', CONCAT('ALTER TABLE seller DROP KEY `', @old_uq, '`'))"
+        - sql: "PREPARE stmt FROM @ddl"
+        - sql: "EXECUTE stmt"
+        - sql: "DEALLOCATE PREPARE stmt"
+        - addUniqueConstraint:
+            tableName: seller
+            columnNames: "tenant_id, business_registration"
+            constraintName: uq_seller_tenant_biz
+  - changeSet:
+      id: 002-tenant-unique-seller-biz-h2
+      author: oclyx
+      dbms: h2
+      comment: "seller.business_registration unique -> tenant-scoped (H2 empty-DB apply check)"
+      changes:
+        - dropUniqueConstraint: { tableName: seller, constraintName: uq_seller_business_registration }
+        - addUniqueConstraint:
+            tableName: seller
+            columnNames: "tenant_id, business_registration"
+            constraintName: uq_seller_tenant_biz

@@ -3,6 +3,7 @@ package com.pms.service.coupang;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.security.TenantContext;
 import com.pms.service.coupang.CoupangOrderSyncService.SyncResult;
 import com.pms.service.coupang.CoupangReturnSyncService.CancelSyncResult;
 import lombok.RequiredArgsConstructor;
@@ -71,12 +72,26 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
 
     /** 한 계정: ordersheets 먼저 → 취소 보정(이미 적재된 주문 위에 보정). */
     private OrderSyncResult syncOne(MarketplaceAccount account) {
-        SyncResult orders = coupangOrderSyncService.syncAccount(account);
-        CancelSyncResult cancels = coupangReturnSyncService.syncCancels(account);
-        return new OrderSyncResult(
-                LocalDateTime.now(),
-                orders.newCount(),
-                orders.updatedCount(),
-                cancels.matchedUpdated());
+        // Drive the tenant from the account being synced so saved order_item/shopping_list_item
+        // (@TenantId) land in the account's tenant regardless of trigger (web admin or a future
+        // batch/@Scheduled with no SecurityContext). Save/restore the previous value instead of
+        // blindly clearing, so a web request's TenantContext survives across the account loop.
+        Long previousTenant = TenantContext.get();
+        try {
+            TenantContext.set(account.getTenantId());
+            SyncResult orders = coupangOrderSyncService.syncAccount(account);
+            CancelSyncResult cancels = coupangReturnSyncService.syncCancels(account);
+            return new OrderSyncResult(
+                    LocalDateTime.now(),
+                    orders.newCount(),
+                    orders.updatedCount(),
+                    cancels.matchedUpdated());
+        } finally {
+            if (previousTenant != null) {
+                TenantContext.set(previousTenant);
+            } else {
+                TenantContext.clear();
+            }
+        }
     }
 }
