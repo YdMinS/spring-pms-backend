@@ -17,16 +17,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * ImageStorageServiceTest - Unit tests for ImageStorageService
+ * LocalImageStorageServiceTest - Unit tests for the disk-based ImageStorageService.
  *
- * Phase 3-1 TDD RED: Tests file upload, retrieval, deletion operations
- * All 7 tests FAIL (RED phase - no implementation yet)
+ * Verifies disk upload/retrieve/delete behaviour stays intact after the interface extraction
+ * (regression guard for local/test profiles).
  */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("ImageStorageService - Unit Tests (file storage operations)")
-public class ImageStorageServiceTest {
+@DisplayName("LocalImageStorageService - Unit Tests (file storage operations)")
+public class LocalImageStorageServiceTest {
 
-    private ImageStorageService imageStorageService;
+    private LocalImageStorageService imageStorageService;
     private ImageValidator imageValidator;
     private ImageStorageProperties properties;
 
@@ -34,23 +34,23 @@ public class ImageStorageServiceTest {
     void setUp() {
         properties = new ImageStorageProperties();
         imageValidator = new ImageValidator(properties);
-        imageStorageService = new ImageStorageService(properties, imageValidator);
+        imageStorageService = new LocalImageStorageService(properties, imageValidator);
     }
 
     // ==================== Test 1: Upload image successfully ====================
 
     @Test
-    @DisplayName("Should upload image successfully and return filename")
+    @DisplayName("Should upload image successfully and return path")
     void testUploadImage_Success() {
         // Given
         MockMultipartFile imageFile = createMockImageFile();
 
         // When
-        String filename = imageStorageService.uploadImage(imageFile);
+        String imageUrl = imageStorageService.uploadImage(imageFile);
 
         // Then
-        assertThat(filename).isNotBlank();
-        assertThat(filename).endsWith(".jpg");
+        assertThat(imageUrl).isNotBlank();
+        assertThat(imageUrl).endsWith(".jpg");
     }
 
     // ==================== Test 2: Creates upload directory if not exists ====================
@@ -79,11 +79,11 @@ public class ImageStorageServiceTest {
         MockMultipartFile file2 = createMockImageFile();
 
         // When
-        String filename1 = imageStorageService.uploadImage(file1);
-        String filename2 = imageStorageService.uploadImage(file2);
+        String url1 = imageStorageService.uploadImage(file1);
+        String url2 = imageStorageService.uploadImage(file2);
 
         // Then
-        assertThat(filename1).isNotEqualTo(filename2);
+        assertThat(url1).isNotEqualTo(url2);
     }
 
     // ==================== Test 4: Get image successfully ====================
@@ -93,10 +93,10 @@ public class ImageStorageServiceTest {
     void testGetImage_Success() throws Exception {
         // Given
         MockMultipartFile imageFile = createMockImageFile();
-        String filename = imageStorageService.uploadImage(imageFile);
+        String imageUrl = imageStorageService.uploadImage(imageFile);
 
         // When
-        byte[] content = imageStorageService.getImage(filename);
+        byte[] content = imageStorageService.getImage(imageUrl);
 
         // Then
         assertThat(content).isNotNull();
@@ -123,13 +123,13 @@ public class ImageStorageServiceTest {
     void testDeleteImage_Success() {
         // Given
         MockMultipartFile imageFile = createMockImageFile();
-        String filename = imageStorageService.uploadImage(imageFile);
+        String imageUrl = imageStorageService.uploadImage(imageFile);
 
         // When
-        imageStorageService.deleteImage(filename);
+        imageStorageService.deleteImage(imageUrl);
 
         // Then
-        assertThatThrownBy(() -> imageStorageService.getImage(filename))
+        assertThatThrownBy(() -> imageStorageService.getImage(imageUrl))
                 .isInstanceOf(FileNotFoundException.class);
     }
 

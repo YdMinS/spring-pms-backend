@@ -1,6 +1,5 @@
 package com.pms.controller;
 
-import com.pms.config.ImageStorageProperties;
 import com.pms.domain.Product;
 import com.pms.dto.request.CreateProductRequest;
 import com.pms.dto.request.UpdateProductRequest;
@@ -26,6 +25,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.net.URI;
+
 /**
  * ProductController - REST API endpoints for Product management
  *
@@ -45,7 +46,6 @@ public class ProductController {
     private final ProductService productService;
     private final ImageStorageService imageStorageService;
     private final ProductRepository productRepository;
-    private final ImageStorageProperties imageStorageProperties;
 
     /**
      * Create a new product (ADMIN only)
@@ -216,11 +216,11 @@ public class ProductController {
             throw new ResourceNotFoundException("Product", id);
         }
 
-        // 3. Upload image via service
-        String imageFilename = imageStorageService.uploadImage(file, id);
+        // 3. Upload image; service returns the value to persist as imageUrl
+        //    (Local = disk-relative path, S3 = public URL). No URL assembly here.
+        String imageUrl = imageStorageService.uploadImage(file, id);
 
-        // 4. Update product with new imageUrl (full path)
-        String imageUrl = imageStorageProperties.getUploadDir() + "/" + imageFilename;
+        // 4. Update product with new imageUrl
         Product updatedProduct = product.toBuilder()
                 .imageUrl(imageUrl)
                 .build();
@@ -257,13 +257,20 @@ public class ProductController {
         }
 
         // 3. Check if product has image URL
-        if (product.getImageUrl() == null || product.getImageUrl().isEmpty()) {
+        String url = product.getImageUrl();
+        if (url == null || url.isEmpty()) {
             return ResponseEntity.notFound().build(); // 404
         }
 
-        // 4. Retrieve image bytes
+        // 4a. Public URL (S3, dev/prod): redirect the client straight to it.
+        //     Avoids the S3 impl's unsupported getImage() and needs no FE change.
+        if (url.startsWith("http")) {
+            return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(url)).build();
+        }
+
+        // 4b. Disk-relative path (Local, local/test): serve bytes as before.
         try {
-            byte[] imageBytes = imageStorageService.getImage(product.getImageUrl());
+            byte[] imageBytes = imageStorageService.getImage(url);
             return ResponseEntity.ok()
                     .contentType(MediaType.APPLICATION_OCTET_STREAM)
                     .contentLength(imageBytes.length)

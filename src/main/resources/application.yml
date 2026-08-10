@@ -63,6 +63,7 @@ oklyx:
 
 image:
   storage:
+    type: local
     uploadDir: /app/uploads/products
     baseUrl: /api/products
     maxFileSize: 20971520

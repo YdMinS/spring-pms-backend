@@ -26,6 +26,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -824,6 +825,27 @@ public class ProductControllerTest extends BaseIntegrationTest {
         mockMvc.perform(get("/api/products/" + savedProduct.getId() + "/image")
                 .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk());
+    }
+
+    // ==================== FEATURE_2608_04 (GET /image): 302 redirect for http imageUrl (S3) ====================
+
+    @Test
+    @DisplayName("Should return 302 redirect to public URL when imageUrl starts with http (S3)")
+    public void getImage_httpImageUrl_returns302Redirect() throws Exception {
+        // Given: a product whose imageUrl is a public S3 URL (dev/prod contract).
+        // Note: profile is 'test' (Local storage). If the controller did not short-circuit on
+        // http and instead called getImage(), the Local impl would 404 (no such file on disk),
+        // so a 302 result proves the redirect branch runs and getImage() is bypassed.
+        String publicUrl =
+                "https://bucket.s3.ap-northeast-2.amazonaws.com/tenants/1/products/foo.jpg";
+        Product savedProduct = productRepository.save(
+                ProductTestFixture.createProduct(null).toBuilder().imageUrl(publicUrl).build());
+
+        // When & Then
+        mockMvc.perform(get("/api/products/" + savedProduct.getId() + "/image")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isFound())
+                .andExpect(header().string("Location", publicUrl));
     }
 
     // ==================== Phase 3-1 Integration (GET /image): testGetImage_NotFound_404 ====================
