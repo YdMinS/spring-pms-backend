@@ -45,6 +45,10 @@ dependencies {
     // DB migration (version managed by Spring Boot 3.3.0)
     implementation 'org.liquibase:liquibase-core'
 
+    // AWS SDK v2 - S3 image hosting (FEATURE_2608_04, dev/prod only)
+    implementation platform('software.amazon.awssdk:bom:2.25.60')
+    implementation 'software.amazon.awssdk:s3'
+
     // xlsx generation (shipping label spreadsheet)
     implementation 'org.apache.poi:poi-ooxml:5.2.5'
 

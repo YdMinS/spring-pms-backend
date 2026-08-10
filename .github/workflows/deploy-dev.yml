@@ -8,7 +8,8 @@
 # ⚠️ GitHub Secrets:
 #   - 기존 재사용: SERVER_HOST / SERVER_USER / SSH_PRIVATE_KEY / TAILSCALE_AUTH_KEY / GITHUB_TOKEN
 #   - 신규(DEV 런타임, PROD와 동일하게 -e 로 주입): DEV_DB_USERNAME / DEV_DB_PASSWORD /
-#     DEV_JWT_SECRET / DEV_OKLYX_CRYPTO_MASTER_KEY
+#     DEV_JWT_SECRET / DEV_OKLYX_CRYPTO_MASTER_KEY /
+#     DEV_AWS_ACCESS_KEY_ID / DEV_AWS_SECRET_ACCESS_KEY  (S3 이미지 호스팅, image.storage.type=s3)
 #   (SPRING_PROFILES_ACTIVE=dev, DB_URL 은 비밀 아님 → 아래에 하드코딩)
 
 name: Deploy spring-pms-backend to DEV
@@ -89,6 +90,8 @@ jobs:
               -e DB_PASSWORD=${{ secrets.DEV_DB_PASSWORD }} \
               -e JWT_SECRET=${{ secrets.DEV_JWT_SECRET }} \
               -e OKLYX_CRYPTO_MASTER_KEY=${{ secrets.DEV_OKLYX_CRYPTO_MASTER_KEY }} \
+              -e AWS_ACCESS_KEY_ID=${{ secrets.DEV_AWS_ACCESS_KEY_ID }} \
+              -e AWS_SECRET_ACCESS_KEY=${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }} \
               --restart unless-stopped \
               ${{ env.IMAGE_NAME }}:dev
 

@@ -40,7 +40,12 @@ jwt:
 
 image:
   storage:
+    type: s3
     uploadDir: /app/uploads/products
+    s3:
+      bucket: oclyx-product-images-prod
+      region: ap-northeast-2
+      keyPrefix: tenants
 
 server:
   tomcat:
