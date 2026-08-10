@@ -33,6 +33,36 @@ public class ImageStorageProperties {
     private String baseUrl = "/api/products";
 
     /**
+     * Storage backend selector: "local" (disk, default) or "s3".
+     * local/test profiles keep "local"; dev/prod set "s3" (see application-{dev,prod}.yml).
+     */
+    private String type = "local";
+
+    /**
+     * S3-specific settings (only used when type=s3).
+     */
+    private S3 s3 = new S3();
+
+    @Getter
+    @Setter
+    public static class S3 {
+        /** Bucket name, e.g. oclyx-product-images-dev. */
+        private String bucket;
+
+        /** AWS region, e.g. ap-northeast-2 (Seoul). */
+        private String region = "ap-northeast-2";
+
+        /** Key prefix; final key = {keyPrefix}/{tenantId}/products/{filename}. */
+        private String keyPrefix = "tenants";
+
+        /**
+         * Public base URL. If null, computed as https://{bucket}.s3.{region}.amazonaws.com.
+         * Override for CDN / custom domain.
+         */
+        private String publicBaseUrl;
+    }
+
+    /**
      * Maximum file size in bytes (20MB = 20971520 bytes)
      * Default: 20971520
      */
