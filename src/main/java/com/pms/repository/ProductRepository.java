@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -42,4 +43,14 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
      * Find product by barcode ID
      */
     Optional<Product> findByBarcodeId(String barcodeId);
+
+    /**
+     * Distinct tenant ids across all products, ignoring the {@code @TenantId} filter.
+     *
+     * <p>Native query so it bypasses Hibernate's tenant discriminator — there is no separate Tenant
+     * registry (the tenant dimension is a {@code tenant_id} column only). Used by the one-off S3
+     * migration runner to iterate every tenant from a non-web/boot context.</p>
+     */
+    @Query(value = "SELECT DISTINCT tenant_id FROM products", nativeQuery = true)
+    List<Long> findDistinctTenantIds();
 }

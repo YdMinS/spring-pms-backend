@@ -14,6 +14,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.UUID;
 
 /**
@@ -83,7 +84,38 @@ public class S3ImageStorageService implements ImageStorageService {
         log.info("Image uploaded to S3: {}", key);
 
         // 5. Return public URL
-        return publicBaseUrl() + "/" + key;
+        return publicUrl(key);
+    }
+
+    /**
+     * Migration-only: upload an existing on-disk file into the current {@link TenantContext} scope
+     * and return its public URL. Skips {@link ImageValidator} (the file was already validated when
+     * first stored). The filename is derived from {@code file}; key/URL rules match {@link #uploadImage}
+     * (same {@link #buildKey}/{@link #publicUrl} helpers), so migrated objects are indistinguishable
+     * from freshly-uploaded ones.
+     *
+     * <p>⚠️ Requires the migration runner to have set the tenant on {@link TenantContext} first
+     * (non-web/batch context — see {@code LocalToS3ImageMigrationRunner}).</p>
+     */
+    public String uploadExisting(Path file, String contentType) {
+        Long tenantId = TenantContext.get();
+        if (tenantId == null) {
+            throw new IllegalStateException(
+                    "No tenant in context for S3 migration upload — set TenantContext before uploadExisting");
+        }
+        String filename = file.getFileName().toString();
+        String key = buildKey(tenantId, filename);
+
+        s3Client.putObject(
+                PutObjectRequest.builder()
+                        .bucket(properties.getS3().getBucket())
+                        .key(key)
+                        .contentType(contentType)
+                        .build(),
+                RequestBody.fromFile(file));
+        log.info("Existing image migrated to S3: {}", key);
+
+        return publicUrl(key);
     }
 
     @Override
@@ -112,6 +144,14 @@ public class S3ImageStorageService implements ImageStorageService {
 
     private String buildKey(Long tenantId, String filename) {
         return properties.getS3().getKeyPrefix() + "/" + tenantId + "/products/" + filename;
+    }
+
+    /**
+     * Single source of the stored public URL for a key. Reused by {@link #uploadImage} and
+     * {@link #uploadExisting} so freshly-uploaded and migrated objects share one URL rule.
+     */
+    private String publicUrl(String key) {
+        return publicBaseUrl() + "/" + key;
     }
 
     /**
