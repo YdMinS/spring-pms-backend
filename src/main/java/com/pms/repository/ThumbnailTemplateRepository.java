@@ -13,4 +13,10 @@ import java.util.List;
 public interface ThumbnailTemplateRepository extends JpaRepository<ThumbnailTemplate, Long> {
 
     List<ThumbnailTemplate> findBySellerId(Long sellerId);
+
+    /** Active templates dedicated to a seller (thumbnail generation: first choice). */
+    List<ThumbnailTemplate> findBySellerIdAndActiveTrue(Long sellerId);
+
+    /** Active tenant-wide templates ({@code seller_id IS NULL}); fallback when no seller-specific one. */
+    List<ThumbnailTemplate> findBySellerIdIsNullAndActiveTrue();
 }
