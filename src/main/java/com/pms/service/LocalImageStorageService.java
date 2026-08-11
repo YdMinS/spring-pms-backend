@@ -103,6 +103,38 @@ public class LocalImageStorageService implements ImageStorageService {
     }
 
     @Override
+    public String uploadBytes(byte[] data, String category, String filename, String contentType) {
+        // Store under {uploadDir}/{category}/{filename}; return the disk-relative path (stored value).
+        Path categoryPath = Paths.get(properties.getUploadDir(), category);
+        try {
+            Files.createDirectories(categoryPath);
+            Path target = categoryPath.resolve(filename);
+            Files.write(target, data);
+            log.info("Bytes stored: {}", target);
+        } catch (IOException e) {
+            log.error("Failed to store bytes: {}/{}", category, filename, e);
+            throw new ImageStorageException("Failed to store bytes", e);
+        }
+        return properties.getUploadDir() + "/" + category + "/" + filename;
+    }
+
+    @Override
+    public byte[] getBytes(String storedValue) throws FileNotFoundException {
+        // storedValue is the disk-relative path returned by uploadBytes/uploadImage.
+        Path filePath = Paths.get(storedValue);
+        if (!Files.exists(filePath)) {
+            log.warn("Stored file not found: {}", storedValue);
+            throw new FileNotFoundException("Stored file not found: " + storedValue);
+        }
+        try {
+            return Files.readAllBytes(filePath);
+        } catch (IOException e) {
+            log.error("Failed to read stored file: {}", storedValue, e);
+            throw new ImageStorageException("Failed to read stored file", e);
+        }
+    }
+
+    @Override
     public void deleteImage(String filename) {
         // Extract filename only so a stored path/URL resolves against uploadDir
         String extractedFilename = extractFilename(filename);

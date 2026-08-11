@@ -3,3 +3,5 @@ databaseChangeLog:
       file: db/changelog/changes/001-baseline.yaml
   - include:
       file: db/changelog/changes/002-tenant-dimension.yaml
+  - include:
+      file: db/changelog/changes/003-thumbnail-generation.yaml
