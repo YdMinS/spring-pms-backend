@@ -8,11 +8,15 @@ import org.hibernate.annotations.TenantId;
 import java.util.List;
 
 /**
- * A seller-scoped thumbnail template: canvas size + an ordered array of {@link TemplateElement}s
- * (painter's algorithm). Rendered by {@link com.pms.service.ThumbnailRenderer} (FEATURE_2608_05).
+ * A tenant-wide thumbnail template library entry: canvas size + an ordered array of
+ * {@link TemplateElement}s (painter's algorithm). Rendered by {@link com.pms.service.ThumbnailRenderer}
+ * (FEATURE_2608_05).
  *
  * <p>Tenant-isolated via Hibernate {@code @TenantId} (auto-filter on SELECT, auto-set on INSERT — no
- * manual tenant conditions). {@code sellerId} null = tenant-wide template; set = that seller only.</p>
+ * manual tenant conditions). Templates are NOT seller-owned — they are a shared library. Exactly one
+ * template per tenant is the default ({@code isDefault=true}, enforced in
+ * {@link com.pms.service.ThumbnailTemplateServiceImpl} like {@code CarrierRate}); thumbnail generation
+ * currently resolves the default for every seller (per-seller assignment is a later step).</p>
  */
 @Entity
 @Table(name = "thumbnail_template")
@@ -29,10 +33,6 @@ public class ThumbnailTemplate extends BaseEntity {
     @TenantId
     @Column(name = "tenant_id", nullable = false)
     private Long tenantId;
-
-    /** Null = tenant-wide template; set = this seller only. Plain column (not an FK entity). */
-    @Column(name = "seller_id")
-    private Long sellerId;
 
     @Column(nullable = false, length = 255)
     private String name;
@@ -54,4 +54,11 @@ public class ThumbnailTemplate extends BaseEntity {
 
     @Column(name = "active", nullable = false)
     private Boolean active;
+
+    /**
+     * Exactly one template per tenant is the default. NOT nullable → the seeder and service must always
+     * set it explicitly (an unset builder default would INSERT null and violate the NOT NULL constraint).
+     */
+    @Column(name = "is_default", nullable = false)
+    private Boolean isDefault;
 }

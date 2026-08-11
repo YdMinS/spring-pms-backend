@@ -40,14 +40,18 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
     @Override
     @Transactional
     public ThumbnailTemplateResponse create(ThumbnailTemplateRequest request) {
+        boolean makeDefault = Boolean.TRUE.equals(request.getIsDefault());
+        if (makeDefault) {
+            demoteExistingDefault(null);
+        }
         ThumbnailTemplate template = ThumbnailTemplate.builder()
-                .sellerId(request.getSellerId())
                 .name(request.getName())
                 .canvasWidth(request.getCanvasWidth())
                 .canvasHeight(request.getCanvasHeight())
                 .backgroundImageKey(request.getBackgroundImageKey())
                 .elements(request.getElements() == null ? List.of() : request.getElements())
                 .active(request.getActive() == null ? Boolean.TRUE : request.getActive())
+                .isDefault(makeDefault)
                 .build();
         return toResponse(templateRepository.save(template));
     }
@@ -58,19 +62,19 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
     }
 
     @Override
-    public List<ThumbnailTemplateResponse> list(Long sellerId) {
-        List<ThumbnailTemplate> templates = sellerId == null
-                ? templateRepository.findAll()
-                : templateRepository.findBySellerId(sellerId);
-        return templates.stream().map(this::toResponse).toList();
+    public List<ThumbnailTemplateResponse> list() {
+        return templateRepository.findAll().stream().map(this::toResponse).toList();
     }
 
     @Override
     @Transactional
     public ThumbnailTemplateResponse update(Long id, ThumbnailTemplateRequest request) {
         ThumbnailTemplate existing = findOrThrow(id);
+        boolean makeDefault = Boolean.TRUE.equals(request.getIsDefault());
+        if (makeDefault) {
+            demoteExistingDefault(id);
+        }
         ThumbnailTemplate updated = existing.toBuilder()
-                .sellerId(request.getSellerId() != null ? request.getSellerId() : existing.getSellerId())
                 .name(request.getName() != null ? request.getName() : existing.getName())
                 .canvasWidth(request.getCanvasWidth() != null ? request.getCanvasWidth() : existing.getCanvasWidth())
                 .canvasHeight(request.getCanvasHeight() != null ? request.getCanvasHeight() : existing.getCanvasHeight())
@@ -78,8 +82,21 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
                         ? request.getBackgroundImageKey() : existing.getBackgroundImageKey())
                 .elements(request.getElements() != null ? request.getElements() : existing.getElements())
                 .active(request.getActive() != null ? request.getActive() : existing.getActive())
+                .isDefault(request.getIsDefault() != null ? request.getIsDefault() : existing.getIsDefault())
                 .build();
         return toResponse(templateRepository.save(updated));
+    }
+
+    /**
+     * Enforce one default per tenant (CarrierRate pattern): demote the current default before promoting
+     * a new one. {@code keepId} = the template being promoted (skip if it is already the default).
+     */
+    private void demoteExistingDefault(Long keepId) {
+        templateRepository.findByIsDefaultTrueAndActiveTrue().ifPresent(current -> {
+            if (!current.getId().equals(keepId)) {
+                templateRepository.save(current.toBuilder().isDefault(false).build());
+            }
+        });
     }
 
     @Override
@@ -164,13 +181,13 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
         List<TemplateElement> elements = t.getElements() == null ? new ArrayList<>() : t.getElements();
         return ThumbnailTemplateResponse.builder()
                 .id(t.getId())
-                .sellerId(t.getSellerId())
                 .name(t.getName())
                 .canvasWidth(t.getCanvasWidth())
                 .canvasHeight(t.getCanvasHeight())
                 .backgroundImageKey(t.getBackgroundImageKey())
                 .elements(elements)
                 .active(t.getActive())
+                .isDefault(t.getIsDefault())
                 .build();
     }
 }

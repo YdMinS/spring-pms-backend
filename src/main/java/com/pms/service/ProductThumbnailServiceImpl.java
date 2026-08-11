@@ -116,17 +116,13 @@ public class ProductThumbnailServiceImpl implements ProductThumbnailService {
                 .toList();
     }
 
-    /** Seller-specific active template first, then tenant-wide default; else 400. */
+    /**
+     * The tenant's active default template. The {@code sellerId} argument is currently ignored (all
+     * sellers share the default); the signature is kept for the later per-seller assignment step.
+     */
     private ThumbnailTemplate resolveTemplate(Long sellerId) {
-        List<ThumbnailTemplate> sellerTemplates = templateRepository.findBySellerIdAndActiveTrue(sellerId);
-        if (!sellerTemplates.isEmpty()) {
-            return sellerTemplates.get(0);
-        }
-        List<ThumbnailTemplate> defaults = templateRepository.findBySellerIdIsNullAndActiveTrue();
-        if (!defaults.isEmpty()) {
-            return defaults.get(0);
-        }
-        throw new IllegalArgumentException("판매자/기본 템플릿이 없습니다");
+        return templateRepository.findByIsDefaultTrueAndActiveTrue()
+                .orElseThrow(() -> new IllegalArgumentException("기본 템플릿이 없습니다"));
     }
 
     /** Upsert on (productId, sellerId): rebuild existing row (same id) or insert a new one. */

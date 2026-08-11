@@ -39,11 +39,10 @@ public class ThumbnailTemplateController {
     }
 
     @GetMapping
-    @Operation(summary = "List thumbnail templates (optional ?sellerId= filter)")
+    @Operation(summary = "List thumbnail templates (tenant-wide library)")
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<ResponseDTO<List<ThumbnailTemplateResponse>>> list(
-            @RequestParam(required = false) Long sellerId) {
-        return ResponseEntity.ok(ResponseDTO.success(templateService.list(sellerId)));
+    public ResponseEntity<ResponseDTO<List<ThumbnailTemplateResponse>>> list() {
+        return ResponseEntity.ok(ResponseDTO.success(templateService.list()));
     }
 
     @GetMapping("/{id}")

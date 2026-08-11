@@ -19,9 +19,6 @@ public class ThumbnailTemplateResponse {
     @Schema(description = "Template id", example = "1")
     private Long id;
 
-    @Schema(description = "Seller id; null = tenant-wide", example = "3", nullable = true)
-    private Long sellerId;
-
     @Schema(description = "Template name", example = "쿠팡 기본 썸네일")
     private String name;
 
@@ -39,4 +36,7 @@ public class ThumbnailTemplateResponse {
 
     @Schema(description = "Active flag", example = "true")
     private Boolean active;
+
+    @Schema(description = "Whether this is the tenant default template", example = "true")
+    private Boolean isDefault;
 }

@@ -12,8 +12,8 @@ public interface ThumbnailTemplateService {
 
     ThumbnailTemplateResponse get(Long id);
 
-    /** All templates for the current tenant, optionally filtered by seller (null = no filter). */
-    List<ThumbnailTemplateResponse> list(Long sellerId);
+    /** All templates for the current tenant (shared library). */
+    List<ThumbnailTemplateResponse> list();
 
     ThumbnailTemplateResponse update(Long id, ThumbnailTemplateRequest request);
 

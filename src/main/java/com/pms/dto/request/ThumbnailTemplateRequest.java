@@ -40,9 +40,6 @@ public class ThumbnailTemplateRequest {
     @Schema(description = "Canvas height in px", example = "1000")
     private Integer canvasHeight;
 
-    @Schema(description = "Seller id; null = tenant-wide template", example = "3", nullable = true)
-    private Long sellerId;
-
     @Schema(description = "Full-canvas base image storage key (optional)", nullable = true)
     private String backgroundImageKey;
 
@@ -51,4 +48,8 @@ public class ThumbnailTemplateRequest {
 
     @Schema(description = "Active flag; defaults to true on create", example = "true", nullable = true)
     private Boolean active;
+
+    @Schema(description = "Make this the tenant default (demotes the existing default); defaults to false",
+            example = "false", nullable = true)
+    private Boolean isDefault;
 }
