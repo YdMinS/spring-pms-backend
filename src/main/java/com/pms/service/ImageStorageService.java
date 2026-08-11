@@ -53,4 +53,39 @@ public interface ImageStorageService {
      * @throws UnsupportedOperationException  always, for the S3 implementation (served via public URL)
      */
     byte[] getImage(String imageUrlOrFilename) throws FileNotFoundException;
+
+    /**
+     * Store arbitrary bytes under a category and return the value to persist (fonts, thumbnails …).
+     * Used by the thumbnail engine (FEATURE_2608_05) — generated thumbnails and uploaded fonts.
+     *
+     * <p>Key layout differs by backend, mirroring {@link #uploadImage}:</p>
+     * <ul>
+     *   <li>Local: {@code {uploadDir}/{category}/{filename}} on disk → returns that disk-relative path.</li>
+     *   <li>S3: {@code {keyPrefix}/{tenantId}/{category}/{filename}} → returns the public https URL
+     *       (tenant read from {@link com.pms.security.TenantContext}; must be present).</li>
+     * </ul>
+     *
+     * @param data        raw bytes to store
+     * @param category    logical bucket, e.g. {@code thumbnails} or {@code fonts}
+     * @param filename    target filename (caller ensures uniqueness / extension)
+     * @param contentType MIME type (e.g. {@code image/jpeg}, {@code font/ttf})
+     * @return value to persist (disk-relative path on Local, public URL on S3)
+     */
+    String uploadBytes(byte[] data, String category, String filename, String contentType);
+
+    /**
+     * Read back bytes previously stored via {@link #uploadBytes} (or {@link #uploadImage}), given the
+     * exact value that method returned. Needed for server-side rendering of UPLOADED fonts, which must
+     * load the actual font bytes regardless of backend.
+     *
+     * <ul>
+     *   <li>Local: resolves the stored disk-relative path and reads it.</li>
+     *   <li>S3: extracts the key from the public URL and {@code getObject}s it.</li>
+     * </ul>
+     *
+     * @param storedValue the value returned by {@link #uploadBytes}/{@link #uploadImage}
+     * @return the stored bytes
+     * @throws FileNotFoundException if the target does not exist (Local)
+     */
+    byte[] getBytes(String storedValue) throws FileNotFoundException;
 }

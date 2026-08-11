@@ -1,0 +1,89 @@
+# Thumbnail generation (FEATURE_2608_05 Step 1): template engine + font registry + product thumbnails.
+# Structured tags only (no raw SQL) for H2<->MySQL portability. Ids prefixed 003-thumb-*.
+# Fresh tables (no pre-existing constraint to drop) → single portable changeset per table, no dbms split.
+# NOTE: product_thumbnail is defined here (01) though its entity/API arrive in 02 — one changeset owns
+#       the table + its UNIQUE(tenant_id, product_id, seller_id); 02 maps the entity, does NOT redefine it.
+databaseChangeLog:
+
+  # ---- thumbnail_template (@TenantId; elements = JSON in a CLOB/TEXT column) ----
+  - changeSet:
+      id: 003-thumb-template
+      author: oclyx
+      comment: "Thumbnail template: canvas + JSON elements array (portable CLOB)."
+      changes:
+        - createTable:
+            tableName: thumbnail_template
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: seller_id, type: BIGINT }
+              - column: { name: name, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: canvas_width, type: INT, constraints: { nullable: false } }
+              - column: { name: canvas_height, type: INT, constraints: { nullable: false } }
+              - column: { name: background_image_key, type: VARCHAR(500) }
+              # elements: List<TemplateElement> JSON. Entity columnDefinition=TEXT; portable CLOB here
+              # (H2 CLOB / MySQL LONGTEXT) — same convention as order_item.raw / products.description.
+              - column: { name: elements, type: CLOB }
+              - column: { name: active, type: BOOLEAN, constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_thumbnail_template_tenant
+            baseTableName: thumbnail_template
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+
+  # ---- font_asset (NOT @TenantId: tenant_id NULL = system-shared; nullable FK) ----
+  - changeSet:
+      id: 003-thumb-font-asset
+      author: oclyx
+      comment: "Font registry: system (tenant_id null) + tenant-uploaded fonts."
+      changes:
+        - createTable:
+            tableName: font_asset
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT }
+              - column: { name: display_name, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: family_key, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: source, type: VARCHAR(20), constraints: { nullable: false } }
+              - column: { name: storage_key, type: VARCHAR(500), constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_font_asset_tenant
+            baseTableName: font_asset
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+
+  # ---- product_thumbnail (used by 02; table+UNIQUE owned here) ----
+  - changeSet:
+      id: 003-thumb-product-thumbnail
+      author: oclyx
+      comment: "Per-product-per-seller generated thumbnail; UNIQUE(tenant_id, product_id, seller_id)."
+      changes:
+        - createTable:
+            tableName: product_thumbnail
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: product_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: seller_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: template_id, type: BIGINT }
+              - column: { name: image_url, type: VARCHAR(500), constraints: { nullable: false } }
+              - column: { name: source, type: VARCHAR(20), constraints: { nullable: false } }
+              - column: { name: generated_at, type: TIMESTAMP }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_product_thumbnail_tenant
+            baseTableName: product_thumbnail
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            tableName: product_thumbnail
+            columnNames: "tenant_id, product_id, seller_id"
+            constraintName: uq_product_thumbnail_tenant_product_seller

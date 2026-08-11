@@ -1,0 +1,122 @@
+package com.pms.domain;
+
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonPOJOBuilder;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+
+/**
+ * A single element of a {@link ThumbnailTemplate} (JSON value object, NOT a JPA entity).
+ *
+ * <p>Persisted as part of {@code ThumbnailTemplate.elements} via
+ * {@link com.pms.domain.converter.TemplateElementListConverter} (JSON TEXT column). The element array
+ * is the only extension seam of the thumbnail model — new element kinds are added as data, never as
+ * schema changes (see FEATURE_2608_05 PLAN §3/§6).</p>
+ *
+ * <p><b>type</b> = {@code text} | {@code image}. Text elements bind an input value (brand/product name)
+ * and are auto-fitted (font shrink + wrap + ellipsis). Image elements draw a stored asset or a bound
+ * image (e.g. the product photo); watermarks are just {@code type:image} with {@code opacity<1}.</p>
+ *
+ * <p>⚠️ Immutable (Builder only, no setters). Jackson (de)serializes through the Lombok builder so the
+ * same rule holds for request bodies and the DB converter. Null soft fields are normalized at render
+ * time by {@link com.pms.service.ThumbnailRenderer} (align→left/top, padding→0, maxLines→1, opacity→1,
+ * color→#000000); {@code region}, {@code maxFontSize}, {@code minFontSize} and (for text) {@code fontId}
+ * are required — a null there is rejected as {@link IllegalArgumentException} (→400).</p>
+ */
+@Getter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@JsonDeserialize(builder = TemplateElement.TemplateElementBuilder.class)
+public class TemplateElement {
+
+    /** {@code text} | {@code image}. */
+    private String type;
+
+    /** Text: input argument name (e.g. {@code brandName}). Image: name of a bound image, or null. */
+    private String bind;
+
+    /** Image: storage key of a fixed source asset. Text: null. */
+    private String src;
+
+    /** Placement box in canvas pixels. Required. */
+    private Region region;
+
+    /** Horizontal/vertical alignment. Null → left/top. */
+    private Align align;
+
+    /** Inner padding in pixels. Null → 0 on every side. */
+    private Padding padding;
+
+    /** Text: {@link FontAsset} id used to render. Required for text. */
+    private Long fontId;
+
+    /** Text: hex color (e.g. {@code #000000}). Null → black. */
+    private String color;
+
+    /** Text autofit upper bound. Required for text. */
+    private Integer maxFontSize;
+
+    /** Text autofit lower bound. Required for text. */
+    private Integer minFontSize;
+
+    /** Text: max lines after wrapping (then shrink, then ellipsize). Null → 1. */
+    private Integer maxLines;
+
+    /** Image: 0..1 opacity (watermark). Null → 1.0. */
+    private Double opacity;
+
+    @Getter
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @JsonDeserialize(builder = Region.RegionBuilder.class)
+    public static class Region {
+        private Integer x;
+        private Integer y;
+        private Integer w;
+        private Integer h;
+
+        @JsonPOJOBuilder(withPrefix = "")
+        public static class RegionBuilder {
+        }
+    }
+
+    @Getter
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @JsonDeserialize(builder = Align.AlignBuilder.class)
+    public static class Align {
+        /** left | center | right */
+        private String h;
+        /** top | center | bottom */
+        private String v;
+
+        @JsonPOJOBuilder(withPrefix = "")
+        public static class AlignBuilder {
+        }
+    }
+
+    @Getter
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @JsonDeserialize(builder = Padding.PaddingBuilder.class)
+    public static class Padding {
+        private Integer top;
+        private Integer bottom;
+        private Integer left;
+        private Integer right;
+
+        @JsonPOJOBuilder(withPrefix = "")
+        public static class PaddingBuilder {
+        }
+    }
+
+    @JsonPOJOBuilder(withPrefix = "")
+    public static class TemplateElementBuilder {
+    }
+}
