@@ -1,5 +1,6 @@
 package com.pms.dto.request;
 
+import com.pms.domain.BackgroundMode;
 import com.pms.domain.TemplateElement;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
@@ -40,8 +41,17 @@ public class ThumbnailTemplateRequest {
     @Schema(description = "Canvas height in px", example = "1000")
     private Integer canvasHeight;
 
-    @Schema(description = "Full-canvas base image storage key (optional)", nullable = true)
-    private String backgroundImageKey;
+    @Schema(description = "Background paint mode; defaults to WHITE on create when null",
+            example = "WHITE", nullable = true)
+    private BackgroundMode backgroundMode;
+
+    @Schema(description = "Top gradient color #RRGGBB (required when backgroundMode=GRADIENT_MANUAL)",
+            example = "#FF0000", nullable = true)
+    private String gradientTopColor;
+
+    @Schema(description = "Bottom gradient color #RRGGBB (required when backgroundMode=GRADIENT_MANUAL)",
+            example = "#0000FF", nullable = true)
+    private String gradientBottomColor;
 
     @Schema(description = "Ordered element array (painter's order)")
     private List<TemplateElement> elements;

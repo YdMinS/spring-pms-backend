@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.BackgroundMode;
 import com.pms.domain.TemplateElement;
 import com.pms.domain.ThumbnailTemplate;
 import lombok.RequiredArgsConstructor;
@@ -60,13 +61,7 @@ public class ThumbnailRenderer {
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
 
-            g.setColor(Color.WHITE);
-            g.fillRect(0, 0, width, height);
-
-            if (template.getBackgroundImageKey() != null && !template.getBackgroundImageKey().isBlank()) {
-                BufferedImage bg = decode(loadStored(template.getBackgroundImageKey()), "background");
-                g.drawImage(bg, 0, 0, width, height, null);
-            }
+            paintBackground(g, template, width, height, imageBindings);
 
             List<TemplateElement> elements = template.getElements();
             if (elements != null) {
@@ -82,6 +77,63 @@ public class ThumbnailRenderer {
             g.dispose();
         }
         return toJpeg(image);
+    }
+
+    /** Binding key of the product image (source for {@link BackgroundMode#GRADIENT_AUTO}). */
+    private static final String PRODUCT_IMAGE_BIND = "productImage";
+    /** Neutral gray used for solid GRAY and as the gradient fallback (no product image / missing colors). */
+    private static final Color GRAY = new Color(0x80, 0x80, 0x80);
+
+    /**
+     * Paints the full-canvas background layer once, before elements. Solid modes fill a color; gradient
+     * modes paint a vertical {@link GradientPaint}. GRADIENT_AUTO derives its colors from the bound
+     * product image's top/bottom-half averages, falling back to gray when no image is bound (e.g.
+     * preview). A null mode (legacy data) is treated as WHITE.
+     */
+    private void paintBackground(Graphics2D g, ThumbnailTemplate template, int width, int height,
+                                 Map<String, byte[]> imageBindings) {
+        BackgroundMode mode = template.getBackgroundMode() == null ? BackgroundMode.WHITE : template.getBackgroundMode();
+        switch (mode) {
+            case BLACK -> fill(g, Color.BLACK, width, height);
+            case GRAY -> fill(g, GRAY, width, height);
+            case GRADIENT_MANUAL -> {
+                Color top = parseColorOrNull(template.getGradientTopColor());
+                Color bottom = parseColorOrNull(template.getGradientBottomColor());
+                if (top == null || bottom == null) {
+                    fill(g, GRAY, width, height); // missing color(s) → gray fallback
+                } else {
+                    fillGradient(g, top, bottom, width, height);
+                }
+            }
+            case GRADIENT_AUTO -> {
+                byte[] productBytes = imageBindings == null ? null : imageBindings.get(PRODUCT_IMAGE_BIND);
+                if (productBytes == null) {
+                    fill(g, GRAY, width, height); // no product image (preview) → gray fallback
+                } else {
+                    Color[] tb = ImageColorSampler.topBottom(decode(productBytes, "auto-gradient source"));
+                    fillGradient(g, tb[0], tb[1], width, height);
+                }
+            }
+            default -> fill(g, Color.WHITE, width, height); // WHITE (and null-normalized)
+        }
+    }
+
+    private static void fill(Graphics2D g, Color color, int width, int height) {
+        g.setColor(color);
+        g.fillRect(0, 0, width, height);
+    }
+
+    private static void fillGradient(Graphics2D g, Color top, Color bottom, int width, int height) {
+        g.setPaint(new GradientPaint(0, 0, top, 0, height, bottom));
+        g.fillRect(0, 0, width, height);
+    }
+
+    /** {@code #RRGGBB} → Color; null/blank → null (caller decides fallback). Invalid format → 400. */
+    private static Color parseColorOrNull(String hex) {
+        if (hex == null || hex.isBlank()) {
+            return null;
+        }
+        return parseColor(hex);
     }
 
     private void drawImageElement(Graphics2D g, TemplateElement element, Map<String, byte[]> imageBindings) {

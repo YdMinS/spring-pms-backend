@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.BackgroundMode;
 import com.pms.domain.TemplateElement;
 import com.pms.domain.ThumbnailTemplate;
 import org.junit.jupiter.api.Test;
@@ -76,6 +77,70 @@ class ThumbnailRendererTest {
         BufferedImage decoded = ImageIO.read(new ByteArrayInputStream(jpeg));
         assertThat(decoded.getWidth()).isEqualTo(150);
         assertThat(decoded.getHeight()).isEqualTo(150);
+    }
+
+    @Test
+    void render_gradientAuto_withProductImage_paintsTopBottomColors() throws Exception {
+        // Source: top half RED, bottom half BLUE → auto gradient RED(top)→BLUE(bottom).
+        ThumbnailTemplate template = ThumbnailTemplate.builder()
+                .canvasWidth(100).canvasHeight(100)
+                .backgroundMode(BackgroundMode.GRADIENT_AUTO)
+                .elements(List.of())
+                .build();
+
+        byte[] jpeg = renderer.render(template, Map.of(),
+                Map.of("productImage", topBottomPng(80, 80, Color.RED, Color.BLUE)));
+
+        BufferedImage out = ImageIO.read(new ByteArrayInputStream(jpeg));
+        Color top = new Color(out.getRGB(50, 2));
+        Color bottom = new Color(out.getRGB(50, 97));
+        assertThat(top.getRed()).isGreaterThan(top.getBlue());     // top ~ red
+        assertThat(bottom.getBlue()).isGreaterThan(bottom.getRed()); // bottom ~ blue
+    }
+
+    @Test
+    void render_gradientAuto_withoutProductImage_fallsBackToGray() throws Exception {
+        ThumbnailTemplate template = ThumbnailTemplate.builder()
+                .canvasWidth(100).canvasHeight(100)
+                .backgroundMode(BackgroundMode.GRADIENT_AUTO)
+                .elements(List.of())
+                .build();
+
+        byte[] jpeg = renderer.render(template, Map.of(), Map.of()); // no productImage binding
+
+        Color px = new Color(ImageIO.read(new ByteArrayInputStream(jpeg)).getRGB(50, 50));
+        assertThat(px.getRed()).isBetween(110, 145);
+        assertThat(px.getGreen()).isBetween(110, 145);
+        assertThat(px.getBlue()).isBetween(110, 145);
+    }
+
+    @Test
+    void render_black_paintsBlackBackground() throws Exception {
+        ThumbnailTemplate template = ThumbnailTemplate.builder()
+                .canvasWidth(80).canvasHeight(80)
+                .backgroundMode(BackgroundMode.BLACK)
+                .elements(List.of())
+                .build();
+
+        byte[] jpeg = renderer.render(template, Map.of(), Map.of());
+
+        Color px = new Color(ImageIO.read(new ByteArrayInputStream(jpeg)).getRGB(40, 40));
+        assertThat(px.getRed()).isLessThan(40);
+        assertThat(px.getGreen()).isLessThan(40);
+        assertThat(px.getBlue()).isLessThan(40);
+    }
+
+    private byte[] topBottomPng(int w, int h, Color top, Color bottom) throws Exception {
+        BufferedImage img = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = img.createGraphics();
+        g.setColor(top);
+        g.fillRect(0, 0, w, h / 2);
+        g.setColor(bottom);
+        g.fillRect(0, h / 2, w, h - h / 2);
+        g.dispose();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ImageIO.write(img, "png", out);
+        return out.toByteArray();
     }
 
     private TemplateElement textElement(String bind) {

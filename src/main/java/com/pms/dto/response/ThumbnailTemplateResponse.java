@@ -1,5 +1,6 @@
 package com.pms.dto.response;
 
+import com.pms.domain.BackgroundMode;
 import com.pms.domain.TemplateElement;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
@@ -28,8 +29,14 @@ public class ThumbnailTemplateResponse {
     @Schema(description = "Canvas height in px", example = "1000")
     private Integer canvasHeight;
 
-    @Schema(description = "Full-canvas base image storage key", nullable = true)
-    private String backgroundImageKey;
+    @Schema(description = "Background paint mode", example = "WHITE")
+    private BackgroundMode backgroundMode;
+
+    @Schema(description = "Top gradient color #RRGGBB (GRADIENT_MANUAL only)", nullable = true)
+    private String gradientTopColor;
+
+    @Schema(description = "Bottom gradient color #RRGGBB (GRADIENT_MANUAL only)", nullable = true)
+    private String gradientBottomColor;
 
     @Schema(description = "Ordered element array")
     private List<TemplateElement> elements;

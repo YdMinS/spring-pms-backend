@@ -43,9 +43,21 @@ public class ThumbnailTemplate extends BaseEntity {
     @Column(name = "canvas_height", nullable = false)
     private Integer canvasHeight;
 
-    /** Optional full-canvas base image (storage key). */
-    @Column(name = "background_image_key", length = 500)
-    private String backgroundImageKey;
+    /**
+     * How the background layer is painted (solid / gradient). NOT nullable → the seeder and service must
+     * always set it explicitly (an unset builder default would INSERT null and violate the constraint).
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "background_mode", nullable = false, length = 20)
+    private BackgroundMode backgroundMode;
+
+    /** Top gradient color ({@code #RRGGBB}); only meaningful for {@link BackgroundMode#GRADIENT_MANUAL}. */
+    @Column(name = "gradient_top_color", length = 7)
+    private String gradientTopColor;
+
+    /** Bottom gradient color ({@code #RRGGBB}); only meaningful for {@link BackgroundMode#GRADIENT_MANUAL}. */
+    @Column(name = "gradient_bottom_color", length = 7)
+    private String gradientBottomColor;
 
     /** Ordered element array, JSON-serialized into a TEXT column (H2/MySQL portable). */
     @Convert(converter = TemplateElementListConverter.class)

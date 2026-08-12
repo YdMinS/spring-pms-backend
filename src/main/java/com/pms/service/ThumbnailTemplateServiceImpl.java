@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.BackgroundMode;
 import com.pms.domain.TemplateElement;
 import com.pms.domain.ThumbnailTemplate;
 import com.pms.dto.request.ThumbnailPreviewRequest;
@@ -44,11 +45,16 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
         if (makeDefault) {
             demoteExistingDefault(null);
         }
+        BackgroundMode mode = request.getBackgroundMode() != null
+                ? request.getBackgroundMode() : BackgroundMode.WHITE;
+        validateGradientColors(mode, request.getGradientTopColor(), request.getGradientBottomColor());
         ThumbnailTemplate template = ThumbnailTemplate.builder()
                 .name(request.getName())
                 .canvasWidth(request.getCanvasWidth())
                 .canvasHeight(request.getCanvasHeight())
-                .backgroundImageKey(request.getBackgroundImageKey())
+                .backgroundMode(mode)
+                .gradientTopColor(request.getGradientTopColor())
+                .gradientBottomColor(request.getGradientBottomColor())
                 .elements(request.getElements() == null ? List.of() : request.getElements())
                 .active(request.getActive() == null ? Boolean.TRUE : request.getActive())
                 .isDefault(makeDefault)
@@ -74,12 +80,20 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
         if (makeDefault) {
             demoteExistingDefault(id);
         }
+        BackgroundMode mode = request.getBackgroundMode() != null
+                ? request.getBackgroundMode() : existing.getBackgroundMode();
+        String topColor = request.getGradientTopColor() != null
+                ? request.getGradientTopColor() : existing.getGradientTopColor();
+        String bottomColor = request.getGradientBottomColor() != null
+                ? request.getGradientBottomColor() : existing.getGradientBottomColor();
+        validateGradientColors(mode, topColor, bottomColor);
         ThumbnailTemplate updated = existing.toBuilder()
                 .name(request.getName() != null ? request.getName() : existing.getName())
                 .canvasWidth(request.getCanvasWidth() != null ? request.getCanvasWidth() : existing.getCanvasWidth())
                 .canvasHeight(request.getCanvasHeight() != null ? request.getCanvasHeight() : existing.getCanvasHeight())
-                .backgroundImageKey(request.getBackgroundImageKey() != null
-                        ? request.getBackgroundImageKey() : existing.getBackgroundImageKey())
+                .backgroundMode(mode)
+                .gradientTopColor(topColor)
+                .gradientBottomColor(bottomColor)
                 .elements(request.getElements() != null ? request.getElements() : existing.getElements())
                 .active(request.getActive() != null ? request.getActive() : existing.getActive())
                 .isDefault(request.getIsDefault() != null ? request.getIsDefault() : existing.getIsDefault())
@@ -97,6 +111,17 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
                 templateRepository.save(current.toBuilder().isDefault(false).build());
             }
         });
+    }
+
+    /**
+     * Cross-field rule: {@code GRADIENT_MANUAL} needs both gradient colors (→400 otherwise). Other modes
+     * ignore the colors. Color format itself is validated at render time by {@code parseColor}.
+     */
+    private void validateGradientColors(BackgroundMode mode, String top, String bottom) {
+        if (mode == BackgroundMode.GRADIENT_MANUAL
+                && (top == null || top.isBlank() || bottom == null || bottom.isBlank())) {
+            throw new IllegalArgumentException("수동 그라데이션은 두 색이 필요합니다");
+        }
     }
 
     @Override
@@ -119,7 +144,10 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
                     .name(inline.getName())
                     .canvasWidth(inline.getCanvasWidth())
                     .canvasHeight(inline.getCanvasHeight())
-                    .backgroundImageKey(inline.getBackgroundImageKey())
+                    .backgroundMode(inline.getBackgroundMode() != null
+                            ? inline.getBackgroundMode() : BackgroundMode.WHITE)
+                    .gradientTopColor(inline.getGradientTopColor())
+                    .gradientBottomColor(inline.getGradientBottomColor())
                     .elements(inline.getElements() == null ? List.of() : inline.getElements())
                     .active(Boolean.TRUE)
                     .build();
@@ -184,7 +212,9 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
                 .name(t.getName())
                 .canvasWidth(t.getCanvasWidth())
                 .canvasHeight(t.getCanvasHeight())
-                .backgroundImageKey(t.getBackgroundImageKey())
+                .backgroundMode(t.getBackgroundMode())
+                .gradientTopColor(t.getGradientTopColor())
+                .gradientBottomColor(t.getGradientBottomColor())
                 .elements(elements)
                 .active(t.getActive())
                 .isDefault(t.getIsDefault())

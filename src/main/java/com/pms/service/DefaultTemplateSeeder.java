@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.BackgroundMode;
 import com.pms.domain.FontAsset;
 import com.pms.domain.TemplateElement;
 import com.pms.domain.ThumbnailTemplate;
@@ -63,6 +64,7 @@ public class DefaultTemplateSeeder implements ApplicationRunner {
                     .name("기본 템플릿")
                     .canvasWidth(1000)
                     .canvasHeight(1000)
+                    .backgroundMode(BackgroundMode.WHITE)
                     .elements(List.of(brandTop(fontId), productBottom(fontId)))
                     .active(true)
                     .isDefault(true)
