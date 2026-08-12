@@ -130,6 +130,36 @@ class ThumbnailRendererTest {
         assertThat(px.getBlue()).isLessThan(40);
     }
 
+    @Test
+    void render_largeLineSpacing_producesValidJpeg() throws Exception {
+        given(fontRegistry.load(any())).willReturn(new Font("SansSerif", Font.PLAIN, 12));
+
+        // Long multi-line text in a tall box with a big multiplier: exercises the spacing path end-to-end.
+        TemplateElement spaced = TemplateElement.builder()
+                .type("text")
+                .bind("productName")
+                .region(TemplateElement.Region.builder().x(0).y(0).w(200).h(160).build())
+                .align(TemplateElement.Align.builder().h("center").v("center").build())
+                .fontId(1L)
+                .color("#000000")
+                .maxFontSize(40)
+                .minFontSize(10)
+                .maxLines(2)
+                .lineSpacing(1.6)
+                .build();
+        ThumbnailTemplate template = ThumbnailTemplate.builder()
+                .canvasWidth(200).canvasHeight(200)
+                .elements(List.of(spaced))
+                .build();
+
+        byte[] jpeg = renderer.render(template, Map.of("productName", "Alpha Beta Gamma Delta"), Map.of());
+
+        assertThat(jpeg).isNotEmpty();
+        BufferedImage decoded = ImageIO.read(new ByteArrayInputStream(jpeg));
+        assertThat(decoded.getWidth()).isEqualTo(200);
+        assertThat(decoded.getHeight()).isEqualTo(200);
+    }
+
     private byte[] topBottomPng(int w, int h, Color top, Color bottom) throws Exception {
         BufferedImage img = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = img.createGraphics();

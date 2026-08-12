@@ -75,18 +75,23 @@ public class DefaultTemplateSeeder implements ApplicationRunner {
         }
     }
 
+    // NOTE: lineSpacing 1.15 + align v=center are the multi-line preset (long/large text wraps instead
+    // of shrinking, block stays centered in its band whether it renders as 1 or 2 lines). Seeder is
+    // idempotent, so this only affects newly seeded templates — existing environments adjust in the editor.
+
     /** Brand name, centered in the top band. */
     private TemplateElement brandTop(Long fontId) {
         return TemplateElement.builder()
                 .type("text")
                 .bind("brandName")
                 .region(TemplateElement.Region.builder().x(0).y(0).w(1000).h(200).build())
-                .align(TemplateElement.Align.builder().h("center").v("top").build())
+                .align(TemplateElement.Align.builder().h("center").v("center").build())
                 .fontId(fontId)
                 .color("#000000")
                 .maxFontSize(64)
                 .minFontSize(24)
                 .maxLines(2)
+                .lineSpacing(1.15)
                 .build();
     }
 
@@ -96,12 +101,13 @@ public class DefaultTemplateSeeder implements ApplicationRunner {
                 .type("text")
                 .bind("productName")
                 .region(TemplateElement.Region.builder().x(0).y(800).w(1000).h(200).build())
-                .align(TemplateElement.Align.builder().h("center").v("bottom").build())
+                .align(TemplateElement.Align.builder().h("center").v("center").build())
                 .fontId(fontId)
                 .color("#000000")
                 .maxFontSize(64)
                 .minFontSize(24)
                 .maxLines(2)
+                .lineSpacing(1.15)
                 .build();
     }
 }

@@ -31,24 +31,24 @@ public final class TextAutofit {
 
     public static Result fit(String text, Font baseFont, int availW, int availH,
                              int maxFontSize, int minFontSize, int maxLines,
-                             FontRenderContext frc) {
+                             double lineSpacing, FontRenderContext frc) {
         String safe = text == null ? "" : text.trim();
         int lines = Math.max(1, maxLines);
 
         for (int size = maxFontSize; size >= minFontSize; size--) {
             Font font = baseFont.deriveFont((float) size);
-            int lineHeight = lineHeight(font, frc);
+            int effLH = effectiveLineHeight(font, frc, lineSpacing);
             List<String> wrapped = wrap(safe, font, frc, availW);
-            if (wrapped.size() <= lines && wrapped.size() * lineHeight <= availH) {
-                return new Result(size, wrapped, ascent(font, frc), lineHeight);
+            if (wrapped.size() <= lines && wrapped.size() * effLH <= availH) {
+                return new Result(size, wrapped, ascent(font, frc), effLH);
             }
         }
 
         // Doesn't fit even at min size → clamp to what fits and ellipsize the last visible line.
         Font font = baseFont.deriveFont((float) minFontSize);
-        int lineHeight = lineHeight(font, frc);
+        int effLH = effectiveLineHeight(font, frc, lineSpacing);
         List<String> wrapped = wrap(safe, font, frc, availW);
-        int maxByHeight = Math.max(1, availH / Math.max(1, lineHeight));
+        int maxByHeight = Math.max(1, availH / Math.max(1, effLH));
         int visible = Math.min(lines, maxByHeight);
         if (wrapped.size() > visible) {
             wrapped = new ArrayList<>(wrapped.subList(0, visible));
@@ -62,7 +62,7 @@ public final class TextAutofit {
                 wrapped.set(last, ellipsize(wrapped.get(last), font, frc, availW));
             }
         }
-        return new Result(minFontSize, wrapped, ascent(font, frc), lineHeight);
+        return new Result(minFontSize, wrapped, ascent(font, frc), effLH);
     }
 
     /** Greedy word wrap; a single word wider than {@code availW} is split by characters. */
@@ -136,6 +136,16 @@ public final class TextAutofit {
     private static int lineHeight(Font font, FontRenderContext frc) {
         LineMetrics lm = font.getLineMetrics("Ayg", frc);
         return (int) Math.ceil(lm.getHeight());
+    }
+
+    /**
+     * Natural line height scaled by {@code lineSpacing} (clamped to &gt;= 1.0 so lines never overlap).
+     * Reflected in both the height budget and {@link Result#lineHeight()} so the renderer stack is
+     * unchanged; {@code lineSpacing == 1.0} yields the natural height (today's rendering).
+     */
+    private static int effectiveLineHeight(Font font, FontRenderContext frc, double lineSpacing) {
+        int naturalLH = lineHeight(font, frc);
+        return Math.max(naturalLH, (int) Math.ceil(naturalLH * Math.max(1.0, lineSpacing)));
     }
 
     private static int ascent(Font font, FontRenderContext frc) {

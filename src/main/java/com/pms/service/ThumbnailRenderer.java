@@ -184,8 +184,10 @@ public class ThumbnailRenderer {
         int availH = Math.max(1, r.getH() - padTop - padBottom);
 
         int maxLines = element.getMaxLines() == null ? 1 : Math.max(1, element.getMaxLines());
+        double lineSpacing = element.getLineSpacing() == null ? 1.0 : element.getLineSpacing();
         TextAutofit.Result fit = TextAutofit.fit(value, base, availW, availH,
-                element.getMaxFontSize(), element.getMinFontSize(), maxLines, g.getFontRenderContext());
+                element.getMaxFontSize(), element.getMinFontSize(), maxLines, lineSpacing,
+                g.getFontRenderContext());
 
         g.setFont(base.deriveFont((float) fit.fontSize()));
         g.setColor(parseColor(element.getColor()));
