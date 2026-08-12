@@ -54,13 +54,13 @@ public class ProductThumbnailControllerTest extends BaseIntegrationTest {
         sellerId = sellerRepository.save(Seller.builder()
                 .sellerName("행복상회").businessRegistration("111-22-33333").build()).getId();
 
-        // Seller-specific active template with one text element (bound to the seeded system font).
+        // The tenant default template (library model) with one text element (bound to the seeded font).
         String templateJson = objectMapper.writeValueAsString(Map.of(
-                "sellerId", sellerId,
                 "name", "쿠팡 기본",
                 "canvasWidth", 300,
                 "canvasHeight", 300,
                 "active", true,
+                "isDefault", true,
                 "elements", List.of(Map.of(
                         "type", "text",
                         "bind", "productName",

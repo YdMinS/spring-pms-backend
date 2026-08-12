@@ -22,8 +22,9 @@ import lombok.NoArgsConstructor;
  * <p>⚠️ Immutable (Builder only, no setters). Jackson (de)serializes through the Lombok builder so the
  * same rule holds for request bodies and the DB converter. Null soft fields are normalized at render
  * time by {@link com.pms.service.ThumbnailRenderer} (align→left/top, padding→0, maxLines→1, opacity→1,
- * color→#000000); {@code region}, {@code maxFontSize}, {@code minFontSize} and (for text) {@code fontId}
- * are required — a null there is rejected as {@link IllegalArgumentException} (→400).</p>
+ * color→#000000, lineSpacing→1.0); {@code region}, {@code maxFontSize}, {@code minFontSize} and (for
+ * text) {@code fontId} are required — a null there is rejected as {@link IllegalArgumentException}
+ * (→400).</p>
  */
 @Getter
 @Builder
@@ -64,6 +65,12 @@ public class TemplateElement {
 
     /** Text: max lines after wrapping (then shrink, then ellipsize). Null → 1. */
     private Integer maxLines;
+
+    /**
+     * Text: line-height multiplier applied to the font's natural line height (&gt;= 1.0). Null → 1.0.
+     * Only has a visual effect on multi-line text; feeds both the autofit height budget and drawing.
+     */
+    private Double lineSpacing;
 
     /** Image: 0..1 opacity (watermark). Null → 1.0. */
     private Double opacity;

@@ -25,7 +25,8 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class SystemFontSeeder implements ApplicationRunner {
 
-    private static final String SYSTEM_FAMILY = "SansSerif";
+    /** Package-visible so {@link DefaultTemplateSeeder} binds text to the same system font family. */
+    static final String SYSTEM_FAMILY = "SansSerif";
     private static final String SYSTEM_STORAGE_KEY = "fonts/system-sans.ttf";
 
     private final FontAssetRepository fontAssetRepository;

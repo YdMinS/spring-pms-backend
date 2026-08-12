@@ -5,3 +5,7 @@ databaseChangeLog:
       file: db/changelog/changes/002-tenant-dimension.yaml
   - include:
       file: db/changelog/changes/003-thumbnail-generation.yaml
+  - include:
+      file: db/changelog/changes/004-template-library-model.yaml
+  - include:
+      file: db/changelog/changes/005-template-background-mode.yaml

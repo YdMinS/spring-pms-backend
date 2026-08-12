@@ -1,0 +1,23 @@
+# Template library model (FEATURE_2608_05 Step 05): thumbnail_template becomes a tenant-wide library.
+# Drops seller ownership (seller_id) and adds is_default (one default per tenant, service-enforced).
+# Structured tags only (no raw SQL) for H2<->MySQL portability. Not yet deployed to prod, no data →
+# destructive drop is safe.
+databaseChangeLog:
+
+  - changeSet:
+      id: 004-template-library-model
+      author: oclyx
+      comment: "thumbnail_template: drop seller_id (library model), add is_default (default uniqueness)."
+      changes:
+        - dropColumn:
+            tableName: thumbnail_template
+            columnName: seller_id
+        - addColumn:
+            tableName: thumbnail_template
+            columns:
+              - column:
+                  name: is_default
+                  type: BOOLEAN
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false

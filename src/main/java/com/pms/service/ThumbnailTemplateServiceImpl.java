@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.BackgroundMode;
 import com.pms.domain.TemplateElement;
 import com.pms.domain.ThumbnailTemplate;
 import com.pms.dto.request.ThumbnailPreviewRequest;
@@ -40,14 +41,23 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
     @Override
     @Transactional
     public ThumbnailTemplateResponse create(ThumbnailTemplateRequest request) {
+        boolean makeDefault = Boolean.TRUE.equals(request.getIsDefault());
+        if (makeDefault) {
+            demoteExistingDefault(null);
+        }
+        BackgroundMode mode = request.getBackgroundMode() != null
+                ? request.getBackgroundMode() : BackgroundMode.WHITE;
+        validateGradientColors(mode, request.getGradientTopColor(), request.getGradientBottomColor());
         ThumbnailTemplate template = ThumbnailTemplate.builder()
-                .sellerId(request.getSellerId())
                 .name(request.getName())
                 .canvasWidth(request.getCanvasWidth())
                 .canvasHeight(request.getCanvasHeight())
-                .backgroundImageKey(request.getBackgroundImageKey())
+                .backgroundMode(mode)
+                .gradientTopColor(request.getGradientTopColor())
+                .gradientBottomColor(request.getGradientBottomColor())
                 .elements(request.getElements() == null ? List.of() : request.getElements())
                 .active(request.getActive() == null ? Boolean.TRUE : request.getActive())
+                .isDefault(makeDefault)
                 .build();
         return toResponse(templateRepository.save(template));
     }
@@ -58,28 +68,60 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
     }
 
     @Override
-    public List<ThumbnailTemplateResponse> list(Long sellerId) {
-        List<ThumbnailTemplate> templates = sellerId == null
-                ? templateRepository.findAll()
-                : templateRepository.findBySellerId(sellerId);
-        return templates.stream().map(this::toResponse).toList();
+    public List<ThumbnailTemplateResponse> list() {
+        return templateRepository.findAll().stream().map(this::toResponse).toList();
     }
 
     @Override
     @Transactional
     public ThumbnailTemplateResponse update(Long id, ThumbnailTemplateRequest request) {
         ThumbnailTemplate existing = findOrThrow(id);
+        boolean makeDefault = Boolean.TRUE.equals(request.getIsDefault());
+        if (makeDefault) {
+            demoteExistingDefault(id);
+        }
+        BackgroundMode mode = request.getBackgroundMode() != null
+                ? request.getBackgroundMode() : existing.getBackgroundMode();
+        String topColor = request.getGradientTopColor() != null
+                ? request.getGradientTopColor() : existing.getGradientTopColor();
+        String bottomColor = request.getGradientBottomColor() != null
+                ? request.getGradientBottomColor() : existing.getGradientBottomColor();
+        validateGradientColors(mode, topColor, bottomColor);
         ThumbnailTemplate updated = existing.toBuilder()
-                .sellerId(request.getSellerId() != null ? request.getSellerId() : existing.getSellerId())
                 .name(request.getName() != null ? request.getName() : existing.getName())
                 .canvasWidth(request.getCanvasWidth() != null ? request.getCanvasWidth() : existing.getCanvasWidth())
                 .canvasHeight(request.getCanvasHeight() != null ? request.getCanvasHeight() : existing.getCanvasHeight())
-                .backgroundImageKey(request.getBackgroundImageKey() != null
-                        ? request.getBackgroundImageKey() : existing.getBackgroundImageKey())
+                .backgroundMode(mode)
+                .gradientTopColor(topColor)
+                .gradientBottomColor(bottomColor)
                 .elements(request.getElements() != null ? request.getElements() : existing.getElements())
                 .active(request.getActive() != null ? request.getActive() : existing.getActive())
+                .isDefault(request.getIsDefault() != null ? request.getIsDefault() : existing.getIsDefault())
                 .build();
         return toResponse(templateRepository.save(updated));
+    }
+
+    /**
+     * Enforce one default per tenant (CarrierRate pattern): demote the current default before promoting
+     * a new one. {@code keepId} = the template being promoted (skip if it is already the default).
+     */
+    private void demoteExistingDefault(Long keepId) {
+        templateRepository.findByIsDefaultTrueAndActiveTrue().ifPresent(current -> {
+            if (!current.getId().equals(keepId)) {
+                templateRepository.save(current.toBuilder().isDefault(false).build());
+            }
+        });
+    }
+
+    /**
+     * Cross-field rule: {@code GRADIENT_MANUAL} needs both gradient colors (→400 otherwise). Other modes
+     * ignore the colors. Color format itself is validated at render time by {@code parseColor}.
+     */
+    private void validateGradientColors(BackgroundMode mode, String top, String bottom) {
+        if (mode == BackgroundMode.GRADIENT_MANUAL
+                && (top == null || top.isBlank() || bottom == null || bottom.isBlank())) {
+            throw new IllegalArgumentException("수동 그라데이션은 두 색이 필요합니다");
+        }
     }
 
     @Override
@@ -102,7 +144,10 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
                     .name(inline.getName())
                     .canvasWidth(inline.getCanvasWidth())
                     .canvasHeight(inline.getCanvasHeight())
-                    .backgroundImageKey(inline.getBackgroundImageKey())
+                    .backgroundMode(inline.getBackgroundMode() != null
+                            ? inline.getBackgroundMode() : BackgroundMode.WHITE)
+                    .gradientTopColor(inline.getGradientTopColor())
+                    .gradientBottomColor(inline.getGradientBottomColor())
                     .elements(inline.getElements() == null ? List.of() : inline.getElements())
                     .active(Boolean.TRUE)
                     .build();
@@ -164,13 +209,15 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
         List<TemplateElement> elements = t.getElements() == null ? new ArrayList<>() : t.getElements();
         return ThumbnailTemplateResponse.builder()
                 .id(t.getId())
-                .sellerId(t.getSellerId())
                 .name(t.getName())
                 .canvasWidth(t.getCanvasWidth())
                 .canvasHeight(t.getCanvasHeight())
-                .backgroundImageKey(t.getBackgroundImageKey())
+                .backgroundMode(t.getBackgroundMode())
+                .gradientTopColor(t.getGradientTopColor())
+                .gradientBottomColor(t.getGradientBottomColor())
                 .elements(elements)
                 .active(t.getActive())
+                .isDefault(t.getIsDefault())
                 .build();
     }
 }

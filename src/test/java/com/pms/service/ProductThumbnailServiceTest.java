@@ -17,7 +17,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
 
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -56,17 +55,17 @@ class ProductThumbnailServiceTest {
         return Seller.builder().id(SELLER_ID).sellerName("행복상회").build();
     }
 
-    private ThumbnailTemplate template(Long id, Long sellerId) {
+    private ThumbnailTemplate template(Long id) {
         return ThumbnailTemplate.builder()
-                .id(id).sellerId(sellerId).name("t").canvasWidth(300).canvasHeight(300).active(true).build();
+                .id(id).name("t").canvasWidth(300).canvasHeight(300).active(true).isDefault(true).build();
     }
 
     @Test
     void generate_newThumbnail_rendersUploadsAndSaves() {
         given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(product()));
         given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(seller()));
-        given(templateRepository.findBySellerIdAndActiveTrue(SELLER_ID))
-                .willReturn(List.of(template(5L, SELLER_ID)));
+        given(templateRepository.findByIsDefaultTrueAndActiveTrue())
+                .willReturn(Optional.of(template(5L)));
         given(productImageLoader.load(any())).willReturn(new byte[]{1, 2, 3});
         given(thumbnailRenderer.render(any(), any(), any())).willReturn(new byte[]{9});
         given(imageStorageService.uploadBytes(any(), eq("thumbnails"), anyString(), eq("image/jpeg")))
@@ -104,8 +103,8 @@ class ProductThumbnailServiceTest {
                 .source(ProductThumbnail.Source.GENERATED).build();
         given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(product()));
         given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(seller()));
-        given(templateRepository.findBySellerIdAndActiveTrue(SELLER_ID))
-                .willReturn(List.of(template(5L, SELLER_ID)));
+        given(templateRepository.findByIsDefaultTrueAndActiveTrue())
+                .willReturn(Optional.of(template(5L)));
         given(productImageLoader.load(any())).willReturn(new byte[]{1});
         given(thumbnailRenderer.render(any(), any(), any())).willReturn(new byte[]{9});
         given(imageStorageService.uploadBytes(any(), anyString(), anyString(), anyString()))
@@ -126,12 +125,11 @@ class ProductThumbnailServiceTest {
     }
 
     @Test
-    void generate_sellerTemplateMissing_usesTenantDefault() {
+    void generate_usesDefaultTemplate_regardlessOfSeller() {
         given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(product()));
         given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(seller()));
-        given(templateRepository.findBySellerIdAndActiveTrue(SELLER_ID)).willReturn(List.of());
-        given(templateRepository.findBySellerIdIsNullAndActiveTrue())
-                .willReturn(List.of(template(7L, null)));
+        given(templateRepository.findByIsDefaultTrueAndActiveTrue())
+                .willReturn(Optional.of(template(7L)));
         given(productImageLoader.load(any())).willReturn(new byte[]{1});
         given(thumbnailRenderer.render(any(), any(), any())).willReturn(new byte[]{9});
         given(imageStorageService.uploadBytes(any(), anyString(), anyString(), anyString()))
@@ -144,15 +142,14 @@ class ProductThumbnailServiceTest {
 
         ArgumentCaptor<ThumbnailTemplate> tplCaptor = ArgumentCaptor.forClass(ThumbnailTemplate.class);
         verify(thumbnailRenderer).render(tplCaptor.capture(), any(), any());
-        assertThat(tplCaptor.getValue().getId()).isEqualTo(7L);    // tenant-default template used
+        assertThat(tplCaptor.getValue().getId()).isEqualTo(7L);    // the tenant default (seller ignored)
     }
 
     @Test
-    void generate_noTemplate_throws() {
+    void generate_noDefaultTemplate_throws() {
         given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(product()));
         given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(seller()));
-        given(templateRepository.findBySellerIdAndActiveTrue(SELLER_ID)).willReturn(List.of());
-        given(templateRepository.findBySellerIdIsNullAndActiveTrue()).willReturn(List.of());
+        given(templateRepository.findByIsDefaultTrueAndActiveTrue()).willReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.generate(PRODUCT_ID, SELLER_ID))
                 .isInstanceOf(IllegalArgumentException.class);
