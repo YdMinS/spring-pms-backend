@@ -9,3 +9,5 @@ databaseChangeLog:
       file: db/changelog/changes/004-template-library-model.yaml
   - include:
       file: db/changelog/changes/005-template-background-mode.yaml
+  - include:
+      file: db/changelog/changes/006-thumbnail-boolean-bit-type.yaml

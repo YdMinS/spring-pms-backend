@@ -1,0 +1,36 @@
+# Hotfix: thumbnail_template boolean columns physical type (MySQL only).
+# On MySQL, Liquibase's abstract BOOLEAN (003 active, 004 is_default) materialized as TINYINT, but
+# Hibernate 6 expects BIT for Boolean fields -> ddl-auto: validate fails on startup (crash loop).
+# Convert both columns to BIT(1) so validate passes. Scoped to MySQL only: H2 (tests) already maps
+# BOOLEAN in a Hibernate-compatible way, so leave it untouched.
+# NOTE: MySQL MODIFY drops NOT NULL / DEFAULT, so they are re-declared below.
+# Idempotent on prod (already BIT) — re-typing to the same type is a harmless no-op.
+databaseChangeLog:
+
+  - changeSet:
+      id: 006-thumbnail-boolean-bit-type
+      author: oclyx
+      dbms: mysql
+      comment: "thumbnail_template: active/is_default TINYINT -> BIT(1) to satisfy Hibernate schema validation."
+      changes:
+        - modifyDataType:
+            tableName: thumbnail_template
+            columnName: active
+            newDataType: BIT(1)
+        - addNotNullConstraint:
+            tableName: thumbnail_template
+            columnName: active
+            columnDataType: BIT(1)
+        - modifyDataType:
+            tableName: thumbnail_template
+            columnName: is_default
+            newDataType: BIT(1)
+        - addNotNullConstraint:
+            tableName: thumbnail_template
+            columnName: is_default
+            columnDataType: BIT(1)
+            defaultNullValue: false
+        - addDefaultValue:
+            tableName: thumbnail_template
+            columnName: is_default
+            defaultValueBoolean: false
