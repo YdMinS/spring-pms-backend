@@ -2,6 +2,7 @@ package com.pms.dto.response;
 
 import com.pms.domain.BackgroundMode;
 import com.pms.domain.TemplateElement;
+import com.pms.domain.TemplateField;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -40,6 +41,9 @@ public class ThumbnailTemplateResponse {
 
     @Schema(description = "Ordered element array")
     private List<TemplateElement> elements;
+
+    @Schema(description = "User-defined input fields (bind targets)")
+    private List<TemplateField> fields;
 
     @Schema(description = "Active flag", example = "true")
     private Boolean active;

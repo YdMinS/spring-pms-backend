@@ -11,3 +11,5 @@ databaseChangeLog:
       file: db/changelog/changes/005-template-background-mode.yaml
   - include:
       file: db/changelog/changes/006-thumbnail-boolean-bit-type.yaml
+  - include:
+      file: db/changelog/changes/007-template-fields.yaml

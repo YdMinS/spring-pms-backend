@@ -3,6 +3,7 @@ package com.pms.service;
 import com.pms.domain.Product;
 import com.pms.domain.ProductThumbnail;
 import com.pms.domain.Seller;
+import com.pms.domain.TemplateField;
 import com.pms.domain.ThumbnailTemplate;
 import com.pms.dto.response.ProductThumbnailResponse;
 import com.pms.repository.ProductRepository;
@@ -17,6 +18,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -27,8 +29,9 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.*;
 
 /**
- * ProductThumbnailService business logic: template resolution, text bindings, and the regeneration
- * upsert (update-not-insert) vs manual override (source=MANUAL_OVERRIDE, renderer bypassed).
+ * ProductThumbnailService business logic: field-driven text bindings (override > default, blank skip,
+ * product text NOT referenced), the regeneration upsert (update-not-insert), and manual override
+ * (source=MANUAL_OVERRIDE, renderer bypassed).
  */
 @ExtendWith(MockitoExtension.class)
 class ProductThumbnailServiceTest {
@@ -55,44 +58,79 @@ class ProductThumbnailServiceTest {
         return Seller.builder().id(SELLER_ID).sellerName("행복상회").build();
     }
 
-    private ThumbnailTemplate template(Long id) {
-        return ThumbnailTemplate.builder()
-                .id(id).name("t").canvasWidth(300).canvasHeight(300).active(true).isDefault(true).build();
+    private TemplateField field(String key, String defaultValue) {
+        return TemplateField.builder().key(key).label(key).defaultValue(defaultValue).build();
     }
 
-    @Test
-    void generate_newThumbnail_rendersUploadsAndSaves() {
+    private ThumbnailTemplate template(Long id, TemplateField... fields) {
+        return ThumbnailTemplate.builder()
+                .id(id).name("t").canvasWidth(300).canvasHeight(300)
+                .fields(List.of(fields)).active(true).isDefault(true).build();
+    }
+
+    /** Common stubs for a successful generate → render → upload → save (new row). */
+    private void stubGenerate(ThumbnailTemplate template) {
         given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(product()));
         given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(seller()));
-        given(templateRepository.findByIsDefaultTrueAndActiveTrue())
-                .willReturn(Optional.of(template(5L)));
+        given(templateRepository.findByIsDefaultTrueAndActiveTrue()).willReturn(Optional.of(template));
         given(productImageLoader.load(any())).willReturn(new byte[]{1, 2, 3});
         given(thumbnailRenderer.render(any(), any(), any())).willReturn(new byte[]{9});
-        given(imageStorageService.uploadBytes(any(), eq("thumbnails"), anyString(), eq("image/jpeg")))
-                .willReturn("thumbnails/thumb_10_3_1.jpg");
+        given(imageStorageService.uploadBytes(any(), anyString(), anyString(), anyString()))
+                .willReturn("thumbnails/x.jpg");
         given(thumbnailRepository.findByProductIdAndSellerId(PRODUCT_ID, SELLER_ID))
                 .willReturn(Optional.empty());
         given(thumbnailRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+    }
 
-        ProductThumbnailResponse response = service.generate(PRODUCT_ID, SELLER_ID);
-
-        // text bindings carry brand + product name
-        @SuppressWarnings("unchecked")
+    @SuppressWarnings("unchecked")
+    private Map<String, String> capturedTextBindings() {
         ArgumentCaptor<Map<String, String>> textCaptor = ArgumentCaptor.forClass(Map.class);
         verify(thumbnailRenderer).render(any(), textCaptor.capture(), any());
-        assertThat(textCaptor.getValue())
-                .containsEntry("brandName", "나이키")
-                .containsEntry("productName", "운동화");
+        return textCaptor.getValue();
+    }
 
-        verify(imageStorageService).uploadBytes(any(), eq("thumbnails"), anyString(), eq("image/jpeg"));
+    @Test
+    void generate_usesFieldDefault_whenNoOverride() {
+        stubGenerate(template(5L, field("promo", "세일중")));
 
-        ArgumentCaptor<ProductThumbnail> saveCaptor = ArgumentCaptor.forClass(ProductThumbnail.class);
-        verify(thumbnailRepository).save(saveCaptor.capture());
-        ProductThumbnail saved = saveCaptor.getValue();
-        assertThat(saved.getSource()).isEqualTo(ProductThumbnail.Source.GENERATED);
-        assertThat(saved.getTemplateId()).isEqualTo(5L);
-        assertThat(saved.getImageUrl()).isEqualTo("thumbnails/thumb_10_3_1.jpg");
-        assertThat(response.getSellerName()).isEqualTo("행복상회");
+        service.generate(PRODUCT_ID, SELLER_ID, Map.of());
+
+        assertThat(capturedTextBindings()).containsEntry("promo", "세일중");
+    }
+
+    @Test
+    void generate_overrideBeatsDefault() {
+        stubGenerate(template(5L, field("promo", "세일중")));
+
+        service.generate(PRODUCT_ID, SELLER_ID, Map.of("promo", "특가"));
+
+        assertThat(capturedTextBindings()).containsEntry("promo", "특가");
+    }
+
+    @Test
+    void generate_bindsFieldValues_notProductText() {
+        // Reserved fields with blank defaults; values come ONLY from fieldValues, never product.getBrand().
+        stubGenerate(template(5L, field("brandName", ""), field("productName", "")));
+
+        service.generate(PRODUCT_ID, SELLER_ID,
+                Map.of("brandName", "직접브랜드", "productName", "직접상품"));
+
+        Map<String, String> bindings = capturedTextBindings();
+        assertThat(bindings).containsEntry("brandName", "직접브랜드"); // NOT product brand "나이키"
+        assertThat(bindings).containsEntry("productName", "직접상품");
+        assertThat(bindings).doesNotContainValue("나이키");
+        // image binding still loaded from the product (unchanged behavior)
+        verify(productImageLoader).load(any());
+    }
+
+    @Test
+    void generate_blankReservedField_skippedFromBindings() {
+        // brandName reserved (blank default) with no override → key omitted → renderer skips the element.
+        stubGenerate(template(5L, field("brandName", "")));
+
+        service.generate(PRODUCT_ID, SELLER_ID, Map.of());
+
+        assertThat(capturedTextBindings()).doesNotContainKey("brandName");
     }
 
     @Test
@@ -104,7 +142,7 @@ class ProductThumbnailServiceTest {
         given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(product()));
         given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(seller()));
         given(templateRepository.findByIsDefaultTrueAndActiveTrue())
-                .willReturn(Optional.of(template(5L)));
+                .willReturn(Optional.of(template(5L, field("productName", ""))));
         given(productImageLoader.load(any())).willReturn(new byte[]{1});
         given(thumbnailRenderer.render(any(), any(), any())).willReturn(new byte[]{9});
         given(imageStorageService.uploadBytes(any(), anyString(), anyString(), anyString()))
@@ -113,7 +151,7 @@ class ProductThumbnailServiceTest {
                 .willReturn(Optional.of(existing));
         given(thumbnailRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
 
-        service.generate(PRODUCT_ID, SELLER_ID);
+        service.generate(PRODUCT_ID, SELLER_ID, Map.of("productName", "운동화"));
 
         ArgumentCaptor<ProductThumbnail> saveCaptor = ArgumentCaptor.forClass(ProductThumbnail.class);
         verify(thumbnailRepository).save(saveCaptor.capture());
@@ -126,19 +164,9 @@ class ProductThumbnailServiceTest {
 
     @Test
     void generate_usesDefaultTemplate_regardlessOfSeller() {
-        given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(product()));
-        given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(seller()));
-        given(templateRepository.findByIsDefaultTrueAndActiveTrue())
-                .willReturn(Optional.of(template(7L)));
-        given(productImageLoader.load(any())).willReturn(new byte[]{1});
-        given(thumbnailRenderer.render(any(), any(), any())).willReturn(new byte[]{9});
-        given(imageStorageService.uploadBytes(any(), anyString(), anyString(), anyString()))
-                .willReturn("thumbnails/x.jpg");
-        given(thumbnailRepository.findByProductIdAndSellerId(PRODUCT_ID, SELLER_ID))
-                .willReturn(Optional.empty());
-        given(thumbnailRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+        stubGenerate(template(7L, field("productName", "")));
 
-        service.generate(PRODUCT_ID, SELLER_ID);
+        service.generate(PRODUCT_ID, SELLER_ID, Map.of());
 
         ArgumentCaptor<ThumbnailTemplate> tplCaptor = ArgumentCaptor.forClass(ThumbnailTemplate.class);
         verify(thumbnailRenderer).render(tplCaptor.capture(), any(), any());
@@ -151,7 +179,7 @@ class ProductThumbnailServiceTest {
         given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(seller()));
         given(templateRepository.findByIsDefaultTrueAndActiveTrue()).willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.generate(PRODUCT_ID, SELLER_ID))
+        assertThatThrownBy(() -> service.generate(PRODUCT_ID, SELLER_ID, Map.of()))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(thumbnailRenderer, never()).render(any(), any(), any());
     }

@@ -3,6 +3,7 @@ package com.pms.service;
 import com.pms.domain.BackgroundMode;
 import com.pms.domain.FontAsset;
 import com.pms.domain.TemplateElement;
+import com.pms.domain.TemplateField;
 import com.pms.domain.ThumbnailTemplate;
 import com.pms.repository.FontAssetRepository;
 import com.pms.repository.ThumbnailTemplateRepository;
@@ -66,6 +67,9 @@ public class DefaultTemplateSeeder implements ApplicationRunner {
                     .canvasHeight(1000)
                     .backgroundMode(BackgroundMode.WHITE)
                     .elements(List.of(brandTop(fontId), productBottom(fontId)))
+                    .fields(List.of(
+                            field("brandName", "브랜드명", ""),
+                            field("productName", "상품명", "")))
                     .active(true)
                     .isDefault(true)
                     .build());
@@ -73,6 +77,11 @@ public class DefaultTemplateSeeder implements ApplicationRunner {
         } finally {
             TenantContext.clear();
         }
+    }
+
+    /** Reserved input field (brandName/productName): blank defaultValue, filled by the generate UI. */
+    private TemplateField field(String key, String label, String defaultValue) {
+        return TemplateField.builder().key(key).label(label).defaultValue(defaultValue).build();
     }
 
     // NOTE: lineSpacing 1.15 + align v=center are the multi-line preset (long/large text wraps instead

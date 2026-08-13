@@ -1,6 +1,7 @@
 package com.pms.domain;
 
 import com.pms.domain.converter.TemplateElementListConverter;
+import com.pms.domain.converter.TemplateFieldListConverter;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.TenantId;
@@ -63,6 +64,11 @@ public class ThumbnailTemplate extends BaseEntity {
     @Convert(converter = TemplateElementListConverter.class)
     @Column(name = "elements", columnDefinition = "TEXT")
     private List<TemplateElement> elements;
+
+    /** User-defined input fields (bind targets for text elements). JSON TEXT, like elements. */
+    @Convert(converter = TemplateFieldListConverter.class)
+    @Column(name = "template_fields", columnDefinition = "TEXT")
+    private List<TemplateField> fields;
 
     @Column(name = "active", nullable = false)
     private Boolean active;
