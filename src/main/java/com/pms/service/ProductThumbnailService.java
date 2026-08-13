@@ -4,6 +4,7 @@ import com.pms.dto.response.ProductThumbnailResponse;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Per-product-per-seller thumbnail lifecycle (FEATURE_2608_05 / 02): generate/regenerate (upsert),
@@ -12,8 +13,12 @@ import java.util.List;
  */
 public interface ProductThumbnailService {
 
-    /** Generate or regenerate (idempotent upsert on productId+sellerId) the templated thumbnail. */
-    ProductThumbnailResponse generate(Long productId, Long sellerId);
+    /**
+     * Generate or regenerate (idempotent upsert on productId+sellerId) the templated thumbnail. Text
+     * elements bind to the template's declared fields; each field renders {@code fieldValues override
+     * (non-blank) ?? defaultValue}. Product text is NOT read here (the generate UI supplies values).
+     */
+    ProductThumbnailResponse generate(Long productId, Long sellerId, Map<String, String> fieldValues);
 
     /** Replace with a manually uploaded image (source=MANUAL_OVERRIDE, renderer bypassed). */
     ProductThumbnailResponse override(Long productId, Long sellerId, MultipartFile file);

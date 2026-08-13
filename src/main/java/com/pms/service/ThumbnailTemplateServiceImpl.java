@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.BackgroundMode;
 import com.pms.domain.TemplateElement;
+import com.pms.domain.TemplateField;
 import com.pms.domain.ThumbnailTemplate;
 import com.pms.dto.request.ThumbnailPreviewRequest;
 import com.pms.dto.request.ThumbnailTemplateRequest;
@@ -11,6 +12,7 @@ import com.pms.repository.ThumbnailTemplateRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import javax.imageio.ImageIO;
 import java.awt.Color;
@@ -20,8 +22,10 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Thumbnail template CRUD + non-persistent preview. Tenant isolation is automatic via {@code @TenantId}
@@ -34,6 +38,9 @@ import java.util.Map;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
+
+    /** Reserved field keys whose defaultValue may be blank (brand/product name filled by the generate UI). */
+    private static final Set<String> BUILTIN_FIELD_KEYS = Set.of("brandName", "productName");
 
     private final ThumbnailTemplateRepository templateRepository;
     private final ThumbnailRenderer renderer;
@@ -48,6 +55,7 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
         BackgroundMode mode = request.getBackgroundMode() != null
                 ? request.getBackgroundMode() : BackgroundMode.WHITE;
         validateGradientColors(mode, request.getGradientTopColor(), request.getGradientBottomColor());
+        validateFields(request.getFields());
         ThumbnailTemplate template = ThumbnailTemplate.builder()
                 .name(request.getName())
                 .canvasWidth(request.getCanvasWidth())
@@ -56,6 +64,7 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
                 .gradientTopColor(request.getGradientTopColor())
                 .gradientBottomColor(request.getGradientBottomColor())
                 .elements(request.getElements() == null ? List.of() : request.getElements())
+                .fields(request.getFields() == null ? List.of() : request.getFields())
                 .active(request.getActive() == null ? Boolean.TRUE : request.getActive())
                 .isDefault(makeDefault)
                 .build();
@@ -87,6 +96,7 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
         String bottomColor = request.getGradientBottomColor() != null
                 ? request.getGradientBottomColor() : existing.getGradientBottomColor();
         validateGradientColors(mode, topColor, bottomColor);
+        validateFields(request.getFields());
         ThumbnailTemplate updated = existing.toBuilder()
                 .name(request.getName() != null ? request.getName() : existing.getName())
                 .canvasWidth(request.getCanvasWidth() != null ? request.getCanvasWidth() : existing.getCanvasWidth())
@@ -95,6 +105,7 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
                 .gradientTopColor(topColor)
                 .gradientBottomColor(bottomColor)
                 .elements(request.getElements() != null ? request.getElements() : existing.getElements())
+                .fields(request.getFields() != null ? request.getFields() : existing.getFields())
                 .active(request.getActive() != null ? request.getActive() : existing.getActive())
                 .isDefault(request.getIsDefault() != null ? request.getIsDefault() : existing.getIsDefault())
                 .build();
@@ -124,6 +135,30 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
         }
     }
 
+    /**
+     * Field rules (→400 on violation): every {@code key} is non-blank and unique; custom (non-reserved)
+     * fields require a non-blank {@code defaultValue} (reserved keys brandName/productName may be blank —
+     * the generate UI fills them). {@code null} = keep-existing (partial update), so it passes untouched.
+     */
+    private void validateFields(List<TemplateField> fields) {
+        if (fields == null) {
+            return;
+        }
+        Set<String> seenKeys = new HashSet<>();
+        for (TemplateField field : fields) {
+            if (!StringUtils.hasText(field.getKey())) {
+                throw new IllegalArgumentException("필드 키는 필수입니다");
+            }
+            if (!seenKeys.add(field.getKey())) {
+                throw new IllegalArgumentException("필드 키가 중복되었습니다: " + field.getKey());
+            }
+            if (!BUILTIN_FIELD_KEYS.contains(field.getKey())
+                    && !StringUtils.hasText(field.getDefaultValue())) {
+                throw new IllegalArgumentException("커스텀 필드는 기본값이 필요합니다");
+            }
+        }
+    }
+
     @Override
     @Transactional
     public void delete(Long id) {
@@ -149,14 +184,29 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
                     .gradientTopColor(inline.getGradientTopColor())
                     .gradientBottomColor(inline.getGradientBottomColor())
                     .elements(inline.getElements() == null ? List.of() : inline.getElements())
+                    .fields(inline.getFields() == null ? List.of() : inline.getFields())
                     .active(Boolean.TRUE)
                     .build();
         } else {
             throw new IllegalArgumentException("Provide either templateId or an inline template");
         }
 
-        Map<String, String> textBindings = request.getSampleBindings() == null
-                ? Map.of() : request.getSampleBindings();
+        // Field defaults first (so custom fields preview even without sampleBindings), sampleBindings overlay.
+        Map<String, String> textBindings = new HashMap<>();
+        if (template.getFields() != null) {
+            for (TemplateField field : template.getFields()) {
+                if (StringUtils.hasText(field.getDefaultValue())) {
+                    textBindings.put(field.getKey(), field.getDefaultValue());
+                }
+            }
+        }
+        if (request.getSampleBindings() != null) {
+            request.getSampleBindings().forEach((key, value) -> {
+                if (StringUtils.hasText(value)) {
+                    textBindings.put(key, value);
+                }
+            });
+        }
         Map<String, byte[]> imageBindings = placeholderImageBindings(template);
         return renderer.render(template, textBindings, imageBindings);
     }
@@ -207,6 +257,7 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
 
     private ThumbnailTemplateResponse toResponse(ThumbnailTemplate t) {
         List<TemplateElement> elements = t.getElements() == null ? new ArrayList<>() : t.getElements();
+        List<TemplateField> fields = t.getFields() == null ? new ArrayList<>() : t.getFields();
         return ThumbnailTemplateResponse.builder()
                 .id(t.getId())
                 .name(t.getName())
@@ -216,6 +267,7 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
                 .gradientTopColor(t.getGradientTopColor())
                 .gradientBottomColor(t.getGradientBottomColor())
                 .elements(elements)
+                .fields(fields)
                 .active(t.getActive())
                 .isDefault(t.getIsDefault())
                 .build();

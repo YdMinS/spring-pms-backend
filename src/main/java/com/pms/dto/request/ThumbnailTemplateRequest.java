@@ -2,6 +2,7 @@ package com.pms.dto.request;
 
 import com.pms.domain.BackgroundMode;
 import com.pms.domain.TemplateElement;
+import com.pms.domain.TemplateField;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -55,6 +56,9 @@ public class ThumbnailTemplateRequest {
 
     @Schema(description = "Ordered element array (painter's order)")
     private List<TemplateElement> elements;
+
+    @Schema(description = "User-defined input fields (bind targets); custom fields require a defaultValue")
+    private List<TemplateField> fields;
 
     @Schema(description = "Active flag; defaults to true on create", example = "true", nullable = true)
     private Boolean active;

@@ -1,6 +1,7 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.GenerateThumbnailRequest;
 import com.pms.dto.response.ProductThumbnailResponse;
 import com.pms.service.ProductThumbnailService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -13,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Per-product-per-seller thumbnails. All endpoints are ADMIN-only, enforced globally by SecurityConfig
@@ -39,8 +41,12 @@ public class ProductThumbnailController {
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<ProductThumbnailResponse>> generate(
             @PathVariable Long productId,
-            @RequestParam Long sellerId) {
-        return ResponseEntity.ok(ResponseDTO.success(thumbnailService.generate(productId, sellerId)));
+            @RequestParam Long sellerId,
+            @RequestBody(required = false) GenerateThumbnailRequest body) {
+        Map<String, String> values = (body == null || body.getFieldValues() == null)
+                ? Map.of() : body.getFieldValues();
+        return ResponseEntity.ok(ResponseDTO.success(
+                thumbnailService.generate(productId, sellerId, values)));
     }
 
     @PostMapping(value = "/{sellerId}/override", consumes = "multipart/form-data")

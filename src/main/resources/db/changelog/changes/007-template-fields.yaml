@@ -1,0 +1,16 @@
+# Template input fields (FEATURE_2608_05 Step 13): add a template_fields TEXT column to store the
+# user-defined input field list (JSON, like elements). Nullable — legacy rows keep fields=null and are
+# treated as an empty list at render time. Structured tags only (no raw SQL) for H2<->MySQL portability.
+databaseChangeLog:
+
+  - changeSet:
+      id: 007-template-fields
+      author: oclyx
+      comment: "thumbnail_template: add template_fields TEXT column (user-defined input fields, JSON)."
+      changes:
+        - addColumn:
+            tableName: thumbnail_template
+            columns:
+              - column:
+                  name: template_fields
+                  type: TEXT

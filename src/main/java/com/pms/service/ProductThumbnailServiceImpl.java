@@ -3,6 +3,7 @@ package com.pms.service;
 import com.pms.domain.Product;
 import com.pms.domain.ProductThumbnail;
 import com.pms.domain.Seller;
+import com.pms.domain.TemplateField;
 import com.pms.domain.ThumbnailTemplate;
 import com.pms.dto.response.ProductThumbnailResponse;
 import com.pms.exception.ResourceNotFoundException;
@@ -14,6 +15,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDateTime;
@@ -51,14 +53,23 @@ public class ProductThumbnailServiceImpl implements ProductThumbnailService {
 
     @Override
     @Transactional
-    public ProductThumbnailResponse generate(Long productId, Long sellerId) {
-        Product product = findProduct(productId);
+    public ProductThumbnailResponse generate(Long productId, Long sellerId, Map<String, String> fieldValues) {
+        Product product = findProduct(productId); // 404 guard + image binding source (text is field-driven)
         Seller seller = findSeller(sellerId);
         ThumbnailTemplate template = resolveTemplate(sellerId);
 
+        // Text is driven by template fields: fieldValues override (non-blank) else the field default.
+        // Blank result → key left out → renderer skips the element (conditional render preserved).
         Map<String, String> textBindings = new HashMap<>();
-        textBindings.put("brandName", product.getBrand());
-        textBindings.put("productName", product.getProductName());
+        if (template.getFields() != null) {
+            for (TemplateField field : template.getFields()) {
+                String override = fieldValues == null ? null : fieldValues.get(field.getKey());
+                String value = StringUtils.hasText(override) ? override : field.getDefaultValue();
+                if (StringUtils.hasText(value)) {
+                    textBindings.put(field.getKey(), value);
+                }
+            }
+        }
         Map<String, byte[]> imageBindings = Map.of("productImage", productImageLoader.load(product));
 
         byte[] jpeg = thumbnailRenderer.render(template, textBindings, imageBindings);

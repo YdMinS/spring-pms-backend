@@ -61,6 +61,8 @@ public class ProductThumbnailControllerTest extends BaseIntegrationTest {
                 "canvasHeight", 300,
                 "active", true,
                 "isDefault", true,
+                "fields", List.of(Map.of(
+                        "key", "productName", "label", "상품명", "defaultValue", "")),
                 "elements", List.of(Map.of(
                         "type", "text",
                         "bind", "productName",
@@ -100,13 +102,28 @@ public class ProductThumbnailControllerTest extends BaseIntegrationTest {
     }
 
     @Test
-    public void generate_adminToken_returns200() throws Exception {
+    public void generate_adminToken_noBody_returns200() throws Exception {
+        // No request body → fields render with defaults (blank reserved key skipped).
         mockMvc.perform(post("/api/admin/products/" + productId + "/thumbnails/generate")
                         .header("Authorization", "Bearer " + adminToken)
                         .param("sellerId", String.valueOf(sellerId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.imageUrl").value("thumbnails/thumb.jpg"))
+                .andExpect(jsonPath("$.data.source").value("GENERATED"));
+    }
+
+    @Test
+    public void generate_adminToken_withFieldValuesBody_returns200() throws Exception {
+        String body = objectMapper.writeValueAsString(Map.of(
+                "fieldValues", Map.of("productName", "직접입력상품")));
+        mockMvc.perform(post("/api/admin/products/" + productId + "/thumbnails/generate")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .param("sellerId", String.valueOf(sellerId))
+                        .contentType("application/json")
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.source").value("GENERATED"));
     }
 
