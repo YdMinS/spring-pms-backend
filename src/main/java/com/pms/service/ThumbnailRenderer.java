@@ -13,6 +13,8 @@ import javax.imageio.ImageWriteParam;
 import javax.imageio.ImageWriter;
 import javax.imageio.stream.ImageOutputStream;
 import java.awt.*;
+import java.awt.font.TextLayout;
+import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -91,18 +93,48 @@ public class ThumbnailRenderer {
         }
         TemplateElement base = firstProductImageElement(elements);
         if (base != null) {
-            drawImageElement(g, base, imageBindings); // base layer, bottom-most
+            drawElement(g, base, textBindings, imageBindings); // base layer, bottom-most
         }
         for (TemplateElement element : elements) {
             if (element == base) {
                 continue; // already drawn as the base layer
             }
-            if ("image".equalsIgnoreCase(element.getType())) {
-                drawImageElement(g, element, imageBindings);
-            } else if ("text".equalsIgnoreCase(element.getType())) {
-                drawTextElement(g, element, textBindings);
-            }
+            drawElement(g, element, textBindings, imageBindings);
         }
+    }
+
+    /** Draw one element's content (image or text) then its optional border box. */
+    private void drawElement(Graphics2D g, TemplateElement element,
+                             Map<String, String> textBindings, Map<String, byte[]> imageBindings) {
+        if ("image".equalsIgnoreCase(element.getType())) {
+            drawImageElement(g, element, imageBindings);
+        } else if ("text".equalsIgnoreCase(element.getType())) {
+            drawTextElement(g, element, textBindings);
+        }
+        drawBorder(g, element);
+    }
+
+    /**
+     * Draws a rectangular border around the element's region (any element type). No-op unless both a
+     * valid {@code borderColor} and a positive {@code borderWidth} are set. The stroke straddles the
+     * rectangle edge, so it is inset by half the width to stay inside the region.
+     */
+    private void drawBorder(Graphics2D g, TemplateElement element) {
+        Integer width = element.getBorderWidth();
+        Color color = parseColorOrNull(element.getBorderColor());
+        if (color == null || width == null || width <= 0) {
+            return;
+        }
+        TemplateElement.Region r = requireRegion(element);
+        Stroke prevStroke = g.getStroke();
+        Color prevColor = g.getColor();
+        g.setColor(color);
+        g.setStroke(new BasicStroke(width));
+        int half = width / 2;
+        g.drawRect(r.getX() + half, r.getY() + half,
+                Math.max(0, r.getW() - width), Math.max(0, r.getH() - width));
+        g.setStroke(prevStroke);
+        g.setColor(prevColor);
     }
 
     /** First image element bound to the product photo (drawn as the base layer), or null if none. */
@@ -229,7 +261,12 @@ public class ThumbnailRenderer {
                 g.getFontRenderContext());
 
         g.setFont(base.deriveFont((float) fit.fontSize()));
-        g.setColor(parseColor(element.getColor()));
+        Color fillColor = parseColor(element.getColor());
+
+        // Optional glyph outline (stroke behind the fill) for legibility over images.
+        Color outlineColor = parseColorOrNull(element.getOutlineColor());
+        Integer outlineWidth = element.getOutlineWidth();
+        boolean hasOutline = outlineColor != null && outlineWidth != null && outlineWidth > 0;
 
         String hAlign = alignH(element);
         String vAlign = alignV(element);
@@ -250,8 +287,28 @@ public class ThumbnailRenderer {
                 default -> r.getX() + padLeft; // left
             };
             int baseline = blockTop + fit.ascent() + i * fit.lineHeight();
+            if (hasOutline && !line.isEmpty()) {
+                drawTextOutline(g, line, x, baseline, outlineColor, outlineWidth);
+            }
+            g.setColor(fillColor);
             g.drawString(line, x, baseline);
         }
+    }
+
+    /**
+     * Strokes the outline of one text line behind its fill. The glyph path is stroked with 2×width and
+     * the solid fill (drawn afterwards) covers the inner half, so the visible outer band ≈ {@code width}.
+     */
+    private void drawTextOutline(Graphics2D g, String line, int x, int baseline, Color color, int width) {
+        TextLayout layout = new TextLayout(line, g.getFont(), g.getFontRenderContext());
+        Shape outline = layout.getOutline(AffineTransform.getTranslateInstance(x, baseline));
+        Stroke prevStroke = g.getStroke();
+        Color prevColor = g.getColor();
+        g.setColor(color);
+        g.setStroke(new BasicStroke(width * 2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.draw(outline);
+        g.setStroke(prevStroke);
+        g.setColor(prevColor);
     }
 
     private byte[] loadStored(String storageKey) {

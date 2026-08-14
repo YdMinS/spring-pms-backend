@@ -188,6 +188,58 @@ class ThumbnailRendererTest {
     }
 
     @Test
+    void drawElement_border_drawsRectInsetByHalfWidth() throws Exception {
+        // A bordered fixed-image element → drawRect around its region, inset by half the border width.
+        TemplateElement bordered = TemplateElement.builder()
+                .type("image").src("badge.png")
+                .region(TemplateElement.Region.builder().x(10).y(10).w(50).h(50).build())
+                .opacity(1.0)
+                .borderColor("#000000").borderWidth(4)
+                .build();
+        given(imageStorageService.getBytes("badge.png")).willReturn(pngBytes(40, 40));
+
+        Graphics2D g = mock(Graphics2D.class);
+        renderer.drawElements(g, List.of(bordered), Map.of(), Map.of());
+
+        // half = 4/2 = 2 → rect (12, 12, 50-4, 50-4)
+        verify(g).drawRect(12, 12, 46, 46);
+    }
+
+    @Test
+    void render_textOutline_paintsOutlineColorAroundGlyphs() throws Exception {
+        given(fontRegistry.load(any())).willReturn(new Font("SansSerif", Font.BOLD, 12));
+
+        TemplateElement outlined = TemplateElement.builder()
+                .type("text").bind("productName")
+                .region(TemplateElement.Region.builder().x(0).y(0).w(200).h(200).build())
+                .align(TemplateElement.Align.builder().h("center").v("center").build())
+                .fontId(1L).color("#000000")
+                .maxFontSize(150).minFontSize(40).maxLines(1)
+                .outlineColor("#FF0000").outlineWidth(6) // red outline
+                .build();
+        ThumbnailTemplate template = ThumbnailTemplate.builder()
+                .canvasWidth(200).canvasHeight(200)
+                .backgroundMode(BackgroundMode.WHITE)
+                .elements(List.of(outlined))
+                .build();
+
+        byte[] jpeg = renderer.render(template, Map.of("productName", "A"), Map.of());
+        BufferedImage out = ImageIO.read(new ByteArrayInputStream(jpeg));
+
+        boolean hasRed = false;
+        for (int y = 0; y < 200 && !hasRed; y++) {
+            for (int x = 0; x < 200; x++) {
+                Color px = new Color(out.getRGB(x, y));
+                if (px.getRed() > 150 && px.getGreen() < 100 && px.getBlue() < 100) {
+                    hasRed = true;
+                    break;
+                }
+            }
+        }
+        assertThat(hasRed).isTrue(); // outline stroke painted in red around the black "A"
+    }
+
+    @Test
     void drawImageElement_fixedSrc_loadedViaGetBytes() throws Exception {
         // Fixed image element (src set, bind null = asset reuse path) → bytes loaded via getBytes(src).
         ThumbnailTemplate template = ThumbnailTemplate.builder()

@@ -22,9 +22,9 @@ import lombok.NoArgsConstructor;
  * <p>⚠️ Immutable (Builder only, no setters). Jackson (de)serializes through the Lombok builder so the
  * same rule holds for request bodies and the DB converter. Null soft fields are normalized at render
  * time by {@link com.pms.service.ThumbnailRenderer} (align→left/top, padding→0, maxLines→1, opacity→1,
- * color→#000000, lineSpacing→1.0); {@code region}, {@code maxFontSize}, {@code minFontSize} and (for
- * text) {@code fontId} are required — a null there is rejected as {@link IllegalArgumentException}
- * (→400).</p>
+ * color→#000000, lineSpacing→1.0, outline/border absent when color null or width &lt;= 0); {@code region},
+ * {@code maxFontSize}, {@code minFontSize} and (for text) {@code fontId} are required — a null there is
+ * rejected as {@link IllegalArgumentException} (→400).</p>
  */
 @Getter
 @Builder
@@ -74,6 +74,18 @@ public class TemplateElement {
 
     /** Image: 0..1 opacity (watermark). Null → 1.0. */
     private Double opacity;
+
+    /** Text: glyph outline (stroke) color, e.g. {@code #FFFFFF}. Null → no outline. */
+    private String outlineColor;
+
+    /** Text: glyph outline stroke width in px. Null or &lt;= 0 → no outline. */
+    private Integer outlineWidth;
+
+    /** Any element: border color drawn around the region box, e.g. {@code #000000}. Null → no border. */
+    private String borderColor;
+
+    /** Any element: border width in px drawn around the region box. Null or &lt;= 0 → no border. */
+    private Integer borderWidth;
 
     @Getter
     @Builder
