@@ -58,10 +58,17 @@ public class TemplateElement {
     private String color;
 
     /**
-     * Text: end (bottom) color of a vertical fill gradient; the top color is {@link #color}. Hex, e.g.
-     * {@code #FFFFFF}. Null → solid {@link #color}.
+     * Text: end color of a fill gradient; the start color is {@link #color}. Hex, e.g. {@code #FFFFFF}.
+     * Null → solid {@link #color}.
      */
     private String gradientColor;
+
+    /**
+     * Text: gradient direction in degrees, clockwise from top→bottom. 0 = top→bottom (default),
+     * 90 = left→right, 180 = bottom→top, 270 = right→left. Null → 0. Only used when {@link #gradientColor}
+     * is set.
+     */
+    private Integer gradientAngle;
 
     /** Text autofit upper bound. Required for text. */
     private Integer maxFontSize;

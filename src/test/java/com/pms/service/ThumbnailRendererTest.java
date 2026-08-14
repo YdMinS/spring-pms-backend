@@ -275,6 +275,42 @@ class ThumbnailRendererTest {
     }
 
     @Test
+    void render_textGradient90deg_leftStartColor_rightEndColor() throws Exception {
+        given(fontRegistry.load(any())).willReturn(new Font("SansSerif", Font.BOLD, 12));
+
+        TemplateElement grad = TemplateElement.builder()
+                .type("text").bind("productName")
+                .region(TemplateElement.Region.builder().x(0).y(0).w(200).h(200).build())
+                .align(TemplateElement.Align.builder().h("center").v("center").build())
+                .fontId(1L)
+                .color("#FF0000")          // start = red
+                .gradientColor("#0000FF")  // end = blue
+                .gradientAngle(90)         // 90° → left→right
+                .maxFontSize(180).minFontSize(60).maxLines(1)
+                .build();
+        ThumbnailTemplate template = ThumbnailTemplate.builder()
+                .canvasWidth(200).canvasHeight(200)
+                .backgroundMode(BackgroundMode.WHITE)
+                .elements(List.of(grad))
+                .build();
+
+        byte[] jpeg = renderer.render(template, Map.of("productName", "M"), Map.of());
+        BufferedImage out = ImageIO.read(new ByteArrayInputStream(jpeg));
+
+        boolean redOnLeft = false;
+        boolean blueOnRight = false;
+        for (int y = 0; y < 200; y++) {
+            for (int x = 0; x < 200; x++) {
+                Color px = new Color(out.getRGB(x, y));
+                if (x < 100 && px.getRed() > 130 && px.getGreen() < 110 && px.getBlue() < 110) redOnLeft = true;
+                if (x > 100 && px.getBlue() > 130 && px.getRed() < 110 && px.getGreen() < 110) blueOnRight = true;
+            }
+        }
+        assertThat(redOnLeft).isTrue();   // left = start = red
+        assertThat(blueOnRight).isTrue(); // right = end = blue
+    }
+
+    @Test
     void drawImageElement_fixedSrc_loadedViaGetBytes() throws Exception {
         // Fixed image element (src set, bind null = asset reuse path) → bytes loaded via getBytes(src).
         ThumbnailTemplate template = ThumbnailTemplate.builder()
