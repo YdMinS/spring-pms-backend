@@ -18,6 +18,9 @@ public interface TemplateAssetService {
     /** Validate (jpeg/png) + store an uploaded image; returns the persisted asset. */
     TemplateAssetResponse upload(MultipartFile file);
 
+    /** Rename the asset's display name (own tenant only; other tenants' ids behave as not-found). */
+    TemplateAssetResponse rename(Long id, String name);
+
     /** Delete the asset (own tenant only; other tenants' ids behave as not-found). */
     void delete(Long id);
 }

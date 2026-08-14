@@ -8,6 +8,7 @@ import com.pms.service.ImageStorageService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 
 import javax.imageio.ImageIO;
@@ -95,6 +96,37 @@ public class TemplateAssetControllerTest extends BaseIntegrationTest {
 
         mockMvc.perform(delete("/api/admin/thumbnail-assets/" + missing)
                         .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound());
+    }
+
+    // ---- Rename endpoint wiring: ADMIN-authorized (not 401/403); missing id → 404 handler ----
+    // (rename happy path + cross-tenant guard are covered by TemplateAssetServiceTest, same @TenantId
+    //  transaction caveat as delete above.)
+
+    @Test
+    public void rename_noToken_returns401() throws Exception {
+        mockMvc.perform(patch("/api/admin/thumbnail-assets/1")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"x\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    public void rename_userToken_returns403() throws Exception {
+        mockMvc.perform(patch("/api/admin/thumbnail-assets/1")
+                        .header("Authorization", "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"x\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    public void rename_adminToken_missingId_returns404() throws Exception {
+        TenantContext.set(1L);
+        long missing = templateAssetRepository.findAllByOrderByIdDesc().stream()
+                .mapToLong(TemplateAsset::getId).max().orElse(0L) + 999L;
+
+        mockMvc.perform(patch("/api/admin/thumbnail-assets/" + missing)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"새 이름\"}"))
                 .andExpect(status().isNotFound());
     }
 }
