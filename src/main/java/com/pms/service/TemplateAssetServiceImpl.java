@@ -79,15 +79,33 @@ public class TemplateAssetServiceImpl implements TemplateAssetService {
 
     @Override
     @Transactional
+    public TemplateAssetResponse rename(Long id, String name) {
+        if (name == null || name.isBlank()) {
+            throw new IllegalArgumentException("Asset name is required");
+        }
+        TemplateAsset asset = requireOwnedAsset(id);
+        // Immutable entity: rebuild via toBuilder (only the display name changes; storageKey is stable
+        // so existing element.src references keep resolving).
+        TemplateAsset renamed = templateAssetRepository.save(asset.toBuilder().name(name.trim()).build());
+        return toResponse(renamed);
+    }
+
+    @Override
+    @Transactional
     public void delete(Long id) {
+        TemplateAsset asset = requireOwnedAsset(id);
+        imageStorageService.deleteImage(asset.getStorageKey()); // graceful (never throws on missing)
+        templateAssetRepository.delete(asset);
+    }
+
+    /** Load the asset and reject cross-tenant ids as not-found (PK findById is not tenant-filtered). */
+    private TemplateAsset requireOwnedAsset(Long id) {
         TemplateAsset asset = templateAssetRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("TemplateAsset", id));
-        // PK findById is NOT tenant-filtered by @TenantId → explicit cross-tenant guard.
         if (!asset.getTenantId().equals(TenantContext.get())) {
             throw new ResourceNotFoundException("TemplateAsset", id);
         }
-        imageStorageService.deleteImage(asset.getStorageKey()); // graceful (never throws on missing)
-        templateAssetRepository.delete(asset);
+        return asset;
     }
 
     private TemplateAssetResponse toResponse(TemplateAsset a) {

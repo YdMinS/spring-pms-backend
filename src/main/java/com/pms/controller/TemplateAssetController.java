@@ -1,11 +1,13 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.TemplateAssetRenameRequest;
 import com.pms.dto.response.TemplateAssetResponse;
 import com.pms.service.TemplateAssetService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -39,6 +41,14 @@ public class TemplateAssetController {
     public ResponseEntity<ResponseDTO<TemplateAssetResponse>> upload(
             @RequestParam("file") MultipartFile file) {
         return ResponseEntity.ok(ResponseDTO.success(templateAssetService.upload(file)));
+    }
+
+    @PatchMapping("/{id}")
+    @Operation(summary = "Rename a tenant asset (display name)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<TemplateAssetResponse>> rename(
+            @PathVariable Long id, @Valid @RequestBody TemplateAssetRenameRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(templateAssetService.rename(id, request.getName())));
     }
 
     @DeleteMapping("/{id}")
