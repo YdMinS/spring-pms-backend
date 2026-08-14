@@ -240,6 +240,41 @@ class ThumbnailRendererTest {
     }
 
     @Test
+    void render_textGradient_paintsBothEndpointColors() throws Exception {
+        given(fontRegistry.load(any())).willReturn(new Font("SansSerif", Font.BOLD, 12));
+
+        TemplateElement grad = TemplateElement.builder()
+                .type("text").bind("productName")
+                .region(TemplateElement.Region.builder().x(0).y(0).w(200).h(200).build())
+                .align(TemplateElement.Align.builder().h("center").v("center").build())
+                .fontId(1L)
+                .color("#FF0000")          // top = red
+                .gradientColor("#0000FF")  // bottom = blue
+                .maxFontSize(180).minFontSize(60).maxLines(1)
+                .build();
+        ThumbnailTemplate template = ThumbnailTemplate.builder()
+                .canvasWidth(200).canvasHeight(200)
+                .backgroundMode(BackgroundMode.WHITE)
+                .elements(List.of(grad))
+                .build();
+
+        byte[] jpeg = renderer.render(template, Map.of("productName", "M"), Map.of());
+        BufferedImage out = ImageIO.read(new ByteArrayInputStream(jpeg));
+
+        boolean hasRed = false;
+        boolean hasBlue = false;
+        for (int y = 0; y < 200; y++) {
+            for (int x = 0; x < 200; x++) {
+                Color px = new Color(out.getRGB(x, y));
+                if (px.getRed() > 130 && px.getGreen() < 110 && px.getBlue() < 110) hasRed = true;
+                if (px.getBlue() > 130 && px.getRed() < 110 && px.getGreen() < 110) hasBlue = true;
+            }
+        }
+        assertThat(hasRed).isTrue();  // top of the glyph ~ red
+        assertThat(hasBlue).isTrue(); // bottom of the glyph ~ blue
+    }
+
+    @Test
     void drawImageElement_fixedSrc_loadedViaGetBytes() throws Exception {
         // Fixed image element (src set, bind null = asset reuse path) → bytes loaded via getBytes(src).
         ThumbnailTemplate template = ThumbnailTemplate.builder()

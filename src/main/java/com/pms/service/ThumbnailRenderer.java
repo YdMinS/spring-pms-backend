@@ -262,6 +262,7 @@ public class ThumbnailRenderer {
 
         g.setFont(base.deriveFont((float) fit.fontSize()));
         Color fillColor = parseColor(element.getColor());
+        Color gradientEnd = parseColorOrNull(element.getGradientColor()); // null → solid fillColor
 
         // Optional glyph outline (stroke behind the fill) for legibility over images.
         Color outlineColor = parseColorOrNull(element.getOutlineColor());
@@ -277,6 +278,11 @@ public class ThumbnailRenderer {
             default -> r.getY() + padTop; // top
         };
 
+        // Solid color, or a vertical top→bottom gradient spanning the whole text block.
+        Paint fillPaint = gradientEnd == null
+                ? fillColor
+                : new GradientPaint(0, blockTop, fillColor, 0, blockTop + Math.max(1, blockHeight), gradientEnd);
+
         FontMetrics fm = g.getFontMetrics();
         for (int i = 0; i < fit.lines().size(); i++) {
             String line = fit.lines().get(i);
@@ -290,7 +296,7 @@ public class ThumbnailRenderer {
             if (hasOutline && !line.isEmpty()) {
                 drawTextOutline(g, line, x, baseline, outlineColor, outlineWidth);
             }
-            g.setColor(fillColor);
+            g.setPaint(fillPaint);
             g.drawString(line, x, baseline);
         }
     }
