@@ -22,7 +22,7 @@ import lombok.NoArgsConstructor;
  * <p>⚠️ Immutable (Builder only, no setters). Jackson (de)serializes through the Lombok builder so the
  * same rule holds for request bodies and the DB converter. Null soft fields are normalized at render
  * time by {@link com.pms.service.ThumbnailRenderer} (align→left/top, padding→0, maxLines→1, opacity→1,
- * color→#000000, lineSpacing→1.0, outline/border absent when color null or width &lt;= 0); {@code region},
+ * color→#000000, lineSpacing→1.0, gradient/outline/border absent when their color is null or width &lt;= 0); {@code region},
  * {@code maxFontSize}, {@code minFontSize} and (for text) {@code fontId} are required — a null there is
  * rejected as {@link IllegalArgumentException} (→400).</p>
  */
@@ -54,8 +54,21 @@ public class TemplateElement {
     /** Text: {@link FontAsset} id used to render. Required for text. */
     private Long fontId;
 
-    /** Text: hex color (e.g. {@code #000000}). Null → black. */
+    /** Text: hex color (e.g. {@code #000000}). Null → black. For a gradient fill this is the top color. */
     private String color;
+
+    /**
+     * Text: end color of a fill gradient; the start color is {@link #color}. Hex, e.g. {@code #FFFFFF}.
+     * Null → solid {@link #color}.
+     */
+    private String gradientColor;
+
+    /**
+     * Text: gradient direction in degrees, clockwise from top→bottom. 0 = top→bottom (default),
+     * 90 = left→right, 180 = bottom→top, 270 = right→left. Null → 0. Only used when {@link #gradientColor}
+     * is set.
+     */
+    private Integer gradientAngle;
 
     /** Text autofit upper bound. Required for text. */
     private Integer maxFontSize;

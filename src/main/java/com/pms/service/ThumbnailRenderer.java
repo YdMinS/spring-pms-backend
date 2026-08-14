@@ -262,6 +262,7 @@ public class ThumbnailRenderer {
 
         g.setFont(base.deriveFont((float) fit.fontSize()));
         Color fillColor = parseColor(element.getColor());
+        Color gradientEnd = parseColorOrNull(element.getGradientColor()); // null → solid fillColor
 
         // Optional glyph outline (stroke behind the fill) for legibility over images.
         Color outlineColor = parseColorOrNull(element.getOutlineColor());
@@ -277,6 +278,12 @@ public class ThumbnailRenderer {
             default -> r.getY() + padTop; // top
         };
 
+        // Solid color, or a directional gradient spanning the whole text block box.
+        Paint fillPaint = gradientEnd == null
+                ? fillColor
+                : gradientPaint(fillColor, gradientEnd, element.getGradientAngle(),
+                        r.getX() + padLeft, blockTop, availW, Math.max(1, blockHeight));
+
         FontMetrics fm = g.getFontMetrics();
         for (int i = 0; i < fit.lines().size(); i++) {
             String line = fit.lines().get(i);
@@ -290,7 +297,7 @@ public class ThumbnailRenderer {
             if (hasOutline && !line.isEmpty()) {
                 drawTextOutline(g, line, x, baseline, outlineColor, outlineWidth);
             }
-            g.setColor(fillColor);
+            g.setPaint(fillPaint);
             g.drawString(line, x, baseline);
         }
     }
@@ -309,6 +316,28 @@ public class ThumbnailRenderer {
         g.draw(outline);
         g.setStroke(prevStroke);
         g.setColor(prevColor);
+    }
+
+    /**
+     * Linear gradient across a box in the requested direction. Angle is degrees clockwise from
+     * top→bottom (0 = top→bottom, 90 = left→right, 180 = bottom→top); null → 0. Start/end are the box's
+     * extreme projections onto the direction, so {@code startColor} is at the leading edge.
+     */
+    private static GradientPaint gradientPaint(Color startColor, Color endColor, Integer angleDeg,
+                                               int boxX, int boxY, int boxW, int boxH) {
+        double rad = Math.toRadians(angleDeg == null ? 0 : angleDeg);
+        double dx = Math.sin(rad); // 0°→(0,1) down, 90°→(1,0) right
+        double dy = Math.cos(rad);
+        double cx = boxX + boxW / 2.0;
+        double cy = boxY + boxH / 2.0;
+        // Half-extent of the box projected onto the direction (max corner projection).
+        double proj = Math.abs(boxW / 2.0 * dx) + Math.abs(boxH / 2.0 * dy);
+        if (proj < 0.5) {
+            proj = 0.5; // guard: GradientPaint rejects coincident start/end points
+        }
+        return new GradientPaint(
+                (float) (cx - proj * dx), (float) (cy - proj * dy), startColor,
+                (float) (cx + proj * dx), (float) (cy + proj * dy), endColor);
     }
 
     private byte[] loadStored(String storageKey) {
