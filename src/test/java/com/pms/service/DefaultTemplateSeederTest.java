@@ -1,5 +1,7 @@
 package com.pms.service;
 
+import com.pms.domain.TemplateElement;
+import com.pms.domain.ThumbnailTemplate;
 import com.pms.repository.ThumbnailTemplateRepository;
 import com.pms.security.TenantContext;
 import org.junit.jupiter.api.AfterEach;
@@ -37,5 +39,22 @@ class DefaultTemplateSeederTest {
         TenantContext.set(1L);
         assertThat(templateRepository.findByIsDefaultTrueAndActiveTrue()).isPresent();
         assertThat(templateRepository.count()).isEqualTo(1);
+    }
+
+    @Test
+    void seededTemplate_hasFullCanvasProductImageBaseElement() {
+        seeder.run(null);
+
+        TenantContext.set(1L);
+        ThumbnailTemplate template = templateRepository.findByIsDefaultTrueAndActiveTrue().orElseThrow();
+        TemplateElement productImage = template.getElements().stream()
+                .filter(e -> "image".equalsIgnoreCase(e.getType()) && "productImage".equals(e.getBind()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("seeded template missing productImage base element"));
+
+        assertThat(productImage.getRegion().getX()).isZero();
+        assertThat(productImage.getRegion().getY()).isZero();
+        assertThat(productImage.getRegion().getW()).isEqualTo(template.getCanvasWidth());
+        assertThat(productImage.getRegion().getH()).isEqualTo(template.getCanvasHeight());
     }
 }

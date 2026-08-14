@@ -19,9 +19,15 @@ import java.io.ByteArrayOutputStream;
 import java.util.List;
 import java.util.Map;
 
+import org.mockito.InOrder;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 /**
  * Renderer unit tests with a mocked {@link FontRegistry} (returns a JDK logical base font) and a
@@ -158,6 +164,60 @@ class ThumbnailRendererTest {
         BufferedImage decoded = ImageIO.read(new ByteArrayInputStream(jpeg));
         assertThat(decoded.getWidth()).isEqualTo(200);
         assertThat(decoded.getHeight()).isEqualTo(200);
+    }
+
+    @Test
+    void drawElements_productImageIsBase_paintedBeforeOverlay_regardlessOfArrayOrder() throws Exception {
+        // z-order contract: the productImage element is drawn FIRST (base), even when it is last in the
+        // array; the fixed overlay is drawn AFTER. Verified by draw order on a mock Graphics2D (no pixels).
+        int canvas = 200;
+        TemplateElement overlay = fixedImageElement("overlay.png", 20, 20, 40, 40); // index 0
+        TemplateElement base = productImageElement(0, 0, canvas, canvas);           // index 1 (last)
+
+        given(imageStorageService.getBytes("overlay.png")).willReturn(pngBytes(80, 80));
+        Map<String, byte[]> imageBindings = Map.of("productImage", pngBytes(80, 80));
+
+        Graphics2D g = mock(Graphics2D.class);
+        renderer.drawElements(g, List.of(overlay, base), Map.of(), imageBindings);
+
+        InOrder order = inOrder(g);
+        // base = full-canvas square fit → drawn at (0,0,200,200) FIRST
+        order.verify(g).drawImage(any(), eq(0), eq(0), eq(canvas), eq(canvas), any());
+        // overlay = 40x40 region square fit → drawn at (20,20,40,40) AFTER
+        order.verify(g).drawImage(any(), eq(20), eq(20), eq(40), eq(40), any());
+    }
+
+    @Test
+    void drawImageElement_fixedSrc_loadedViaGetBytes() throws Exception {
+        // Fixed image element (src set, bind null = asset reuse path) → bytes loaded via getBytes(src).
+        ThumbnailTemplate template = ThumbnailTemplate.builder()
+                .canvasWidth(100).canvasHeight(100)
+                .elements(List.of(fixedImageElement("badge.png", 0, 0, 100, 100)))
+                .build();
+        given(imageStorageService.getBytes("badge.png")).willReturn(pngBytes(40, 40));
+
+        byte[] jpeg = renderer.render(template, Map.of(), Map.of());
+
+        assertThat(jpeg).isNotEmpty();
+        verify(imageStorageService).getBytes("badge.png");
+    }
+
+    private TemplateElement productImageElement(int x, int y, int w, int h) {
+        return TemplateElement.builder()
+                .type("image")
+                .bind("productImage")
+                .region(TemplateElement.Region.builder().x(x).y(y).w(w).h(h).build())
+                .opacity(1.0)
+                .build();
+    }
+
+    private TemplateElement fixedImageElement(String src, int x, int y, int w, int h) {
+        return TemplateElement.builder()
+                .type("image")
+                .src(src)
+                .region(TemplateElement.Region.builder().x(x).y(y).w(w).h(h).build())
+                .opacity(1.0)
+                .build();
     }
 
     private byte[] topBottomPng(int w, int h, Color top, Color bottom) throws Exception {

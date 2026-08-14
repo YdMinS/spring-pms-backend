@@ -62,21 +62,60 @@ public class ThumbnailRenderer {
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
 
             paintBackground(g, template, width, height, imageBindings);
-
-            List<TemplateElement> elements = template.getElements();
-            if (elements != null) {
-                for (TemplateElement element : elements) {
-                    if ("image".equalsIgnoreCase(element.getType())) {
-                        drawImageElement(g, element, imageBindings);
-                    } else if ("text".equalsIgnoreCase(element.getType())) {
-                        drawTextElement(g, element, textBindings);
-                    }
-                }
-            }
+            drawElements(g, template.getElements(), textBindings, imageBindings);
         } finally {
             g.dispose();
         }
         return toJpeg(image);
+    }
+
+    /**
+     * Paints the template elements over the already-painted background.
+     *
+     * <p><b>Product photo = base layer.</b> The first image element bound to {@code productImage} is
+     * always drawn first (bottom-most), regardless of its position in {@code elements}, so overlays
+     * (fixed images, text) sit on top of the product photo. Its default region is the full canvas
+     * (contain-fit: the long side meets the canvas, the margins show the background).</p>
+     *
+     * <p><b>z-order = array order.</b> Every other element is then painted in {@code elements} order
+     * (painter's algorithm). Only the single element chosen as the base is skipped here (by identity):
+     * a legacy template with two {@code productImage} elements draws the first as base and the rest in
+     * array order.</p>
+     *
+     * <p>Package-private as a test seam — a mock {@code Graphics2D} can verify the draw ordering.</p>
+     */
+    void drawElements(Graphics2D g, List<TemplateElement> elements,
+                      Map<String, String> textBindings, Map<String, byte[]> imageBindings) {
+        if (elements == null) {
+            return;
+        }
+        TemplateElement base = firstProductImageElement(elements);
+        if (base != null) {
+            drawImageElement(g, base, imageBindings); // base layer, bottom-most
+        }
+        for (TemplateElement element : elements) {
+            if (element == base) {
+                continue; // already drawn as the base layer
+            }
+            if ("image".equalsIgnoreCase(element.getType())) {
+                drawImageElement(g, element, imageBindings);
+            } else if ("text".equalsIgnoreCase(element.getType())) {
+                drawTextElement(g, element, textBindings);
+            }
+        }
+    }
+
+    /** First image element bound to the product photo (drawn as the base layer), or null if none. */
+    static TemplateElement firstProductImageElement(List<TemplateElement> elements) {
+        if (elements == null) {
+            return null;
+        }
+        for (TemplateElement e : elements) {
+            if ("image".equalsIgnoreCase(e.getType()) && PRODUCT_IMAGE_BIND.equalsIgnoreCase(e.getBind())) {
+                return e;
+            }
+        }
+        return null;
     }
 
     /** Binding key of the product image (source for {@link BackgroundMode#GRADIENT_AUTO}). */

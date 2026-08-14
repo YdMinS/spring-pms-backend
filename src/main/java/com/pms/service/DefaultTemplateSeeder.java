@@ -66,7 +66,7 @@ public class DefaultTemplateSeeder implements ApplicationRunner {
                     .canvasWidth(1000)
                     .canvasHeight(1000)
                     .backgroundMode(BackgroundMode.WHITE)
-                    .elements(List.of(brandTop(fontId), productBottom(fontId)))
+                    .elements(List.of(productBase(), brandTop(fontId), productBottom(fontId)))
                     .fields(List.of(
                             field("brandName", "브랜드명", ""),
                             field("productName", "상품명", "")))
@@ -87,6 +87,22 @@ public class DefaultTemplateSeeder implements ApplicationRunner {
     // NOTE: lineSpacing 1.15 + align v=center are the multi-line preset (long/large text wraps instead
     // of shrinking, block stays centered in its band whether it renders as 1 or 2 lines). Seeder is
     // idempotent, so this only affects newly seeded templates — existing environments adjust in the editor.
+
+    /**
+     * Product photo base layer — full canvas, drawn bottom-most. Contain-fit so the long side meets the
+     * canvas and the margins show the background; text bands overlay on top. The renderer forces any
+     * {@code productImage} element to the base regardless of array position, but seeding it first keeps
+     * the array's z-order self-explanatory.
+     */
+    private TemplateElement productBase() {
+        return TemplateElement.builder()
+                .type("image")
+                .bind("productImage")
+                .region(TemplateElement.Region.builder().x(0).y(0).w(1000).h(1000).build())
+                .align(TemplateElement.Align.builder().h("center").v("center").build())
+                .opacity(1.0)
+                .build();
+    }
 
     /** Brand name, centered in the top band. */
     private TemplateElement brandTop(Long fontId) {
