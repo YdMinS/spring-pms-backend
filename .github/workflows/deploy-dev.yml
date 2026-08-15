@@ -90,8 +90,7 @@ jobs:
             set +e
             set -o pipefail
             LB_DIR=/services/oclyx-dev/liquibase
-            # DRIVER=/services/oklyx/mysql-connector-j.jar
-            DRIVER=/services/oklyx/NOPE.jar
+            DRIVER=/services/oklyx/mysql-connector-j.jar
             BK_DIR=/services/oclyx-dev/db-backups
             mkdir -p "$BK_DIR"
 
