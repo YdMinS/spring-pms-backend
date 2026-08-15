@@ -6,6 +6,9 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+import java.util.Map;
+
 @Getter
 @NoArgsConstructor
 @AllArgsConstructor
@@ -18,4 +21,36 @@ public class MasterProductResponse {
 
     @Schema(description = "Master product name", example = "Galaxy S21 Bundle")
     private String name;
+
+    @Schema(description = "Activation flag (false = soft deleted)", example = "true")
+    private Boolean active;
+
+    @Schema(description = "Base image override URL", nullable = true)
+    private String sourceImageUrl;
+
+    @Schema(description = "Mall-shared detail-page source", nullable = true)
+    private String detailSource;
+
+    @Schema(description = "UI input field values (key -> value)")
+    private Map<String, String> fieldValues;
+
+    @Schema(description = "Component products (the master's product set)")
+    private List<Component> components;
+
+    @Schema(description = "Options (SKU variants)")
+    private List<MasterOptionResponse> options;
+
+    @Getter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    @Schema(description = "A component product of the master")
+    public static class Component {
+
+        @Schema(description = "Product ID", example = "3")
+        private Long productId;
+
+        @Schema(description = "Product name", example = "Galaxy S21")
+        private String productName;
+    }
 }

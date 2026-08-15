@@ -65,7 +65,7 @@ class MasterProductTenantIsolationTest {
 
         TenantContext.set(TENANT_2);
         Long tenant2MasterId = masterProductRepository.save(
-                MasterProduct.builder().name("타테넌트마스터").build()).getId();
+                MasterProduct.builder().name("타테넌트마스터").active(true).build()).getId();
         TenantContext.clear();
 
         String tenant1Token = login("t1@test.com");

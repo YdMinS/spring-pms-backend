@@ -1,0 +1,122 @@
+# Master definition (FEATURE_2608_06 / 3b-1, Design 2): master_product content columns +
+# master_product_component (membership set) + master_product_option / master_product_option_item
+# (SKU quantity vectors). Structured tags for H2<->MySQL portability.
+# ⚠️ In YAML flow-mappings { } a value with a comma ("BIT(1)") MUST be quoted, or the comma is parsed
+# as a flow separator. Comma-free VARCHAR(n) needs no quoting.
+databaseChangeLog:
+
+  # ---- 1. master_product content columns (source image override / field values / detail / active) ----
+  - changeSet:
+      id: 010-master-content-columns
+      author: oclyx
+      comment: "Design 2 3b-1: master_product content columns (active BOOLEAN; MySQL re-types to BIT below)."
+      changes:
+        - addColumn:
+            tableName: master_product
+            columns:
+              - column: { name: source_image_url, type: VARCHAR(1024) }
+              - column: { name: field_values, type: TEXT }
+              - column: { name: detail_source, type: TEXT }
+              - column: { name: active, type: BOOLEAN, defaultValueBoolean: true, constraints: { nullable: false } }
+
+  # ---- 1b. active TINYINT -> BIT(1) on MySQL (Hibernate maps Boolean to BIT; mirrors changeset 006) ----
+  # H2 (tests) maps BOOLEAN in a Hibernate-compatible way, so this is scoped to MySQL only.
+  - changeSet:
+      id: 010-master-active-bit-type
+      author: oclyx
+      dbms: mysql
+      comment: "master_product.active TINYINT -> BIT(1) to satisfy Hibernate schema validation."
+      changes:
+        - modifyDataType:
+            tableName: master_product
+            columnName: active
+            newDataType: BIT(1)
+        - addNotNullConstraint:
+            tableName: master_product
+            columnName: active
+            columnDataType: BIT(1)
+            defaultNullValue: true
+        - addDefaultValue:
+            tableName: master_product
+            columnName: active
+            defaultValueBoolean: true
+
+  # ---- 2. master_product_component (which products compose the master; membership only) ----
+  - changeSet:
+      id: 010-master-product-component
+      author: oclyx
+      comment: "Master component set: (master_product_id, product_id) unique membership."
+      changes:
+        - createTable:
+            tableName: master_product_component
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: master_product_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: product_id, type: BIGINT, constraints: { nullable: false } }
+        - addForeignKeyConstraint:
+            constraintName: fk_mpc_master
+            baseTableName: master_product_component
+            baseColumnNames: master_product_id
+            referencedTableName: master_product
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_mpc_product
+            baseTableName: master_product_component
+            baseColumnNames: product_id
+            referencedTableName: products
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            tableName: master_product_component
+            columnNames: "master_product_id, product_id"
+            constraintName: uq_mpc_master_product
+
+  # ---- 3. master_product_option (SKU variant of a master) ----
+  - changeSet:
+      id: 010-master-product-option
+      author: oclyx
+      comment: "Master option (SKU variant): name + FK to master."
+      changes:
+        - createTable:
+            tableName: master_product_option
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: master_product_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: name, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_mpo_master
+            baseTableName: master_product_option
+            baseColumnNames: master_product_id
+            referencedTableName: master_product
+            referencedColumnNames: id
+
+  # ---- 4. master_product_option_item (quantity vector of an option over component products) ----
+  - changeSet:
+      id: 010-master-product-option-item
+      author: oclyx
+      comment: "Master option item: (option, product, quantity); unique (option, product)."
+      changes:
+        - createTable:
+            tableName: master_product_option_item
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: master_product_option_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: product_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: quantity, type: INT, constraints: { nullable: false } }
+        - addForeignKeyConstraint:
+            constraintName: fk_mpoi_option
+            baseTableName: master_product_option_item
+            baseColumnNames: master_product_option_id
+            referencedTableName: master_product_option
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_mpoi_product
+            baseTableName: master_product_option_item
+            baseColumnNames: product_id
+            referencedTableName: products
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            tableName: master_product_option_item
+            columnNames: "master_product_option_id, product_id"
+            constraintName: uq_mpoi_option_product
