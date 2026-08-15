@@ -48,6 +48,11 @@ class LiquibaseChangelogApplyTest {
         // ...and that baseline tables actually materialized (querying proves existence).
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM seller", Integer.class)).isZero();
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM order_item", Integer.class)).isZero();
+
+        // changeset 008: thumbnail_asset table + its columns materialized (a successful count proves both).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM thumbnail_asset WHERE storage_key IS NULL AND content_type IS NULL",
+                Integer.class)).isZero();
     }
 
     @Test

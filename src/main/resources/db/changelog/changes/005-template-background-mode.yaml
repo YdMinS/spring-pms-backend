@@ -1,0 +1,29 @@
+# Template background modes (FEATURE_2608_05 Step 07): replace the free-form background_image_key with
+# a 5-value background_mode enum (WHITE/BLACK/GRAY/GRADIENT_AUTO/GRADIENT_MANUAL) plus two manual
+# gradient colors. Structured tags only (no raw SQL) for H2<->MySQL portability. Not yet deployed to
+# prod, no data → destructive drop is safe.
+databaseChangeLog:
+
+  - changeSet:
+      id: 005-template-background-mode
+      author: oclyx
+      comment: "thumbnail_template: add background_mode + gradient colors, drop background_image_key."
+      changes:
+        - addColumn:
+            tableName: thumbnail_template
+            columns:
+              - column:
+                  name: background_mode
+                  type: VARCHAR(20)
+                  defaultValue: WHITE
+                  constraints:
+                    nullable: false
+              - column:
+                  name: gradient_top_color
+                  type: VARCHAR(7)
+              - column:
+                  name: gradient_bottom_color
+                  type: VARCHAR(7)
+        - dropColumn:
+            tableName: thumbnail_template
+            columnName: background_image_key

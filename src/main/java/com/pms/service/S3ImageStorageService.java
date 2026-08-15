@@ -10,6 +10,7 @@ import org.springframework.web.multipart.MultipartFile;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.io.FileNotFoundException;
@@ -116,6 +117,39 @@ public class S3ImageStorageService implements ImageStorageService {
         log.info("Existing image migrated to S3: {}", key);
 
         return publicUrl(key);
+    }
+
+    @Override
+    public String uploadBytes(byte[] data, String category, String filename, String contentType) {
+        // Tenant-scoped key: {keyPrefix}/{tenantId}/{category}/{filename}. Public read via bucket policy.
+        Long tenantId = TenantContext.get();
+        if (tenantId == null) {
+            throw new IllegalStateException(
+                    "No tenant in context for S3 uploadBytes — requires an authenticated request");
+        }
+        String key = properties.getS3().getKeyPrefix() + "/" + tenantId + "/" + category + "/" + filename;
+        s3Client.putObject(
+                PutObjectRequest.builder()
+                        .bucket(properties.getS3().getBucket())
+                        .key(key)
+                        .contentType(contentType)
+                        .build(),
+                RequestBody.fromBytes(data));
+        log.info("Bytes uploaded to S3: {}", key);
+        return publicUrl(key);
+    }
+
+    @Override
+    public byte[] getBytes(String storedValue) {
+        // storedValue is a public URL → extract key → getObject.
+        String key = extractKey(storedValue);
+        if (key == null || key.isEmpty()) {
+            throw new IllegalArgumentException("Cannot extract S3 key from stored value: " + storedValue);
+        }
+        return s3Client.getObjectAsBytes(GetObjectRequest.builder()
+                .bucket(properties.getS3().getBucket())
+                .key(key)
+                .build()).asByteArray();
     }
 
     @Override
