@@ -6,6 +6,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -40,4 +41,13 @@ public interface ProductListingRepository extends JpaRepository<ProductListing, 
      * @return true if exists, false otherwise
      */
     boolean existsByPlatformProductId(String platformProductId);
+
+    /**
+     * Find all channel-cell listings grouped under a master product (coverage matrix right side).
+     * Tenant-filtered by {@code @TenantId} automatically.
+     *
+     * @param masterProductId ID of the parent MasterProduct
+     * @return List of ProductListing cells for that master
+     */
+    List<ProductListing> findByMasterProductId(Long masterProductId);
 }

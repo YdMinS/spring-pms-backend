@@ -4,6 +4,7 @@ import com.pms.domain.ProductListingOption;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -22,6 +23,14 @@ public interface ProductListingOptionRepository extends JpaRepository<ProductLis
      * @return List of ProductListingOption entities
      */
     List<ProductListingOption> findByProductListingId(Long productListingId);
+
+    /**
+     * Batch-fetch options for several listings at once (coverage matrix selling-price lookup, N+1 guard).
+     *
+     * @param productListingIds IDs of the parent ProductListings
+     * @return List of ProductListingOption entities across all given listings
+     */
+    List<ProductListingOption> findByProductListingIdIn(Collection<Long> productListingIds);
 
     /**
      * Find an option by platform option ID.

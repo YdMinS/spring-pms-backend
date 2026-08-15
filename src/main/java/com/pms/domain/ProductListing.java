@@ -119,4 +119,18 @@ public class ProductListing {
     @JoinColumn(name = "package_id", nullable = true)
     @Schema(description = "Default package for box cost")
     private Package package_;
+
+    /**
+     * Master product this channel cell belongs to (Design 2, FEATURE_2608_06 / 3a).
+     *
+     * <p>Additive grouping link only — everything else on this entity is unchanged. Transitional
+     * nullable (filled by the shared-id backfill in changeset 009); channel-add (3b') will drive new
+     * cells through the master.</p>
+     *
+     * @see com.pms.domain.MasterProduct
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "master_product_id", nullable = true)
+    @Schema(description = "Master product grouping this listing (Design 2)")
+    private MasterProduct masterProduct;
 }

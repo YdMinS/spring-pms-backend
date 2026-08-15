@@ -1,0 +1,42 @@
+package com.pms.domain;
+
+import jakarta.persistence.*;
+import lombok.*;
+import org.hibernate.annotations.TenantId;
+
+/**
+ * Tenant-shared master product (Design 2, FEATURE_2608_06 / 3a).
+ *
+ * <p>The master sits <b>additively</b> on top of {@link ProductListing}: a listing is the per-channel
+ * cell, and the master is the grouping node that many channel cells point back to (via
+ * {@code product_listing.master_product_id}). 3a introduces the master as a <b>backfill-created,
+ * read-only</b> grouping node — one master per existing listing (shared-id 1:1 backfill).</p>
+ *
+ * <p>⚠️ Content columns (source_image_url / field_values / detail_source / active) are deferred to 3b.
+ * 3a only stores id/tenant/name so the coverage matrix and margin presets have a stable anchor.</p>
+ *
+ * <p>Tenant isolation: {@code @TenantId} auto-filters query-based SELECTs and auto-stamps INSERTs.
+ * Do NOT add manual tenant conditions to queries. PK {@code find()} is NOT tenant-filtered, so
+ * tenant-scoped reads must use the query-based {@code findScopedById} (see MasterProductRepository).</p>
+ */
+@Entity
+@Table(name = "master_product")
+@Getter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder(toBuilder = true)
+public class MasterProduct extends BaseEntity {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    // Tenant dimension (changeset 009). Hibernate auto-sets this on INSERT and auto-filters
+    // query-based SELECTs from TenantIdentifierResolver — do NOT add manual tenant conditions.
+    @TenantId
+    @Column(name = "tenant_id", nullable = false)
+    private Long tenantId;
+
+    @Column(nullable = false, length = 255)
+    private String name;
+}

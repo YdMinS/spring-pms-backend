@@ -53,6 +53,15 @@ class LiquibaseChangelogApplyTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM thumbnail_asset WHERE storage_key IS NULL AND content_type IS NULL",
                 Integer.class)).isZero();
+
+        // changeset 009: master_product + margin_policy tables + product_listing.master_product_id column
+        // materialized (a successful count proves the structural changesets; dbms:mysql backfill is skipped).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM master_product WHERE name IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM margin_policy WHERE margin_rate IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing WHERE master_product_id IS NULL", Integer.class)).isZero();
     }
 
     @Test
