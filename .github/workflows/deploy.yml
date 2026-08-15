@@ -48,6 +48,20 @@ jobs:
         with:
           authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
 
+      # Ship the Liquibase changelog to the server so the pre-deploy backup gate
+      # can run `liquibase status`. The changelog lives inside app.jar (BOOT-INF)
+      # at runtime, so there are no loose files on the server -> scp them here.
+      # strip_components:3 drops "src/main/resources" -> lands as .../liquibase/db/...
+      - name: Copy Liquibase changelog to server
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "src/main/resources/db/**"
+          target: "/services/oklyx/liquibase"
+          strip_components: 3
+
       - name: Deploy to server via SSH
         uses: appleboy/ssh-action@master
         with:
@@ -56,6 +70,63 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
+
+            # ---- Liquibase pre-deploy backup gate (prod) ----
+            # Backs up the DB ONLY when Liquibase has pending changesets (or when
+            # `status` itself fails -> fail-safe). Runs BEFORE docker stop so the
+            # dump captures the exact pre-migration state (app applies changesets
+            # on boot). Subshell ( ... ) isolates `set +e` so it never pollutes the
+            # errexit state of the docker stop/rm/pull/run steps below.
+            (
+            set +e
+            set -o pipefail
+            LB_DIR=/services/oklyx/liquibase
+            DRIVER=/services/oklyx/mysql-connector-j.jar
+            BK_DIR=/services/oklyx/db-backups
+            mkdir -p "$BK_DIR"
+
+            # Query pending changesets (read-only, does NOT touch the schema).
+            STATUS=$(docker run --rm --network pms_network \
+              -v "$LB_DIR/db:/liquibase/db" \
+              -v "$DRIVER:/liquibase/lib/mysql-connector-j.jar" \
+              liquibase/liquibase:4.27 \
+              --driver=com.mysql.cj.jdbc.Driver \
+              --url="jdbc:mysql://db-pms:3306/pms_db" \
+              --username="${{ secrets.DB_USERNAME }}" \
+              --password="${{ secrets.DB_PASSWORD }}" \
+              --changeLogFile=db/changelog/db.changelog-master.yaml \
+              status --verbose 2>&1); RC=$?
+            echo "$STATUS"
+            PENDING=$(echo "$STATUS" | grep -oiE '[0-9]+ changesets? (have|has) not been' | grep -oE '^[0-9]+' | head -1)
+            PENDING=${PENDING:-0}
+
+            # pending > 0 OR status failed (fail-safe) -> back up.
+            if [ "$RC" -ne 0 ] || [ "$PENDING" -gt 0 ]; then
+              echo "[backup] RC=$RC PENDING=$PENDING -> dumping prod DB"
+              TS=$(date +%Y%m%d-%H%M%S)
+              DUMP="$BK_DIR/pms_db-$TS.sql.gz"
+              # Inject the password via MYSQL_PWD (avoids -p plaintext + "insecure" warning).
+              # --no-tablespaces: dump user lacks PROCESS privilege (runbook §10). Do NOT
+              # add --skip-comments/--compact: it removes the "-- Dump completed" marker
+              # the integrity check below relies on.
+              docker exec -e MYSQL_PWD="${{ secrets.DB_PASSWORD }}" db-pms sh -c \
+                "mysqldump -u'${{ secrets.DB_USERNAME }}' --single-transaction --routines --triggers --no-tablespaces pms_db" \
+                | gzip > "$DUMP"
+              DUMP_RC=$?
+              # Triple integrity check: (1) pipe succeeded (2) gzip intact (3) not empty (completion marker)
+              if [ "$DUMP_RC" -ne 0 ]; then echo "[backup] mysqldump/pipe FAILED (rc=$DUMP_RC)"; exit 1; fi
+              gzip -t "$DUMP" || { echo "[backup] gzip corrupt"; exit 1; }
+              zcat "$DUMP" | tail -5 | grep -q 'Dump completed' \
+                || { echo "[backup] empty/truncated dump (no completion marker)"; exit 1; }
+              echo "[backup] OK: $DUMP ($(stat -c%s "$DUMP") bytes)"
+              # Retain only the 10 most recent backups.
+              ls -1t "$BK_DIR"/pms_db-*.sql.gz | tail -n +11 | xargs -r rm -f
+            else
+              echo "[backup] no pending changesets -> skip"
+            fi
+            ) || { echo "[backup] gate failed - aborting deploy"; exit 1; }
+            # ---- end gate ----
+
             docker stop spring-pms-backend || true
             docker rm spring-pms-backend || true
             docker pull ${{ env.IMAGE_NAME }}:latest

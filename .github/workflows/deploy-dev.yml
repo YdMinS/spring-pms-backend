@@ -61,6 +61,19 @@ jobs:
         with:
           authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
 
+      # Ship the Liquibase changelog so the pre-deploy backup gate can run
+      # `liquibase status`. Changelog is inside app.jar at runtime -> scp needed.
+      # DEV is the canary: it migrates on every develop push, BEFORE prod.
+      - name: Copy Liquibase changelog to server (dev)
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "src/main/resources/db/**"
+          target: "/services/oclyx-dev/liquibase"
+          strip_components: 3
+
       - name: Deploy DEV to server via SSH
         uses: appleboy/ssh-action@master
         with:
@@ -69,6 +82,58 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
+
+            # ---- Liquibase pre-deploy backup gate (dev) ----
+            # Same pattern as prod (deploy.yml), values swapped to dev. dev data is
+            # disposable -> retain only 3 backups. db-pms-dev sits on pms_network.
+            (
+            set +e
+            set -o pipefail
+            LB_DIR=/services/oclyx-dev/liquibase
+            DRIVER=/services/oklyx/mysql-connector-j.jar
+            BK_DIR=/services/oclyx-dev/db-backups
+            mkdir -p "$BK_DIR"
+
+            # Query pending changesets (read-only, does NOT touch the schema).
+            STATUS=$(docker run --rm --network pms_network \
+              -v "$LB_DIR/db:/liquibase/db" \
+              -v "$DRIVER:/liquibase/lib/mysql-connector-j.jar" \
+              liquibase/liquibase:4.27 \
+              --driver=com.mysql.cj.jdbc.Driver \
+              --url="jdbc:mysql://db-pms-dev:3306/pms_db" \
+              --username="${{ secrets.DEV_DB_USERNAME }}" \
+              --password="${{ secrets.DEV_DB_PASSWORD }}" \
+              --changeLogFile=db/changelog/db.changelog-master.yaml \
+              status --verbose 2>&1); RC=$?
+            echo "$STATUS"
+            PENDING=$(echo "$STATUS" | grep -oiE '[0-9]+ changesets? (have|has) not been' | grep -oE '^[0-9]+' | head -1)
+            PENDING=${PENDING:-0}
+
+            # pending > 0 OR status failed (fail-safe) -> back up.
+            if [ "$RC" -ne 0 ] || [ "$PENDING" -gt 0 ]; then
+              echo "[backup] RC=$RC PENDING=$PENDING -> dumping dev DB"
+              TS=$(date +%Y%m%d-%H%M%S)
+              DUMP="$BK_DIR/pms_db-$TS.sql.gz"
+              # Inject the password via MYSQL_PWD. --no-tablespaces per runbook §10.
+              # Do NOT add --skip-comments/--compact (kills the completion marker check).
+              docker exec -e MYSQL_PWD="${{ secrets.DEV_DB_PASSWORD }}" db-pms-dev sh -c \
+                "mysqldump -u'${{ secrets.DEV_DB_USERNAME }}' --single-transaction --routines --triggers --no-tablespaces pms_db" \
+                | gzip > "$DUMP"
+              DUMP_RC=$?
+              # Triple integrity check: (1) pipe succeeded (2) gzip intact (3) not empty (completion marker)
+              if [ "$DUMP_RC" -ne 0 ]; then echo "[backup] mysqldump/pipe FAILED (rc=$DUMP_RC)"; exit 1; fi
+              gzip -t "$DUMP" || { echo "[backup] gzip corrupt"; exit 1; }
+              zcat "$DUMP" | tail -5 | grep -q 'Dump completed' \
+                || { echo "[backup] empty/truncated dump (no completion marker)"; exit 1; }
+              echo "[backup] OK: $DUMP ($(stat -c%s "$DUMP") bytes)"
+              # Retain only the 3 most recent backups (dev data is disposable).
+              ls -1t "$BK_DIR"/pms_db-*.sql.gz | tail -n +4 | xargs -r rm -f
+            else
+              echo "[backup] no pending changesets -> skip"
+            fi
+            ) || { echo "[backup] gate failed - aborting deploy"; exit 1; }
+            # ---- end gate ----
+
             docker stop spring-pms-backend-dev || true
             docker rm spring-pms-backend-dev || true
             docker pull ${{ env.IMAGE_NAME }}:dev
