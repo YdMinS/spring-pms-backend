@@ -29,6 +29,7 @@ import com.pms.repository.SellerRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.util.LinkedHashMap;
@@ -64,6 +65,10 @@ public class MasterProductServiceImpl implements MasterProductService {
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
     private final SellerRepository sellerRepository;
+    private final ImageStorageService imageStorageService;
+    private final ImageValidator imageValidator;
+
+    private static final String IMAGE_STORAGE_CATEGORY = "master";
 
     // ---------------------------------------------------------------- reads
 
@@ -246,6 +251,27 @@ public class MasterProductServiceImpl implements MasterProductService {
         MasterProductOption option = requireOption(masterId, optionId);
         optionItemRepository.deleteByOptionId(optionId);
         optionRepository.delete(option);
+    }
+
+    // ---------------------------------------------------------------- image override (3b-2)
+
+    @Override
+    @Transactional
+    public MasterProductResponse uploadMasterImage(Long id, MultipartFile file) {
+        MasterProduct master = requireScopedMaster(id);
+        imageValidator.validate(file);
+        byte[] bytes;
+        try {
+            bytes = file.getBytes();
+        } catch (Exception e) {
+            throw new IllegalArgumentException("업로드 파일을 읽을 수 없습니다", e);
+        }
+        String url = imageStorageService.uploadBytes(
+                bytes, IMAGE_STORAGE_CATEGORY,
+                "master_" + id + "_" + System.currentTimeMillis() + ".jpg", file.getContentType());
+        MasterProduct updated = masterProductRepository.save(
+                master.toBuilder().sourceImageUrl(url).build());
+        return mapToResponse(updated);
     }
 
     // ---------------------------------------------------------------- helpers

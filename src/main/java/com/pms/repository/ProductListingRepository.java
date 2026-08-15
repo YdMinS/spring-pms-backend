@@ -4,6 +4,8 @@ import com.pms.domain.ProductListing;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -50,4 +52,15 @@ public interface ProductListingRepository extends JpaRepository<ProductListing, 
      * @return List of ProductListing cells for that master
      */
     List<ProductListing> findByMasterProductId(Long masterProductId);
+
+    /**
+     * Tenant-scoped fetch by id (FEATURE_2608_06 / 3b-2). The inherited PK {@code findById} is NOT
+     * tenant-filtered; this query-based SELECT is (Hibernate {@code @TenantId} filter), so a cross-tenant
+     * id yields empty → a natural 404 without a manual tenant compare (mirrors MasterProductRepository).
+     *
+     * @param id ProductListing id
+     * @return Optional containing the listing if it belongs to the current tenant
+     */
+    @Query("select p from ProductListing p where p.id = :id")
+    Optional<ProductListing> findScopedById(@Param("id") Long id);
 }

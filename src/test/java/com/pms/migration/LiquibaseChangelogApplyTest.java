@@ -62,6 +62,11 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM margin_policy WHERE margin_rate IS NULL", Integer.class)).isZero();
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM product_listing WHERE master_product_id IS NULL", Integer.class)).isZero();
+
+        // changeset 011: generated_product_data table + its columns materialized (a successful count proves both).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM generated_product_data WHERE thumbnail_url IS NULL AND detail_html IS NULL",
+                Integer.class)).isZero();
     }
 
     @Test

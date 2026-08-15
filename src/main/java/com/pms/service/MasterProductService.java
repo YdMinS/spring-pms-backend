@@ -6,6 +6,7 @@ import com.pms.dto.request.MasterProductUpdateRequest;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductResponse;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -36,4 +37,14 @@ public interface MasterProductService {
     MasterOptionResponse updateOption(Long masterId, Long optionId, MasterOptionRequest request);
 
     void deleteOption(Long masterId, Long optionId);
+
+    /**
+     * Upload a base-image override (FEATURE_2608_06 / 3b-2): validates + stores the file and sets
+     * {@code MasterProduct.sourceImageUrl}. Asset regeneration is a separate call (listing regenerate).
+     *
+     * @param id   master product id (tenant-scoped; 404 if absent)
+     * @param file image file (validated by {@code ImageValidator})
+     * @return the updated master product
+     */
+    MasterProductResponse uploadMasterImage(Long id, MultipartFile file);
 }

@@ -16,6 +16,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -77,6 +78,14 @@ public class MasterProductController {
     public ResponseEntity<ResponseDTO<Void>> deleteMasterProduct(@PathVariable Long id) {
         masterProductService.deleteMasterProduct(id);
         return ResponseEntity.ok(ResponseDTO.success(null));
+    }
+
+    @PostMapping(value = "/{id}/image", consumes = "multipart/form-data")
+    @Operation(summary = "Upload a base-image override (sets sourceImageUrl)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<MasterProductResponse>> uploadImage(
+            @PathVariable Long id, @RequestParam("file") MultipartFile file) {
+        return ResponseEntity.ok(ResponseDTO.success(masterProductService.uploadMasterImage(id, file)));
     }
 
     @PostMapping("/{id}/options")
