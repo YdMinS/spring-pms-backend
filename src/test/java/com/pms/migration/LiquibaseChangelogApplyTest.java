@@ -67,6 +67,15 @@ class LiquibaseChangelogApplyTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM generated_product_data WHERE thumbnail_url IS NULL AND detail_html IS NULL",
                 Integer.class)).isZero();
+
+        // changeset 012: product_listing.status column materialized (a successful count proves it)...
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing WHERE status IS NULL", Integer.class)).isZero();
+        // ...and platform_product_id relaxed to nullable (DRAFT cells carry no market id).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE TABLE_NAME = 'PRODUCT_LISTING' AND COLUMN_NAME = 'PLATFORM_PRODUCT_ID'",
+                String.class)).isEqualTo("YES");
     }
 
     @Test

@@ -59,11 +59,24 @@ public class ProductListing {
     /**
      * Platform-specific product ID (업체상품 ID on Coupang).
      * Unique per platform, max 255 chars.
-     * Required field.
+     *
+     * <p>Nullable since FEATURE_2608_06 / 3b' (changeset 012): a channel-add DRAFT cell has no market id
+     * until it is pushed in 3c. Live listings still carry it.</p>
      */
-    @Column(length = 255, nullable = false, name = "platform_product_id")
+    @Column(length = 255, nullable = true, name = "platform_product_id")
     @Schema(description = "Platform product ID (업체상품 ID)", example = "12345678")
     private String platformProductId;
+
+    /**
+     * Lifecycle status (FEATURE_2608_06 / 3b'). Channel-add creates {@link ListingStatus#DRAFT} cells;
+     * promotion is driven by 3c. Defaults to {@link ListingStatus#SELLING} so the legacy CRUD create path
+     * (live listings) and pre-existing rows (backfilled by changeset 012) stay consistent — unchanged.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20, nullable = false)
+    @Builder.Default
+    @Schema(description = "Listing lifecycle status", example = "DRAFT")
+    private ListingStatus status = ListingStatus.SELLING;
 
     /**
      * Product listing name (max 255 chars).

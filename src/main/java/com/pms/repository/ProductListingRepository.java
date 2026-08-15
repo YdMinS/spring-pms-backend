@@ -63,4 +63,15 @@ public interface ProductListingRepository extends JpaRepository<ProductListing, 
      */
     @Query("select p from ProductListing p where p.id = :id")
     Optional<ProductListing> findScopedById(@Param("id") Long id);
+
+    /**
+     * Channel-add duplicate guard (FEATURE_2608_06 / 3b'): at most one cell per (master, seller, platform)
+     * — one market product page per account. Tenant-filtered by {@code @TenantId} automatically.
+     *
+     * @param masterProductId parent MasterProduct id
+     * @param sellerId        seller id
+     * @param platform        platform identifier (e.g., "COUPANG")
+     * @return true if a listing already exists for that account under the master
+     */
+    boolean existsByMasterProductIdAndSellerIdAndPlatform(Long masterProductId, Long sellerId, String platform);
 }

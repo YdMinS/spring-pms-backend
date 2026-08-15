@@ -1,0 +1,31 @@
+# Channel add (FEATURE_2608_06 / 3b', Design 2): additive-only changes to product_listing.
+#   1. status VARCHAR(20) NOT NULL, defaultValue SELLING — backfills pre-existing (live) rows; new DRAFT
+#      cells set the value explicitly in the app. Enum stored as STRING (no boolean → no 006 BIT split).
+#   2. platform_product_id relaxed to nullable — a DRAFT cell has no market id until 3c push.
+# Structured tags for H2<->MySQL portability. No raw SQL.
+databaseChangeLog:
+
+  - changeSet:
+      id: 012-product-listing-status
+      author: oclyx
+      comment: "3b': product_listing.status (VARCHAR(20) NOT NULL, defaultValue SELLING backfills live rows)."
+      changes:
+        - addColumn:
+            tableName: product_listing
+            columns:
+              - column:
+                  name: status
+                  type: VARCHAR(20)
+                  defaultValue: "SELLING"
+                  constraints:
+                    nullable: false
+
+  - changeSet:
+      id: 012-product-listing-platform-id-nullable
+      author: oclyx
+      comment: "3b': relax product_listing.platform_product_id to nullable (DRAFT cell has no market id yet)."
+      changes:
+        - dropNotNullConstraint:
+            tableName: product_listing
+            columnName: platform_product_id
+            columnDataType: VARCHAR(255)
