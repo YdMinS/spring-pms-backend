@@ -76,6 +76,13 @@ class LiquibaseChangelogApplyTest {
                 "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
                         + "WHERE TABLE_NAME = 'PRODUCT_LISTING' AND COLUMN_NAME = 'PLATFORM_PRODUCT_ID'",
                 String.class)).isEqualTo("YES");
+
+        // changeset 013: product_listing_option.approval_status + seller_product_item_id materialized
+        // (a successful count over both columns proves they exist).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing_option "
+                        + "WHERE approval_status IS NULL AND seller_product_item_id IS NULL",
+                Integer.class)).isZero();
     }
 
     @Test

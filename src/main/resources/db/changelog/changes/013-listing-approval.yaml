@@ -1,0 +1,35 @@
+# Listing approval (FEATURE_2608_06 / 3c, Design 2): additive-only columns on product_listing_option.
+#   1. approval_status VARCHAR(20) NOT NULL, defaultValue APPROVED — backfills pre-existing (live) options.
+#      New DRAFT options set NOT_APPROVED explicitly in the app. Enum stored as STRING (no boolean → no 006
+#      BIT split).
+#   2. seller_product_item_id VARCHAR(255) nullable — Coupang option-update id, filled by fetchStatus after
+#      approval.
+# Structured tags for H2<->MySQL portability. No raw SQL.
+databaseChangeLog:
+
+  - changeSet:
+      id: 013-option-approval-status
+      author: oclyx
+      comment: "3c: product_listing_option.approval_status (VARCHAR(20) NOT NULL, defaultValue APPROVED backfills live options)."
+      changes:
+        - addColumn:
+            tableName: product_listing_option
+            columns:
+              - column:
+                  name: approval_status
+                  type: VARCHAR(20)
+                  defaultValue: "APPROVED"
+                  constraints:
+                    nullable: false
+
+  - changeSet:
+      id: 013-option-seller-product-item-id
+      author: oclyx
+      comment: "3c: product_listing_option.seller_product_item_id (VARCHAR(255) nullable, filled after approval)."
+      changes:
+        - addColumn:
+            tableName: product_listing_option
+            columns:
+              - column:
+                  name: seller_product_item_id
+                  type: VARCHAR(255)

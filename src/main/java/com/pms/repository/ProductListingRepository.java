@@ -74,4 +74,20 @@ public interface ProductListingRepository extends JpaRepository<ProductListing, 
      * @return true if a listing already exists for that account under the master
      */
     boolean existsByMasterProductIdAndSellerIdAndPlatform(Long masterProductId, Long sellerId, String platform);
+
+    /**
+     * Pending-approval sweep source (FEATURE_2608_06 / 3c, sync-approvals): cells still SUBMITTED that have at
+     * least one option not yet approved. Tenant-filtered by {@code @TenantId} on ProductListing automatically.
+     *
+     * <p>Uses an explicit entity join to ProductListingOption (that entity has no {@code @TenantId} and there
+     * is no mapped {@code options} collection on ProductListing — kept unchanged), with DISTINCT to dedup a
+     * listing that has several not-approved options.</p>
+     *
+     * @return distinct listings awaiting approval for the current tenant
+     */
+    @Query("SELECT DISTINCT l FROM ProductListing l "
+            + "JOIN ProductListingOption o ON o.productListing = l "
+            + "WHERE l.status = com.pms.domain.ListingStatus.SUBMITTED "
+            + "AND o.approvalStatus = com.pms.domain.OptionApprovalStatus.NOT_APPROVED")
+    List<ProductListing> findPendingApproval();
 }
