@@ -1,12 +1,15 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.MasterImageReorderRequest;
 import com.pms.dto.request.MasterOptionRequest;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.MasterOptionResponse;
+import com.pms.dto.response.MasterProductImageResponse;
 import com.pms.dto.response.MasterProductResponse;
+import com.pms.service.MasterProductImageService;
 import com.pms.service.MasterProductService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -33,6 +36,7 @@ import java.util.List;
 public class MasterProductController {
 
     private final MasterProductService masterProductService;
+    private final MasterProductImageService masterProductImageService;
 
     @GetMapping
     @Operation(summary = "List master products")
@@ -111,5 +115,41 @@ public class MasterProductController {
             @PathVariable Long id, @PathVariable Long optionId) {
         masterProductService.deleteOption(id, optionId);
         return ResponseEntity.ok(ResponseDTO.success(null));
+    }
+
+    // ---------------------------------------------------------------- input images (Step 2-1)
+
+    @PostMapping(value = "/{id}/images", consumes = "multipart/form-data")
+    @Operation(summary = "Upload a master input image into a zone")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<MasterProductImageResponse>> uploadImageToZone(
+            @PathVariable Long id, @RequestParam("file") MultipartFile file,
+            @RequestParam("zoneId") String zoneId) {
+        MasterProductImageResponse response = masterProductImageService.upload(id, zoneId, file);
+        return ResponseEntity.status(HttpStatus.CREATED).body(ResponseDTO.success(response));
+    }
+
+    @GetMapping("/{id}/images")
+    @Operation(summary = "List master input images (by zone then position)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<List<MasterProductImageResponse>>> listImages(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(masterProductImageService.list(id)));
+    }
+
+    @PutMapping("/{id}/images/reorder")
+    @Operation(summary = "Reorder a zone's images")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<List<MasterProductImageResponse>>> reorderImages(
+            @PathVariable Long id, @Valid @RequestBody MasterImageReorderRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                masterProductImageService.reorder(id, request.getZoneId(), request.getImageIds())));
+    }
+
+    @DeleteMapping("/{id}/images/{imageId}")
+    @Operation(summary = "Delete a master input image")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<Void> deleteImage(@PathVariable Long id, @PathVariable Long imageId) {
+        masterProductImageService.delete(id, imageId);
+        return ResponseEntity.noContent().build();
     }
 }

@@ -1,0 +1,88 @@
+# Detail-page template + master input images (FEATURE_2608_06 / Step 2-1, Design 2).
+#   detail_template      = tenant-wide block-array library (mirror of thumbnail_template).
+#   master_product_image = master-owned input images (zones) for imageZone blocks.
+# Structured tags for H2<->MySQL portability (no raw SQL).
+# ⚠️ boolean = 006 BIT trap: detail_template.active/is_default are BOOLEAN here, re-typed to BIT(1) on
+# MySQL below (Hibernate 6 expects BIT for boolean fields → ddl-auto: validate). H2 (tests) untouched.
+databaseChangeLog:
+
+  # ---- 1. detail_template (tenant-wide block-array library) ----
+  - changeSet:
+      id: 015-detail-template
+      author: oclyx
+      comment: "Step 2-1: detail_template (blocks TEXT; active/is_default BOOLEAN, MySQL re-types to BIT below)."
+      changes:
+        - createTable:
+            tableName: detail_template
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: name, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: blocks, type: TEXT }
+              - column: { name: active, type: BOOLEAN, defaultValueBoolean: true, constraints: { nullable: false } }
+              - column: { name: is_default, type: BOOLEAN, defaultValueBoolean: false, constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_detail_template_tenant
+            baseTableName: detail_template
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+
+  # ---- 1b. active/is_default TINYINT -> BIT(1) on MySQL (mirrors changeset 006). H2 untouched. ----
+  - changeSet:
+      id: 015-detail-template-mysql-bit
+      author: oclyx
+      dbms: mysql
+      comment: "detail_template.active/is_default TINYINT -> BIT(1) to satisfy Hibernate schema validation."
+      changes:
+        - modifyDataType:
+            tableName: detail_template
+            columnName: active
+            newDataType: BIT(1)
+        - addNotNullConstraint:
+            tableName: detail_template
+            columnName: active
+            columnDataType: BIT(1)
+            defaultNullValue: true
+        - addDefaultValue:
+            tableName: detail_template
+            columnName: active
+            defaultValueBoolean: true
+        - modifyDataType:
+            tableName: detail_template
+            columnName: is_default
+            newDataType: BIT(1)
+        - addNotNullConstraint:
+            tableName: detail_template
+            columnName: is_default
+            columnDataType: BIT(1)
+            defaultNullValue: false
+        - addDefaultValue:
+            tableName: detail_template
+            columnName: is_default
+            defaultValueBoolean: false
+
+  # ---- 2. master_product_image (master-owned input images; zones for imageZone blocks) ----
+  - changeSet:
+      id: 015-master-product-image
+      author: oclyx
+      comment: "Master input images: (master, zone, sort_order, image_url). No boolean columns."
+      changes:
+        - createTable:
+            tableName: master_product_image
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: master_product_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: zone_id, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: sort_order, type: INT, constraints: { nullable: false } }
+              - column: { name: image_url, type: VARCHAR(1024), constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_mpi_master
+            baseTableName: master_product_image
+            baseColumnNames: master_product_id
+            referencedTableName: master_product
+            referencedColumnNames: id

@@ -87,6 +87,15 @@ class LiquibaseChangelogApplyTest {
         // changeset 014: product_listing.needs_market_sync materialized (a successful count proves it).
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM product_listing WHERE needs_market_sync IS NULL", Integer.class)).isZero();
+
+        // changeset 015: detail_template + master_product_image tables + their columns materialized
+        // (a successful count over the columns proves both tables and their structure).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM detail_template WHERE name IS NULL AND blocks IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM master_product_image "
+                        + "WHERE zone_id IS NULL AND sort_order IS NULL AND image_url IS NULL",
+                Integer.class)).isZero();
     }
 
     @Test
