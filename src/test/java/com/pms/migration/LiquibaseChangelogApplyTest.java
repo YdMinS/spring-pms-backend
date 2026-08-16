@@ -83,6 +83,10 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM product_listing_option "
                         + "WHERE approval_status IS NULL AND seller_product_item_id IS NULL",
                 Integer.class)).isZero();
+
+        // changeset 014: product_listing.needs_market_sync materialized (a successful count proves it).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing WHERE needs_market_sync IS NULL", Integer.class)).isZero();
     }
 
     @Test

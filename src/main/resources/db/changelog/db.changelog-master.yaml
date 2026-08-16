@@ -25,3 +25,5 @@ databaseChangeLog:
       file: db/changelog/changes/012-listing-channel-add.yaml
   - include:
       file: db/changelog/changes/013-listing-approval.yaml
+  - include:
+      file: db/changelog/changes/014-listing-needs-market-sync.yaml

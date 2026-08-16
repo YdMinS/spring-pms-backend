@@ -146,4 +146,19 @@ public class ProductListing {
     @JoinColumn(name = "master_product_id", nullable = true)
     @Schema(description = "Master product grouping this listing (Design 2)")
     private MasterProduct masterProduct;
+
+    /**
+     * Market-sync dirty marker (FEATURE_2608_06 / 3d, Design 2). {@code true} = "local assets were regenerated
+     * (layer A: {@code MasterPropagationService.propagate}) and this cell has NOT yet been pushed to the market"
+     * — i.e. pending market reflection. Only <b>on-market</b> cells ({@code platformProductId != null}) are
+     * marked true during propagation; DRAFT cells (not yet pushed) are never marked. Layer B
+     * ({@code ListingPropagationService.pushSync}) clears it back to {@code false} after a successful push.
+     *
+     * <p>Additive column only — pre-existing live rows are backfilled to {@code false} (not just regenerated,
+     * so not pending). See changeset 014.</p>
+     */
+    @Column(name = "needs_market_sync", nullable = false)
+    @Builder.Default
+    @Schema(description = "Regenerated locally but not yet pushed to the market (pending sync)", example = "false")
+    private boolean needsMarketSync = false;
 }

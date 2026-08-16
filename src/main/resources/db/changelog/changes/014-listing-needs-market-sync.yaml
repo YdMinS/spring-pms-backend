@@ -1,0 +1,48 @@
+# Market-sync dirty marker (FEATURE_2608_06 / 3d, Design 2): additive boolean on product_listing.
+#   needs_market_sync = "regenerated locally (layer A) but not yet pushed to the market" (pending reflection).
+#   Only on-market cells are marked true during propagation; layer B (pushSync) clears it. Pre-existing live
+#   rows backfill to false (defaultValueBoolean).
+#
+# ⚠️ boolean = 006 BIT trap (this is the first boolean column since 006; 012/013 were enum/string strings, so
+# they did not need the split). On MySQL, Liquibase's abstract BOOLEAN materializes as TINYINT, but Hibernate 6
+# expects BIT(1) for boolean fields -> ddl-auto: validate fails on startup (crash loop). So mirror 006 exactly:
+# a portable BOOLEAN changeset for all DBs + a dbms:mysql changeset re-typing to BIT(1). H2 (tests) maps BOOLEAN
+# in a Hibernate-compatible way and is left untouched.
+databaseChangeLog:
+
+  - changeSet:
+      id: 014-listing-needs-market-sync
+      author: oclyx
+      comment: "3d: product_listing.needs_market_sync (BOOLEAN NOT NULL default false, backfills live rows)."
+      changes:
+        - addColumn:
+            tableName: product_listing
+            columns:
+              - column:
+                  name: needs_market_sync
+                  type: BOOLEAN
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false
+
+  # MySQL only: abstract BOOLEAN -> TINYINT, but Hibernate expects BIT(1). Re-type + re-declare NOT NULL/DEFAULT
+  # (MySQL MODIFY drops them). Mirrors 006. H2 untouched.
+  - changeSet:
+      id: 014-listing-needs-market-sync-mysql-bit
+      author: oclyx
+      dbms: mysql
+      comment: "3d: product_listing.needs_market_sync TINYINT -> BIT(1) to satisfy Hibernate schema validation."
+      changes:
+        - modifyDataType:
+            tableName: product_listing
+            columnName: needs_market_sync
+            newDataType: BIT(1)
+        - addNotNullConstraint:
+            tableName: product_listing
+            columnName: needs_market_sync
+            columnDataType: BIT(1)
+            defaultNullValue: false
+        - addDefaultValue:
+            tableName: product_listing
+            columnName: needs_market_sync
+            defaultValueBoolean: false

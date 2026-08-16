@@ -90,4 +90,13 @@ public interface ProductListingRepository extends JpaRepository<ProductListing, 
             + "WHERE l.status = com.pms.domain.ListingStatus.SUBMITTED "
             + "AND o.approvalStatus = com.pms.domain.OptionApprovalStatus.NOT_APPROVED")
     List<ProductListing> findPendingApproval();
+
+    /**
+     * Pending market-sync source (FEATURE_2608_06 / 3d, pending-sync / push-sync): cells regenerated locally
+     * by layer A but not yet pushed to the market. Derived-query SELECT, so tenant-filtered by {@code @TenantId}
+     * automatically (only the current tenant's cells).
+     *
+     * @return listings flagged {@code needs_market_sync = true} for the current tenant
+     */
+    List<ProductListing> findByNeedsMarketSyncTrue();
 }

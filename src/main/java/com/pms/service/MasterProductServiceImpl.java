@@ -26,6 +26,7 @@ import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
+import com.pms.service.listing.MasterPropagationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -67,6 +68,7 @@ public class MasterProductServiceImpl implements MasterProductService {
     private final SellerRepository sellerRepository;
     private final ImageStorageService imageStorageService;
     private final ImageValidator imageValidator;
+    private final MasterPropagationService masterPropagationService;
 
     private static final String IMAGE_STORAGE_CATEGORY = "master";
 
@@ -198,6 +200,12 @@ public class MasterProductServiceImpl implements MasterProductService {
                 assertCoversComponents(newComponentIds, vector, "구성 변경이 기존 옵션과 불일치");
             }
         }
+
+        // Layer-A auto-trigger (3d): re-generate linked cells after the master content is saved. Each cell runs
+        // in its own REQUIRES_NEW transaction (this @Transactional update stays open), so a cell failure never
+        // rolls the master save back. Cells without generated assets are a no-op (skip) — safe for tests too.
+        masterPropagationService.propagate(id);
+
         return mapToResponse(updated);
     }
 
