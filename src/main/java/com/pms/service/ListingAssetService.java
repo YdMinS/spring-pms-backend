@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ProductListing;
+import com.pms.dto.response.DetailPreviewResponse;
 import com.pms.dto.response.GeneratedProductResponse;
 
 /**
@@ -19,6 +20,15 @@ public interface ListingAssetService {
 
     /** Endpoint 4-2: read persisted assets (404 if the cell is absent or not yet generated). */
     GeneratedProductResponse getGenerated(Long listingId);
+
+    /** Non-persistent AUTO detail-HTML preview for a tenant-scoped cell (404 if absent); ignores any override. */
+    DetailPreviewResponse previewDetail(Long listingId);
+
+    /** Upsert a raw-HTML override (source=MANUAL_OVERRIDE) for a tenant-scoped cell (404 if absent). */
+    GeneratedProductResponse overrideDetailHtml(Long listingId, String html);
+
+    /** Drop the override (source=AUTO) and re-apply generator output (404 if cell/assets absent). */
+    GeneratedProductResponse clearDetailHtml(Long listingId);
 
     /**
      * Seam: (re)generate the thumbnail + detail HTML + per-option selling prices for {@code cell} and

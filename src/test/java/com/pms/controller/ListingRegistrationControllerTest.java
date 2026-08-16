@@ -4,6 +4,7 @@ import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.Carrier;
 import com.pms.domain.CarrierRate;
 import com.pms.domain.Category;
+import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
@@ -79,7 +80,7 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
                 .productListing(cell).optionName("기본").sellingPrice(new BigDecimal("6000")).build());
         generatedProductDataRepository.save(GeneratedProductData.builder()
                 .productListing(cell).thumbnailUrl("thumbnails/t.jpg").detailHtml("<p>셀</p>")
-                .generatedAt(LocalDateTime.now()).build());
+                .source(GeneratedContentSource.AUTO).generatedAt(LocalDateTime.now()).build());
         marketplaceAccountRepository.save(MarketplaceAccount.builder()
                 .seller(seller).platform("COUPANG").accountAlias("메인")
                 .vendorId("V1").accessKey("ak").secretKey("sk").isActive(true).build());

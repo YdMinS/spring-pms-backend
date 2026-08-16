@@ -51,4 +51,13 @@ public class GeneratedProductData extends BaseEntity {
     /** Last (re)generation timestamp. */
     @Column(name = "generated_at")
     private LocalDateTime generatedAt;
+
+    /**
+     * Origin of {@link #detailHtml} (Step 2-2). {@code AUTO} = generator output (overwritten on
+     * regenerate); {@code MANUAL_OVERRIDE} = user-edited raw HTML (preserved on regenerate). New rows
+     * default to {@code AUTO}; changeset 016 backfills existing rows.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "source", nullable = false, length = 20)
+    private GeneratedContentSource source;
 }

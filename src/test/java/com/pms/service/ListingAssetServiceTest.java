@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.Product;
@@ -169,5 +170,60 @@ class ListingAssetServiceTest {
         verify(generatedProductDataRepository).save(dataCaptor.capture());
         assertThat(dataCaptor.getValue().getId()).isEqualTo(77L);            // same row updated, not inserted
         assertThat(dataCaptor.getValue().getThumbnailUrl()).isEqualTo("thumbnails/generated.jpg");
+    }
+
+    // ---- override guard (Step 2-2) ----
+
+    @Test
+    void regenerateAssets_manualOverride_preservesDetailHtml_stillRegeneratesThumbnailAndPrice() {
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+        given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
+                .willReturn(List.of(ProductListingProduct.builder().product(product()).quantity(1).build()));
+        given(productImageLoader.load(any())).willReturn(new byte[]{7});
+        given(thumbnailTemplateRepository.findByIsDefaultTrueAndActiveTrue()).willReturn(Optional.of(template()));
+        given(thumbnailRenderer.render(any(), any(), any())).willReturn(new byte[]{1, 2, 3});
+        given(imageStorageService.uploadBytes(any(), anyString(), anyString(), anyString()))
+                .willReturn("thumbnails/generated.jpg");
+        given(priceCalculator.calculatePrice(any(), any())).willReturn(new BigDecimal("10670"));
+        GeneratedProductData existing = GeneratedProductData.builder()
+                .id(88L).productListing(cell).detailHtml("X")
+                .source(GeneratedContentSource.MANUAL_OVERRIDE).build();
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID)).willReturn(Optional.of(existing));
+        given(generatedProductDataRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+
+        service.regenerateAssets(cell);
+
+        // Override cell → generator NOT called, edited detailHtml preserved, source stays MANUAL_OVERRIDE.
+        verify(detailContentGenerator, never()).generate(any());
+        ArgumentCaptor<GeneratedProductData> dataCaptor = ArgumentCaptor.forClass(GeneratedProductData.class);
+        verify(generatedProductDataRepository).save(dataCaptor.capture());
+        assertThat(dataCaptor.getValue().getDetailHtml()).isEqualTo("X");
+        assertThat(dataCaptor.getValue().getSource()).isEqualTo(GeneratedContentSource.MANUAL_OVERRIDE);
+        // Thumbnail + option price are still regenerated.
+        assertThat(dataCaptor.getValue().getThumbnailUrl()).isEqualTo("thumbnails/generated.jpg");
+        ArgumentCaptor<ProductListingOption> optionCaptor = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository).save(optionCaptor.capture());
+        assertThat(optionCaptor.getValue().getSellingPrice()).isEqualByComparingTo("10670");
+    }
+
+    @Test
+    void regenerateAssets_autoSource_regeneratesDetailHtmlFromGenerator() {
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+        given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
+                .willReturn(List.of(ProductListingProduct.builder().product(product()).quantity(1).build()));
+        given(productImageLoader.load(any())).willReturn(new byte[]{7});
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID)).willReturn(Optional.empty());
+        commonRenderStubs();
+
+        service.regenerateAssets(cell);
+
+        ArgumentCaptor<GeneratedProductData> dataCaptor = ArgumentCaptor.forClass(GeneratedProductData.class);
+        verify(generatedProductDataRepository).save(dataCaptor.capture());
+        assertThat(dataCaptor.getValue().getDetailHtml()).isEqualTo("<p>운동화</p>");   // generator output
+        assertThat(dataCaptor.getValue().getSource()).isEqualTo(GeneratedContentSource.AUTO);
     }
 }

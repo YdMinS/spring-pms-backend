@@ -96,6 +96,10 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM master_product_image "
                         + "WHERE zone_id IS NULL AND sort_order IS NULL AND image_url IS NULL",
                 Integer.class)).isZero();
+
+        // changeset 016: generated_product_data.source materialized (a successful count proves it).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM generated_product_data WHERE source IS NULL", Integer.class)).isZero();
     }
 
     @Test

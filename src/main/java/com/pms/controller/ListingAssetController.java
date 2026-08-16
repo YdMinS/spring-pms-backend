@@ -1,11 +1,14 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.DetailHtmlOverrideRequest;
+import com.pms.dto.response.DetailPreviewResponse;
 import com.pms.dto.response.GeneratedProductResponse;
 import com.pms.service.ListingAssetService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -35,5 +38,27 @@ public class ListingAssetController {
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<GeneratedProductResponse>> getGenerated(@PathVariable Long id) {
         return ResponseEntity.ok(ResponseDTO.success(listingAssetService.getGenerated(id)));
+    }
+
+    @GetMapping("/{id}/detail-preview")
+    @Operation(summary = "Non-persistent AUTO detail-HTML preview (ignores any override, for comparison)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<DetailPreviewResponse>> detailPreview(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(listingAssetService.previewDetail(id)));
+    }
+
+    @PutMapping("/{id}/detail-html")
+    @Operation(summary = "Override the cell's detail HTML (source=MANUAL_OVERRIDE)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<GeneratedProductResponse>> overrideDetailHtml(
+            @PathVariable Long id, @Valid @RequestBody DetailHtmlOverrideRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(listingAssetService.overrideDetailHtml(id, request.getHtml())));
+    }
+
+    @DeleteMapping("/{id}/detail-html")
+    @Operation(summary = "Drop the detail-HTML override (source=AUTO) and re-apply generator output")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<GeneratedProductResponse>> clearDetailHtml(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(listingAssetService.clearDetailHtml(id)));
     }
 }
