@@ -33,3 +33,9 @@ oklyx:
   crypto:
     # 로컬 전용 더미 AES-256 master key(32-byte Base64). 비밀 아님 — prod 에선 절대 사용 금지.
     master-key: Fwa3r5YgZBZG8UAJ3GJo6SnpMGc8XOv7fvitDLTK5zs=
+
+# 이미지 로컬 디스크 저장 경로 override. base(application.yml)의 /app/uploads/products 는 컨테이너 경로라
+# Mac 로컬에선 쓰기 불가("Failed to store bytes"). 홈 아래 쓰기 가능한 경로로 돌린다(썸네일/마스터 이미지 업로드).
+image:
+  storage:
+    uploadDir: ${user.home}/oclyx-local-uploads/products

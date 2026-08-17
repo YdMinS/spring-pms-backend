@@ -1,6 +1,12 @@
 package com.pms.config;
 
+import com.pms.domain.Carrier;
+import com.pms.domain.CarrierRate;
+import com.pms.domain.Category;
+import com.pms.domain.CommissionRate;
+import com.pms.domain.MarginPolicy;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Package;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -8,7 +14,13 @@ import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Role;
 import com.pms.domain.Seller;
 import com.pms.domain.User;
+import com.pms.repository.CarrierRateRepository;
+import com.pms.repository.CarrierRepository;
+import com.pms.repository.CategoryRepository;
+import com.pms.repository.CommissionRateRepository;
+import com.pms.repository.MarginPolicyRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
@@ -24,6 +36,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -35,6 +48,9 @@ import java.util.List;
  *   <li>Seller 1 + MarketplaceAccount 1 (더미 자격증명 — secretKey 암호화 저장 경로 검증용)</li>
  *   <li>Product 3 (썸네일 없음)</li>
  *   <li>ProductListing 2 (판매상품 — 각각 옵션 1 + 옵션당 Product 연결, 목록/상세 화면 검증용)</li>
+ *   <li>기준 데이터: 택배사 2 + 택배비 2(CJ 3000 기본), 박스 3(중박스 기본), 카테고리 4(COUPANG/NAVER),
+ *       수수료 기본 2(COUPANG 10% / NAVER 6%), 마진 프리셋 2(판매자 × COUPANG 15% / NAVER 12%)
+ *       — 채널추가·상품등록 가격 역산이 offline 에서 바로 동작</li>
  * </ul>
  *
  * <p><b>멱등</b>: 각 영역은 {@code count() > 0} 이면 skip 하므로 재시작 시 중복 생성되지 않는다.
@@ -58,6 +74,12 @@ public class LocalDataSeeder implements CommandLineRunner {
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
     private final ProductListingProductRepository productListingProductRepository;
+    private final CarrierRepository carrierRepository;
+    private final CarrierRateRepository carrierRateRepository;
+    private final PackageRepository packageRepository;
+    private final CategoryRepository categoryRepository;
+    private final CommissionRateRepository commissionRateRepository;
+    private final MarginPolicyRepository marginPolicyRepository;
     private final BCryptPasswordEncoder passwordEncoder;
 
     @Override
@@ -71,6 +93,12 @@ public class LocalDataSeeder implements CommandLineRunner {
             Seller seller = seedSellerAndAccount();
             List<Product> products = seedProducts();
             seedProductListings(seller, products);
+            // 기준 데이터(택배사·택배비·박스·카테고리·수수료·마진 프리셋) — 채널추가/가격엔진이 offline 에서 바로 동작하도록.
+            seedCarriersAndRates();
+            seedPackages();
+            seedCategories();
+            seedCommissionRates();
+            seedMarginPolicies(seller);
         } finally {
             TenantContext.clear();
         }
@@ -187,6 +215,96 @@ public class LocalDataSeeder implements CommandLineRunner {
                 .quantity(2)
                 .build());
         log.info("[LOCAL-SEED] 2 product listings seeded (platform=COUPANG)");
+    }
+
+    /**
+     * 택배사(Carrier) 2 + 택배비(CarrierRate) 2 시드. CJ STANDARD 3000원을 기본(isDefault)으로 둔다
+     * (기본 유니크는 서비스가 강제하나, 시더는 하나만 기본으로 직접 세팅).
+     */
+    private void seedCarriersAndRates() {
+        if (carrierRepository.count() > 0) {
+            return;
+        }
+        Carrier cj = carrierRepository.save(Carrier.builder().name("CJ대한통운").isActive(true).build());
+        Carrier post = carrierRepository.save(Carrier.builder().name("우체국택배").isActive(true).build());
+        carrierRateRepository.save(CarrierRate.builder()
+                .carrier(cj).type("STANDARD").cost(new BigDecimal("3000"))
+                .effectiveDate(LocalDate.now()).isDefault(true).build());
+        carrierRateRepository.save(CarrierRate.builder()
+                .carrier(post).type("STANDARD").cost(new BigDecimal("3500"))
+                .effectiveDate(LocalDate.now()).isDefault(false).build());
+        log.info("[LOCAL-SEED] 2 carriers + 2 carrier rates seeded (CJ 3000 default)");
+    }
+
+    /** 박스(Package) 3 시드 — 소/중/대. 중(M)을 기본으로 둔다. */
+    private void seedPackages() {
+        if (packageRepository.count() > 0) {
+            return;
+        }
+        packageRepository.save(localPackage("소박스", "300", false));
+        packageRepository.save(localPackage("중박스", "500", true));
+        packageRepository.save(localPackage("대박스", "800", false));
+        log.info("[LOCAL-SEED] 3 packages seeded (중박스 default)");
+    }
+
+    /** 카테고리(Category) 시드 — COUPANG/NAVER 각각 몇 개(수수료·상품등록 카테고리 선택용). */
+    private void seedCategories() {
+        if (categoryRepository.count() > 0) {
+            return;
+        }
+        categoryRepository.saveAll(List.of(
+                localCategory("패션의류", "COUPANG", "C-1001"),
+                localCategory("생활용품", "COUPANG", "C-1002"),
+                localCategory("패션의류", "NAVER", "N-2001"),
+                localCategory("생활용품", "NAVER", "N-2002")));
+        log.info("[LOCAL-SEED] 4 categories seeded (COUPANG/NAVER)");
+    }
+
+    /**
+     * 수수료율(CommissionRate) 플랫폼 기본값 시드 — 가격엔진 폴백(category 없이 platform 기본).
+     * COUPANG 10%, NAVER 6%.
+     */
+    private void seedCommissionRates() {
+        if (commissionRateRepository.count() > 0) {
+            return;
+        }
+        commissionRateRepository.save(CommissionRate.builder()
+                .platform("COUPANG").category(null).rate(new BigDecimal("0.1000")).isDefault(true).build());
+        commissionRateRepository.save(CommissionRate.builder()
+                .platform("NAVER").category(null).rate(new BigDecimal("0.0600")).isDefault(true).build());
+        log.info("[LOCAL-SEED] 2 default commission rates seeded (COUPANG 10% / NAVER 6%)");
+    }
+
+    /**
+     * 마진 프리셋(MarginPolicy) 시드 — 시드 판매자 × (COUPANG/NAVER). 상품등록 가격 역산이 offline 에서
+     * 성공하려면 (판매자, 플랫폼) 마진율이 있어야 한다. COUPANG 15%, NAVER 12%.
+     */
+    private void seedMarginPolicies(Seller seller) {
+        if (marginPolicyRepository.count() > 0) {
+            return;
+        }
+        marginPolicyRepository.save(MarginPolicy.builder()
+                .seller(seller).platform("COUPANG").marginRate(new BigDecimal("0.1500")).build());
+        marginPolicyRepository.save(MarginPolicy.builder()
+                .seller(seller).platform("NAVER").marginRate(new BigDecimal("0.1200")).build());
+        log.info("[LOCAL-SEED] 2 margin policies seeded (seller × COUPANG 15% / NAVER 12%)");
+    }
+
+    private Package localPackage(String type, String cost, boolean isDefault) {
+        return Package.builder()
+                .type(type)
+                .cost(new BigDecimal(cost))
+                .effectiveDate(LocalDate.now())
+                .isDefault(isDefault)
+                .build();
+    }
+
+    private Category localCategory(String name, String platform, String platformCategoryId) {
+        return Category.builder()
+                .name(name)
+                .platform(platform)
+                .platformCategoryId(platformCategoryId)
+                .build();
     }
 
     private Product localProduct(String productName, String brand, String price) {
