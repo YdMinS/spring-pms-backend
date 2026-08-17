@@ -35,6 +35,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -184,5 +185,47 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.thumbnailUrl").value("thumbnails/generated.jpg"));
+    }
+
+    // ---- field-values override (12): authority + reflected response + 404 ----
+
+    private static final String FIELD_VALUES_BODY = "{\"fieldValues\":{\"brandName\":\"직접입력\"}}";
+
+    @Test
+    void updateFieldValues_noToken_returns401() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + listingId + "/field-values")
+                        .contentType("application/json").content(FIELD_VALUES_BODY))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void updateFieldValues_userToken_returns403() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + listingId + "/field-values")
+                        .header("Authorization", "Bearer " + userToken)
+                        .contentType("application/json").content(FIELD_VALUES_BODY))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void updateFieldValues_adminToken_returns200WithReflectedOverride() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + listingId + "/field-values")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content(FIELD_VALUES_BODY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.productListingId").value(listingId))
+                .andExpect(jsonPath("$.data.fieldValues.brandName").value("직접입력"))
+                // regeneration still runs: option price recomputed, thumbnail written.
+                .andExpect(jsonPath("$.data.thumbnailUrl").value("thumbnails/generated.jpg"))
+                .andExpect(jsonPath("$.data.optionPrices[0].sellingPrice").value(6000.00));
+    }
+
+    @Test
+    void updateFieldValues_missingCell_returns404() throws Exception {
+        mockMvc.perform(patch(PATH + "/999999/field-values")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content(FIELD_VALUES_BODY))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
     }
 }

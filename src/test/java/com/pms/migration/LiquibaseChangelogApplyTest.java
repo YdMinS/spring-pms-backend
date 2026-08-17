@@ -100,6 +100,10 @@ class LiquibaseChangelogApplyTest {
         // changeset 016: generated_product_data.source materialized (a successful count proves it).
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM generated_product_data WHERE source IS NULL", Integer.class)).isZero();
+
+        // changeset 017: product_listing.field_values materialized (a successful count proves it).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing WHERE field_values IS NULL", Integer.class)).isZero();
     }
 
     @Test

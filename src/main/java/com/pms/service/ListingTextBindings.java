@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.MasterProduct;
 import com.pms.domain.Product;
+import com.pms.domain.ProductListing;
 import org.springframework.util.StringUtils;
 
 import java.util.HashMap;
@@ -23,6 +24,25 @@ final class ListingTextBindings {
     static final String KEY_PRODUCT_NAME = "productName";
 
     private ListingTextBindings() {
+    }
+
+    /**
+     * Channel-override overload (FEATURE_2608_06 / 12): the master/product base {@link #resolve(MasterProduct,
+     * Product)} with the cell's own {@code fieldValues} (non-blank) layered on top per key. Resulting priority
+     * per key: {@code listing.fieldValues (non-blank) > master.fieldValues (non-blank) > reserved-key product
+     * value}. Blank keys are left for each renderer's template {@code defaultValue} fallback (07 §3, unchanged).
+     */
+    static Map<String, String> resolve(ProductListing cell, MasterProduct master, Product firstProduct) {
+        Map<String, String> bindings = resolve(master, firstProduct);
+        Map<String, String> overrides = cell == null ? null : cell.getFieldValues();
+        if (overrides != null) {
+            for (Map.Entry<String, String> e : overrides.entrySet()) {
+                if (StringUtils.hasText(e.getKey()) && StringUtils.hasText(e.getValue())) {
+                    bindings.put(e.getKey(), e.getValue());
+                }
+            }
+        }
+        return bindings;
     }
 
     /** master.fieldValues (non-blank) + derived brandName/productName from {@code firstProduct} (if absent). */

@@ -208,6 +208,38 @@ class ListingAssetServiceTest {
         assertThat(optionCaptor.getValue().getSellingPrice()).isEqualByComparingTo("10670");
     }
 
+    // ---- channel field-value override (12) ----
+
+    @Test
+    void updateFieldValues_savesOverride_andOverrideWinsInThumbnailBindings() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터")
+                .fieldValues(Map.of("productName", "마스터상품")).build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀")
+                .masterProduct(master).build();
+
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
+        given(productListingRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+        given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
+                .willReturn(List.of(ProductListingProduct.builder().product(product()).quantity(1).build()));
+        given(productImageLoader.load(any())).willReturn(new byte[]{7});
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID)).willReturn(Optional.empty());
+        commonRenderStubs();
+
+        service.updateFieldValues(CELL_ID, Map.of("productName", "OVERRIDE"));
+
+        // The override is persisted on the cell.
+        ArgumentCaptor<ProductListing> cellCaptor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(cellCaptor.capture());
+        assertThat(cellCaptor.getValue().getFieldValues()).containsEntry("productName", "OVERRIDE");
+
+        // Thumbnail bindings use the channel override (not the master value, not the product name).
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, String>> bindings = ArgumentCaptor.forClass(Map.class);
+        verify(thumbnailRenderer).render(any(), bindings.capture(), any());
+        assertThat(bindings.getValue()).containsEntry("productName", "OVERRIDE");
+    }
+
     @Test
     void regenerateAssets_autoSource_regeneratesDetailHtmlFromGenerator() {
         ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();

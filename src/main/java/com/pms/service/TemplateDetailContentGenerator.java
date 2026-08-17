@@ -55,9 +55,12 @@ public class TemplateDetailContentGenerator implements DetailContentGenerator {
         return detailHtmlRenderer.render(template, textBindings, zoneImageUrls);
     }
 
-    /** Same fieldValues ?? first-BOM-product assembly as the thumbnail path (no defaultValue fallback). */
+    /**
+     * Same fieldValues ?? first-BOM-product assembly as the thumbnail path (no defaultValue fallback), with
+     * the cell's channel override layered on top per key (FEATURE_2608_06 / 12).
+     */
     private Map<String, String> resolveTextBindings(ProductListing cell) {
-        return ListingTextBindings.resolve(cell.getMasterProduct(), firstBomProduct(cell));
+        return ListingTextBindings.resolve(cell, cell.getMasterProduct(), firstBomProduct(cell));
     }
 
     /** Zone id → image URLs in sortOrder (ordering guaranteed by the query; this only groups). */

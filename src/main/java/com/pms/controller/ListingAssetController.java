@@ -2,6 +2,7 @@ package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.DetailHtmlOverrideRequest;
+import com.pms.dto.request.FieldValuesRequest;
 import com.pms.dto.response.DetailPreviewResponse;
 import com.pms.dto.response.GeneratedProductResponse;
 import com.pms.service.ListingAssetService;
@@ -60,5 +61,14 @@ public class ListingAssetController {
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<GeneratedProductResponse>> clearDetailHtml(@PathVariable Long id) {
         return ResponseEntity.ok(ResponseDTO.success(listingAssetService.clearDetailHtml(id)));
+    }
+
+    @PatchMapping("/{id}/field-values")
+    @Operation(summary = "Override this cell's text field values, then regenerate assets (empty map clears)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<GeneratedProductResponse>> updateFieldValues(
+            @PathVariable Long id, @Valid @RequestBody FieldValuesRequest request) {
+        return ResponseEntity.ok(
+                ResponseDTO.success(listingAssetService.updateFieldValues(id, request.getFieldValues())));
     }
 }

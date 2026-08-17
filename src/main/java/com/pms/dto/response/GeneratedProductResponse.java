@@ -6,6 +6,7 @@ import lombok.Getter;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Auto-generated assets for a channel cell (FEATURE_2608_06 / 3b-2): thumbnail URL, detail HTML, its
@@ -20,6 +21,8 @@ public class GeneratedProductResponse {
     private String thumbnailUrl;
     private String detailHtml;
     private GeneratedContentSource source;
+    /** This cell's channel-level field-value overrides (FEATURE_2608_06 / 12); null override → empty map. */
+    private Map<String, String> fieldValues;
     private List<OptionPrice> optionPrices;
 
     @Getter

@@ -104,6 +104,18 @@ public class ListingAssetServiceImpl implements ListingAssetService {
 
     @Override
     @Transactional
+    public GeneratedProductResponse updateFieldValues(Long listingId, Map<String, String> fieldValues) {
+        ProductListing cell = requireScopedCell(listingId);
+        // Persist the channel override, then regenerate so the thumbnail + option prices reflect it. The
+        // detail HTML keeps its Step 2-2 override guard (a MANUAL_OVERRIDE cell preserves its edited HTML).
+        // An empty map is stored as-is (override cleared); blank values are naturally skipped at render time.
+        ProductListing updated = productListingRepository.save(cell.toBuilder().fieldValues(fieldValues).build());
+        GeneratedProductData data = regenerateAssets(updated);
+        return toResponse(updated, data);
+    }
+
+    @Override
+    @Transactional
     public GeneratedProductResponse clearDetailHtml(Long listingId) {
         ProductListing cell = requireScopedCell(listingId);
         GeneratedProductData existing = generatedProductDataRepository.findByProductListingId(listingId)
@@ -212,7 +224,8 @@ public class ListingAssetServiceImpl implements ListingAssetService {
      */
     private Map<String, String> resolveTextBindings(ProductListing cell) {
         List<ProductListingOption> options = productListingOptionRepository.findByProductListingId(cell.getId());
-        return ListingTextBindings.resolve(cell.getMasterProduct(), firstBomProduct(options));
+        // Channel override (12): listing.fieldValues (non-blank) > master.fieldValues > reserved-key product value.
+        return ListingTextBindings.resolve(cell, cell.getMasterProduct(), firstBomProduct(options));
     }
 
     /** Σ(product.price × quantity) over an option's BOM (null price treated as 0). */
@@ -256,6 +269,7 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                 .thumbnailUrl(data.getThumbnailUrl())
                 .detailHtml(data.getDetailHtml())
                 .source(data.getSource())
+                .fieldValues(cell.getFieldValues() != null ? cell.getFieldValues() : Map.of())
                 .optionPrices(optionPrices)
                 .build();
     }

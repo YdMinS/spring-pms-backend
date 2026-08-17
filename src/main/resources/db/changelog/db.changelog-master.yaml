@@ -31,3 +31,5 @@ databaseChangeLog:
       file: db/changelog/changes/015-detail-template.yaml
   - include:
       file: db/changelog/changes/016-generated-content-source.yaml
+  - include:
+      file: db/changelog/changes/017-listing-field-values.yaml

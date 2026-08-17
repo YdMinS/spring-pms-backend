@@ -1,9 +1,12 @@
 package com.pms.domain;
 
+import com.pms.domain.converter.MapStringConverter;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.TenantId;
+
+import java.util.Map;
 
 /**
  * ProductListing entity representing a product registered on a platform (e.g., Coupang).
@@ -161,4 +164,21 @@ public class ProductListing {
     @Builder.Default
     @Schema(description = "Regenerated locally but not yet pushed to the market (pending sync)", example = "false")
     private boolean needsMarketSync = false;
+
+    /**
+     * Per-channel text field-value overrides (FEATURE_2608_06 / 12, Design 2). Reuses the master's
+     * {@link MapStringConverter} (JSON TEXT). During asset (re)generation these are layered <b>on top of</b>
+     * the master field values per key, so the render priority is
+     * {@code listing.fieldValues (non-blank) > master.fieldValues (non-blank) > reserved-key product value}
+     * (blank keys still fall back to the template defaultValue in the renderer — unchanged).
+     *
+     * <p>⚠️ {@code null} = no override (NOT a {@code @Builder.Default} empty map) — the legacy CRUD/create
+     * path and pre-existing rows leave it unset (nullable, no live backfill). 3d propagation reuses
+     * {@code regenerateAssets}, which reads this column, so channel overrides are preserved on re-generation
+     * (propagation never touches this column). See changeset 017.</p>
+     */
+    @Convert(converter = MapStringConverter.class)
+    @Column(name = "field_values", columnDefinition = "TEXT")
+    @Schema(description = "Per-channel text field-value overrides")
+    private Map<String, String> fieldValues;
 }
