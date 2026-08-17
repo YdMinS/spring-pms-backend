@@ -275,7 +275,6 @@ public class ProductServiceTest {
         assertThat(response.getVolumeShort()).isEqualTo(request.getVolumeShort());
         assertThat(response.getWeight()).isEqualTo(request.getWeight());
         assertThat(response.getDescription()).isEqualTo(request.getDescription());
-        assertThat(response.getName()).isEqualTo(request.getName());
         assertThat(response.getActive()).isTrue();
         assertThat(response.getCreatedDate()).isNotNull();
         assertThat(response.getModifiedDate()).isNotNull();

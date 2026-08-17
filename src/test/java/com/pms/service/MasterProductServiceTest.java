@@ -71,7 +71,7 @@ class MasterProductServiceTest {
     }
 
     private Product product(Long id, String name) {
-        return Product.builder().id(id).productName(name).name(name).build();
+        return Product.builder().id(id).productName(name).build();
     }
 
     private MasterProductComponent component(MasterProduct master, Product product) {

@@ -68,8 +68,6 @@ public class Product extends BaseEntity {
     @Column(name = "description", columnDefinition = "TEXT")
     private String description;
 
-    @Column(name = "name", nullable = false, length = 100)
-    private String name;
 
     @Column(name = "image_url", length = 500)
     private String imageUrl;

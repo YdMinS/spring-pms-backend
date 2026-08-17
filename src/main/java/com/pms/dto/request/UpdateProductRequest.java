@@ -62,10 +62,6 @@ public class UpdateProductRequest {
     @Builder.Default
     private Optional<String> description = Optional.empty();
 
-    @Schema(description = "Product name short", example = "Samsung Galaxy S21")
-    @Builder.Default
-    private Optional<String> name = Optional.empty();
-
     @Schema(description = "Active status", example = "true")
     @Builder.Default
     private Optional<Boolean> active = Optional.empty();

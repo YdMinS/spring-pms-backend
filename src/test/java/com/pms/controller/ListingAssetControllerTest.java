@@ -69,7 +69,7 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
         Seller seller = sellerRepository.save(Seller.builder()
                 .sellerName("행복상회").businessRegistration("111-22-33333").build());
         Product product = productRepository.save(Product.builder()
-                .productName("운동화").name("운동화").brand("나이키")
+                .productName("운동화").brand("나이키")
                 .price(new BigDecimal("1500")).imageUrl("products/p.jpg").active(true).build());
 
         // Commission (COUPANG default) + margin preset so the price engine resolves.

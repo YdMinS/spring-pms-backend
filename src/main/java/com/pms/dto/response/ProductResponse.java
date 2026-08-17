@@ -53,9 +53,6 @@ public class ProductResponse {
     @Schema(description = "Product description")
     private String description;
 
-    @Schema(description = "Product name short", example = "Samsung Galaxy S21")
-    private String name;
-
     @Schema(description = "Product image URL (filename)", example = "product_1_1234567890_abc123.jpg")
     private String imageUrl;
 
@@ -82,7 +79,6 @@ public class ProductResponse {
                 .volumeShort(product.getVolumeShort())
                 .weight(product.getWeight())
                 .description(product.getDescription())
-                .name(product.getName())
                 .imageUrl(product.getImageUrl())
                 .active(product.getActive())
                 .createdDate(product.getCreatedAt())

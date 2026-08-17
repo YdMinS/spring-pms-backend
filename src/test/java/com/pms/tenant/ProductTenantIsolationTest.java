@@ -141,7 +141,6 @@ class ProductTenantIsolationTest {
     private Product productFixture(String name) {
         return Product.builder()
                 .productName(name)
-                .name(name)
                 .active(true)
                 .build();
     }

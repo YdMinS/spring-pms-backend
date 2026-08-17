@@ -49,7 +49,7 @@ public class ProductThumbnailControllerTest extends BaseIntegrationTest {
     @BeforeEach
     void seedFixtures() throws Exception {
         productId = productRepository.save(Product.builder()
-                .productName("운동화").name("운동화").brand("나이키")
+                .productName("운동화").brand("나이키")
                 .imageUrl("products/p.jpg").active(true).build()).getId();
         sellerId = sellerRepository.save(Seller.builder()
                 .sellerName("행복상회").businessRegistration("111-22-33333").build()).getId();

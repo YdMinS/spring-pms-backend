@@ -59,7 +59,4 @@ public class CreateProductRequest {
     @Schema(description = "Product description")
     private String description;
 
-    @Size(max = 100, message = "Name must not exceed 100 characters")
-    @Schema(description = "Product name short", example = "Samsung Galaxy S21")
-    private String name;
 }

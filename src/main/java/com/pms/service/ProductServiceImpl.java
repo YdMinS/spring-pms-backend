@@ -58,7 +58,6 @@ public class ProductServiceImpl implements ProductService {
                 .volumeShort(request.getVolumeShort())
                 .weight(request.getWeight())
                 .description(request.getDescription())
-                .name(request.getName())
                 .active(true)
                 .build();
 
@@ -133,7 +132,6 @@ public class ProductServiceImpl implements ProductService {
                 .volumeShort(request.getVolumeShort().orElse(product.getVolumeShort()))
                 .weight(request.getWeight().orElse(product.getWeight()))
                 .description(request.getDescription().orElse(product.getDescription()))
-                .name(request.getName().orElse(product.getName()))
                 .build();
 
         // Save updated product
@@ -204,7 +202,6 @@ public class ProductServiceImpl implements ProductService {
                 .volumeShort(product.getVolumeShort())
                 .weight(product.getWeight())
                 .description(product.getDescription())
-                .name(product.getName())
                 .imageUrl(product.getImageUrl())
                 .active(product.getActive())
                 .createdDate(product.getCreatedAt())

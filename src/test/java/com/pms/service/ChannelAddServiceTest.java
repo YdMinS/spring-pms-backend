@@ -79,7 +79,7 @@ class ChannelAddServiceTest {
     }
 
     private Product product(Long id) {
-        return Product.builder().id(id).productName("상품" + id).name("상품" + id).build();
+        return Product.builder().id(id).productName("상품" + id).build();
     }
 
     private MasterProductOptionItem item(MasterProductOption option, Product product, int qty) {
