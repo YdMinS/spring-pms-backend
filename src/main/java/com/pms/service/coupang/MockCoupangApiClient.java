@@ -22,9 +22,12 @@ import java.nio.charset.StandardCharsets;
  * <ul>
  *   <li>{@code ordersheets} 포함 → {@code fixtures/coupang/ordersheets.json}</li>
  *   <li>{@code returnRequests} 포함 → {@code fixtures/coupang/returnRequests.json}</li>
+ *   <li>{@code seller-products} 포함(GET) → 승인완료 상태 + 옵션 id 인라인 fixture (3c fetchStatus)</li>
+ *   <li>{@code seller-products} 포함(POST) → sellerProductId 인라인 fixture (3c register)</li>
  *   <li>그 외 → {@code {"code":200,"data":[]}}</li>
  * </ul>
- * 반환 JSON 은 실제 파서(예: CoupangOrderSyncServiceImpl.upsert)가 그대로 소화할 수 있는 키 구조여야 한다.
+ * 반환 JSON 은 실제 파서(예: CoupangOrderSyncServiceImpl.upsert, CoupangListingAdapter)가 그대로 소화할 수
+ * 있는 키 구조여야 한다.
  */
 @Component
 @Profile("local")
@@ -36,6 +39,14 @@ public class MockCoupangApiClient implements CoupangApiClient {
     private static final String RETURN_REQUESTS_FIXTURE = "fixtures/coupang/returnRequests.json";
     private static final String EMPTY = "{\"code\":200,\"data\":[]}";
 
+    // 3c fixtures (inline): register → sellerProductId, fetchStatus → 승인완료 + option ids.
+    private static final String SELLER_PRODUCT_REGISTER =
+            "{\"code\":\"SUCCESS\",\"data\":123456789}";
+    private static final String SELLER_PRODUCT_FETCH =
+            "{\"code\":\"SUCCESS\",\"data\":{\"sellerProductId\":123456789,\"statusName\":\"승인완료\","
+                    + "\"items\":[{\"itemName\":\"1세트\",\"vendorItemId\":987654321,"
+                    + "\"sellerProductItemId\":555666777}]}}";
+
     @Override
     public String get(String path, String query, MarketplaceAccount account) {
         String body = resolve(path);
@@ -45,7 +56,17 @@ public class MockCoupangApiClient implements CoupangApiClient {
 
     @Override
     public String post(String path, String body, MarketplaceAccount account) {
+        if (path.contains("seller-products")) {
+            log.info("[COUPANG-MOCK] POST {} → register fixture", path);
+            return SELLER_PRODUCT_REGISTER;
+        }
         log.info("[COUPANG-MOCK] POST {} → default empty", path);
+        return EMPTY;
+    }
+
+    @Override
+    public String put(String path, String body, MarketplaceAccount account) {
+        log.info("[COUPANG-MOCK] PUT {} → default empty", path);
         return EMPTY;
     }
 
@@ -55,6 +76,9 @@ public class MockCoupangApiClient implements CoupangApiClient {
         }
         if (path.contains("returnRequests")) {
             return load(RETURN_REQUESTS_FIXTURE);
+        }
+        if (path.contains("seller-products")) {
+            return SELLER_PRODUCT_FETCH;
         }
         return EMPTY;
     }

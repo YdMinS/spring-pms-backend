@@ -15,3 +15,21 @@ databaseChangeLog:
       file: db/changelog/changes/007-template-fields.yaml
   - include:
       file: db/changelog/changes/008-template-asset.yaml
+  - include:
+      file: db/changelog/changes/009-product-registration-model.yaml
+  - include:
+      file: db/changelog/changes/010-master-definition.yaml
+  - include:
+      file: db/changelog/changes/011-generated-product-data.yaml
+  - include:
+      file: db/changelog/changes/012-listing-channel-add.yaml
+  - include:
+      file: db/changelog/changes/013-listing-approval.yaml
+  - include:
+      file: db/changelog/changes/014-listing-needs-market-sync.yaml
+  - include:
+      file: db/changelog/changes/015-detail-template.yaml
+  - include:
+      file: db/changelog/changes/016-generated-content-source.yaml
+  - include:
+      file: db/changelog/changes/017-listing-field-values.yaml

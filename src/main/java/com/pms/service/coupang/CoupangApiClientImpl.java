@@ -73,6 +73,17 @@ public class CoupangApiClientImpl implements CoupangApiClient {
                 .body(body).retrieve().body(String.class));
     }
 
+    @Override
+    public String put(String path, String body, MarketplaceAccount account) {
+        // POST 와 동일: 쿠팡 HMAC 은 method+path+query 만 서명(바디 제외)하므로 query="" 로 서명한다.
+        String auth = signer.authorization("PUT", path, "",
+                account.getAccessKey(), account.getSecretKey());
+        return execute("PUT", path, "", () -> restClient.put().uri(URI.create(HOST + path))
+                .header("Authorization", auth)
+                .header("Content-Type", "application/json")
+                .body(body).retrieve().body(String.class));
+    }
+
     /**
      * 실제 호출을 감싸 로깅을 일원화한다. raw 는 DEBUG/실패 경로에서만, 항상 mask() 를 통과한다.
      */

@@ -31,6 +31,19 @@ public class ProductImageLoader {
 
     public byte[] load(Product product) {
         String url = product == null ? null : product.getImageUrl();
+        return loadUrl(url);
+    }
+
+    /**
+     * Load raw image bytes from a stored image value (public http URL or disk-relative path). Extracted
+     * so the master image override ({@code MasterProduct.sourceImageUrl}) can reuse the same http/local
+     * branch as {@link #load(Product)} (FEATURE_2608_06 / 3b-2).
+     *
+     * @param url stored image value (S3 public URL on dev/prod, disk-relative path on local/test)
+     * @return the image bytes
+     * @throws IllegalArgumentException (→400) if blank / missing / network / read failure
+     */
+    public byte[] loadUrl(String url) {
         if (url == null || url.isBlank()) {
             throw new IllegalArgumentException("상품 이미지를 불러올 수 없습니다: 이미지가 없습니다");
         }

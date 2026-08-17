@@ -1,0 +1,20 @@
+# Generated content source (FEATURE_2608_06 / Step 2-2, Design 2): a VARCHAR enum marking whether a
+# cell's detail HTML is generator output (AUTO) or a user raw-HTML edit (MANUAL_OVERRIDE). NOT NULL with
+# defaultValue AUTO so existing generated_product_data rows backfill automatically. No boolean column
+# (VARCHAR enum → BIT trap does not apply). Structured tags for H2<->MySQL portability.
+databaseChangeLog:
+
+  - changeSet:
+      id: 016-generated-content-source
+      author: oclyx
+      comment: "Step 2-2: generated_product_data.source (AUTO/MANUAL_OVERRIDE) — VARCHAR(20) NOT NULL default AUTO."
+      changes:
+        - addColumn:
+            tableName: generated_product_data
+            columns:
+              - column:
+                  name: source
+                  type: VARCHAR(20)
+                  defaultValue: AUTO
+                  constraints:
+                    nullable: false

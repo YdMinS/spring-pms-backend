@@ -53,6 +53,57 @@ class LiquibaseChangelogApplyTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM thumbnail_asset WHERE storage_key IS NULL AND content_type IS NULL",
                 Integer.class)).isZero();
+
+        // changeset 009: master_product + margin_policy tables + product_listing.master_product_id column
+        // materialized (a successful count proves the structural changesets; dbms:mysql backfill is skipped).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM master_product WHERE name IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM margin_policy WHERE margin_rate IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing WHERE master_product_id IS NULL", Integer.class)).isZero();
+
+        // changeset 011: generated_product_data table + its columns materialized (a successful count proves both).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM generated_product_data WHERE thumbnail_url IS NULL AND detail_html IS NULL",
+                Integer.class)).isZero();
+
+        // changeset 012: product_listing.status column materialized (a successful count proves it)...
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing WHERE status IS NULL", Integer.class)).isZero();
+        // ...and platform_product_id relaxed to nullable (DRAFT cells carry no market id).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE TABLE_NAME = 'PRODUCT_LISTING' AND COLUMN_NAME = 'PLATFORM_PRODUCT_ID'",
+                String.class)).isEqualTo("YES");
+
+        // changeset 013: product_listing_option.approval_status + seller_product_item_id materialized
+        // (a successful count over both columns proves they exist).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing_option "
+                        + "WHERE approval_status IS NULL AND seller_product_item_id IS NULL",
+                Integer.class)).isZero();
+
+        // changeset 014: product_listing.needs_market_sync materialized (a successful count proves it).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing WHERE needs_market_sync IS NULL", Integer.class)).isZero();
+
+        // changeset 015: detail_template + master_product_image tables + their columns materialized
+        // (a successful count over the columns proves both tables and their structure).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM detail_template WHERE name IS NULL AND blocks IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM master_product_image "
+                        + "WHERE zone_id IS NULL AND sort_order IS NULL AND image_url IS NULL",
+                Integer.class)).isZero();
+
+        // changeset 016: generated_product_data.source materialized (a successful count proves it).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM generated_product_data WHERE source IS NULL", Integer.class)).isZero();
+
+        // changeset 017: product_listing.field_values materialized (a successful count proves it).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing WHERE field_values IS NULL", Integer.class)).isZero();
     }
 
     @Test

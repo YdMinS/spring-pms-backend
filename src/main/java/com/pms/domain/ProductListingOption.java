@@ -84,4 +84,25 @@ public class ProductListingOption {
     @Column(length = 255, nullable = true, name = "platform_option_id")
     @Schema(description = "Platform option ID", example = "opt_12345")
     private String platformOptionId;
+
+    /**
+     * Approval state on the market (FEATURE_2608_06 / 3c) — the source of truth for option approval.
+     * New DRAFT options default to {@link OptionApprovalStatus#NOT_APPROVED}; pre-existing live options are
+     * backfilled to {@code APPROVED} (changeset 013 defaultValue). {@code fetchStatus} flips matched options
+     * to {@code APPROVED} after the market approves them.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "approval_status", length = 20, nullable = false)
+    @Builder.Default
+    @Schema(description = "Option approval state", example = "NOT_APPROVED")
+    private OptionApprovalStatus approvalStatus = OptionApprovalStatus.NOT_APPROVED;
+
+    /**
+     * Coupang option-update id (sellerProductItemId), max 255 chars. Nullable — filled by {@code fetchStatus}
+     * after approval (alongside {@link #platformOptionId}=vendorItemId, both approval-result data).
+     * Distinct from {@link #platformOptionId} which is the vendorItemId used for order mapping (unchanged).
+     */
+    @Column(length = 255, nullable = true, name = "seller_product_item_id")
+    @Schema(description = "Coupang seller product item id (for option updates)", example = "555666")
+    private String sellerProductItemId;
 }

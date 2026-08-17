@@ -1,0 +1,17 @@
+# Per-channel field-value overrides (FEATURE_2608_06 / 12, Design 2): a nullable JSON TEXT column on
+# product_listing holding this cell's text field-value overrides. Layered on top of master.fieldValues at
+# render time (listing > master > product > template default). Nullable, no backfill (null = no override).
+# No boolean column (JSON TEXT → BIT trap does not apply). Structured tags for H2<->MySQL portability.
+databaseChangeLog:
+
+  - changeSet:
+      id: 017-listing-field-values
+      author: oclyx
+      comment: "12: product_listing.field_values (JSON TEXT, nullable) — per-channel text overrides."
+      changes:
+        - addColumn:
+            tableName: product_listing
+            columns:
+              - column:
+                  name: field_values
+                  type: TEXT

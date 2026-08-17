@@ -1,0 +1,57 @@
+package com.pms.service.listing;
+
+import com.pms.domain.GeneratedProductData;
+import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.ProductListing;
+
+/**
+ * Per-platform channel adapter seam (FEATURE_2608_06 / 3c). The orchestration
+ * ({@code ListingRegistrationService}) depends only on this interface — the NAVER adapter is added later (3d).
+ *
+ * <p><b>⚠️ Async principle (MUST-KEEP)</b>: {@link #register} returns quickly (seconds) with the market
+ * product id; it does NOT wait for approval (hours~days). Approval is detected later by {@link #fetchStatus}
+ * (manual refresh / sweep). Adapters do HTTP only — the cell state machine lives in the orchestration.</p>
+ */
+public interface ListingChannel {
+
+    /** Platform key this adapter handles (e.g. "COUPANG"). Resolver matching key. */
+    String platform();
+
+    /**
+     * Register the product on the market → returns the market product id (sellerProductId).
+     * Does NOT wait for approval.
+     *
+     * @param cell the DRAFT channel cell
+     * @param gen  generated assets (thumbnail URL + detail HTML) — the payload source
+     * @param acct the marketplace account (credentials)
+     * @return the market product id (Coupang sellerProductId)
+     */
+    String register(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct);
+
+    /**
+     * Fetch the current market status + per-option ids (1 call). See {@link FetchResult}.
+     *
+     * @param cell the already-registered cell (has platformProductId)
+     * @param acct the marketplace account (credentials)
+     * @return status + option ids
+     */
+    FetchResult fetchStatus(ProductListing cell, MarketplaceAccount acct);
+
+    /**
+     * Update the listing: rebuild the WHOLE product object → PUT (no incremental option add — approved
+     * options cannot be added piecemeal on Coupang; the whole object is re-submitted for re-approval).
+     *
+     * @param cell the registered cell
+     * @param gen  generated assets (payload source)
+     * @param acct the marketplace account (credentials)
+     */
+    void update(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct);
+
+    /**
+     * Stop selling the listing (approved options cannot be physically deleted → stop-selling).
+     *
+     * @param cell the registered cell
+     * @param acct the marketplace account (credentials)
+     */
+    void delete(ProductListing cell, MarketplaceAccount acct);
+}
