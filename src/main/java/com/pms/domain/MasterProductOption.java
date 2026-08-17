@@ -28,4 +28,20 @@ public class MasterProductOption extends BaseEntity {
 
     @Column(name = "name", nullable = false, length = 255)
     private String name;
+
+    /**
+     * Per-option delivery override (FEATURE_2608_06 / 13). Nullable — null means "use the master default"
+     * ({@link MasterProduct#getDefaultDelivery()}). Resolution = this override ?? master default.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "delivery_id", nullable = true)
+    private CarrierRate delivery;
+
+    /**
+     * Per-option box override (FEATURE_2608_06 / 13). Nullable — null means "use the master default"
+     * ({@link MasterProduct#getDefaultPackage()}). Getter is {@code getPackage_()} ({@code package} is reserved).
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "package_id", nullable = true)
+    private Package package_;
 }

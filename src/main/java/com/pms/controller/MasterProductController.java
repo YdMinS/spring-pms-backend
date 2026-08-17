@@ -1,11 +1,13 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterImageReorderRequest;
 import com.pms.dto.request.MasterOptionRequest;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
 import com.pms.dto.response.ListingMatrixResponse;
+import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductImageResponse;
 import com.pms.dto.response.MasterProductResponse;
@@ -115,6 +117,31 @@ public class MasterProductController {
             @PathVariable Long id, @PathVariable Long optionId) {
         masterProductService.deleteOption(id, optionId);
         return ResponseEntity.ok(ResponseDTO.success(null));
+    }
+
+    // ---------------------------------------------------------------- category (master × platform, 13)
+
+    @PutMapping("/{id}/category")
+    @Operation(summary = "Upsert the category for a master × platform")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<MasterCategoryResponse>> upsertCategory(
+            @PathVariable Long id, @Valid @RequestBody MasterCategoryRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(masterProductService.upsertCategory(id, request)));
+    }
+
+    @GetMapping("/{id}/categories")
+    @Operation(summary = "List a master's per-platform categories")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<List<MasterCategoryResponse>>> getCategories(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(masterProductService.getCategories(id)));
+    }
+
+    @DeleteMapping("/{id}/categories/{platform}")
+    @Operation(summary = "Delete a master's category for a platform")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<Void> deleteCategory(@PathVariable Long id, @PathVariable String platform) {
+        masterProductService.deleteCategory(id, platform);
+        return ResponseEntity.noContent().build();
     }
 
     // ---------------------------------------------------------------- input images (Step 2-1)

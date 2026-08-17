@@ -1,33 +1,45 @@
 package com.pms.service;
 
+import com.pms.domain.CarrierRate;
+import com.pms.domain.Category;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
+import com.pms.domain.MasterProductCategory;
 import com.pms.domain.MasterProductComponent;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
+import com.pms.domain.Package;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.Seller;
+import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterOptionRequest;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.ListingMatrixResponse.MatrixCell;
 import com.pms.dto.response.ListingMatrixResponse.MatrixRow;
+import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductResponse;
+import com.pms.exception.BusinessException;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.CarrierRateRepository;
+import com.pms.repository.CategoryRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.MasterProductCategoryRepository;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
+import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.service.listing.MasterPropagationService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -58,10 +70,14 @@ import java.util.stream.Collectors;
 public class MasterProductServiceImpl implements MasterProductService {
 
     private final MasterProductRepository masterProductRepository;
+    private final MasterProductCategoryRepository masterProductCategoryRepository;
     private final MasterProductComponentRepository componentRepository;
     private final MasterProductOptionRepository optionRepository;
     private final MasterProductOptionItemRepository optionItemRepository;
     private final ProductRepository productRepository;
+    private final CategoryRepository categoryRepository;
+    private final CarrierRateRepository carrierRateRepository;
+    private final PackageRepository packageRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
@@ -154,6 +170,10 @@ public class MasterProductServiceImpl implements MasterProductService {
                 .detailSource(request.getDetailSource())
                 .fieldValues(request.getFieldValues())
                 .active(true)
+                .defaultDelivery(request.getDefaultDeliveryId() != null
+                        ? requireDelivery(request.getDefaultDeliveryId()) : null)
+                .defaultPackage(request.getDefaultPackageId() != null
+                        ? requirePackage(request.getDefaultPackageId()) : null)
                 .build());
 
         for (Product product : products) {
@@ -173,6 +193,11 @@ public class MasterProductServiceImpl implements MasterProductService {
                 .detailSource(request.getDetailSource() != null ? request.getDetailSource() : existing.getDetailSource())
                 .fieldValues(request.getFieldValues() != null ? request.getFieldValues() : existing.getFieldValues())
                 .active(request.getActive() != null ? request.getActive() : existing.getActive())
+                // null = keep existing; a given id replaces (explicit unset via null is a follow-up).
+                .defaultDelivery(request.getDefaultDeliveryId() != null
+                        ? requireDelivery(request.getDefaultDeliveryId()) : existing.getDefaultDelivery())
+                .defaultPackage(request.getDefaultPackageId() != null
+                        ? requirePackage(request.getDefaultPackageId()) : existing.getDefaultPackage())
                 .build());
 
         if (request.getComponentProductIds() != null) {
@@ -230,7 +255,10 @@ public class MasterProductServiceImpl implements MasterProductService {
         assertCoversComponents(componentProductIds(masterId), vector, "옵션은 구성상품 전체를 포함해야 합니다");
 
         MasterProductOption option = optionRepository.save(MasterProductOption.builder()
-                .masterProduct(master).name(request.getName()).build());
+                .masterProduct(master).name(request.getName())
+                .delivery(request.getDeliveryId() != null ? requireDelivery(request.getDeliveryId()) : null)
+                .package_(request.getPackageId() != null ? requirePackage(request.getPackageId()) : null)
+                .build());
         saveItems(option, vector);
         return mapToOptionResponse(option, vector);
     }
@@ -252,7 +280,12 @@ public class MasterProductServiceImpl implements MasterProductService {
                     .collect(Collectors.toMap(it -> it.getProduct().getId(), MasterProductOptionItem::getQuantity));
         }
 
-        MasterProductOption updated = optionRepository.save(option.toBuilder().name(request.getName()).build());
+        // Override fields follow the items rule: a given id replaces, null keeps the existing override.
+        MasterProductOption updated = optionRepository.save(option.toBuilder()
+                .name(request.getName())
+                .delivery(request.getDeliveryId() != null ? requireDelivery(request.getDeliveryId()) : option.getDelivery())
+                .package_(request.getPackageId() != null ? requirePackage(request.getPackageId()) : option.getPackage_())
+                .build());
         return mapToOptionResponse(updated, vector);
     }
 
@@ -263,6 +296,52 @@ public class MasterProductServiceImpl implements MasterProductService {
         MasterProductOption option = requireOption(masterId, optionId);
         optionItemRepository.deleteByOptionId(optionId);
         optionRepository.delete(option);
+    }
+
+    // ---------------------------------------------------------------- category (master × platform, 13)
+
+    @Override
+    @Transactional
+    public MasterCategoryResponse upsertCategory(Long masterId, MasterCategoryRequest request) {
+        MasterProduct master = requireScopedMaster(masterId);
+        Category category = categoryRepository.findById(request.getCategoryId())
+                .orElseThrow(() -> new ResourceNotFoundException("Category", request.getCategoryId()));
+
+        MasterProductCategory existing = masterProductCategoryRepository
+                .findByMasterProductIdAndPlatform(masterId, request.getPlatform()).orElse(null);
+        MasterProductCategory toSave = existing != null
+                ? existing.toBuilder().category(category).build()
+                : MasterProductCategory.builder()
+                        .masterProduct(master).platform(request.getPlatform()).category(category).build();
+        MasterProductCategory saved = masterProductCategoryRepository.save(toSave);
+        return toCategoryResponse(saved);
+    }
+
+    @Override
+    public List<MasterCategoryResponse> getCategories(Long masterId) {
+        requireScopedMaster(masterId);
+        return masterProductCategoryRepository.findByMasterProductId(masterId).stream()
+                .map(this::toCategoryResponse)
+                .toList();
+    }
+
+    @Override
+    @Transactional
+    public void deleteCategory(Long masterId, String platform) {
+        requireScopedMaster(masterId);
+        MasterProductCategory existing = masterProductCategoryRepository
+                .findByMasterProductIdAndPlatform(masterId, platform)
+                .orElseThrow(() -> new BusinessException(
+                        "MasterProductCategory not found for platform: " + platform, HttpStatus.NOT_FOUND));
+        masterProductCategoryRepository.delete(existing);
+    }
+
+    private MasterCategoryResponse toCategoryResponse(MasterProductCategory mpc) {
+        return MasterCategoryResponse.builder()
+                .platform(mpc.getPlatform())
+                .categoryId(mpc.getCategory().getId())
+                .categoryName(mpc.getCategory().getName())
+                .build();
     }
 
     // ---------------------------------------------------------------- image override (3b-2)
@@ -312,6 +391,18 @@ public class MasterProductServiceImpl implements MasterProductService {
             }
         }
         return products;
+    }
+
+    /** Fetch a delivery (CarrierRate) by id (404 if absent). */
+    private CarrierRate requireDelivery(Long id) {
+        return carrierRateRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("CarrierRate", id));
+    }
+
+    /** Fetch a box (Package) by id (404 if absent). */
+    private Package requirePackage(Long id) {
+        return packageRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Package", id));
     }
 
     /** The master's component product ids. */
@@ -386,6 +477,8 @@ public class MasterProductServiceImpl implements MasterProductService {
                 .map(o -> MasterOptionResponse.builder()
                         .id(o.getId())
                         .name(o.getName())
+                        .deliveryId(o.getDelivery() != null ? o.getDelivery().getId() : null)
+                        .packageId(o.getPackage_() != null ? o.getPackage_().getId() : null)
                         .items(itemsByOption.getOrDefault(o.getId(), List.of()).stream()
                                 .map(it -> MasterOptionResponse.Item.builder()
                                         .productId(it.getProduct().getId())
@@ -403,6 +496,8 @@ public class MasterProductServiceImpl implements MasterProductService {
                 .sourceImageUrl(master.getSourceImageUrl())
                 .detailSource(master.getDetailSource())
                 .fieldValues(master.getFieldValues())
+                .defaultDeliveryId(master.getDefaultDelivery() != null ? master.getDefaultDelivery().getId() : null)
+                .defaultPackageId(master.getDefaultPackage() != null ? master.getDefaultPackage().getId() : null)
                 .components(componentResponses)
                 .options(optionResponses)
                 .build();
@@ -423,6 +518,8 @@ public class MasterProductServiceImpl implements MasterProductService {
         return MasterOptionResponse.builder()
                 .id(option.getId())
                 .name(option.getName())
+                .deliveryId(option.getDelivery() != null ? option.getDelivery().getId() : null)
+                .packageId(option.getPackage_() != null ? option.getPackage_().getId() : null)
                 .items(items)
                 .build();
     }

@@ -3,17 +3,23 @@ package com.pms.controller;
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.Carrier;
 import com.pms.domain.CarrierRate;
+import com.pms.domain.Category;
 import com.pms.domain.CommissionRate;
 import com.pms.domain.MarginPolicy;
+import com.pms.domain.MasterProduct;
+import com.pms.domain.MasterProductCategory;
 import com.pms.domain.Package;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
+import com.pms.repository.CategoryRepository;
 import com.pms.repository.CommissionRateRepository;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarginPolicyRepository;
+import com.pms.repository.MasterProductCategoryRepository;
+import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
@@ -55,6 +61,9 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
     @Autowired private MarginPolicyRepository marginPolicyRepository;
     @Autowired private CommissionRateRepository commissionRateRepository;
     @Autowired private GeneratedProductDataRepository generatedProductDataRepository;
+    @Autowired private CategoryRepository categoryRepository;
+    @Autowired private MasterProductRepository masterProductRepository;
+    @Autowired private MasterProductCategoryRepository masterProductCategoryRepository;
     // carrierRepository / carrierRateRepository / packageRepository are inherited from BaseIntegrationTest.
 
     @MockBean private ThumbnailRenderer thumbnailRenderer;
@@ -89,9 +98,18 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                 .type("M").cost(new BigDecimal("500"))
                 .effectiveDate(LocalDate.now()).isDefault(false).build());
 
+        // Channel config now lives on the master (13): category (master × COUPANG) + default delivery/box
+        // drive the price engine. The cell's own delivery/package columns are deprecated (kept null here).
+        Category category = categoryRepository.save(Category.builder()
+                .name("신발").platform("COUPANG").platformCategoryId("cat-1").build());
+        MasterProduct master = masterProductRepository.save(MasterProduct.builder()
+                .name("운동화 마스터").active(true).defaultDelivery(delivery).defaultPackage(box).build());
+        masterProductCategoryRepository.save(MasterProductCategory.builder()
+                .masterProduct(master).platform("COUPANG").category(category).build());
+
         ProductListing listing = productListingRepository.save(ProductListing.builder()
                 .platform("COUPANG").platformProductId("X").name("셀").seller(seller)
-                .delivery(delivery).package_(box)
+                .masterProduct(master)
                 .build());
         listingId = listing.getId();
         ProductListingOption option = productListingOptionRepository.save(ProductListingOption.builder()
@@ -128,6 +146,9 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
         productListingProductRepository.deleteAll();
         productListingOptionRepository.deleteAll();
         productListingRepository.deleteAll();
+        // The master FK-references carrier_rate/package (default delivery/box) — remove it before base cleanup.
+        masterProductCategoryRepository.deleteAll();
+        masterProductRepository.deleteAll();
     }
 
     // ---- regenerate authority (MUST-KEEP) ----

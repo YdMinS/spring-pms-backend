@@ -30,18 +30,6 @@ public class ChannelAddRequest {
     @Schema(description = "Platform identifier", example = "COUPANG")
     private String platform;
 
-    @NotNull(message = "Category ID cannot be null")
-    @Schema(description = "Category ID (commission lookup)", example = "1")
-    private Long categoryId;
-
-    @NotNull(message = "Delivery ID cannot be null")
-    @Schema(description = "Delivery (CarrierRate) ID", example = "1")
-    private Long deliveryId;
-
-    @NotNull(message = "Package ID cannot be null")
-    @Schema(description = "Package ID (box cost)", example = "1")
-    private Long packageId;
-
     @NotEmpty(message = "Option IDs cannot be empty")
     @Schema(description = "Master option IDs to copy into this cell (subset allowed)", example = "[1, 2]")
     private List<Long> optionIds;

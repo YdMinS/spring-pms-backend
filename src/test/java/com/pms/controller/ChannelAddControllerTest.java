@@ -13,10 +13,12 @@ import com.pms.domain.Package;
 import com.pms.domain.Product;
 import com.pms.domain.Seller;
 import com.pms.dto.request.ChannelAddRequest;
+import com.pms.domain.MasterProductCategory;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.CommissionRateRepository;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarginPolicyRepository;
+import com.pms.repository.MasterProductCategoryRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
@@ -58,6 +60,7 @@ class ChannelAddControllerTest extends BaseIntegrationTest {
     @Autowired private CommissionRateRepository commissionRateRepository;
     @Autowired private MarginPolicyRepository marginPolicyRepository;
     @Autowired private MasterProductRepository masterProductRepository;
+    @Autowired private MasterProductCategoryRepository masterProductCategoryRepository;
     @Autowired private MasterProductOptionRepository masterProductOptionRepository;
     @Autowired private MasterProductOptionItemRepository masterProductOptionItemRepository;
     @Autowired private ProductListingRepository productListingRepository;
@@ -108,10 +111,14 @@ class ChannelAddControllerTest extends BaseIntegrationTest {
                 .effectiveDate(LocalDate.now()).isDefault(false).build());
         boxId = box.getId();
 
-        // Master + one option (BOM = the product, qty 1).
+        // Master + one option (BOM = the product, qty 1). Channel config (category/delivery/box) now lives on
+        // the master: default delivery/box + a category for COUPANG (master × platform).
         MasterProduct master = masterProductRepository.save(MasterProduct.builder()
-                .name("운동화 마스터").active(true).build());
+                .name("운동화 마스터").active(true)
+                .defaultDelivery(delivery).defaultPackage(box).build());
         masterId = master.getId();
+        masterProductCategoryRepository.save(MasterProductCategory.builder()
+                .masterProduct(master).platform("COUPANG").category(category).build());
         MasterProductOption option = masterProductOptionRepository.save(MasterProductOption.builder()
                 .masterProduct(master).name("1세트").build());
         optionId = option.getId();
@@ -135,19 +142,25 @@ class ChannelAddControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isCreated());
     }
 
-    /** Delete the listing graph before base cleanup removes package / carrier_rate (FK targets). */
+    /**
+     * Delete the listing + master graph before base cleanup removes package / carrier_rate (FK targets).
+     * The master now FK-references carrier_rate/package (default delivery/box), so it must go first too.
+     */
     @AfterEach
     void cleanupListingGraph() {
         generatedProductDataRepository.deleteAll();
         productListingProductRepository.deleteAll();
         productListingOptionRepository.deleteAll();
         productListingRepository.deleteAll();
+        masterProductCategoryRepository.deleteAll();
+        masterProductOptionItemRepository.deleteAll();
+        masterProductOptionRepository.deleteAll();
+        masterProductRepository.deleteAll();
     }
 
     private String body() throws Exception {
         return objectMapper.writeValueAsString(ChannelAddRequest.builder()
                 .sellerId(sellerId).platform("COUPANG")
-                .categoryId(categoryId).deliveryId(deliveryId).packageId(boxId)
                 .optionIds(List.of(optionId)).build());
     }
 

@@ -33,6 +33,12 @@ public class MasterOptionRequest {
     @Schema(description = "Quantity vector over the master's component products")
     private List<OptionItem> items;
 
+    @Schema(description = "Delivery override (CarrierRate) ID; null = use master default", nullable = true)
+    private Long deliveryId;
+
+    @Schema(description = "Box override (Package) ID; null = use master default", nullable = true)
+    private Long packageId;
+
     @Getter
     @NoArgsConstructor
     @AllArgsConstructor

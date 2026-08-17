@@ -34,6 +34,12 @@ public class MasterProductResponse {
     @Schema(description = "UI input field values (key -> value)")
     private Map<String, String> fieldValues;
 
+    @Schema(description = "Default delivery (CarrierRate) ID for the price engine", nullable = true)
+    private Long defaultDeliveryId;
+
+    @Schema(description = "Default box (Package) ID for the price engine", nullable = true)
+    private Long defaultPackageId;
+
     @Schema(description = "Component products (the master's product set)")
     private List<Component> components;
 
