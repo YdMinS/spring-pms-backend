@@ -1,12 +1,9 @@
 package com.pms.service;
 
-import com.pms.domain.CarrierRate;
-import com.pms.domain.Category;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
-import com.pms.domain.Package;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
@@ -15,12 +12,9 @@ import com.pms.dto.request.ChannelAddRequest;
 import com.pms.dto.response.ChannelAddResponse;
 import com.pms.exception.DuplicateChannelException;
 import com.pms.exception.ResourceNotFoundException;
-import com.pms.repository.CarrierRateRepository;
-import com.pms.repository.CategoryRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
-import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
@@ -55,9 +49,7 @@ public class ChannelAddServiceImpl implements ChannelAddService {
     private final ProductListingOptionRepository productListingOptionRepository;
     private final ProductListingProductRepository productListingProductRepository;
     private final SellerRepository sellerRepository;
-    private final CategoryRepository categoryRepository;
-    private final CarrierRateRepository carrierRateRepository;
-    private final PackageRepository packageRepository;
+    private final MasterChannelConfigService masterChannelConfigService;
     private final ListingAssetService listingAssetService;
 
     @Override
@@ -87,12 +79,11 @@ public class ChannelAddServiceImpl implements ChannelAddService {
 
         Seller seller = sellerRepository.findById(request.getSellerId())
                 .orElseThrow(() -> new ResourceNotFoundException("Seller", request.getSellerId()));
-        Category category = categoryRepository.findById(request.getCategoryId())
-                .orElseThrow(() -> new ResourceNotFoundException("Category", request.getCategoryId()));
-        CarrierRate delivery = carrierRateRepository.findById(request.getDeliveryId())
-                .orElseThrow(() -> new ResourceNotFoundException("CarrierRate", request.getDeliveryId()));
-        Package box = packageRepository.findById(request.getPackageId())
-                .orElseThrow(() -> new ResourceNotFoundException("Package", request.getPackageId()));
+
+        // Category/delivery/box are now derived from the master (13). Pre-validate the master has a category for
+        // this platform before creating the cell (missing → 400 "카테고리 미설정"); delivery/box are checked by the
+        // reused regenerate seam. The cell's own category/delivery/package columns stay null (deprecated).
+        masterChannelConfigService.resolveCategory(masterProductId, request.getPlatform());
 
         // --- copy: master options → listing options + BOM ---
         ProductListing cell = productListingRepository.save(ProductListing.builder()
@@ -101,9 +92,6 @@ public class ChannelAddServiceImpl implements ChannelAddService {
                 .platform(request.getPlatform())
                 .platformProductId(null)              // no market id until 3c push
                 .name(master.getName())
-                .category(category)
-                .delivery(delivery)
-                .package_(box)
                 .status(ListingStatus.DRAFT)
                 .build());
 

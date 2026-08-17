@@ -1,25 +1,37 @@
 package com.pms.service;
 
+import com.pms.domain.CarrierRate;
+import com.pms.domain.Category;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
+import com.pms.domain.MasterProductCategory;
 import com.pms.domain.MasterProductComponent;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
+import com.pms.domain.Package;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
+import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterOptionRequest;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
 import com.pms.dto.response.ListingMatrixResponse;
+import com.pms.dto.response.MasterCategoryResponse;
+import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductResponse;
+import com.pms.exception.BusinessException;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.CarrierRateRepository;
+import com.pms.repository.CategoryRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.MasterProductCategoryRepository;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
+import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
@@ -51,10 +63,14 @@ import static org.mockito.Mockito.verify;
 class MasterProductServiceTest {
 
     @Mock private MasterProductRepository masterProductRepository;
+    @Mock private MasterProductCategoryRepository masterProductCategoryRepository;
     @Mock private MasterProductComponentRepository componentRepository;
     @Mock private MasterProductOptionRepository optionRepository;
     @Mock private MasterProductOptionItemRepository optionItemRepository;
     @Mock private ProductRepository productRepository;
+    @Mock private CategoryRepository categoryRepository;
+    @Mock private CarrierRateRepository carrierRateRepository;
+    @Mock private PackageRepository packageRepository;
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock private ProductListingRepository productListingRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
@@ -235,5 +251,104 @@ class MasterProductServiceTest {
         assertThatThrownBy(() -> service.updateMasterProduct(1L, request))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("구성 변경이 기존 옵션과 불일치");
+    }
+
+    // ------------------------------------------------------------- master default delivery/box (13)
+
+    @Test
+    void createMasterProduct_withDefaults_setsDeliveryAndPackage() {
+        MasterProductRequest request = MasterProductRequest.builder()
+                .name("마스터A").componentProductIds(List.of(1L))
+                .defaultDeliveryId(4L).defaultPackageId(5L).build();
+        given(productRepository.findAllById(any())).willReturn(List.of(product(1L, "상품1")));
+        given(carrierRateRepository.findById(4L)).willReturn(Optional.of(CarrierRate.builder().id(4L).build()));
+        given(packageRepository.findById(5L)).willReturn(Optional.of(Package.builder().id(5L).build()));
+        given(masterProductRepository.save(any()))
+                .willAnswer(inv -> ((MasterProduct) inv.getArgument(0)).toBuilder().id(5L).build());
+        given(componentRepository.findByMasterProductId(5L)).willReturn(List.of());
+        given(optionRepository.findByMasterProductId(5L)).willReturn(List.of());
+
+        service.createMasterProduct(request);
+
+        ArgumentCaptor<MasterProduct> captor = ArgumentCaptor.forClass(MasterProduct.class);
+        verify(masterProductRepository).save(captor.capture());
+        assertThat(captor.getValue().getDefaultDelivery().getId()).isEqualTo(4L);
+        assertThat(captor.getValue().getDefaultPackage().getId()).isEqualTo(5L);
+    }
+
+    // ------------------------------------------------------------- option delivery/box override (13)
+
+    @Test
+    void createOption_withOverride_exposesDeliveryAndPackageIds() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(componentRepository.findByMasterProductId(1L))
+                .willReturn(List.of(component(master, product(1L, "상품1"))));
+        given(carrierRateRepository.findById(4L)).willReturn(Optional.of(CarrierRate.builder().id(4L).build()));
+        given(packageRepository.findById(5L)).willReturn(Optional.of(Package.builder().id(5L).build()));
+        given(optionRepository.save(any()))
+                .willAnswer(inv -> ((MasterProductOption) inv.getArgument(0)).toBuilder().id(10L).build());
+        given(productRepository.findAllById(any())).willReturn(List.of(product(1L, "상품1")));
+
+        MasterOptionResponse resp = service.createOption(1L, MasterOptionRequest.builder()
+                .name("1세트").items(List.of(item(1L, 1))).deliveryId(4L).packageId(5L).build());
+
+        assertThat(resp.getDeliveryId()).isEqualTo(4L);
+        assertThat(resp.getPackageId()).isEqualTo(5L);
+    }
+
+    // ------------------------------------------------------------- category (master × platform, 13)
+
+    @Test
+    void upsertCategory_new_savesMasterPlatformCategory() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(categoryRepository.findById(3L))
+                .willReturn(Optional.of(Category.builder().id(3L).name("신발").build()));
+        given(masterProductCategoryRepository.findByMasterProductIdAndPlatform(1L, "COUPANG"))
+                .willReturn(Optional.empty());
+        given(masterProductCategoryRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+
+        MasterCategoryResponse resp = service.upsertCategory(1L,
+                MasterCategoryRequest.builder().platform("COUPANG").categoryId(3L).build());
+
+        assertThat(resp.getPlatform()).isEqualTo("COUPANG");
+        assertThat(resp.getCategoryId()).isEqualTo(3L);
+        assertThat(resp.getCategoryName()).isEqualTo("신발");
+        ArgumentCaptor<MasterProductCategory> captor = ArgumentCaptor.forClass(MasterProductCategory.class);
+        verify(masterProductCategoryRepository).save(captor.capture());
+        assertThat(captor.getValue().getId()).isNull();                 // new insert, not update
+    }
+
+    @Test
+    void upsertCategory_existing_updatesSameRow() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        MasterProductCategory existing = MasterProductCategory.builder()
+                .id(9L).masterProduct(master).platform("COUPANG")
+                .category(Category.builder().id(2L).name("옛카테고리").build()).build();
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(categoryRepository.findById(3L))
+                .willReturn(Optional.of(Category.builder().id(3L).name("신발").build()));
+        given(masterProductCategoryRepository.findByMasterProductIdAndPlatform(1L, "COUPANG"))
+                .willReturn(Optional.of(existing));
+        given(masterProductCategoryRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+
+        service.upsertCategory(1L, MasterCategoryRequest.builder().platform("COUPANG").categoryId(3L).build());
+
+        ArgumentCaptor<MasterProductCategory> captor = ArgumentCaptor.forClass(MasterProductCategory.class);
+        verify(masterProductCategoryRepository).save(captor.capture());
+        assertThat(captor.getValue().getId()).isEqualTo(9L);            // same row updated
+        assertThat(captor.getValue().getCategory().getId()).isEqualTo(3L);
+    }
+
+    @Test
+    void deleteCategory_missing_throws404() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(masterProductCategoryRepository.findByMasterProductIdAndPlatform(1L, "NAVER"))
+                .willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.deleteCategory(1L, "NAVER"))
+                .isInstanceOf(BusinessException.class);
     }
 }

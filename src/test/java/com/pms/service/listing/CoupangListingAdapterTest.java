@@ -8,6 +8,7 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.repository.ProductListingOptionRepository;
+import com.pms.service.MasterChannelConfigService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -34,6 +35,7 @@ class CoupangListingAdapterTest {
 
     @Mock private com.pms.service.coupang.CoupangApiClient client;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
+    @Mock private MasterChannelConfigService masterChannelConfigService;
     @org.mockito.Spy private ObjectMapper objectMapper = new ObjectMapper();
     @InjectMocks private CoupangListingAdapter adapter;
 
@@ -55,6 +57,9 @@ class CoupangListingAdapterTest {
                         .sellingPrice(new BigDecimal("6000")).build()));
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+        // Category now comes from the master (master × platform), not the cell.
+        given(masterChannelConfigService.resolveCategory(any()))
+                .willReturn(Category.builder().platformCategoryId("cat-1").build());
         given(client.post(anyString(), anyString(), any()))
                 .willReturn("{\"code\":\"SUCCESS\",\"data\":987654321}");
 

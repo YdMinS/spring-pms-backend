@@ -1,6 +1,7 @@
 package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
+import com.pms.domain.Category;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductComponent;
@@ -8,7 +9,9 @@ import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
+import com.pms.repository.CategoryRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.MasterProductCategoryRepository;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -22,9 +25,11 @@ import org.springframework.http.MediaType;
 
 import java.math.BigDecimal;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -45,11 +50,14 @@ class MasterProductControllerTest extends BaseIntegrationTest {
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
     @Autowired private MarketplaceAccountRepository marketplaceAccountRepository;
     @Autowired private SellerRepository sellerRepository;
+    @Autowired private CategoryRepository categoryRepository;
+    @Autowired private MasterProductCategoryRepository masterProductCategoryRepository;
 
     private static final String PATH = "/api/admin/master-products";
     private Long masterId;
     private Long productId1;
     private Long productId2;
+    private Long categoryId;
 
     @BeforeEach
     void seedMatrix() {
@@ -67,6 +75,9 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .productName("상품2").build());
         productId1 = product1.getId();
         productId2 = product2.getId();
+        Category category = categoryRepository.save(Category.builder()
+                .name("신발").platform("COUPANG").platformCategoryId("cat-1").build());
+        categoryId = category.getId();
         componentRepository.save(MasterProductComponent.builder()
                 .masterProduct(master).product(product1).build());
         componentRepository.save(MasterProductComponent.builder()
@@ -194,6 +205,60 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.components.length()").value(2));
+    }
+
+    // ------------------------------------------------------------- category (master × platform, 13)
+
+    @Test
+    void upsertCategory_noToken_returns401() throws Exception {
+        mockMvc.perform(put(PATH + "/" + masterId + "/category")
+                        .contentType(MediaType.APPLICATION_JSON).content(categoryBody()))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void upsertCategory_userToken_returns403() throws Exception {
+        mockMvc.perform(put(PATH + "/" + masterId + "/category")
+                        .header("Authorization", "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(categoryBody()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void upsertCategory_thenList_adminToken_returns200() throws Exception {
+        mockMvc.perform(put(PATH + "/" + masterId + "/category")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(categoryBody()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.platform").value("COUPANG"))
+                .andExpect(jsonPath("$.data.categoryId").value(categoryId));
+
+        mockMvc.perform(get(PATH + "/" + masterId + "/categories")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].platform").value("COUPANG"));
+    }
+
+    @Test
+    void deleteCategory_present_returns204_missing_returns404() throws Exception {
+        mockMvc.perform(put(PATH + "/" + masterId + "/category")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(categoryBody()))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(delete(PATH + "/" + masterId + "/categories/COUPANG")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNoContent());
+
+        // Now absent → 404.
+        mockMvc.perform(delete(PATH + "/" + masterId + "/categories/COUPANG")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound());
+    }
+
+    private String categoryBody() {
+        return "{\"platform\":\"COUPANG\",\"categoryId\":" + categoryId + "}";
     }
 
     private String createMasterBody() {

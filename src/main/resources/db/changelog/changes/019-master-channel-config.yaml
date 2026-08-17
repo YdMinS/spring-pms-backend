@@ -1,0 +1,115 @@
+# Channel config → master level (FEATURE_2608_06 / 13): category = master × platform
+# (master_product_category), delivery/box = master default + option override. Plus the shared-id 1:1
+# backfill from the source listings (MySQL only). No boolean columns → no MySQL BIT trap.
+databaseChangeLog:
+
+  # ---- 1. master_product_category (master × platform) ----
+  - changeSet:
+      id: 019-master-product-category
+      author: oclyx
+      comment: "Category = master x platform: at most one row per (master, platform)."
+      changes:
+        - createTable:
+            tableName: master_product_category
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: master_product_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: platform, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: category_id, type: BIGINT, constraints: { nullable: false } }
+        - addForeignKeyConstraint:
+            constraintName: fk_mpcat_master
+            baseTableName: master_product_category
+            baseColumnNames: master_product_id
+            referencedTableName: master_product
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_mpcat_category
+            baseTableName: master_product_category
+            baseColumnNames: category_id
+            referencedTableName: category
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            tableName: master_product_category
+            columnNames: "master_product_id, platform"
+            constraintName: uq_mpcat_master_platform
+
+  # ---- 2. master_product default delivery/box (additive nullable FKs) ----
+  - changeSet:
+      id: 019-master-product-defaults
+      author: oclyx
+      comment: "Additive: master_product.default_delivery_id / default_package_id (nullable)."
+      changes:
+        - addColumn:
+            tableName: master_product
+            columns:
+              - column: { name: default_delivery_id, type: BIGINT }
+              - column: { name: default_package_id, type: BIGINT }
+        - addForeignKeyConstraint:
+            constraintName: fk_master_default_delivery
+            baseTableName: master_product
+            baseColumnNames: default_delivery_id
+            referencedTableName: carrier_rate
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_master_default_package
+            baseTableName: master_product
+            baseColumnNames: default_package_id
+            referencedTableName: package
+            referencedColumnNames: id
+
+  # ---- 3. master_product_option delivery/box override (additive nullable FKs) ----
+  - changeSet:
+      id: 019-master-option-overrides
+      author: oclyx
+      comment: "Additive: master_product_option.delivery_id / package_id override (nullable)."
+      changes:
+        - addColumn:
+            tableName: master_product_option
+            columns:
+              - column: { name: delivery_id, type: BIGINT }
+              - column: { name: package_id, type: BIGINT }
+        - addForeignKeyConstraint:
+            constraintName: fk_master_option_delivery
+            baseTableName: master_product_option
+            baseColumnNames: delivery_id
+            referencedTableName: carrier_rate
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_master_option_package
+            baseTableName: master_product_option
+            baseColumnNames: package_id
+            referencedTableName: package
+            referencedColumnNames: id
+
+  # ---- 4. backfill from source listings (shared-id 1:1 → no (master, platform) collision) ----
+  # H2 apply-check skips this (dbms:mysql); the empty test DB has no listings to backfill anyway.
+  - changeSet:
+      id: 019-backfill-master-defaults
+      author: oclyx
+      dbms: mysql
+      comment: "Backfill master default delivery/box from the source listing (shared-id 1:1)."
+      preConditions:
+        - onFail: MARK_RAN
+        - sqlCheck:
+            expectedResult: 0
+            sql: "SELECT count(*) FROM master_product WHERE default_delivery_id IS NOT NULL OR default_package_id IS NOT NULL"
+      changes:
+        - sql: >-
+            UPDATE master_product mp JOIN product_listing pl ON pl.id = mp.id
+            SET mp.default_delivery_id = pl.delivery_id, mp.default_package_id = pl.package_id
+
+  - changeSet:
+      id: 019-backfill-master-category
+      author: oclyx
+      dbms: mysql
+      comment: "Backfill master_product_category from the source listing's (platform, category)."
+      preConditions:
+        - onFail: MARK_RAN
+        - sqlCheck:
+            expectedResult: 0
+            sql: "SELECT count(*) FROM master_product_category"
+      changes:
+        - sql: >-
+            INSERT INTO master_product_category (master_product_id, platform, category_id)
+            SELECT pl.master_product_id, pl.platform, pl.category_id FROM product_listing pl
+            WHERE pl.master_product_id IS NOT NULL AND pl.category_id IS NOT NULL

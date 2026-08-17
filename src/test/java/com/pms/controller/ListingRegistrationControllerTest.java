@@ -9,6 +9,7 @@ import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
+import com.pms.domain.MasterProductCategory;
 import com.pms.domain.Package;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -16,6 +17,7 @@ import com.pms.domain.Seller;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.MasterProductCategoryRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
@@ -48,6 +50,7 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
     @Autowired private SellerRepository sellerRepository;
     @Autowired private CategoryRepository categoryRepository;
     @Autowired private MasterProductRepository masterProductRepository;
+    @Autowired private MasterProductCategoryRepository masterProductCategoryRepository;
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
     @Autowired private GeneratedProductDataRepository generatedProductDataRepository;
@@ -71,6 +74,9 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
                 .type("M").cost(new BigDecimal("500")).effectiveDate(LocalDate.now()).isDefault(false).build());
         MasterProduct master = masterProductRepository.save(MasterProduct.builder()
                 .name("운동화 마스터").active(true).build());
+        // Category = master × platform (13): the adapter payload resolves displayCategoryCode from here.
+        masterProductCategoryRepository.save(MasterProductCategory.builder()
+                .masterProduct(master).platform("COUPANG").category(category).build());
 
         ProductListing cell = productListingRepository.save(ProductListing.builder()
                 .platform("COUPANG").platformProductId(null).name("셀").status(ListingStatus.DRAFT)

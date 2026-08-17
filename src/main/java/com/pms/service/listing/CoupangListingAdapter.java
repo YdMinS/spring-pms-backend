@@ -8,6 +8,7 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.repository.ProductListingOptionRepository;
+import com.pms.service.MasterChannelConfigService;
 import com.pms.service.coupang.CoupangApiClient;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -39,6 +40,7 @@ public class CoupangListingAdapter implements ListingChannel {
     private final CoupangApiClient client;
     private final ObjectMapper objectMapper;
     private final ProductListingOptionRepository productListingOptionRepository;
+    private final MasterChannelConfigService masterChannelConfigService;
 
     @Override
     public String platform() {
@@ -95,8 +97,10 @@ public class CoupangListingAdapter implements ListingChannel {
     private Map<String, Object> buildPayload(ProductListing cell, GeneratedProductData gen,
                                              MarketplaceAccount acct) {
         Map<String, Object> payload = new LinkedHashMap<>();
+        // Category now comes from the master (master × platform); the channel-add cell's own category column is
+        // null. Resolved-not-set (400) is already validated before registration.
         payload.put("displayCategoryCode",
-                cell.getCategory() != null ? cell.getCategory().getPlatformCategoryId() : null);
+                masterChannelConfigService.resolveCategory(cell).getPlatformCategoryId());
         payload.put("sellerProductName",
                 cell.getMasterProduct() != null ? cell.getMasterProduct().getName() : cell.getName());
         payload.put("vendorId", acct.getVendorId());

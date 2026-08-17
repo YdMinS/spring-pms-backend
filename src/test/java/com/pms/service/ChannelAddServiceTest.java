@@ -1,12 +1,9 @@
 package com.pms.service;
 
-import com.pms.domain.CarrierRate;
-import com.pms.domain.Category;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
-import com.pms.domain.Package;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -14,12 +11,9 @@ import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.request.ChannelAddRequest;
 import com.pms.exception.DuplicateChannelException;
-import com.pms.repository.CarrierRateRepository;
-import com.pms.repository.CategoryRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
-import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
@@ -61,9 +55,7 @@ class ChannelAddServiceTest {
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private ProductListingProductRepository productListingProductRepository;
     @Mock private SellerRepository sellerRepository;
-    @Mock private CategoryRepository categoryRepository;
-    @Mock private CarrierRateRepository carrierRateRepository;
-    @Mock private PackageRepository packageRepository;
+    @Mock private MasterChannelConfigService masterChannelConfigService;
     @Mock private ListingAssetService listingAssetService;
     @InjectMocks private ChannelAddServiceImpl service;
 
@@ -89,7 +81,6 @@ class ChannelAddServiceTest {
     private ChannelAddRequest request(List<Long> optionIds) {
         return ChannelAddRequest.builder()
                 .sellerId(SELLER_ID).platform("COUPANG")
-                .categoryId(3L).deliveryId(4L).packageId(5L)
                 .optionIds(optionIds).build();
     }
 
@@ -105,9 +96,6 @@ class ChannelAddServiceTest {
                 .willReturn(false);
         given(masterProductOptionRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(opt1, opt2));
         given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(Seller.builder().id(SELLER_ID).build()));
-        given(categoryRepository.findById(3L)).willReturn(Optional.of(Category.builder().id(3L).build()));
-        given(carrierRateRepository.findById(4L)).willReturn(Optional.of(CarrierRate.builder().id(4L).build()));
-        given(packageRepository.findById(5L)).willReturn(Optional.of(Package.builder().id(5L).build()));
         given(masterProductOptionItemRepository.findByOptionIdIn(List.of(10L, 20L)))
                 .willReturn(List.of(item(opt1, prodA, 2), item(opt2, prodB, 1)));
 
@@ -126,6 +114,10 @@ class ChannelAddServiceTest {
         assertThat(saved.getStatus()).isEqualTo(ListingStatus.DRAFT);
         assertThat(saved.getPlatformProductId()).isNull();
         assertThat(saved.getMasterProduct().getId()).isEqualTo(MASTER_ID);
+        // Category/delivery/box are derived from the master now — the cell's own columns stay null (deprecated).
+        assertThat(saved.getCategory()).isNull();
+        assertThat(saved.getDelivery()).isNull();
+        assertThat(saved.getPackage_()).isNull();
 
         // Options: two copied — names carried over, platformOptionId null (issued by 3c).
         ArgumentCaptor<ProductListingOption> optionCaptor = ArgumentCaptor.forClass(ProductListingOption.class);
@@ -169,6 +161,26 @@ class ChannelAddServiceTest {
         assertThatThrownBy(() -> service.addChannel(MASTER_ID, request(List.of(10L, 99L))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("마스터 옵션 아님");
+
+        verify(productListingRepository, never()).save(any());
+        verify(listingAssetService, never()).regenerateAssets(any());
+    }
+
+    @Test
+    void addChannel_masterCategoryUnset_throwsBadRequest_beforeCellSave() {
+        given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master()));
+        given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(MASTER_ID, SELLER_ID, "COUPANG"))
+                .willReturn(false);
+        given(masterProductOptionRepository.findByMasterProductId(MASTER_ID))
+                .willReturn(List.of(masterOption(10L, "1세트")));
+        given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(Seller.builder().id(SELLER_ID).build()));
+        // Master has no category for this platform → resolver 400, before the cell is created.
+        given(masterChannelConfigService.resolveCategory(MASTER_ID, "COUPANG"))
+                .willThrow(new IllegalArgumentException("카테고리 미설정"));
+
+        assertThatThrownBy(() -> service.addChannel(MASTER_ID, request(List.of(10L))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("카테고리 미설정");
 
         verify(productListingRepository, never()).save(any());
         verify(listingAssetService, never()).regenerateAssets(any());

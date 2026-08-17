@@ -1,9 +1,11 @@
 package com.pms.service;
 
+import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterOptionRequest;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
 import com.pms.dto.response.ListingMatrixResponse;
+import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductResponse;
 import org.springframework.web.multipart.MultipartFile;
@@ -37,6 +39,15 @@ public interface MasterProductService {
     MasterOptionResponse updateOption(Long masterId, Long optionId, MasterOptionRequest request);
 
     void deleteOption(Long masterId, Long optionId);
+
+    /** Upsert the category for (master, platform) — FEATURE_2608_06 / 13. 404 if master/category absent. */
+    MasterCategoryResponse upsertCategory(Long masterId, MasterCategoryRequest request);
+
+    /** List the master's per-platform categories. */
+    List<MasterCategoryResponse> getCategories(Long masterId);
+
+    /** Delete the master's category for a platform (404 if none). */
+    void deleteCategory(Long masterId, String platform);
 
     /**
      * Upload a base-image override (FEATURE_2608_06 / 3b-2): validates + stores the file and sets

@@ -10,6 +10,7 @@ import com.pms.domain.ProductListingProduct;
 import com.pms.domain.TemplateField;
 import com.pms.domain.ThumbnailTemplate;
 import com.pms.repository.GeneratedProductDataRepository;
+import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
@@ -45,6 +46,7 @@ class ListingAssetServiceTest {
     @Mock private ProductListingRepository productListingRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private ProductListingProductRepository productListingProductRepository;
+    @Mock private MasterProductOptionRepository masterProductOptionRepository;
     @Mock private GeneratedProductDataRepository generatedProductDataRepository;
     @Mock private ThumbnailTemplateRepository thumbnailTemplateRepository;
     @Mock private ThumbnailRenderer thumbnailRenderer;
@@ -79,7 +81,7 @@ class ListingAssetServiceTest {
         given(thumbnailRenderer.render(any(), any(), any())).willReturn(new byte[]{1, 2, 3});
         given(imageStorageService.uploadBytes(any(), anyString(), anyString(), anyString()))
                 .willReturn("thumbnails/generated.jpg");
-        given(priceCalculator.calculatePrice(any(), any())).willReturn(new BigDecimal("10670"));
+        given(priceCalculator.calculatePrice(any(), any(), any())).willReturn(new BigDecimal("10670"));
         given(detailContentGenerator.generate(any())).willReturn("<p>운동화</p>");
         given(generatedProductDataRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
     }
@@ -186,7 +188,7 @@ class ListingAssetServiceTest {
         given(thumbnailRenderer.render(any(), any(), any())).willReturn(new byte[]{1, 2, 3});
         given(imageStorageService.uploadBytes(any(), anyString(), anyString(), anyString()))
                 .willReturn("thumbnails/generated.jpg");
-        given(priceCalculator.calculatePrice(any(), any())).willReturn(new BigDecimal("10670"));
+        given(priceCalculator.calculatePrice(any(), any(), any())).willReturn(new BigDecimal("10670"));
         GeneratedProductData existing = GeneratedProductData.builder()
                 .id(88L).productListing(cell).detailHtml("X")
                 .source(GeneratedContentSource.MANUAL_OVERRIDE).build();

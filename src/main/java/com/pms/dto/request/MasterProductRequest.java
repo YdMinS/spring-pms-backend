@@ -38,4 +38,10 @@ public class MasterProductRequest {
 
     @Schema(description = "UI input field values (key -> value)", nullable = true)
     private Map<String, String> fieldValues;
+
+    @Schema(description = "Default delivery (CarrierRate) ID for the price engine", nullable = true, example = "4")
+    private Long defaultDeliveryId;
+
+    @Schema(description = "Default box (Package) ID for the price engine", nullable = true, example = "5")
+    private Long defaultPackageId;
 }

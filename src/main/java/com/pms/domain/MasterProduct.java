@@ -64,4 +64,21 @@ public class MasterProduct extends BaseEntity {
      */
     @Column(name = "active", nullable = false)
     private Boolean active;
+
+    /**
+     * Default delivery (carrier rate) for the price engine (FEATURE_2608_06 / 13). Nullable; an option may
+     * override it ({@link MasterProductOption#getDelivery()}). Resolution = option override ?? this default.
+     * Not a boolean → no MySQL BIT trap.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "default_delivery_id", nullable = true)
+    private CarrierRate defaultDelivery;
+
+    /**
+     * Default box (package) cost for the price engine (FEATURE_2608_06 / 13). Nullable; an option may
+     * override it ({@link MasterProductOption#getPackage_()}). Resolution = option override ?? this default.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "default_package_id", nullable = true)
+    private Package defaultPackage;
 }

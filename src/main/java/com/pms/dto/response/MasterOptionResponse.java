@@ -28,6 +28,12 @@ public class MasterOptionResponse {
     @Schema(description = "Quantity vector over the master's component products")
     private List<Item> items;
 
+    @Schema(description = "Delivery override (CarrierRate) ID; null = master default", nullable = true)
+    private Long deliveryId;
+
+    @Schema(description = "Box override (Package) ID; null = master default", nullable = true)
+    private Long packageId;
+
     @Getter
     @NoArgsConstructor
     @AllArgsConstructor

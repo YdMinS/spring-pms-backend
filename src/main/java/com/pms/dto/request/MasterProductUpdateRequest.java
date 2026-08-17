@@ -38,4 +38,10 @@ public class MasterProductUpdateRequest {
 
     @Schema(description = "New component product IDs; re-validates existing options", nullable = true)
     private List<Long> componentProductIds;
+
+    @Schema(description = "Default delivery (CarrierRate) ID (null = keep existing)", nullable = true)
+    private Long defaultDeliveryId;
+
+    @Schema(description = "Default box (Package) ID (null = keep existing)", nullable = true)
+    private Long defaultPackageId;
 }

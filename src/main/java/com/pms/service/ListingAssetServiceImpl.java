@@ -3,6 +3,7 @@ package com.pms.service;
 import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.MasterProduct;
+import com.pms.domain.MasterProductOption;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -13,10 +14,13 @@ import com.pms.dto.response.DetailPreviewResponse;
 import com.pms.dto.response.GeneratedProductResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.GeneratedProductDataRepository;
+import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ThumbnailTemplateRepository;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -51,6 +55,7 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
     private final ProductListingProductRepository productListingProductRepository;
+    private final MasterProductOptionRepository masterProductOptionRepository;
     private final GeneratedProductDataRepository generatedProductDataRepository;
     private final ThumbnailTemplateRepository thumbnailTemplateRepository;
     private final ThumbnailRenderer thumbnailRenderer;
@@ -155,9 +160,16 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         String detailHtml = override ? existing.getDetailHtml() : detailContentGenerator.generate(cell);
         GeneratedContentSource source = override ? GeneratedContentSource.MANUAL_OVERRIDE : GeneratedContentSource.AUTO;
 
-        // 3. Per-option selling price (margin reverse-calc); write back only sellingPrice.
+        // 3. Per-option selling price (margin reverse-calc); write back only sellingPrice. Match each listing
+        //    option to its master option by optionName (one query, outside the loop — no N+1); an unmatched
+        //    option means "no override" → the price engine falls back to the master defaults.
+        Map<String, MasterProductOption> masterOptionsByName = cell.getMasterProduct() == null
+                ? Map.of()
+                : masterProductOptionRepository.findByMasterProductId(cell.getMasterProduct().getId()).stream()
+                        .collect(Collectors.toMap(MasterProductOption::getName, Function.identity(), (a, b) -> a));
         for (ProductListingOption option : options) {
-            BigDecimal price = priceCalculator.calculatePrice(cell, optionCostSum(option));
+            MasterProductOption mo = masterOptionsByName.get(option.getOptionName());
+            BigDecimal price = priceCalculator.calculatePrice(cell, mo, optionCostSum(option));
             productListingOptionRepository.save(option.toBuilder().sellingPrice(price).build());
         }
 
