@@ -58,7 +58,7 @@ class ListingAssetServiceTest {
     private static final Long OPTION_ID = 50L;
 
     private Product product() {
-        return Product.builder().id(9L).productName("운동화").name("운동화").brand("나이키")
+        return Product.builder().id(9L).productName("운동화").brand("나이키")
                 .price(new BigDecimal("5000")).imageUrl("products/p.jpg").build();
     }
 

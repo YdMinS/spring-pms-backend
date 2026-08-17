@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ListingTextBindingsTest {
 
     private Product product() {
-        return Product.builder().id(9L).productName("상품명P").name("상품명P").brand("브랜드P").build();
+        return Product.builder().id(9L).productName("상품명P").brand("브랜드P").build();
     }
 
     private MasterProduct master(Map<String, String> fieldValues) {

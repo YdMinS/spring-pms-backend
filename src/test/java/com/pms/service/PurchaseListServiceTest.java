@@ -54,7 +54,7 @@ class PurchaseListServiceTest {
     @InjectMocks private PurchaseListServiceImpl service;
 
     private Product product(Long id, String name) {
-        return Product.builder().id(id).productName(name).name(name).build();
+        return Product.builder().id(id).productName(name).build();
     }
 
     private OrderItem acceptOrder(Long id, String optionId, int orderCount) {

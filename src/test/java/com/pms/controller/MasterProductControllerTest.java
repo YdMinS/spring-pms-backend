@@ -62,9 +62,9 @@ class MasterProductControllerTest extends BaseIntegrationTest {
 
         // Two component products so option-coverage validation has a concrete target set.
         Product product1 = productRepository.save(Product.builder()
-                .productName("상품1").name("상품1").build());
+                .productName("상품1").build());
         Product product2 = productRepository.save(Product.builder()
-                .productName("상품2").name("상품2").build());
+                .productName("상품2").build());
         productId1 = product1.getId();
         productId2 = product2.getId();
         componentRepository.save(MasterProductComponent.builder()

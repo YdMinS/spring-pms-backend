@@ -33,3 +33,5 @@ databaseChangeLog:
       file: db/changelog/changes/016-generated-content-source.yaml
   - include:
       file: db/changelog/changes/017-listing-field-values.yaml
+  - include:
+      file: db/changelog/changes/018-drop-products-name.yaml

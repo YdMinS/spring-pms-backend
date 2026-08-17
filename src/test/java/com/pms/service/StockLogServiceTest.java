@@ -238,7 +238,6 @@ public class StockLogServiceTest {
                 .id(1L)
                 .barcodeId(TEST_BARCODE_ID)
                 .productName("Current Product Name")
-                .name("Test")
                 .active(true)
                 .build();
 
@@ -279,7 +278,6 @@ public class StockLogServiceTest {
                 .id(1L)
                 .barcodeId(TEST_BARCODE_ID)
                 .productName("New Product")
-                .name("Test")
                 .active(true)
                 .build();
 

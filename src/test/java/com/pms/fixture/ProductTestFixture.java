@@ -42,7 +42,6 @@ public class ProductTestFixture {
                 .volumeShort("8.9mm")
                 .weight("170g")
                 .description("Flagship smartphone")
-                .name("Samsung Galaxy S21")
                 .active(true)
                 .build();
 
@@ -74,7 +73,6 @@ public class ProductTestFixture {
                 .volumeShort("8.9mm")
                 .weight("170g")
                 .description("Flagship smartphone")
-                .name("Samsung Galaxy S21")
                 .active(false)
                 .build();
 
@@ -116,7 +114,6 @@ public class ProductTestFixture {
                 .volumeShort("8.9mm")
                 .weight("170g")
                 .description("Flagship smartphone")
-                .name("Samsung Galaxy S21")
                 .build();
     }
 
@@ -136,7 +133,6 @@ public class ProductTestFixture {
                 .volumeShort("8.9mm")
                 .weight("170g")
                 .description("Flagship smartphone")
-                .name("Samsung Galaxy S21")
                 .build();
     }
 
@@ -156,7 +152,6 @@ public class ProductTestFixture {
                 .volumeShort("8.9mm")
                 .weight("170g")
                 .description("Flagship smartphone")
-                .name("Samsung Galaxy S21")
                 .build();
     }
 
@@ -212,7 +207,6 @@ public class ProductTestFixture {
                 .volumeShort(java.util.Optional.of("7.80mm"))
                 .weight(java.util.Optional.of("171g"))
                 .description(java.util.Optional.of("Latest iPhone"))
-                .name(java.util.Optional.of("Apple iPhone 15"))
                 .active(java.util.Optional.of(true))
                 .build();
     }
@@ -253,7 +247,6 @@ public class ProductTestFixture {
                 .volumeShort("8.9mm")
                 .weight("170g")
                 .description("Flagship smartphone")
-                .name("Samsung Galaxy S21")
                 .active(true)
                 .createdDate(LocalDateTime.now())
                 .modifiedDate(LocalDateTime.now())
@@ -286,7 +279,6 @@ public class ProductTestFixture {
                 .volumeShort("18.9mm")
                 .weight("1.94kg")
                 .description("High-performance laptop")
-                .name("Dell XPS 15")
                 .active(true)
                 .build();
 
@@ -318,7 +310,6 @@ public class ProductTestFixture {
                 .volumeShort("7.80mm")
                 .weight("171g")
                 .description("Latest iPhone")
-                .name("Apple iPhone 15")
                 .active(true)
                 .build();
 
@@ -342,7 +333,6 @@ public class ProductTestFixture {
                 .volumeShort("80mm")
                 .weight("250g")
                 .description("Wireless headphones")
-                .name("Sony WH-1000XM5")
                 .build();
     }
 
@@ -370,7 +360,6 @@ public class ProductTestFixture {
                 .volumeShort("80mm")
                 .weight("250g")
                 .description("Wireless headphones")
-                .name("Sony WH-1000XM5")
                 .active(true)
                 .build();
 

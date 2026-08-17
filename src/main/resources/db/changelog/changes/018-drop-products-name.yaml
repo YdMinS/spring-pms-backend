@@ -1,0 +1,16 @@
+# Drop the vestigial products.name column ("short product name"). It was defined in the original Product
+# entity (2026-04-27) alongside product_name but never wired to any UI, so it is write-only/unused — no
+# frontend/mobile consumer reads it. The baseline reverse-engineered it as NOT NULL, which diverges from the
+# real (changelogSync'd) prod schema where it is nullable; that divergence broke product creation on any
+# freshly-applied schema. Removing the column (and the entity/DTO/response field) eliminates the redundancy
+# and the mismatch on every environment. No boolean column (BIT trap N/A). Structured tags for portability.
+databaseChangeLog:
+
+  - changeSet:
+      id: 018-drop-products-name
+      author: oclyx
+      comment: "Drop unused legacy products.name (short product name); superseded by product_name."
+      changes:
+        - dropColumn:
+            tableName: products
+            columnName: name

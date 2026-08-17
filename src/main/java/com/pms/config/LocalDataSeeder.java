@@ -309,7 +309,6 @@ public class LocalDataSeeder implements CommandLineRunner {
 
     private Product localProduct(String productName, String brand, String price) {
         return Product.builder()
-                .name(productName)
                 .productName(productName)
                 .brand(brand)
                 .price(new BigDecimal(price))

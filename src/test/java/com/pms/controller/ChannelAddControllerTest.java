@@ -84,7 +84,7 @@ class ChannelAddControllerTest extends BaseIntegrationTest {
                 .sellerName("행복상회").businessRegistration("111-22-33333").build());
         sellerId = seller.getId();
         Product product = productRepository.save(Product.builder()
-                .productName("운동화").name("운동화").brand("나이키")
+                .productName("운동화").brand("나이키")
                 .price(new BigDecimal("1500")).imageUrl("products/p.jpg").active(true).build());
         Category category = categoryRepository.save(Category.builder()
                 .name("신발").platform("COUPANG").platformCategoryId("cat-1").build());
