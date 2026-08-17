@@ -23,6 +23,7 @@ import org.springframework.http.MediaType;
 import java.math.BigDecimal;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -179,6 +180,20 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    @Test
+    void update_resendSameComponents_returns200_noUniqueViolation() throws Exception {
+        // Regression: PATCH re-sending an unchanged component set does delete + re-insert of the same
+        // (master, product) pairs in one transaction. Without a flush between them, Hibernate runs the
+        // INSERTs before the entity DELETEs and hits the UQ_MPC unique index (was a 500).
+        String body = "{\"componentProductIds\":[" + productId1 + "," + productId2 + "]}";
+        mockMvc.perform(patch(PATH + "/" + masterId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.components.length()").value(2));
     }
 
     private String createMasterBody() {

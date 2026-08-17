@@ -180,7 +180,11 @@ public class MasterProductServiceImpl implements MasterProductService {
 
             // Replace the component set (delete + re-insert), then re-validate every existing option
             // against the new set. A violation throws → the whole @Transactional PATCH rolls back.
+            // ⚠️ flush() after the delete: Hibernate's action queue runs INSERTs before entity DELETEs in one
+            // flush, so re-inserting an unchanged (master, product) pair would collide with the not-yet-deleted
+            // row on UQ_MPC (unique index). Forcing the delete first makes the re-insert safe.
             componentRepository.deleteByMasterProductId(id);
+            componentRepository.flush();
             for (Product product : products) {
                 componentRepository.save(MasterProductComponent.builder()
                         .masterProduct(updated).product(product).build());
