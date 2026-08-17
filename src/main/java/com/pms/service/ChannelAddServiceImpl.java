@@ -8,7 +8,9 @@ import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
+import com.pms.dto.request.BatchChannelAddRequest;
 import com.pms.dto.request.ChannelAddRequest;
+import com.pms.dto.response.BatchChannelAddResponse;
 import com.pms.dto.response.ChannelAddResponse;
 import com.pms.exception.DuplicateChannelException;
 import com.pms.exception.ResourceNotFoundException;
@@ -20,27 +22,38 @@ import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.SellerRepository;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * Channel add (FEATURE_2608_06 / 3b'). See {@link ChannelAddService}.
+ * Channel add (FEATURE_2608_06 / 15). See {@link ChannelAddService}.
  *
- * <p>⚠️ {@code addChannel} is a single {@code @Transactional} so the copy (listing + options + BOM) and the
- * reused {@link ListingAssetService#regenerateAssets} seam are atomic — a regenerate failure (e.g. missing
- * margin/template, 400) rolls the whole cell back. Options are copied with a placeholder
- * {@code sellingPrice} (the NOT-NULL column is filled by regenerate before commit) and a null
- * {@code platformOptionId} (issued by 3c).</p>
+ * <p>{@code addChannel} copies <em>all</em> of the master's options (the master is the single option
+ * universe — no subset selection) into a new DRAFT cell, then reuses the {@link ListingAssetService#regenerateAssets}
+ * seam. It runs as {@code REQUIRES_NEW} so the copy + regenerate are atomic per cell <em>and</em> so the batch
+ * path ({@link #addChannelsBatch}) gets per-cell transaction isolation: each target commits or rolls back
+ * independently, and one failure never marks a shared transaction rollback-only.</p>
+ *
+ * <p>Options are copied with a placeholder {@code sellingPrice} (the NOT-NULL column is filled by regenerate
+ * before commit) and a null {@code platformOptionId} (issued by 3c).</p>
  */
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class ChannelAddServiceImpl implements ChannelAddService {
+
+    private static final Logger log = LoggerFactory.getLogger(ChannelAddServiceImpl.class);
 
     private final MasterProductRepository masterProductRepository;
     private final MasterProductOptionRepository masterProductOptionRepository;
@@ -52,8 +65,16 @@ public class ChannelAddServiceImpl implements ChannelAddService {
     private final MasterChannelConfigService masterChannelConfigService;
     private final ListingAssetService listingAssetService;
 
+    /**
+     * Self proxy so the batch loop reaches {@link #addChannel} through the {@code REQUIRES_NEW} advice (a direct
+     * self-invocation would bypass the proxy → no new transaction per cell → no partial-success isolation).
+     */
+    @Autowired
+    @Lazy
+    private ChannelAddService self;
+
     @Override
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ChannelAddResponse addChannel(Long masterProductId, ChannelAddRequest request) {
         // --- validation (MUST-KEEP) ---
         MasterProduct master = masterProductRepository.findScopedById(masterProductId)
@@ -67,14 +88,10 @@ public class ChannelAddServiceImpl implements ChannelAddService {
             throw new DuplicateChannelException();
         }
 
-        // Selected master options must all belong to this master (subset allowed).
-        Map<Long, MasterProductOption> optionsById = masterProductOptionRepository
-                .findByMasterProductId(masterProductId).stream()
-                .collect(Collectors.toMap(MasterProductOption::getId, o -> o));
-        for (Long optionId : request.getOptionIds()) {
-            if (!optionsById.containsKey(optionId)) {
-                throw new IllegalArgumentException("마스터 옵션 아님");
-            }
+        // The master is the single option universe → copy all of its options (no subset selection).
+        List<MasterProductOption> masterOptions = masterProductOptionRepository.findByMasterProductId(masterProductId);
+        if (masterOptions.isEmpty()) {
+            throw new IllegalArgumentException("옵션 없는 마스터");
         }
 
         Seller seller = sellerRepository.findById(request.getSellerId())
@@ -95,19 +112,19 @@ public class ChannelAddServiceImpl implements ChannelAddService {
                 .status(ListingStatus.DRAFT)
                 .build());
 
+        List<Long> optionIds = masterOptions.stream().map(MasterProductOption::getId).collect(Collectors.toList());
         Map<Long, List<MasterProductOptionItem>> itemsByOption = masterProductOptionItemRepository
-                .findByOptionIdIn(request.getOptionIds()).stream()
+                .findByOptionIdIn(optionIds).stream()
                 .collect(Collectors.groupingBy(it -> it.getOption().getId()));
 
-        for (Long optionId : request.getOptionIds()) {
-            MasterProductOption masterOption = optionsById.get(optionId);
+        for (MasterProductOption masterOption : masterOptions) {
             ProductListingOption listingOption = productListingOptionRepository.save(ProductListingOption.builder()
                     .productListing(cell)
                     .optionName(masterOption.getName())
                     .sellingPrice(BigDecimal.ZERO)    // placeholder; regenerate fills the real price below
                     .platformOptionId(null)           // issued by 3c
                     .build());
-            for (MasterProductOptionItem item : itemsByOption.getOrDefault(optionId, List.of())) {
+            for (MasterProductOptionItem item : itemsByOption.getOrDefault(masterOption.getId(), List.of())) {
                 productListingProductRepository.save(ProductListingProduct.builder()
                         .productListingOption(listingOption)
                         .product(item.getProduct())
@@ -126,5 +143,41 @@ public class ChannelAddServiceImpl implements ChannelAddService {
                 .status(ListingStatus.DRAFT.name())
                 .generated(listingAssetService.getGenerated(cell.getId()))
                 .build();
+    }
+
+    /**
+     * ⚠️ NOT_SUPPORTED: the class default is {@code @Transactional(readOnly=true)}, but the batch orchestrator
+     * must run with no surrounding transaction so each {@link #addChannel} opens its own {@code REQUIRES_NEW}
+     * boundary. A single wrapping transaction would go rollback-only on the first caught exception and block the
+     * later successful commits (no partial success). This method just loops and aggregates.
+     */
+    @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public BatchChannelAddResponse addChannelsBatch(Long masterProductId, BatchChannelAddRequest request) {
+        List<BatchChannelAddResponse.Result> results = new ArrayList<>();
+        int succeeded = 0, failed = 0;
+        for (BatchChannelAddRequest.Target target : request.getTargets()) {
+            ChannelAddRequest single = ChannelAddRequest.builder()
+                    .sellerId(target.getSellerId()).platform(target.getPlatform()).build();
+            try {
+                // Through the self proxy → REQUIRES_NEW: independent commit per cell.
+                ChannelAddResponse added = self.addChannel(masterProductId, single);
+                results.add(BatchChannelAddResponse.Result.builder()
+                        .sellerId(target.getSellerId()).platform(target.getPlatform())
+                        .success(true).productListingId(added.getProductListingId()).build());
+                succeeded++;
+            } catch (Exception e) {
+                // Isolate: a failed target must not abort the remaining targets.
+                results.add(BatchChannelAddResponse.Result.builder()
+                        .sellerId(target.getSellerId()).platform(target.getPlatform())
+                        .success(false).errorMessage(e.getMessage()).build());
+                failed++;
+                log.warn("[CHANNEL-ADD-BATCH] masterId={} sellerId={} platform={} add failed: {}",
+                        masterProductId, target.getSellerId(), target.getPlatform(), e.getMessage());
+            }
+        }
+        return BatchChannelAddResponse.builder()
+                .requested(request.getTargets().size())
+                .succeeded(succeeded).failed(failed).results(results).build();
     }
 }

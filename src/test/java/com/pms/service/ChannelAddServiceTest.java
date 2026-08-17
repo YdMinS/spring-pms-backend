@@ -25,25 +25,22 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /**
- * Channel add (FEATURE_2608_06 / 3b'): master → listing copy (DRAFT, no market id, options + BOM),
- * duplicate-channel guard (409), and option-membership validation (400). The reused
- * {@link ListingAssetService#regenerateAssets} seam is mocked (its internals are covered by
- * {@code ListingAssetServiceTest}); here we only verify it runs once on the new cell.
+ * Channel add (FEATURE_2608_06 / 15): master → listing copy of <em>all</em> master options (DRAFT, no market
+ * id, options + BOM), duplicate-channel guard (409), master-category pre-validation (400), and the
+ * empty-master guard (400). The reused {@link ListingAssetService#regenerateAssets} seam is mocked (its
+ * internals are covered by {@code ListingAssetServiceTest}); here we only verify it runs once on the new cell.
  */
 @ExtendWith(MockitoExtension.class)
 class ChannelAddServiceTest {
@@ -78,14 +75,12 @@ class ChannelAddServiceTest {
         return MasterProductOptionItem.builder().option(option).product(product).quantity(qty).build();
     }
 
-    private ChannelAddRequest request(List<Long> optionIds) {
-        return ChannelAddRequest.builder()
-                .sellerId(SELLER_ID).platform("COUPANG")
-                .optionIds(optionIds).build();
+    private ChannelAddRequest request() {
+        return ChannelAddRequest.builder().sellerId(SELLER_ID).platform("COUPANG").build();
     }
 
     @Test
-    void addChannel_happy_copiesMasterOptionsToDraftListing_andRegeneratesOnce() {
+    void addChannel_happy_copiesAllMasterOptionsToDraftListing_andRegeneratesOnce() {
         MasterProductOption opt1 = masterOption(10L, "1세트");
         MasterProductOption opt2 = masterOption(20L, "2세트");
         Product prodA = product(100L);
@@ -94,6 +89,7 @@ class ChannelAddServiceTest {
         given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master()));
         given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(MASTER_ID, SELLER_ID, "COUPANG"))
                 .willReturn(false);
+        // Master owns two options — channel-add copies BOTH (no subset selection).
         given(masterProductOptionRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(opt1, opt2));
         given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(Seller.builder().id(SELLER_ID).build()));
         given(masterProductOptionItemRepository.findByOptionIdIn(List.of(10L, 20L)))
@@ -105,7 +101,7 @@ class ChannelAddServiceTest {
         given(productListingOptionRepository.save(any())).willAnswer(inv ->
                 ((ProductListingOption) inv.getArgument(0)).toBuilder().id(60L).build());
 
-        service.addChannel(MASTER_ID, request(List.of(10L, 20L)));
+        service.addChannel(MASTER_ID, request());
 
         // Listing: one saved, DRAFT, no market id, master FK.
         ArgumentCaptor<ProductListing> listingCaptor = ArgumentCaptor.forClass(ProductListing.class);
@@ -119,7 +115,7 @@ class ChannelAddServiceTest {
         assertThat(saved.getDelivery()).isNull();
         assertThat(saved.getPackage_()).isNull();
 
-        // Options: two copied — names carried over, platformOptionId null (issued by 3c).
+        // Options: BOTH copied — names carried over, platformOptionId null (issued by 3c).
         ArgumentCaptor<ProductListingOption> optionCaptor = ArgumentCaptor.forClass(ProductListingOption.class);
         verify(productListingOptionRepository, times(2)).save(optionCaptor.capture());
         assertThat(optionCaptor.getAllValues()).extracting(ProductListingOption::getOptionName)
@@ -142,25 +138,8 @@ class ChannelAddServiceTest {
         given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(MASTER_ID, SELLER_ID, "COUPANG"))
                 .willReturn(true);
 
-        assertThatThrownBy(() -> service.addChannel(MASTER_ID, request(List.of(10L))))
+        assertThatThrownBy(() -> service.addChannel(MASTER_ID, request()))
                 .isInstanceOf(DuplicateChannelException.class);
-
-        verify(productListingRepository, never()).save(any());
-        verify(listingAssetService, never()).regenerateAssets(any());
-    }
-
-    @Test
-    void addChannel_optionFromAnotherMaster_throwsBadRequest_andNoSave() {
-        given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master()));
-        given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(anyLong(), anyLong(), anyString()))
-                .willReturn(false);
-        given(masterProductOptionRepository.findByMasterProductId(MASTER_ID))
-                .willReturn(List.of(masterOption(10L, "1세트")));
-
-        // 99 does not belong to this master → 400.
-        assertThatThrownBy(() -> service.addChannel(MASTER_ID, request(List.of(10L, 99L))))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("마스터 옵션 아님");
 
         verify(productListingRepository, never()).save(any());
         verify(listingAssetService, never()).regenerateAssets(any());
@@ -178,9 +157,25 @@ class ChannelAddServiceTest {
         given(masterChannelConfigService.resolveCategory(MASTER_ID, "COUPANG"))
                 .willThrow(new IllegalArgumentException("카테고리 미설정"));
 
-        assertThatThrownBy(() -> service.addChannel(MASTER_ID, request(List.of(10L))))
+        assertThatThrownBy(() -> service.addChannel(MASTER_ID, request()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("카테고리 미설정");
+
+        verify(productListingRepository, never()).save(any());
+        verify(listingAssetService, never()).regenerateAssets(any());
+    }
+
+    @Test
+    void addChannel_masterWithNoOptions_throwsBadRequest_andNoSave() {
+        given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master()));
+        given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(MASTER_ID, SELLER_ID, "COUPANG"))
+                .willReturn(false);
+        // No options on the master → empty listing would result → 400.
+        given(masterProductOptionRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of());
+
+        assertThatThrownBy(() -> service.addChannel(MASTER_ID, request()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("옵션 없는 마스터");
 
         verify(productListingRepository, never()).save(any());
         verify(listingAssetService, never()).regenerateAssets(any());
