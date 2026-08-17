@@ -15,7 +15,7 @@ import com.pms.domain.Product;
 import com.pms.domain.Role;
 import com.pms.domain.Seller;
 import com.pms.domain.User;
-import com.pms.dto.request.ChannelAddRequest;
+import com.pms.dto.request.BatchChannelAddRequest;
 import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.CarrierRepository;
 import com.pms.repository.CategoryRepository;
@@ -52,7 +52,9 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
@@ -61,20 +63,19 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Single channel-add endpoint (FEATURE_2608_06 / 15): authority (401/403/201) + generated price on the new
- * DRAFT cell, and the duplicate-channel 409.
+ * Batch channel-add endpoint (FEATURE_2608_06 / 15): authority (401/403/200) + partial-success with a
+ * <em>DB assertion</em> that a failed target writes nothing while a succeeding one commits its cell.
  *
- * <p>⚠️ Intentionally NOT {@code @Transactional}: {@code addChannel} now runs {@code REQUIRES_NEW}, which
- * opens a separate transaction/connection that cannot see a rolling-back test transaction's uncommitted
- * seeds. Seeds are therefore committed (non-transactional) and cleaned up with tenant-scoped {@code deleteAll}
- * in {@code @AfterEach}. Renderer / storage / image-loader are mocked so the reused seam runs without
- * disk/network. The tenant-1 default thumbnail template is provided by the startup seeder (visible here
- * because each op reads the live {@link TenantContext}).</p>
+ * <p>⚠️ Intentionally NOT {@code @Transactional} (same reason as {@code ChannelAddControllerTest}):
+ * each {@code addChannel} runs {@code REQUIRES_NEW} and commits independently, so a rolling-back test
+ * transaction would hide seeds and the committed cells. Seeds are committed; cleanup is tenant-scoped
+ * {@code deleteAll}. The failed target here is a missing master category (pre-save 400), so it writes
+ * nothing — this proves <em>partial success</em>, not REQUIRES_NEW rollback isolation (which is CUT).</p>
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-class ChannelAddControllerTest {
+class BatchChannelAddControllerTest {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
@@ -103,15 +104,19 @@ class ChannelAddControllerTest {
     @MockBean private ImageStorageService imageStorageService;
     @MockBean private ProductImageLoader productImageLoader;
 
-    private static final String BASE = "/api/admin/master-products";
-    private static final String ADMIN_EMAIL = "admin@channeladd.com";
-    private static final String USER_EMAIL = "user@channeladd.com";
+    private static final String ADMIN_EMAIL = "admin@batchchannel.com";
+    private static final String USER_EMAIL = "user@batchchannel.com";
     private static final String PASSWORD = "testpass123";
 
     private String adminToken;
     private String userToken;
     private Long masterId;
-    private Long sellerId;
+    private Long seller1Id;
+    private Long seller2Id;
+
+    private String batchUrl() {
+        return "/api/admin/master-products/" + masterId + "/listings/batch";
+    }
 
     @BeforeEach
     void seed() throws Exception {
@@ -122,22 +127,27 @@ class ChannelAddControllerTest {
         userRepository.save(User.builder().email(USER_EMAIL).password(passwordEncoder.encode(PASSWORD))
                 .name("User").role(Role.USER).build());
 
-        Seller seller = sellerRepository.save(Seller.builder()
+        Seller seller1 = sellerRepository.save(Seller.builder()
                 .sellerName("행복상회").businessRegistration("111-22-33333").build());
-        sellerId = seller.getId();
+        seller1Id = seller1.getId();
+        Seller seller2 = sellerRepository.save(Seller.builder()
+                .sellerName("즐거운상회").businessRegistration("222-33-44444").build());
+        seller2Id = seller2.getId();
+
         Product product = productRepository.save(Product.builder()
                 .productName("운동화").brand("나이키")
                 .price(new BigDecimal("1500")).imageUrl("products/p.jpg").active(true).build());
         Category category = categoryRepository.save(Category.builder()
                 .name("신발").platform("COUPANG").platformCategoryId("cat-1").build());
 
-        // Commission (COUPANG default) + margin preset so the reused price engine resolves.
         commissionRateRepository.save(CommissionRate.builder()
                 .platform("COUPANG").category(null).rate(new BigDecimal("0.10")).isDefault(true).build());
+        // Both sellers need a COUPANG margin preset so the price engine resolves for the all-succeed case.
         marginPolicyRepository.save(MarginPolicy.builder()
-                .seller(seller).platform("COUPANG").marginRate(new BigDecimal("0.1500")).build());
+                .seller(seller1).platform("COUPANG").marginRate(new BigDecimal("0.1500")).build());
+        marginPolicyRepository.save(MarginPolicy.builder()
+                .seller(seller2).platform("COUPANG").marginRate(new BigDecimal("0.1500")).build());
 
-        // (1500 + 2500 + 500) / 0.75 = 6000.
         Carrier carrier = carrierRepository.save(Carrier.builder().name("CJ").isActive(true).build());
         CarrierRate delivery = carrierRateRepository.save(CarrierRate.builder()
                 .carrier(carrier).type("STANDARD").cost(new BigDecimal("2500"))
@@ -146,7 +156,7 @@ class ChannelAddControllerTest {
                 .type("M").cost(new BigDecimal("500"))
                 .effectiveDate(LocalDate.now()).isDefault(false).build());
 
-        // Channel config lives on the master: default delivery/box + a COUPANG category (master × platform).
+        // Master has a category for COUPANG only — NAVER targets fail category pre-validation (400).
         MasterProduct master = masterProductRepository.save(MasterProduct.builder()
                 .name("운동화 마스터").active(true)
                 .defaultDelivery(delivery).defaultPackage(box).build());
@@ -169,7 +179,6 @@ class ChannelAddControllerTest {
 
     @AfterEach
     void cleanup() {
-        // Non-transactional: REQUIRES_NEW committed real rows. Delete child → parent under tenant 1.
         TenantContext.set(1L);
         refreshTokenRepository.deleteAll();
         generatedProductDataRepository.deleteAll();
@@ -188,8 +197,6 @@ class ChannelAddControllerTest {
         carrierRateRepository.deleteAll();
         carrierRepository.deleteAll();
         packageRepository.deleteAll();
-        // deleteAll wraps its own transaction (SimpleJpaRepository); the custom @Modifying deleteByEmail would
-        // need an ambient one, which this non-transactional test does not have.
         userRepository.deleteAll();
         TenantContext.clear();
     }
@@ -203,55 +210,65 @@ class ChannelAddControllerTest {
         return objectMapper.readTree(response).get("data").get("token").asText();
     }
 
-    private String body() throws Exception {
-        return objectMapper.writeValueAsString(ChannelAddRequest.builder()
-                .sellerId(sellerId).platform("COUPANG").build());
+    private String body(BatchChannelAddRequest.Target... targets) throws Exception {
+        return objectMapper.writeValueAsString(BatchChannelAddRequest.builder()
+                .targets(List.of(targets)).build());
+    }
+
+    private BatchChannelAddRequest.Target target(Long sellerId, String platform) {
+        return BatchChannelAddRequest.Target.builder().sellerId(sellerId).platform(platform).build();
     }
 
     // ---- authority (MUST-KEEP) ----
 
     @Test
-    void addChannel_noToken_returns401() throws Exception {
-        mockMvc.perform(post(BASE + "/" + masterId + "/listings")
-                        .contentType("application/json").content(body()))
+    void batch_noToken_returns401() throws Exception {
+        mockMvc.perform(post(batchUrl())
+                        .contentType("application/json").content(body(target(seller1Id, "COUPANG"))))
                 .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void addChannel_userToken_returns403() throws Exception {
-        mockMvc.perform(post(BASE + "/" + masterId + "/listings")
+    void batch_userToken_returns403() throws Exception {
+        mockMvc.perform(post(batchUrl())
                         .header("Authorization", "Bearer " + userToken)
-                        .contentType("application/json").content(body()))
+                        .contentType("application/json").content(body(target(seller1Id, "COUPANG"))))
                 .andExpect(status().isForbidden());
     }
 
     @Test
-    void addChannel_adminToken_returns201WithDraftAndPrice() throws Exception {
-        mockMvc.perform(post(BASE + "/" + masterId + "/listings")
+    void batch_adminToken_bothTargetsSucceed_returns200() throws Exception {
+        mockMvc.perform(post(batchUrl())
                         .header("Authorization", "Bearer " + adminToken)
-                        .contentType("application/json").content(body()))
-                .andExpect(status().isCreated())
+                        .contentType("application/json")
+                        .content(body(target(seller1Id, "COUPANG"), target(seller2Id, "COUPANG"))))
+                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.status").value("DRAFT"))
-                .andExpect(jsonPath("$.data.productListingId").isNumber())
-                .andExpect(jsonPath("$.data.generated.optionPrices.length()").value(1))
-                // (1500 + 2500 + 500) / 0.75 = 6000, rounded to nearest 10 won
-                .andExpect(jsonPath("$.data.generated.optionPrices[0].sellingPrice").value(6000.00));
+                .andExpect(jsonPath("$.data.requested").value(2))
+                .andExpect(jsonPath("$.data.succeeded").value(2))
+                .andExpect(jsonPath("$.data.failed").value(0))
+                .andExpect(jsonPath("$.data.results.length()").value(2));
     }
 
-    // ---- duplicate channel (409) ----
+    // ---- partial success + DB assertion (MUST-KEEP) ----
 
     @Test
-    void addChannel_duplicateAccount_returns409() throws Exception {
-        mockMvc.perform(post(BASE + "/" + masterId + "/listings")
+    void batch_oneCategoryUnset_partialSuccess_dbReflectsOnlyTheSucceededCell() throws Exception {
+        // seller1 on COUPANG (has category) succeeds; seller2 on NAVER (no master category) fails 400.
+        mockMvc.perform(post(batchUrl())
                         .header("Authorization", "Bearer " + adminToken)
-                        .contentType("application/json").content(body()))
-                .andExpect(status().isCreated());
+                        .contentType("application/json")
+                        .content(body(target(seller1Id, "COUPANG"), target(seller2Id, "NAVER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.requested").value(2))
+                .andExpect(jsonPath("$.data.succeeded").value(1))
+                .andExpect(jsonPath("$.data.failed").value(1));
 
-        mockMvc.perform(post(BASE + "/" + masterId + "/listings")
-                        .header("Authorization", "Bearer " + adminToken)
-                        .contentType("application/json").content(body()))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.status").value("FAILURE"));
+        // DB truth: the succeeding target committed its cell; the failing target wrote nothing.
+        TenantContext.set(1L);
+        assertThat(productListingRepository
+                .existsByMasterProductIdAndSellerIdAndPlatform(masterId, seller1Id, "COUPANG")).isTrue();
+        assertThat(productListingRepository
+                .existsByMasterProductIdAndSellerIdAndPlatform(masterId, seller2Id, "NAVER")).isFalse();
     }
 }
