@@ -41,8 +41,8 @@ import java.util.List;
  *
  * <p>로컬 로그인 계정:
  * <ul>
- *   <li>admin@oklyx.local / admin1234 (ADMIN)</li>
- *   <li>user@oklyx.local / user1234 (USER)</li>
+ *   <li>admin@oclyx.local / admin1234 (ADMIN)</li>
+ *   <li>user@oclyx.local / user1234 (USER)</li>
  * </ul>
  */
 @Slf4j
@@ -81,18 +81,18 @@ public class LocalDataSeeder implements CommandLineRunner {
             return;
         }
         userRepository.save(User.builder()
-                .email("admin@oklyx.local")
+                .email("admin@oclyx.local")
                 .password(passwordEncoder.encode("admin1234"))
                 .name("로컬 관리자")
                 .role(Role.ADMIN)
                 .build());
         userRepository.save(User.builder()
-                .email("user@oklyx.local")
+                .email("user@oclyx.local")
                 .password(passwordEncoder.encode("user1234"))
                 .name("로컬 사용자")
                 .role(Role.USER)
                 .build());
-        log.info("[LOCAL-SEED] users seeded (admin@oklyx.local / user@oklyx.local)");
+        log.info("[LOCAL-SEED] users seeded (admin@oclyx.local / user@oclyx.local)");
     }
 
     private Seller seedSellerAndAccount() {
