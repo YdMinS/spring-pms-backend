@@ -49,7 +49,9 @@ public class DefaultDetailTemplateSeeder implements ApplicationRunner {
                             text("brandName", null, "center"),
                             text("productName", null, "center"),
                             text("freeShipping", "무료배송", "center"),
+                            spacer(24),
                             imageZone("product_photos"),
+                            spacer(24),
                             imageZone("detail_photos")))
                     .active(true)
                     .isDefault(true)
@@ -74,6 +76,13 @@ public class DefaultDetailTemplateSeeder implements ApplicationRunner {
                 .type("imageZone")
                 .bind(zoneId)
                 .widthPercent(100)
+                .build();
+    }
+
+    private DetailBlock spacer(int heightPx) {
+        return DetailBlock.builder()
+                .type("spacer")
+                .heightPx(heightPx)
                 .build();
     }
     // NOTE: asset blocks (shipping/refund notices) are NOT seeded — a TemplateAsset must be uploaded by

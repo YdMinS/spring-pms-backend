@@ -78,6 +78,30 @@ class DetailHtmlRendererTest {
     }
 
     @Test
+    void spacer_rendersGapDiv() {
+        DetailBlock block = DetailBlock.builder().type("spacer").heightPx(24).build();
+        String html = renderer.render(template(block), Map.of(), Map.of());
+
+        assertThat(html).isEqualTo("<div style=\"height:24px;\"></div>");
+    }
+
+    @Test
+    void spacer_nullHeight_usesDefault24() {
+        DetailBlock block = DetailBlock.builder().type("spacer").build();
+        String html = renderer.render(template(block), Map.of(), Map.of());
+
+        assertThat(html).isEqualTo("<div style=\"height:24px;\"></div>");
+    }
+
+    @Test
+    void spacer_oversizeHeight_clampedTo600() {
+        DetailBlock block = DetailBlock.builder().type("spacer").heightPx(1000).build();
+        String html = renderer.render(template(block), Map.of(), Map.of());
+
+        assertThat(html).isEqualTo("<div style=\"height:600px;\"></div>");
+    }
+
+    @Test
     void text_value_isHtmlEscaped() {
         DetailBlock block = DetailBlock.builder().type("text").bind("brandName").build();
         String html = renderer.render(template(block), Map.of("brandName", "<b>x</b>"), Map.of());

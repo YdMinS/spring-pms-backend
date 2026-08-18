@@ -46,6 +46,7 @@ public class DetailHtmlRenderer {
                 case "text" -> renderText(html, block, texts);
                 case "imageZone" -> renderImageZone(html, block, zones);
                 case "asset" -> renderAsset(html, block);
+                case "spacer" -> renderSpacer(html, block);
                 default -> { /* unknown type → skip (lenient) */ }
             }
         }
@@ -88,6 +89,13 @@ public class DetailHtmlRenderer {
         html.append("<div style=\"").append(wrapperStyle(block)).append("\">");
         appendImg(html, block.getSrc(), block);
         html.append("</div>");
+    }
+
+    /** spacer: a vertical gap. heightPx null/≤0 → default 24, &gt;600 → clamped to 600. Always rendered. */
+    private void renderSpacer(StringBuilder html, DetailBlock block) {
+        Integer raw = block.getHeightPx();
+        int h = (raw == null || raw <= 0) ? 24 : Math.min(raw, 600);
+        html.append("<div style=\"height:").append(h).append("px;\"></div>");
     }
 
     private void appendImg(StringBuilder html, String url, DetailBlock block) {

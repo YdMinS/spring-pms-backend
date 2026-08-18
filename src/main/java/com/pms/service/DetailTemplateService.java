@@ -1,18 +1,27 @@
 package com.pms.service;
 
+import com.pms.dto.request.DetailTemplateRequest;
 import com.pms.dto.response.DetailTemplateResponse;
 
 import java.util.List;
 
 /**
- * Read access to the tenant's detail-page template library (FEATURE_2608_06 / Step 2-1).
+ * The tenant's editable detail-page template library (FEATURE_2608_06 / 17) — mirror of
+ * {@link ThumbnailTemplateService}. Templates are a tenant-wide shared library (not seller-owned) with
+ * exactly one default ({@code isDefault=true}).
  *
- * <p>Read-only in this step — block editing / create is a later editor. Reads are tenant-scoped via
- * {@code @TenantId}; {@link #get(Long)} uses {@code findScopedById} so a cross-tenant/absent id is 404.</p>
+ * <p>Reads are tenant-scoped via {@code @TenantId}; single-id operations use {@code findScopedById} so a
+ * cross-tenant/absent id is 404.</p>
  */
 public interface DetailTemplateService {
 
     List<DetailTemplateResponse> list();
 
     DetailTemplateResponse get(Long id);
+
+    DetailTemplateResponse create(DetailTemplateRequest request);
+
+    DetailTemplateResponse update(Long id, DetailTemplateRequest request);
+
+    void delete(Long id);
 }
