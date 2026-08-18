@@ -19,7 +19,8 @@ import lombok.NoArgsConstructor;
  *
  * <p><b>type</b> = {@code text} (bind a master field / free text) | {@code imageZone} (an ordered array
  * of input images referenced by {@code bind}=zoneId) | {@code asset} (a fixed library image reused via
- * {@code src}={@link TemplateAsset#getStorageKey()}, e.g. shipping/refund notices).</p>
+ * {@code src}={@link TemplateAsset#getStorageKey()}, e.g. shipping/refund notices) | {@code spacer} (a
+ * vertical gap of {@code heightPx} px to loosen dense detail pages).</p>
  *
  * <p>⚠️ Immutable (Builder only, no setters). Jackson (de)serializes through the Lombok builder so the
  * same rule holds for request bodies and the DB converter.</p>
@@ -31,7 +32,7 @@ import lombok.NoArgsConstructor;
 @JsonDeserialize(builder = DetailBlock.DetailBlockBuilder.class)
 public class DetailBlock {
 
-    /** {@code text} | {@code imageZone} | {@code asset}. */
+    /** {@code text} | {@code imageZone} | {@code asset} | {@code spacer}. */
     private String type;
 
     /** text = field key (brandName/productName/custom). imageZone = zoneId. asset = null. */
@@ -42,6 +43,9 @@ public class DetailBlock {
 
     /** text = fallback copy (e.g. "무료배송") when the bound value is blank. Otherwise null. */
     private String defaultValue;
+
+    /** spacer = vertical gap height in px (1..600). Other types → null. */
+    private Integer heightPx;
 
     /** Content column width as a percent (1..100). Null → 100. */
     private Integer widthPercent;
