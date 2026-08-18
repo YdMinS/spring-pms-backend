@@ -45,4 +45,12 @@ public class MarketplaceAccountRequest {
 
     @Schema(description = "Active flag (null defaults to true on create)", example = "true")
     private Boolean isActive;
+
+    @Schema(description = "Thumbnail template override for this seller×platform (null = tenant default). "
+            + "On update, null keeps the existing assignment.", example = "3")
+    private Long thumbnailTemplateId;
+
+    @Schema(description = "Detail template override for this seller×platform (null = tenant default). "
+            + "On update, null keeps the existing assignment.", example = "5")
+    private Long detailTemplateId;
 }

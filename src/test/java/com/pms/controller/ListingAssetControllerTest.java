@@ -134,6 +134,17 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType("application/json").content(templateJson))
                 .andExpect(status().isCreated());
+
+        // Likewise create the tenant default DETAIL template in-session: ChannelTemplateResolver (21) now
+        // throws when neither an account override nor a tenant default exists, and the startup-seeded default
+        // lives under tenant 1 (invisible to this @Transactional session). POST returns 200.
+        String detailTemplateJson = objectMapper.writeValueAsString(java.util.Map.of(
+                "name", "쿠팡 상세 기본", "active", true, "isDefault", true,
+                "blocks", java.util.List.of()));
+        mockMvc.perform(post("/api/admin/detail-templates")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content(detailTemplateJson))
+                .andExpect(status().isOk());
     }
 
     /**

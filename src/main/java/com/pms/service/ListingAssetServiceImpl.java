@@ -18,7 +18,6 @@ import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
-import com.pms.repository.ThumbnailTemplateRepository;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -57,7 +56,7 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     private final ProductListingProductRepository productListingProductRepository;
     private final MasterProductOptionRepository masterProductOptionRepository;
     private final GeneratedProductDataRepository generatedProductDataRepository;
-    private final ThumbnailTemplateRepository thumbnailTemplateRepository;
+    private final ChannelTemplateResolver channelTemplateResolver;
     private final ThumbnailRenderer thumbnailRenderer;
     private final ProductImageLoader productImageLoader;
     private final ImageStorageService imageStorageService;
@@ -144,8 +143,8 @@ public class ListingAssetServiceImpl implements ListingAssetService {
 
         // 1. Thumbnail: master override photo, else the cell's first BOM product photo.
         byte[] baseImage = resolveBaseImage(cell.getMasterProduct(), firstProduct);
-        ThumbnailTemplate template = thumbnailTemplateRepository.findByIsDefaultTrueAndActiveTrue()
-                .orElseThrow(() -> new IllegalArgumentException("기본 템플릿이 없습니다"));
+        // Channel template override (21): account's assigned thumbnail template ?? tenant default.
+        ThumbnailTemplate template = channelTemplateResolver.resolveThumbnail(cell);
         Map<String, String> textBindings = buildTextBindings(template, cell);
         byte[] jpeg = thumbnailRenderer.render(template, textBindings, Map.of("productImage", baseImage));
         String thumbnailUrl = imageStorageService.uploadBytes(

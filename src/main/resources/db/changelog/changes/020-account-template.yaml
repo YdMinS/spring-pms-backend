@@ -1,0 +1,28 @@
+# Channel template override (FEATURE_2608_06 / 21): thumbnail/detail template chosen per
+# seller×platform, stored on marketplace_account. Nullable FKs — null = tenant default fallback.
+# No boolean columns → no MySQL BIT trap. Backfill unnecessary (nullable, null = fallback).
+# onDelete unspecified = DB default RESTRICT (a referencing account blocks template deletion — intended).
+databaseChangeLog:
+
+  - changeSet:
+      id: 020-account-template
+      author: oclyx
+      comment: "Additive: marketplace_account.thumbnail_template_id / detail_template_id (nullable FKs)."
+      changes:
+        - addColumn:
+            tableName: marketplace_account
+            columns:
+              - column: { name: thumbnail_template_id, type: BIGINT }
+              - column: { name: detail_template_id, type: BIGINT }
+        - addForeignKeyConstraint:
+            constraintName: fk_account_thumbnail_template
+            baseTableName: marketplace_account
+            baseColumnNames: thumbnail_template_id
+            referencedTableName: thumbnail_template
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_account_detail_template
+            baseTableName: marketplace_account
+            baseColumnNames: detail_template_id
+            referencedTableName: detail_template
+            referencedColumnNames: id

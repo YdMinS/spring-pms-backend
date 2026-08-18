@@ -104,6 +104,13 @@ class LiquibaseChangelogApplyTest {
         // changeset 017: product_listing.field_values materialized (a successful count proves it).
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM product_listing WHERE field_values IS NULL", Integer.class)).isZero();
+
+        // changeset 020: marketplace_account.thumbnail_template_id + detail_template_id materialized
+        // (a successful count over both columns proves they exist).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM marketplace_account "
+                        + "WHERE thumbnail_template_id IS NULL AND detail_template_id IS NULL",
+                Integer.class)).isZero();
     }
 
     @Test

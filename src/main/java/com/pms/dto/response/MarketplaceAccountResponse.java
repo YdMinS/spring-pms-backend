@@ -28,6 +28,8 @@ public class MarketplaceAccountResponse {
     private String vendorId;
     private String accessKey;          // accessKey는 식별자라 노출 가능
     private Boolean isActive;
+    private Long thumbnailTemplateId;  // 채널 템플릿 지정(id만 노출, 표시명은 프론트가 별도 조회)
+    private Long detailTemplateId;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     // secretKey: 응답에 절대 포함하지 않음

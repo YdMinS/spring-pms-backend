@@ -8,7 +8,6 @@ import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
-import com.pms.repository.DetailTemplateRepository;
 import com.pms.repository.MasterProductImageRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
@@ -21,7 +20,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -38,7 +36,7 @@ import static org.mockito.Mockito.verify;
 @ExtendWith(MockitoExtension.class)
 class TemplateDetailContentGeneratorTest {
 
-    @Mock private DetailTemplateRepository detailTemplateRepository;
+    @Mock private ChannelTemplateResolver channelTemplateResolver;
     @Mock private MasterProductImageRepository masterProductImageRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private ProductListingProductRepository productListingProductRepository;
@@ -63,7 +61,7 @@ class TemplateDetailContentGeneratorTest {
                 .fieldValues(Map.of("productName", "P")).build();
         ProductListing cell = ProductListing.builder().id(CELL_ID).masterProduct(master).build();
 
-        given(detailTemplateRepository.findByIsDefaultTrueAndActiveTrue()).willReturn(Optional.of(template()));
+        given(channelTemplateResolver.resolveDetail(any())).willReturn(template());
         given(masterProductImageRepository.findByMasterProductIdOrderByZoneIdAscSortOrderAsc(MASTER_ID))
                 .willReturn(List.of(
                         MasterProductImage.builder().zoneId("product_photos").sortOrder(0).imageUrl("u0.jpg").build(),
@@ -88,7 +86,7 @@ class TemplateDetailContentGeneratorTest {
         MasterProduct master = MasterProduct.builder().id(MASTER_ID).name("마스터").build(); // no fieldValues
         ProductListing cell = ProductListing.builder().id(CELL_ID).masterProduct(master).build();
 
-        given(detailTemplateRepository.findByIsDefaultTrueAndActiveTrue()).willReturn(Optional.of(template()));
+        given(channelTemplateResolver.resolveDetail(any())).willReturn(template());
         given(masterProductImageRepository.findByMasterProductIdOrderByZoneIdAscSortOrderAsc(MASTER_ID))
                 .willReturn(List.of());
         given(productListingOptionRepository.findByProductListingId(CELL_ID))
@@ -113,14 +111,6 @@ class TemplateDetailContentGeneratorTest {
         assertThat(generator.generate(cell)).isEmpty();
         verify(detailHtmlRenderer, never()).render(any(), any(), any());
     }
-
-    @Test
-    void generate_noDefaultTemplate_returnsEmpty_rendererNotCalled() {
-        MasterProduct master = MasterProduct.builder().id(MASTER_ID).name("마스터").build();
-        ProductListing cell = ProductListing.builder().id(CELL_ID).masterProduct(master).build();
-        given(detailTemplateRepository.findByIsDefaultTrueAndActiveTrue()).willReturn(Optional.empty());
-
-        assertThat(generator.generate(cell)).isEmpty();
-        verify(detailHtmlRenderer, never()).render(any(), any(), any());
-    }
+    // Note: "no default template" now throws in ChannelTemplateResolver (covered by ChannelTemplateResolverTest),
+    // so the generator no longer has a null-template branch of its own.
 }

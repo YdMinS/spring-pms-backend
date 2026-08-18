@@ -14,7 +14,6 @@ import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
-import com.pms.repository.ThumbnailTemplateRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -48,7 +47,7 @@ class ListingAssetServiceTest {
     @Mock private ProductListingProductRepository productListingProductRepository;
     @Mock private MasterProductOptionRepository masterProductOptionRepository;
     @Mock private GeneratedProductDataRepository generatedProductDataRepository;
-    @Mock private ThumbnailTemplateRepository thumbnailTemplateRepository;
+    @Mock private ChannelTemplateResolver channelTemplateResolver;
     @Mock private ThumbnailRenderer thumbnailRenderer;
     @Mock private ProductImageLoader productImageLoader;
     @Mock private ImageStorageService imageStorageService;
@@ -76,8 +75,7 @@ class ListingAssetServiceTest {
     }
 
     private void commonRenderStubs() {
-        given(thumbnailTemplateRepository.findByIsDefaultTrueAndActiveTrue())
-                .willReturn(Optional.of(template()));
+        given(channelTemplateResolver.resolveThumbnail(any())).willReturn(template());
         given(thumbnailRenderer.render(any(), any(), any())).willReturn(new byte[]{1, 2, 3});
         given(imageStorageService.uploadBytes(any(), anyString(), anyString(), anyString()))
                 .willReturn("thumbnails/generated.jpg");
@@ -184,7 +182,7 @@ class ListingAssetServiceTest {
         given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
                 .willReturn(List.of(ProductListingProduct.builder().product(product()).quantity(1).build()));
         given(productImageLoader.load(any())).willReturn(new byte[]{7});
-        given(thumbnailTemplateRepository.findByIsDefaultTrueAndActiveTrue()).willReturn(Optional.of(template()));
+        given(channelTemplateResolver.resolveThumbnail(any())).willReturn(template());
         given(thumbnailRenderer.render(any(), any(), any())).willReturn(new byte[]{1, 2, 3});
         given(imageStorageService.uploadBytes(any(), anyString(), anyString(), anyString()))
                 .willReturn("thumbnails/generated.jpg");
