@@ -33,6 +33,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.mock.web.MockMultipartFile;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -40,7 +41,9 @@ import java.time.LocalDate;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -259,5 +262,80 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                         .contentType("application/json").content(FIELD_VALUES_BODY))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    // ---- thumbnail override / clear (25): authority + happy path + empty file 400 ----
+
+    /** Valid minimal JPEG (magic bytes FF D8 FF...) so the real ImageValidator passes. */
+    private MockMultipartFile jpeg() {
+        return new MockMultipartFile("file", "t.jpg", "image/jpeg",
+                new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xE0, 0, 0, 0, 0});
+    }
+
+    private void regenerate() throws Exception {
+        mockMvc.perform(post(PATH + "/" + listingId + "/regenerate")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void overrideThumbnail_noToken_returns401() throws Exception {
+        mockMvc.perform(multipart(PATH + "/" + listingId + "/thumbnail").file(jpeg()))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void overrideThumbnail_userToken_returns403() throws Exception {
+        mockMvc.perform(multipart(PATH + "/" + listingId + "/thumbnail").file(jpeg())
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void overrideThumbnail_adminToken_returns200WithManualOverride() throws Exception {
+        regenerate();                       // the cell must be generated first
+        mockMvc.perform(multipart(PATH + "/" + listingId + "/thumbnail").file(jpeg())
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.thumbnailUrl").value("thumbnails/generated.jpg"))
+                .andExpect(jsonPath("$.data.thumbnailSource").value("MANUAL_OVERRIDE"));
+    }
+
+    @Test
+    void overrideThumbnail_emptyFile_returns400() throws Exception {
+        regenerate();
+        MockMultipartFile empty = new MockMultipartFile("file", "t.jpg", "image/jpeg", new byte[0]);
+        mockMvc.perform(multipart(PATH + "/" + listingId + "/thumbnail").file(empty)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void clearThumbnail_noToken_returns401() throws Exception {
+        mockMvc.perform(delete(PATH + "/" + listingId + "/thumbnail"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void clearThumbnail_userToken_returns403() throws Exception {
+        mockMvc.perform(delete(PATH + "/" + listingId + "/thumbnail")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void clearThumbnail_adminToken_returns200WithAuto() throws Exception {
+        regenerate();
+        // Put an override in place, then drop it back to AUTO.
+        mockMvc.perform(multipart(PATH + "/" + listingId + "/thumbnail").file(jpeg())
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(delete(PATH + "/" + listingId + "/thumbnail")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.thumbnailSource").value("AUTO"));
     }
 }

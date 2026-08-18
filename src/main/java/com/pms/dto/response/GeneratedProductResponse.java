@@ -21,6 +21,8 @@ public class GeneratedProductResponse {
     private String thumbnailUrl;
     private String detailHtml;
     private GeneratedContentSource source;
+    /** Origin of the thumbnail (25): AUTO = renderer output, MANUAL_OVERRIDE = user-uploaded image. */
+    private GeneratedContentSource thumbnailSource;
     /** This cell's channel-level field-value overrides (FEATURE_2608_06 / 12); null override → empty map. */
     private Map<String, String> fieldValues;
     private List<OptionPrice> optionPrices;

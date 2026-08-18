@@ -1,0 +1,21 @@
+# Thumbnail source (FEATURE_2608_06 / 25, Design 2): a VARCHAR enum marking whether a cell's thumbnail
+# is renderer output (AUTO) or a user-uploaded image (MANUAL_OVERRIDE) — the thumbnail twin of changeset
+# 016's detail-HTML `source`. NOT NULL with defaultValue AUTO so existing generated_product_data rows
+# backfill automatically. No boolean column (VARCHAR enum -> BIT trap does not apply). Structured tags for
+# H2<->MySQL portability.
+databaseChangeLog:
+
+  - changeSet:
+      id: 021-thumbnail-source
+      author: oclyx
+      comment: "25: generated_product_data.thumbnail_source (AUTO/MANUAL_OVERRIDE) — VARCHAR(20) NOT NULL default AUTO."
+      changes:
+        - addColumn:
+            tableName: generated_product_data
+            columns:
+              - column:
+                  name: thumbnail_source
+                  type: VARCHAR(20)
+                  defaultValue: AUTO
+                  constraints:
+                    nullable: false

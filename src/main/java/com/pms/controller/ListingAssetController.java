@@ -13,6 +13,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 /**
  * Channel-cell auto-generated assets (FEATURE_2608_06 / 3b-2). ADMIN-only via the global
@@ -61,6 +62,21 @@ public class ListingAssetController {
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<GeneratedProductResponse>> clearDetailHtml(@PathVariable Long id) {
         return ResponseEntity.ok(ResponseDTO.success(listingAssetService.clearDetailHtml(id)));
+    }
+
+    @PostMapping(value = "/{id}/thumbnail", consumes = "multipart/form-data")
+    @Operation(summary = "Override a cell's thumbnail with an uploaded image (thumbnailSource=MANUAL_OVERRIDE)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<GeneratedProductResponse>> overrideThumbnail(
+            @PathVariable Long id, @RequestParam("file") MultipartFile file) {
+        return ResponseEntity.ok(ResponseDTO.success(listingAssetService.overrideThumbnail(id, file)));
+    }
+
+    @DeleteMapping("/{id}/thumbnail")
+    @Operation(summary = "Drop the thumbnail override (thumbnailSource=AUTO) and re-render")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<GeneratedProductResponse>> clearThumbnail(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(listingAssetService.clearThumbnail(id)));
     }
 
     @PatchMapping("/{id}/field-values")

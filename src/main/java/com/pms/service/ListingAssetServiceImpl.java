@@ -21,9 +21,11 @@ import com.pms.repository.ProductListingRepository;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -44,6 +46,7 @@ import java.util.Map;
  * {@code sellingPrice} is written back. {@link ThumbnailRenderer} / {@link ImageStorageService} /
  * {@link ProductImageLoader} are reused as-is.</p>
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -60,6 +63,7 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     private final ThumbnailRenderer thumbnailRenderer;
     private final ProductImageLoader productImageLoader;
     private final ImageStorageService imageStorageService;
+    private final ImageValidator imageValidator;
     private final PriceCalculator priceCalculator;
     private final DetailContentGenerator detailContentGenerator;
 
@@ -102,7 +106,8 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                         .detailHtml(html).source(GeneratedContentSource.MANUAL_OVERRIDE).generatedAt(now).build()
                 : GeneratedProductData.builder()
                         .productListing(cell)
-                        .detailHtml(html).source(GeneratedContentSource.MANUAL_OVERRIDE).generatedAt(now).build();
+                        .detailHtml(html).source(GeneratedContentSource.MANUAL_OVERRIDE)
+                        .thumbnailSource(GeneratedContentSource.AUTO).generatedAt(now).build();
         return toResponse(cell, generatedProductDataRepository.save(toSave));
     }
 
@@ -133,6 +138,58 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         return toResponse(cell, generatedProductDataRepository.save(toSave));
     }
 
+    @Override
+    @Transactional
+    public GeneratedProductResponse overrideThumbnail(Long listingId, MultipartFile file) {
+        ProductListing cell = requireScopedCell(listingId);
+        GeneratedProductData existing = generatedProductDataRepository.findByProductListingId(listingId)
+                .orElseThrow(() -> new ResourceNotFoundException("GeneratedProductData", listingId));
+        imageValidator.validate(file);
+
+        byte[] bytes;
+        try {
+            bytes = file.getBytes();
+        } catch (Exception e) {
+            throw new IllegalArgumentException("업로드 파일을 읽을 수 없습니다", e);
+        }
+        String contentType = StringUtils.hasText(file.getContentType()) ? file.getContentType() : "image/jpeg";
+        String url = imageStorageService.uploadBytes(
+                bytes, STORAGE_CATEGORY,
+                "listing_" + cell.getId() + "_" + System.currentTimeMillis() + ".jpg", contentType);
+
+        String oldUrl = existing.getThumbnailUrl();
+        GeneratedProductData saved = generatedProductDataRepository.save(existing.toBuilder()
+                .thumbnailUrl(url)
+                .thumbnailSource(GeneratedContentSource.MANUAL_OVERRIDE)
+                .generatedAt(LocalDateTime.now())
+                .build());
+        // Best-effort drop the superseded storage object after a successful upsert (detail HTML untouched).
+        if (oldUrl != null && !oldUrl.equals(url)) {
+            bestEffortDeleteStorage(oldUrl);
+        }
+        return toResponse(cell, saved);
+    }
+
+    @Override
+    @Transactional
+    public GeneratedProductResponse clearThumbnail(Long listingId) {
+        ProductListing cell = requireScopedCell(listingId);
+        GeneratedProductData existing = generatedProductDataRepository.findByProductListingId(listingId)
+                .orElseThrow(() -> new ResourceNotFoundException("GeneratedProductData", listingId));
+        String oldUrl = existing.getThumbnailUrl();
+        // Order matters: flip the source to AUTO and persist FIRST, so that regenerateAssets' own
+        // findByProductListingId re-reads AUTO and re-renders the thumbnail (bypassing the override guard).
+        // The AUTO render lives inside the regenerateAssets seam, so we cannot inline it like clearDetailHtml.
+        generatedProductDataRepository.save(existing.toBuilder()
+                .thumbnailSource(GeneratedContentSource.AUTO).build());
+        GeneratedProductData data = regenerateAssets(cell);
+        // Best-effort drop the superseded override image after the AUTO re-render produced a new url.
+        if (oldUrl != null && !oldUrl.equals(data.getThumbnailUrl())) {
+            bestEffortDeleteStorage(oldUrl);
+        }
+        return toResponse(cell, data);
+    }
+
     // ---------------------------------------------------------------- seam
 
     @Override
@@ -141,20 +198,35 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         List<ProductListingOption> options = productListingOptionRepository.findByProductListingId(cell.getId());
         Product firstProduct = firstBomProduct(options);
 
-        // 1. Thumbnail: master override photo, else the cell's first BOM product photo.
-        byte[] baseImage = resolveBaseImage(cell.getMasterProduct(), firstProduct);
-        // Channel template override (21): account's assigned thumbnail template ?? tenant default.
-        ThumbnailTemplate template = channelTemplateResolver.resolveThumbnail(cell);
-        Map<String, String> textBindings = buildTextBindings(template, cell);
-        byte[] jpeg = thumbnailRenderer.render(template, textBindings, Map.of("productImage", baseImage));
-        String thumbnailUrl = imageStorageService.uploadBytes(
-                jpeg, STORAGE_CATEGORY,
-                "listing_" + cell.getId() + "_" + System.currentTimeMillis() + ".jpg", "image/jpeg");
+        GeneratedProductData existing = generatedProductDataRepository
+                .findByProductListingId(cell.getId()).orElse(null);
+
+        // 1. Thumbnail — override guard (25): a MANUAL_OVERRIDE cell keeps its uploaded thumbnail (nothing
+        //    is re-rendered or re-uploaded); otherwise (new / AUTO) the renderer produces it. This mirrors
+        //    the detail-HTML guard below and is fully independent of it.
+        boolean thumbOverride = existing != null
+                && existing.getThumbnailSource() == GeneratedContentSource.MANUAL_OVERRIDE;
+        String thumbnailUrl;
+        GeneratedContentSource thumbSource;
+        Long templateId = existing != null ? existing.getTemplateId() : null;
+        if (thumbOverride) {
+            thumbnailUrl = existing.getThumbnailUrl();               // preserved, not re-rendered/uploaded
+            thumbSource = GeneratedContentSource.MANUAL_OVERRIDE;
+        } else {
+            byte[] baseImage = resolveBaseImage(cell.getMasterProduct(), firstProduct);
+            // Channel template override (21): account's assigned thumbnail template ?? tenant default.
+            ThumbnailTemplate template = channelTemplateResolver.resolveThumbnail(cell);
+            Map<String, String> textBindings = buildTextBindings(template, cell);
+            byte[] jpeg = thumbnailRenderer.render(template, textBindings, Map.of("productImage", baseImage));
+            thumbnailUrl = imageStorageService.uploadBytes(
+                    jpeg, STORAGE_CATEGORY,
+                    "listing_" + cell.getId() + "_" + System.currentTimeMillis() + ".jpg", "image/jpeg");
+            thumbSource = GeneratedContentSource.AUTO;
+            templateId = template.getId();
+        }
 
         // 2. Detail HTML — override guard: a MANUAL_OVERRIDE cell keeps its edited detailHtml (thumbnail
         //    and option prices are still regenerated); otherwise (new / AUTO) the generator produces it.
-        GeneratedProductData existing = generatedProductDataRepository
-                .findByProductListingId(cell.getId()).orElse(null);
         boolean override = existing != null && existing.getSource() == GeneratedContentSource.MANUAL_OVERRIDE;
         String detailHtml = override ? existing.getDetailHtml() : detailContentGenerator.generate(cell);
         GeneratedContentSource source = override ? GeneratedContentSource.MANUAL_OVERRIDE : GeneratedContentSource.AUTO;
@@ -173,7 +245,7 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         }
 
         // 4. Upsert the assets row.
-        return upsert(cell, existing, thumbnailUrl, detailHtml, template.getId(), source);
+        return upsert(cell, existing, thumbnailUrl, thumbSource, detailHtml, templateId, source);
     }
 
     // ---------------------------------------------------------------- helpers
@@ -181,6 +253,21 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     private ProductListing requireScopedCell(Long id) {
         return productListingRepository.findScopedById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("ProductListing", id));
+    }
+
+    /**
+     * Best-effort storage delete — never rolls back the transaction. {@code deleteImage} is graceful and
+     * branches on path vs URL, so passing the stored thumbnail value is compatible with Local and S3.
+     */
+    private void bestEffortDeleteStorage(String url) {
+        if (url == null || url.isBlank()) {
+            return;
+        }
+        try {
+            imageStorageService.deleteImage(url);
+        } catch (Exception e) {
+            log.warn("Best-effort listing thumbnail storage delete failed: {}", url, e);
+        }
     }
 
     /** Base thumbnail photo bytes: master override url ?? first BOM product image (400 if neither). */
@@ -253,16 +340,16 @@ public class ListingAssetServiceImpl implements ListingAssetService {
 
     /** Rebuild the pre-fetched existing assets row (same id) or insert a new one. */
     private GeneratedProductData upsert(ProductListing cell, GeneratedProductData existing,
-                                       String thumbnailUrl, String detailHtml, Long templateId,
-                                       GeneratedContentSource source) {
+                                       String thumbnailUrl, GeneratedContentSource thumbnailSource,
+                                       String detailHtml, Long templateId, GeneratedContentSource source) {
         LocalDateTime now = LocalDateTime.now();
         GeneratedProductData toSave = existing != null
                 ? existing.toBuilder()
-                        .thumbnailUrl(thumbnailUrl).detailHtml(detailHtml)
+                        .thumbnailUrl(thumbnailUrl).thumbnailSource(thumbnailSource).detailHtml(detailHtml)
                         .templateId(templateId).generatedAt(now).source(source).build()
                 : GeneratedProductData.builder()
                         .productListing(cell)
-                        .thumbnailUrl(thumbnailUrl).detailHtml(detailHtml)
+                        .thumbnailUrl(thumbnailUrl).thumbnailSource(thumbnailSource).detailHtml(detailHtml)
                         .templateId(templateId).generatedAt(now).source(source).build();
         return generatedProductDataRepository.save(toSave);
     }
@@ -280,6 +367,7 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                 .thumbnailUrl(data.getThumbnailUrl())
                 .detailHtml(data.getDetailHtml())
                 .source(data.getSource())
+                .thumbnailSource(data.getThumbnailSource())
                 .fieldValues(cell.getFieldValues() != null ? cell.getFieldValues() : Map.of())
                 .optionPrices(optionPrices)
                 .build();

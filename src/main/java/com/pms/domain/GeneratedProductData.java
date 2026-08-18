@@ -60,4 +60,15 @@ public class GeneratedProductData extends BaseEntity {
     @Enumerated(EnumType.STRING)
     @Column(name = "source", nullable = false, length = 20)
     private GeneratedContentSource source;
+
+    /**
+     * Origin of {@link #thumbnailUrl} (25). {@code AUTO} = renderer output (overwritten on regenerate);
+     * {@code MANUAL_OVERRIDE} = a user uploaded a thumbnail image (preserved on regenerate). Independent
+     * of {@link #source} (detail HTML) — the two origins are guarded separately. New rows default to
+     * {@code AUTO}; changeset 021 backfills existing rows.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "thumbnail_source", nullable = false, length = 20)
+    @Builder.Default
+    private GeneratedContentSource thumbnailSource = GeneratedContentSource.AUTO;
 }
