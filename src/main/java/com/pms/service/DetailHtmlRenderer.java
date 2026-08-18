@@ -63,7 +63,9 @@ public class DetailHtmlRenderer {
             return; // both blank → conditional-render skip (thumbnail convention)
         }
         html.append("<div style=\"").append(wrapperStyle(block)).append("\">")
-                .append("<p style=\"width:").append(width(block)).append("%;\">")
+                .append("<p style=\"width:").append(width(block)).append("%;")
+                .append(TextStyleSupport.toCss(block.getTextStyle()))   // registered, valid style overrides only
+                .append("\">")
                 .append(escape(value))
                 .append("</p></div>");
     }

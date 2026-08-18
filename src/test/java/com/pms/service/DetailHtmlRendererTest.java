@@ -109,4 +109,71 @@ class DetailHtmlRendererTest {
         assertThat(html).contains("&lt;b&gt;x&lt;/b&gt;");
         assertThat(html).doesNotContain("<b>x</b>");
     }
+
+    // --- text style (registry) — FEATURE_2608_06 / 19. Map ordering is nondeterministic → contains() only.
+
+    @Test
+    void text_fontSize_rendersPx() {
+        String html = renderer.render(template(styledText(Map.of("fontSize", "18"))),
+                Map.of("brandName", "x"), Map.of());
+        assertThat(html).contains("font-size:18px;");
+    }
+
+    @Test
+    void text_color_rendersHex() {
+        String html = renderer.render(template(styledText(Map.of("color", "#ff0000"))),
+                Map.of("brandName", "x"), Map.of());
+        assertThat(html).contains("color:#ff0000;");
+    }
+
+    @Test
+    void text_boldAndItalic_rendersWeightAndStyle() {
+        String html = renderer.render(template(styledText(Map.of("bold", "true", "italic", "true"))),
+                Map.of("brandName", "x"), Map.of());
+        assertThat(html).contains("font-weight:700;");
+        assertThat(html).contains("font-style:italic;");
+    }
+
+    @Test
+    void text_colorInjection_isDropped() { // MUST-KEEP security regression
+        String html = renderer.render(template(styledText(Map.of("color", "red;font-size:99px"))),
+                Map.of("brandName", "x"), Map.of());
+        assertThat(html).doesNotContain("color:red");
+        assertThat(html).doesNotContain("font-size:99px");
+    }
+
+    @Test
+    void text_fontSizeSuffixInjection_isDropped() { // MUST-KEEP: "18px;color:red" → parseInt fail → drop
+        String html = renderer.render(template(styledText(Map.of("fontSize", "18px;color:red"))),
+                Map.of("brandName", "x"), Map.of());
+        assertThat(html).doesNotContain("font-size:");
+        assertThat(html).doesNotContain("color:red");
+    }
+
+    @Test
+    void text_unknownKey_isIgnored() {
+        String html = renderer.render(template(styledText(Map.of("foo", "bar"))),
+                Map.of("brandName", "x"), Map.of());
+        assertThat(html).doesNotContain("foo");
+        assertThat(html).doesNotContain("bar");
+    }
+
+    @Test
+    void text_nullStyleValue_isSkippedWithoutNpe() {
+        Map<String, String> style = new java.util.HashMap<>();
+        style.put("color", null);
+        String html = renderer.render(template(styledText(style)), Map.of("brandName", "x"), Map.of());
+        assertThat(html).doesNotContain("color:");
+    }
+
+    @Test
+    void text_nullStyle_rendersSameAsBefore() {
+        DetailBlock block = DetailBlock.builder().type("text").bind("brandName").build();
+        String html = renderer.render(template(block), Map.of("brandName", "x"), Map.of());
+        assertThat(html).contains("<p style=\"width:100%;\">");
+    }
+
+    private DetailBlock styledText(Map<String, String> style) {
+        return DetailBlock.builder().type("text").bind("brandName").textStyle(style).build();
+    }
 }

@@ -53,6 +53,9 @@ public class DetailBlock {
     /** Horizontal alignment: {@code left} | {@code center} | {@code right}. Null → left. */
     private String align;
 
+    /** text = optional inline style overrides (key → value); see TextStyleSupport registry. Other types → null. */
+    private java.util.Map<String, String> textStyle;
+
     @JsonPOJOBuilder(withPrefix = "")
     public static class DetailBlockBuilder {
     }
