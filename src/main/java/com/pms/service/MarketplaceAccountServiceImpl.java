@@ -1,12 +1,16 @@
 package com.pms.service;
 
+import com.pms.domain.DetailTemplate;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Seller;
+import com.pms.domain.ThumbnailTemplate;
 import com.pms.dto.request.MarketplaceAccountRequest;
 import com.pms.dto.response.MarketplaceAccountResponse;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.DetailTemplateRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.SellerRepository;
+import com.pms.repository.ThumbnailTemplateRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +33,8 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
 
     private final MarketplaceAccountRepository repository;
     private final SellerRepository sellerRepository;
+    private final ThumbnailTemplateRepository thumbnailTemplateRepository;
+    private final DetailTemplateRepository detailTemplateRepository;
 
     @Override
     @Transactional
@@ -49,6 +55,9 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                 .accessKey(req.getAccessKey())
                 .secretKey(req.getSecretKey())
                 .isActive(req.getIsActive() != null ? req.getIsActive() : true)
+                // Channel template override (21): validate id when provided (404), else null = tenant default.
+                .thumbnailTemplate(resolveThumbnailTemplate(req.getThumbnailTemplateId()))
+                .detailTemplate(resolveDetailTemplate(req.getDetailTemplateId()))
                 .build();
 
         return mapToResponse(repository.save(account));
@@ -82,6 +91,14 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                 ? req.getSecretKey()
                 : existing.getSecretKey();
 
+        // Template override: null keeps existing (secretKey convention), a value re-validates (404) and replaces.
+        ThumbnailTemplate thumbnailTemplate = req.getThumbnailTemplateId() != null
+                ? resolveThumbnailTemplate(req.getThumbnailTemplateId())
+                : existing.getThumbnailTemplate();
+        DetailTemplate detailTemplate = req.getDetailTemplateId() != null
+                ? resolveDetailTemplate(req.getDetailTemplateId())
+                : existing.getDetailTemplate();
+
         MarketplaceAccount updated = existing.toBuilder()
                 .seller(seller)
                 .platform(req.getPlatform())
@@ -90,6 +107,8 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                 .accessKey(req.getAccessKey())
                 .secretKey(secretKey)
                 .isActive(req.getIsActive() != null ? req.getIsActive() : existing.getIsActive())
+                .thumbnailTemplate(thumbnailTemplate)
+                .detailTemplate(detailTemplate)
                 .build();
 
         return mapToResponse(repository.save(updated));
@@ -106,6 +125,24 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                 .orElseThrow(() -> new ResourceNotFoundException("MarketplaceAccount", id));
     }
 
+    /** Load the assigned thumbnail template (404 when the id does not exist), or null when unspecified. */
+    private ThumbnailTemplate resolveThumbnailTemplate(Long templateId) {
+        if (templateId == null) {
+            return null;
+        }
+        return thumbnailTemplateRepository.findById(templateId)
+                .orElseThrow(() -> new ResourceNotFoundException("ThumbnailTemplate", templateId));
+    }
+
+    /** Load the assigned detail template (404 when the id does not exist), or null when unspecified. */
+    private DetailTemplate resolveDetailTemplate(Long templateId) {
+        if (templateId == null) {
+            return null;
+        }
+        return detailTemplateRepository.findById(templateId)
+                .orElseThrow(() -> new ResourceNotFoundException("DetailTemplate", templateId));
+    }
+
     private MarketplaceAccountResponse mapToResponse(MarketplaceAccount a) {
         // secretKey 제외하고 매핑 (민감 자격증명 노출 금지)
         return MarketplaceAccountResponse.builder()
@@ -116,6 +153,9 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                 .vendorId(a.getVendorId())
                 .accessKey(a.getAccessKey())
                 .isActive(a.getIsActive())
+                // id only (LAZY getId reads the FK without a query); template display name resolved on the front.
+                .thumbnailTemplateId(a.getThumbnailTemplate() != null ? a.getThumbnailTemplate().getId() : null)
+                .detailTemplateId(a.getDetailTemplate() != null ? a.getDetailTemplate().getId() : null)
                 .createdAt(a.getCreatedAt())
                 .updatedAt(a.getUpdatedAt())
                 .build();

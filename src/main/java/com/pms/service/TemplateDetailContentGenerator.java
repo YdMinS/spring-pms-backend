@@ -7,7 +7,6 @@ import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
-import com.pms.repository.DetailTemplateRepository;
 import com.pms.repository.MasterProductImageRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
@@ -34,7 +33,7 @@ import java.util.Map;
 @Transactional(readOnly = true)
 public class TemplateDetailContentGenerator implements DetailContentGenerator {
 
-    private final DetailTemplateRepository detailTemplateRepository;
+    private final ChannelTemplateResolver channelTemplateResolver;
     private final MasterProductImageRepository masterProductImageRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
     private final ProductListingProductRepository productListingProductRepository;
@@ -46,10 +45,9 @@ public class TemplateDetailContentGenerator implements DetailContentGenerator {
         if (master == null) {
             return ""; // backfill-transition guard (nullable master), matching the stub's leniency
         }
-        DetailTemplate template = detailTemplateRepository.findByIsDefaultTrueAndActiveTrue().orElse(null);
-        if (template == null) {
-            return ""; // the seeder guarantees a default, but be defensive
-        }
+        // Channel template override (21): account's assigned detail template ?? tenant default
+        // (resolver throws if neither exists, so the old null guard is removed).
+        DetailTemplate template = channelTemplateResolver.resolveDetail(cell);
         Map<String, String> textBindings = resolveTextBindings(cell);
         Map<String, List<String>> zoneImageUrls = resolveZoneImageUrls(master.getId());
         return detailHtmlRenderer.render(template, textBindings, zoneImageUrls);

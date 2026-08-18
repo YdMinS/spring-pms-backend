@@ -37,3 +37,7 @@ databaseChangeLog:
       file: db/changelog/changes/018-drop-products-name.yaml
   - include:
       file: db/changelog/changes/019-master-channel-config.yaml
+  - include:
+      file: db/changelog/changes/020-account-template.yaml
+  - include:
+      file: db/changelog/changes/021-thumbnail-source.yaml

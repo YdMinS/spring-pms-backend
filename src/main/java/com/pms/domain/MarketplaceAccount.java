@@ -55,4 +55,15 @@ public class MarketplaceAccount extends BaseEntity {
 
     @Column(name = "is_active", nullable = false)
     private Boolean isActive;
+
+    // Channel template override (FEATURE_2608_06 / 21): thumbnail/detail template chosen per
+    // seller×platform. Nullable — when null the asset generation resolver falls back to the tenant
+    // default template ({@code findByIsDefaultTrueAndActiveTrue}). Resolved via ChannelTemplateResolver.
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "thumbnail_template_id", nullable = true)
+    private ThumbnailTemplate thumbnailTemplate;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "detail_template_id", nullable = true)
+    private DetailTemplate detailTemplate;
 }

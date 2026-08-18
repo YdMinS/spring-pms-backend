@@ -4,6 +4,7 @@ import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ProductListing;
 import com.pms.dto.response.DetailPreviewResponse;
 import com.pms.dto.response.GeneratedProductResponse;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Map;
 
@@ -38,6 +39,19 @@ public interface ListingAssetService {
      * override guard is unchanged (a MANUAL_OVERRIDE cell keeps its edited detail HTML).
      */
     GeneratedProductResponse updateFieldValues(Long listingId, Map<String, String> fieldValues);
+
+    /**
+     * Override the cell's thumbnail with an uploaded image (thumbnailSource=MANUAL_OVERRIDE) for a
+     * tenant-scoped cell. 404 if the cell or its generated assets are absent (the cell must be generated
+     * first via the matrix). Detail HTML and its source are untouched (the two origins are independent).
+     */
+    GeneratedProductResponse overrideThumbnail(Long listingId, MultipartFile file);
+
+    /**
+     * Drop the thumbnail override (thumbnailSource=AUTO) and re-render for a tenant-scoped cell. 404 if the
+     * cell or its generated assets are absent. Detail HTML and its source are untouched.
+     */
+    GeneratedProductResponse clearThumbnail(Long listingId);
 
     /**
      * Seam: (re)generate the thumbnail + detail HTML + per-option selling prices for {@code cell} and
