@@ -122,6 +122,15 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
                         + "WHERE TABLE_NAME = 'MASTER_PRODUCT' AND COLUMN_NAME = 'DETAIL_SOURCE'",
                 Integer.class)).isZero();
+
+        // changeset 023: master_product.tags + product_listing.tags columns + product_listing_tag_revision
+        // table materialized (a successful count over each proves both columns and the table).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM master_product WHERE tags IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing WHERE tags IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing_tag_revision WHERE tags IS NULL", Integer.class)).isZero();
     }
 
     @Test

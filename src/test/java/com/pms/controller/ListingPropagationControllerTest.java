@@ -7,6 +7,7 @@ import com.pms.domain.ProductListing;
 import com.pms.domain.Seller;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingRepository;
+import com.pms.repository.ProductListingTagRevisionRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.service.ImageStorageService;
 import com.pms.service.ProductImageLoader;
@@ -33,6 +34,7 @@ class ListingPropagationControllerTest extends BaseIntegrationTest {
     @Autowired private SellerRepository sellerRepository;
     @Autowired private MasterProductRepository masterProductRepository;
     @Autowired private ProductListingRepository productListingRepository;
+    @Autowired private ProductListingTagRevisionRepository productListingTagRevisionRepository;
 
     @MockBean private CoupangApiClient coupangApiClient;
     @MockBean private ThumbnailRenderer thumbnailRenderer;
@@ -58,6 +60,8 @@ class ListingPropagationControllerTest extends BaseIntegrationTest {
     /** Delete the listing graph before base cleanup (keeps other tenant-owned FKs clean). */
     @AfterEach
     void cleanupListingGraph() {
+        // A successful push appends a ProductListingTagRevision (33) — delete it before the listing (FK).
+        productListingTagRevisionRepository.deleteAll();
         productListingRepository.deleteAll();
     }
 

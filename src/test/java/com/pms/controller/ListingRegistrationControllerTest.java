@@ -21,6 +21,7 @@ import com.pms.repository.MasterProductCategoryRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
+import com.pms.repository.ProductListingTagRevisionRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import org.junit.jupiter.api.AfterEach;
@@ -54,6 +55,7 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
     @Autowired private GeneratedProductDataRepository generatedProductDataRepository;
+    @Autowired private ProductListingTagRevisionRepository productListingTagRevisionRepository;
     @Autowired private MarketplaceAccountRepository marketplaceAccountRepository;
 
     @MockBean private CoupangApiClient coupangApiClient;
@@ -100,6 +102,8 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
     @AfterEach
     void cleanupListingGraph() {
         generatedProductDataRepository.deleteAll();
+        // A successful register appends a ProductListingTagRevision (33) — delete it before the listing (FK).
+        productListingTagRevisionRepository.deleteAll();
         productListingOptionRepository.deleteAll();
         productListingRepository.deleteAll();
     }

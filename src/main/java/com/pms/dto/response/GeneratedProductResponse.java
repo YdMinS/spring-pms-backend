@@ -25,6 +25,8 @@ public class GeneratedProductResponse {
     private GeneratedContentSource thumbnailSource;
     /** This cell's channel-level field-value overrides (FEATURE_2608_06 / 12); null override → empty map. */
     private Map<String, String> fieldValues;
+    /** This cell's channel raw tags (33); null → empty list. */
+    private List<String> tags;
     private List<OptionPrice> optionPrices;
 
     @Getter

@@ -39,6 +39,7 @@ class ListingPropagationServiceTest {
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock private ListingChannelResolver resolver;
     @Mock private ListingChannel adapter;
+    @Mock private TagMergeService tagMergeService;
     @InjectMocks private ListingPropagationServiceImpl service;
 
     private static final Long SELLER_ID = 7L;

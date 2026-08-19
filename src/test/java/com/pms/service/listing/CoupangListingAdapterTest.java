@@ -36,6 +36,7 @@ class CoupangListingAdapterTest {
     @Mock private com.pms.service.coupang.CoupangApiClient client;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private MasterChannelConfigService masterChannelConfigService;
+    @Mock private TagMergeService tagMergeService;
     @org.mockito.Spy private ObjectMapper objectMapper = new ObjectMapper();
     @InjectMocks private CoupangListingAdapter adapter;
 

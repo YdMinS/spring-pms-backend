@@ -6,6 +6,7 @@ import com.pms.dto.request.MasterImageReorderRequest;
 import com.pms.dto.request.MasterOptionRequest;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
+import com.pms.dto.request.TagsRequest;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterOptionResponse;
@@ -76,6 +77,14 @@ public class MasterProductController {
     public ResponseEntity<ResponseDTO<MasterProductResponse>> updateMasterProduct(
             @PathVariable Long id, @Valid @RequestBody MasterProductUpdateRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(masterProductService.updateMasterProduct(id, request)));
+    }
+
+    @PatchMapping("/{id}/tags")
+    @Operation(summary = "Replace the master product's tag pool (33; deduped, empty clears)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<MasterProductResponse>> updateTags(
+            @PathVariable Long id, @Valid @RequestBody TagsRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(masterProductService.updateTags(id, request.getTags())));
     }
 
     @DeleteMapping("/{id}")

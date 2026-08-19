@@ -43,3 +43,5 @@ databaseChangeLog:
       file: db/changelog/changes/021-thumbnail-source.yaml
   - include:
       file: db/changelog/changes/022-drop-master-detail-source.yaml
+  - include:
+      file: db/changelog/changes/023-product-tags.yaml

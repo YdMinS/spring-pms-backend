@@ -298,6 +298,22 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.status").value("FAILURE"));
     }
 
+    // ---- tags (33): channel raw tags reflected on the cell (auth covered by the global /api/admin/** handler) ----
+
+    @Test
+    void updateTags_adminToken_returns200Deduped() throws Exception {
+        // Duplicate "인기" collapses (order-preserving dedup); no regenerate needed (cell not yet generated).
+        mockMvc.perform(patch(PATH + "/" + listingId + "/tags")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content("{\"tags\":[\"인기\",\"인기\",\"세일\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.productListingId").value(listingId))
+                .andExpect(jsonPath("$.data.tags.length()").value(2))
+                .andExpect(jsonPath("$.data.tags[0]").value("인기"))
+                .andExpect(jsonPath("$.data.tags[1]").value("세일"));
+    }
+
     // ---- thumbnail override / clear (25): authority + happy path + empty file 400 ----
 
     /** Valid minimal JPEG (magic bytes FF D8 FF...) so the real ImageValidator passes. */

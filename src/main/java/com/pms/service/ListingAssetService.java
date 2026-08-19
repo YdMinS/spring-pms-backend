@@ -7,6 +7,7 @@ import com.pms.dto.response.DetailTemplateResponse;
 import com.pms.dto.response.GeneratedProductResponse;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -48,6 +49,13 @@ public interface ListingAssetService {
      * override guard is unchanged (a MANUAL_OVERRIDE cell keeps its edited detail HTML).
      */
     GeneratedProductResponse updateFieldValues(Long listingId, Map<String, String> fieldValues);
+
+    /**
+     * Replace a tenant-scoped cell's raw channel tags (33; 404 if absent). The list is order-preserving
+     * deduped; an empty list clears them. No regeneration/push — the merged snapshot is recorded at push
+     * time. Returns the cell's current generated view (asset fields null if not yet generated).
+     */
+    GeneratedProductResponse updateTags(Long listingId, List<String> tags);
 
     /**
      * Override the cell's thumbnail with an uploaded image (thumbnailSource=MANUAL_OVERRIDE) for a

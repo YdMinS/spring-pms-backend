@@ -1,11 +1,13 @@
 package com.pms.domain;
 
 import com.pms.domain.converter.MapStringConverter;
+import com.pms.domain.converter.StringListConverter;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.TenantId;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -181,4 +183,17 @@ public class ProductListing {
     @Column(name = "field_values", columnDefinition = "TEXT")
     @Schema(description = "Per-channel text field-value overrides")
     private Map<String, String> fieldValues;
+
+    /**
+     * Per-channel raw tags (33): this cell's own tags, ordered and deduped on save (JSON TEXT, H2/MySQL
+     * portable). At push time these come <b>first</b>, then the master's {@code tags} are appended (skipping
+     * duplicates) and truncated to the platform cap — see {@code TagMergeService.resolveTags}.
+     *
+     * <p>⚠️ {@code null} = "no channel tags" (NOT a {@code @Builder.Default} empty list): the legacy CRUD/create
+     * path and pre-existing rows leave it unset (nullable, no live backfill). See changeset 023.</p>
+     */
+    @Convert(converter = StringListConverter.class)
+    @Column(columnDefinition = "TEXT")
+    @Schema(description = "Per-channel raw tags")
+    private List<String> tags;
 }

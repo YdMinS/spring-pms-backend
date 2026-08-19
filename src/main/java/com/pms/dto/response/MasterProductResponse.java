@@ -31,6 +31,9 @@ public class MasterProductResponse {
     @Schema(description = "UI input field values (key -> value)")
     private Map<String, String> fieldValues;
 
+    @Schema(description = "Master tag pool (33; deduped, folded into channel cells at push time)")
+    private List<String> tags;
+
     @Schema(description = "Default delivery (CarrierRate) ID for the price engine", nullable = true)
     private Long defaultDeliveryId;
 

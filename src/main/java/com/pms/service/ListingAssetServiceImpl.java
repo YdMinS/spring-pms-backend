@@ -68,6 +68,7 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     private final ImageValidator imageValidator;
     private final PriceCalculator priceCalculator;
     private final DetailContentGenerator detailContentGenerator;
+    private final com.pms.service.listing.TagMergeService tagMergeService;
 
     // ---------------------------------------------------------------- endpoints
 
@@ -134,6 +135,18 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         // An empty map is stored as-is (override cleared); blank values are naturally skipped at render time.
         ProductListing updated = productListingRepository.save(cell.toBuilder().fieldValues(fieldValues).build());
         GeneratedProductData data = regenerateAssets(updated);
+        return toResponse(updated, data);
+    }
+
+    @Override
+    @Transactional
+    public GeneratedProductResponse updateTags(Long listingId, List<String> tags) {
+        ProductListing cell = requireScopedCell(listingId);
+        // Persist deduped raw channel tags (empty clears). No regenerate/push here — the merged snapshot is
+        // recorded at push time. The response reuses the generated view (asset fields null if not generated).
+        ProductListing updated = productListingRepository.save(
+                cell.toBuilder().tags(tagMergeService.dedup(tags)).build());
+        GeneratedProductData data = generatedProductDataRepository.findByProductListingId(listingId).orElse(null);
         return toResponse(updated, data);
     }
 
@@ -368,6 +381,7 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         return generatedProductDataRepository.save(toSave);
     }
 
+    /** Cell view; {@code data} may be null (e.g. the tags endpoint on a not-yet-generated cell → asset fields null). */
     private GeneratedProductResponse toResponse(ProductListing cell, GeneratedProductData data) {
         List<GeneratedProductResponse.OptionPrice> optionPrices = productListingOptionRepository
                 .findByProductListingId(cell.getId()).stream()
@@ -378,11 +392,12 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                 .toList();
         return GeneratedProductResponse.builder()
                 .productListingId(cell.getId())
-                .thumbnailUrl(data.getThumbnailUrl())
-                .detailHtml(data.getDetailHtml())
-                .source(data.getSource())
-                .thumbnailSource(data.getThumbnailSource())
+                .thumbnailUrl(data != null ? data.getThumbnailUrl() : null)
+                .detailHtml(data != null ? data.getDetailHtml() : null)
+                .source(data != null ? data.getSource() : null)
+                .thumbnailSource(data != null ? data.getThumbnailSource() : null)
                 .fieldValues(cell.getFieldValues() != null ? cell.getFieldValues() : Map.of())
+                .tags(cell.getTags() != null ? cell.getTags() : List.of())
                 .optionPrices(optionPrices)
                 .build();
     }
