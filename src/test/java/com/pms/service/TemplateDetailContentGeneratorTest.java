@@ -2,13 +2,14 @@ package com.pms.service;
 
 import com.pms.domain.DetailBlock;
 import com.pms.domain.DetailTemplate;
+import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductImage;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
-import com.pms.repository.MasterProductImageRepository;
+import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import org.junit.jupiter.api.Test;
@@ -37,7 +38,7 @@ import static org.mockito.Mockito.verify;
 class TemplateDetailContentGeneratorTest {
 
     @Mock private ChannelTemplateResolver channelTemplateResolver;
-    @Mock private MasterProductImageRepository masterProductImageRepository;
+    @Mock private MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private ProductListingProductRepository productListingProductRepository;
     @Mock private DetailHtmlRenderer detailHtmlRenderer;
@@ -62,10 +63,12 @@ class TemplateDetailContentGeneratorTest {
         ProductListing cell = ProductListing.builder().id(CELL_ID).masterProduct(master).build();
 
         given(channelTemplateResolver.resolveDetail(any())).willReturn(template());
-        given(masterProductImageRepository.findByMasterProductIdOrderByZoneIdAscSortOrderAsc(MASTER_ID))
+        given(masterImageZoneAssignmentRepository.findByImage_MasterProductIdOrderByZoneIdAscSortOrderAsc(MASTER_ID))
                 .willReturn(List.of(
-                        MasterProductImage.builder().zoneId("product_photos").sortOrder(0).imageUrl("u0.jpg").build(),
-                        MasterProductImage.builder().zoneId("product_photos").sortOrder(1).imageUrl("u1.jpg").build()));
+                        assignment("product_photos", 0, "u0.jpg"),
+                        assignment("product_photos", 1, "u1.jpg"),
+                        // A __source__ mapping (cover photo) must be excluded from detail zones.
+                        assignment(MasterImageZoneAssignment.SOURCE_ZONE, 0, "cover.jpg")));
         given(detailHtmlRenderer.render(any(), any(), any())).willReturn("<html/>");
 
         String result = generator.generate(cell);
@@ -79,6 +82,16 @@ class TemplateDetailContentGeneratorTest {
         verify(detailHtmlRenderer, times(1)).render(any(), textCaptor.capture(), zoneCaptor.capture());
         assertThat(textCaptor.getValue()).containsEntry("productName", "P");
         assertThat(zoneCaptor.getValue().get("product_photos")).containsExactly("u0.jpg", "u1.jpg");
+        // __source__ (cover photo) is not a detail zone.
+        assertThat(zoneCaptor.getValue()).doesNotContainKey(MasterImageZoneAssignment.SOURCE_ZONE);
+    }
+
+    /** A mapping carrying a pool image with the given URL. */
+    private MasterImageZoneAssignment assignment(String zoneId, int sortOrder, String url) {
+        return MasterImageZoneAssignment.builder()
+                .zoneId(zoneId).sortOrder(sortOrder)
+                .image(MasterProductImage.builder().imageUrl(url).build())
+                .build();
     }
 
     @Test
@@ -87,7 +100,7 @@ class TemplateDetailContentGeneratorTest {
         ProductListing cell = ProductListing.builder().id(CELL_ID).masterProduct(master).build();
 
         given(channelTemplateResolver.resolveDetail(any())).willReturn(template());
-        given(masterProductImageRepository.findByMasterProductIdOrderByZoneIdAscSortOrderAsc(MASTER_ID))
+        given(masterImageZoneAssignmentRepository.findByImage_MasterProductIdOrderByZoneIdAscSortOrderAsc(MASTER_ID))
                 .willReturn(List.of());
         given(productListingOptionRepository.findByProductListingId(CELL_ID))
                 .willReturn(List.of(ProductListingOption.builder().id(OPTION_ID).optionName("기본").build()));

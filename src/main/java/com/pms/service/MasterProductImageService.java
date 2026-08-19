@@ -6,24 +6,29 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.List;
 
 /**
- * Manages a {@link com.pms.domain.MasterProduct}'s input images (zone members) — the source images for
- * detail-page {@code imageZone} blocks (FEATURE_2608_06 / Step 2-1).
+ * Manages a {@link com.pms.domain.MasterProduct}'s image pool and its field mappings (FEATURE_2608_06 / 37).
+ *
+ * <p>Every image is uploaded into the pool first ({@link #uploadToPool}); it is then mapped — by drag/select
+ * — onto detail zones ({@link #setZoneImages}) and/or the cover photo ({@link #setSourceImage}). One pool
+ * image can be reused across several fields (M:N via {@code MasterImageZoneAssignment}).</p>
  *
  * <p>All operations resolve the master tenant-scoped first ({@code MasterProductRepository.findScopedById},
- * cross-tenant/absent → 404). Images live in S3 (DB stores only the URL). Immutability is preserved via
- * {@code toBuilder} on reorder.</p>
+ * cross-tenant/absent → 404). Images live in S3 (DB stores only the URL).</p>
  */
 public interface MasterProductImageService {
 
-    /** Upload one image into a zone; appended after the current max sortOrder. */
-    MasterProductImageResponse upload(Long masterId, String zoneId, MultipartFile file);
+    /** Upload one image into the master's pool (no zone binding); appended after the current max sortOrder. */
+    MasterProductImageResponse uploadToPool(Long masterId, MultipartFile file);
 
-    /** All images of a master, ordered by zone then position. */
-    List<MasterProductImageResponse> list(Long masterId);
+    /** All pool images with their mapping state (assignedZones + isSource). */
+    List<MasterProductImageResponse> listPool(Long masterId);
 
-    /** Reorder a zone's images to match {@code imageIds} exactly (set + size must match). */
-    List<MasterProductImageResponse> reorder(Long masterId, String zoneId, List<Long> imageIds);
+    /** Replace a detail zone's mapped images with exactly {@code imageIds} (ordered; empty clears the zone). */
+    List<MasterProductImageResponse> setZoneImages(Long masterId, String zoneId, List<Long> imageIds);
 
-    /** Delete one image belonging to the master (best-effort storage delete). */
-    void delete(Long masterId, Long imageId);
+    /** Set the cover photo to {@code imageId} (single mapping), or clear it when {@code imageId} is null. */
+    MasterProductImageResponse setSourceImage(Long masterId, Long imageId);
+
+    /** Remove a pool image: clear its mappings, delete the row, then best-effort delete storage. */
+    void removeFromPool(Long masterId, Long imageId);
 }

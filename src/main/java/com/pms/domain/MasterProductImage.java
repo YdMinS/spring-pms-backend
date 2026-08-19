@@ -4,16 +4,18 @@ import jakarta.persistence.*;
 import lombok.*;
 
 /**
- * An input image owned by a {@link MasterProduct}, grouped into a named zone (FEATURE_2608_06 / Step 2-1).
+ * A pool image owned by a {@link MasterProduct} (FEATURE_2608_06 / Step 2-1 → 37).
  *
- * <p>Zones ({@code zoneId}, e.g. {@code product_photos} / {@code detail_photos}) are the source images
- * for {@link DetailBlock} {@code imageZone} blocks: within a zone, images render in {@code sortOrder}
- * order. The master owns them so a re-generation / propagation reuses the same source set.</p>
+ * <p>⚠️ As of 37 this is a pure <b>pool asset</b> — it is no longer bound to a single zone at upload time.
+ * Zone / cover-photo membership lives in {@link MasterImageZoneAssignment} (M:N), so one pool image can be
+ * reused across several zones and the cover photo. {@code sortOrder} is now the position within the pool.</p>
+ *
+ * <p>⚠️ {@code zoneId} is kept nullable during the transition (backfilled into assignments, then written no
+ * more — see changeset 024). Do NOT set it on new pool uploads; physical column removal is a follow-up.</p>
  *
  * <p>⚠️ No {@code @TenantId} — isolation flows through the parent {@link MasterProduct} (repositories
  * expose only master-scoped finders, no tenant-less {@code findAll}); same convention as
- * {@link MasterProductComponent} / {@link GeneratedProductData}. Immutable (no {@code @Setter}) —
- * reorder rebuilds via {@code toBuilder}.</p>
+ * {@link MasterProductComponent} / {@link GeneratedProductData}. Immutable (no {@code @Setter}).</p>
  */
 @Entity
 @Table(name = "master_product_image")
@@ -31,11 +33,14 @@ public class MasterProductImage extends BaseEntity {
     @JoinColumn(name = "master_product_id", nullable = false)
     private MasterProduct masterProduct;
 
-    /** Logical group, e.g. {@code product_photos}, {@code detail_photos}. */
-    @Column(name = "zone_id", nullable = false, length = 100)
+    /**
+     * Legacy zone binding — transition-only, nullable (37). New pool uploads leave this null; mapping now
+     * lives in {@link MasterImageZoneAssignment}. Do NOT write this on new pool images.
+     */
+    @Column(name = "zone_id", nullable = true, length = 100)
     private String zoneId;
 
-    /** Position within the zone (0-based, gaps allowed until reorder). */
+    /** Position within the master's image pool (0-based, gaps allowed after a delete). */
     @Column(name = "sort_order", nullable = false)
     private Integer sortOrder;
 

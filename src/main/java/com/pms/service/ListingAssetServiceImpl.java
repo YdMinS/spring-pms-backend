@@ -15,7 +15,9 @@ import com.pms.dto.response.DetailPreviewResponse;
 import com.pms.dto.response.DetailTemplateResponse;
 import com.pms.dto.response.GeneratedProductResponse;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.repository.GeneratedProductDataRepository;
+import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
@@ -60,6 +62,7 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     private final ProductListingOptionRepository productListingOptionRepository;
     private final ProductListingProductRepository productListingProductRepository;
     private final MasterProductOptionRepository masterProductOptionRepository;
+    private final MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     private final GeneratedProductDataRepository generatedProductDataRepository;
     private final ChannelTemplateResolver channelTemplateResolver;
     private final ThumbnailRenderer thumbnailRenderer;
@@ -305,10 +308,22 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         }
     }
 
-    /** Base thumbnail photo bytes: master override url ?? first BOM product image (400 if neither). */
+    /**
+     * Base thumbnail photo bytes — single source-resolution point (37). Priority:
+     * {@code __source__} mapped pool image ?? {@code master.sourceImageUrl} (legacy override) ?? first BOM
+     * product image (400 if none). The cover-photo mapping wins so a pool image can serve as the cover.
+     */
     private byte[] resolveBaseImage(MasterProduct master, Product firstProduct) {
-        if (master != null && StringUtils.hasText(master.getSourceImageUrl())) {
-            return productImageLoader.loadUrl(master.getSourceImageUrl());
+        if (master != null) {
+            List<MasterImageZoneAssignment> cover = masterImageZoneAssignmentRepository
+                    .findByImage_MasterProductIdAndZoneIdOrderBySortOrderAsc(
+                            master.getId(), MasterImageZoneAssignment.SOURCE_ZONE);
+            if (!cover.isEmpty()) {
+                return productImageLoader.loadUrl(cover.get(0).getImage().getImageUrl());
+            }
+            if (StringUtils.hasText(master.getSourceImageUrl())) {
+                return productImageLoader.loadUrl(master.getSourceImageUrl());
+            }
         }
         if (firstProduct == null) {
             throw new IllegalArgumentException("셀에 등록상품이 없습니다");

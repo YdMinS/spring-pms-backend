@@ -2,10 +2,11 @@ package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.MasterCategoryRequest;
-import com.pms.dto.request.MasterImageReorderRequest;
 import com.pms.dto.request.MasterOptionRequest;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
+import com.pms.dto.request.MasterSourceImageRequest;
+import com.pms.dto.request.MasterZoneImagesRequest;
 import com.pms.dto.request.TagsRequest;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.MasterCategoryResponse;
@@ -153,39 +154,51 @@ public class MasterProductController {
         return ResponseEntity.noContent().build();
     }
 
-    // ---------------------------------------------------------------- input images (Step 2-1)
+    // ---------------------------------------------------------------- image pool + field mapping (37)
 
     @PostMapping(value = "/{id}/images", consumes = "multipart/form-data")
-    @Operation(summary = "Upload a master input image into a zone")
+    @Operation(summary = "Upload an image into the master's pool")
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<ResponseDTO<MasterProductImageResponse>> uploadImageToZone(
-            @PathVariable Long id, @RequestParam("file") MultipartFile file,
-            @RequestParam("zoneId") String zoneId) {
-        MasterProductImageResponse response = masterProductImageService.upload(id, zoneId, file);
+    public ResponseEntity<ResponseDTO<MasterProductImageResponse>> uploadToPool(
+            @PathVariable Long id, @RequestParam("file") MultipartFile file) {
+        MasterProductImageResponse response = masterProductImageService.uploadToPool(id, file);
         return ResponseEntity.status(HttpStatus.CREATED).body(ResponseDTO.success(response));
     }
 
     @GetMapping("/{id}/images")
-    @Operation(summary = "List master input images (by zone then position)")
+    @Operation(summary = "List the master's pool images (with mapping state)")
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<ResponseDTO<List<MasterProductImageResponse>>> listImages(@PathVariable Long id) {
-        return ResponseEntity.ok(ResponseDTO.success(masterProductImageService.list(id)));
-    }
-
-    @PutMapping("/{id}/images/reorder")
-    @Operation(summary = "Reorder a zone's images")
-    @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<ResponseDTO<List<MasterProductImageResponse>>> reorderImages(
-            @PathVariable Long id, @Valid @RequestBody MasterImageReorderRequest request) {
-        return ResponseEntity.ok(ResponseDTO.success(
-                masterProductImageService.reorder(id, request.getZoneId(), request.getImageIds())));
+    public ResponseEntity<ResponseDTO<List<MasterProductImageResponse>>> listPool(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(masterProductImageService.listPool(id)));
     }
 
     @DeleteMapping("/{id}/images/{imageId}")
-    @Operation(summary = "Delete a master input image")
+    @Operation(summary = "Remove a pool image (and its mappings)")
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<Void> deleteImage(@PathVariable Long id, @PathVariable Long imageId) {
-        masterProductImageService.delete(id, imageId);
+    public ResponseEntity<Void> removeFromPool(@PathVariable Long id, @PathVariable Long imageId) {
+        masterProductImageService.removeFromPool(id, imageId);
         return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/{id}/zones/{zoneId}/images")
+    @Operation(summary = "Set a detail zone's mapped images (ordered; empty clears)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<List<MasterProductImageResponse>>> setZoneImages(
+            @PathVariable Long id, @PathVariable String zoneId,
+            @Valid @RequestBody MasterZoneImagesRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                masterProductImageService.setZoneImages(id, zoneId, request.getImageIds())));
+    }
+
+    @PutMapping("/{id}/source-image")
+    @Operation(summary = "Set (imageId) or clear (null) the master's cover photo")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<MasterProductImageResponse>> setSourceImage(
+            @PathVariable Long id, @RequestBody MasterSourceImageRequest request) {
+        MasterProductImageResponse response = masterProductImageService.setSourceImage(id, request.getImageId());
+        // imageId != null → 200 with the set cover image; imageId == null (cleared) → 204.
+        return response == null
+                ? ResponseEntity.noContent().build()
+                : ResponseEntity.ok(ResponseDTO.success(response));
     }
 }

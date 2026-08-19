@@ -1,0 +1,57 @@
+# Master image pool + field mapping (FEATURE_2608_06 / 37).
+#   master_image_zone_assignment = M:N mapping (pool image <-> zone / cover photo __source__).
+# Splits the old "upload = zone binding" into a pool asset (master_product_image) + this mapping, so one
+# pool image can be reused across zones and the cover photo. No boolean columns → no MySQL BIT trap.
+databaseChangeLog:
+
+  # ---- 1. master_image_zone_assignment (M:N field mapping) ----
+  - changeSet:
+      id: 024-master-image-zone-assignment
+      author: oclyx
+      comment: "Field-to-image mapping: (image, zone_id, sort_order). UNIQUE(image, zone) blocks a dup mapping."
+      changes:
+        - createTable:
+            tableName: master_image_zone_assignment
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: master_product_image_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: zone_id, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: sort_order, type: INT, constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_miza_image
+            baseTableName: master_image_zone_assignment
+            baseColumnNames: master_product_image_id
+            referencedTableName: master_product_image
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            tableName: master_image_zone_assignment
+            columnNames: "master_product_image_id, zone_id"
+            constraintName: uq_miza_image_zone
+
+  # ---- 2. backfill existing zone-bound images into mappings ----
+  # INSERT..SELECT is common H2/MySQL syntax (portable), so a single <sql> is allowed here by exception.
+  # NOW() matches the existing backfill convention (changeset 009). The apply-check runs on an empty H2
+  # (no images) so this inserts nothing there; on prod it folds every zone-bound row into a mapping.
+  - changeSet:
+      id: 024-backfill-zone-assignment
+      author: oclyx
+      comment: "Backfill master_image_zone_assignment from the legacy master_product_image.zone_id rows."
+      changes:
+        - sql: >-
+            INSERT INTO master_image_zone_assignment
+            (master_product_image_id, zone_id, sort_order, created_date, modified_date)
+            SELECT id, zone_id, sort_order, NOW(), NOW() FROM master_product_image WHERE zone_id IS NOT NULL
+
+  # ---- 3. relax master_product_image.zone_id to nullable (pool asset; mapping owns zone membership) ----
+  # Physical column removal is a follow-up (after front/generator migration is verified).
+  - changeSet:
+      id: 024-relax-image-zone-null
+      author: oclyx
+      comment: "Pool asset: master_product_image.zone_id becomes nullable (new pool uploads leave it null)."
+      changes:
+        - dropNotNullConstraint:
+            tableName: master_product_image
+            columnName: zone_id
+            columnDataType: VARCHAR(100)

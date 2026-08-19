@@ -1,13 +1,13 @@
 package com.pms.service;
 
 import com.pms.domain.DetailTemplate;
+import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
-import com.pms.domain.MasterProductImage;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
-import com.pms.repository.MasterProductImageRepository;
+import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import lombok.RequiredArgsConstructor;
@@ -34,7 +34,7 @@ import java.util.Map;
 public class TemplateDetailContentGenerator implements DetailContentGenerator {
 
     private final ChannelTemplateResolver channelTemplateResolver;
-    private final MasterProductImageRepository masterProductImageRepository;
+    private final MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
     private final ProductListingProductRepository productListingProductRepository;
     private final DetailHtmlRenderer detailHtmlRenderer;
@@ -61,12 +61,18 @@ public class TemplateDetailContentGenerator implements DetailContentGenerator {
         return ListingTextBindings.resolve(cell, cell.getMasterProduct(), firstBomProduct(cell));
     }
 
-    /** Zone id → image URLs in sortOrder (ordering guaranteed by the query; this only groups). */
+    /**
+     * Zone id → image URLs in sortOrder, from the field mappings (37). The cover-photo key
+     * ({@code __source__}) is excluded — it is not a detail zone.
+     */
     private Map<String, List<String>> resolveZoneImageUrls(Long masterId) {
         Map<String, List<String>> zones = new LinkedHashMap<>();
-        for (MasterProductImage image : masterProductImageRepository
-                .findByMasterProductIdOrderByZoneIdAscSortOrderAsc(masterId)) {
-            zones.computeIfAbsent(image.getZoneId(), k -> new ArrayList<>()).add(image.getImageUrl());
+        for (MasterImageZoneAssignment a : masterImageZoneAssignmentRepository
+                .findByImage_MasterProductIdOrderByZoneIdAscSortOrderAsc(masterId)) {
+            if (MasterImageZoneAssignment.SOURCE_ZONE.equals(a.getZoneId())) {
+                continue;
+            }
+            zones.computeIfAbsent(a.getZoneId(), k -> new ArrayList<>()).add(a.getImage().getImageUrl());
         }
         return zones;
     }
