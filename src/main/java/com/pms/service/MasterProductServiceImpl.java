@@ -3,6 +3,7 @@ package com.pms.service;
 import com.pms.domain.CarrierRate;
 import com.pms.domain.Category;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductCategory;
 import com.pms.domain.MasterProductComponent;
@@ -28,6 +29,7 @@ import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.MasterProductCategoryRepository;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
@@ -83,6 +85,7 @@ public class MasterProductServiceImpl implements MasterProductService {
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
+    private final MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     private final SellerRepository sellerRepository;
     private final ImageStorageService imageStorageService;
     private final ImageValidator imageValidator;
@@ -97,8 +100,22 @@ public class MasterProductServiceImpl implements MasterProductService {
     @Override
     public List<MasterProductResponse> getMasterProducts() {
         // Active only — soft-deleted (active=false) masters are hidden from the list (recover via PATCH active=true).
-        return masterProductRepository.findByActiveTrue().stream()
-                .map(this::mapToResponse)
+        List<MasterProduct> masters = masterProductRepository.findByActiveTrue();
+        List<Long> ids = masters.stream().map(MasterProduct::getId).toList();
+        // Resolve the list cover from the __source__ mapping (37) in one batch query. Priority mirrors
+        // resolveBaseImage: mapped cover > legacy master.sourceImageUrl (kept when no mapping exists).
+        Map<Long, String> coverByMaster = ids.isEmpty()
+                ? Map.of()
+                : masterImageZoneAssignmentRepository
+                        .findZoneImageUrlsByMasterIds(MasterImageZoneAssignment.SOURCE_ZONE, ids).stream()
+                        .collect(Collectors.toMap(
+                                r -> (Long) r[0], r -> (String) r[1], (first, dup) -> first));
+        return masters.stream()
+                .map(master -> {
+                    MasterProductResponse response = mapToResponse(master);
+                    String cover = coverByMaster.get(master.getId());
+                    return cover != null ? response.toBuilder().sourceImageUrl(cover).build() : response;
+                })
                 .toList();
     }
 

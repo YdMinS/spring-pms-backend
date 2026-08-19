@@ -3,8 +3,11 @@ package com.pms.repository;
 import com.pms.domain.MasterImageZoneAssignment;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -32,4 +35,14 @@ public interface MasterImageZoneAssignmentRepository extends JpaRepository<Maste
     @Modifying
     @Transactional
     void deleteByImageId(Long imageId);
+
+    /**
+     * Batch-resolve one zone's mapped image URL per master (list cover thumbnail, no N+1).
+     * Returns rows of {@code [masterProductId (Long), imageUrl (String)]}; for {@code __source__} each
+     * master has at most one row (single-cover invariant).
+     */
+    @Query("SELECT a.image.masterProduct.id, a.image.imageUrl FROM MasterImageZoneAssignment a "
+            + "WHERE a.zoneId = :zoneId AND a.image.masterProduct.id IN :masterIds")
+    List<Object[]> findZoneImageUrlsByMasterIds(
+            @Param("zoneId") String zoneId, @Param("masterIds") Collection<Long> masterIds);
 }

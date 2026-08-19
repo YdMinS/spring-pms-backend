@@ -3,6 +3,7 @@ package com.pms.service;
 import com.pms.domain.CarrierRate;
 import com.pms.domain.Category;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductCategory;
 import com.pms.domain.MasterProductComponent;
@@ -27,6 +28,7 @@ import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.MasterProductCategoryRepository;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
@@ -75,6 +77,7 @@ class MasterProductServiceTest {
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock private ProductListingRepository productListingRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
+    @Mock private MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     @Mock private SellerRepository sellerRepository;
     @Mock private RegistrationNameGenerator registrationNameGenerator;
     @InjectMocks private MasterProductServiceImpl service;
@@ -166,6 +169,21 @@ class MasterProductServiceTest {
         assertThat(result.get(0).getRegistrationName()).isNull();
         verify(registrationNameGenerator, never()).generate(any());
         verify(masterProductRepository, never()).findAll();
+    }
+
+    @Test
+    void getMasterProducts_overlaysSourceMappingCover() {
+        // The __source__ pool mapping (37) wins over the legacy sourceImageUrl in the list thumbnail.
+        given(masterProductRepository.findByActiveTrue())
+                .willReturn(List.of(MasterProduct.builder()
+                        .id(7L).name("커버").active(true).sourceImageUrl("legacy.jpg").build()));
+        given(masterImageZoneAssignmentRepository.findZoneImageUrlsByMasterIds(
+                MasterImageZoneAssignment.SOURCE_ZONE, List.of(7L)))
+                .willReturn(List.<Object[]>of(new Object[] { 7L, "https://cdn/mapped.jpg" }));
+
+        List<MasterProductResponse> result = service.getMasterProducts();
+
+        assertThat(result.get(0).getSourceImageUrl()).isEqualTo("https://cdn/mapped.jpg");
     }
 
     @Test
