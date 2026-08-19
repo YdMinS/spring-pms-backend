@@ -23,6 +23,7 @@ import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductResponse;
 import com.pms.exception.BusinessException;
+import com.pms.exception.MasterProductInUseException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.CategoryRepository;
@@ -243,6 +244,14 @@ public class MasterProductServiceImpl implements MasterProductService {
     @Transactional
     public void deleteMasterProduct(Long id) {
         MasterProduct existing = requireScopedMaster(id);
+        // Block delete while any channel cell is live on the market (platformProductId != null) — deleting
+        // the master would orphan the market listings. The user must stop those channels first (409).
+        long onMarket = productListingRepository.findByMasterProductId(id).stream()
+                .filter(l -> l.getPlatformProductId() != null)
+                .count();
+        if (onMarket > 0) {
+            throw new MasterProductInUseException(onMarket);
+        }
         masterProductRepository.save(existing.toBuilder().active(false).build());
     }
 
