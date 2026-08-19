@@ -147,6 +147,7 @@ public class MasterProductServiceImpl implements MasterProductService {
             ProductListing pl = listingByKey.get(matchKey(sellerId, acc.getPlatform()));
             MatrixCell cell = pl == null ? null : MatrixCell.builder()
                     .productListingId(pl.getId())
+                    .name(pl.getName())
                     .platformProductId(pl.getPlatformProductId())
                     .sellingPrice(priceByListing.get(pl.getId()))
                     .build();

@@ -38,6 +38,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
@@ -312,6 +313,50 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.tags.length()").value(2))
                 .andExpect(jsonPath("$.data.tags[0]").value("인기"))
                 .andExpect(jsonPath("$.data.tags[1]").value("세일"));
+    }
+
+    // ---- display name (35): 노출상품명 = listing name, internal only (no regenerate/push) ----
+
+    @Test
+    void updateDisplayName_adminToken_returns200AndReflectsName() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + listingId + "/name")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content("{\"name\":\"  행복상회 특가  \"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"));
+        assertThat(productListingRepository.findById(listingId).orElseThrow().getName())
+                .isEqualTo("행복상회 특가");
+    }
+
+    @Test
+    void updateDisplayName_blank_returns400() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + listingId + "/name")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content("{\"name\":\"   \"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void updateDisplayName_noToken_returns401() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + listingId + "/name")
+                        .contentType("application/json").content("{\"name\":\"x\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void updateDisplayName_userToken_returns403() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + listingId + "/name")
+                        .header("Authorization", "Bearer " + userToken)
+                        .contentType("application/json").content("{\"name\":\"x\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void updateDisplayName_missingId_returns404() throws Exception {
+        mockMvc.perform(patch(PATH + "/999999/name")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content("{\"name\":\"x\"}"))
+                .andExpect(status().isNotFound());
     }
 
     // ---- thumbnail override / clear (25): authority + happy path + empty file 400 ----

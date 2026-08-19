@@ -58,6 +58,13 @@ public interface ListingAssetService {
     GeneratedProductResponse updateTags(Long listingId, List<String> tags);
 
     /**
+     * Update the display name (노출상품명 = {@code ProductListing.name}) of a tenant-scoped cell (404 if
+     * absent). Internal only — no asset regeneration and no marketplace push (the name is not a thumbnail/
+     * detail binding key). The name is trimmed before saving (35).
+     */
+    void updateDisplayName(Long listingId, String name);
+
+    /**
      * Override the cell's thumbnail with an uploaded image (thumbnailSource=MANUAL_OVERRIDE) for a
      * tenant-scoped cell. 404 if the cell or its generated assets are absent (the cell must be generated
      * first via the matrix). Detail HTML and its source are untouched (the two origins are independent).

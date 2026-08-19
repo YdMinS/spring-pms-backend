@@ -152,6 +152,14 @@ public class ListingAssetServiceImpl implements ListingAssetService {
 
     @Override
     @Transactional
+    public void updateDisplayName(Long listingId, String name) {
+        ProductListing cell = requireScopedCell(listingId);
+        // Internal-only rename: name is not a thumbnail/detail binding key, so no regenerateAssets here.
+        productListingRepository.save(cell.toBuilder().name(name.trim()).build());
+    }
+
+    @Override
+    @Transactional
     public GeneratedProductResponse clearDetailHtml(Long listingId) {
         ProductListing cell = requireScopedCell(listingId);
         GeneratedProductData existing = generatedProductDataRepository.findByProductListingId(listingId)
