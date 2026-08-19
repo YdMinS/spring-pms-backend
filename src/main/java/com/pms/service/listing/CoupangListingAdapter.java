@@ -9,6 +9,7 @@ import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.MasterChannelConfigService;
+import com.pms.service.RegistrationNameGenerator;
 import com.pms.service.coupang.CoupangApiClient;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -42,6 +43,7 @@ public class CoupangListingAdapter implements ListingChannel {
     private final ProductListingOptionRepository productListingOptionRepository;
     private final MasterChannelConfigService masterChannelConfigService;
     private final TagMergeService tagMergeService;
+    private final RegistrationNameGenerator registrationNameGenerator;
 
     @Override
     public String platform() {
@@ -102,8 +104,12 @@ public class CoupangListingAdapter implements ListingChannel {
         // null. Resolved-not-set (400) is already validated before registration.
         payload.put("displayCategoryCode",
                 masterChannelConfigService.resolveCategory(cell).getPlatformCategoryId());
+        // Registration name = rule-generated from the master's components/options (not the free-text
+        // master label). master null fallback = cell.getName() (backfill transition window).
         payload.put("sellerProductName",
-                cell.getMasterProduct() != null ? cell.getMasterProduct().getName() : cell.getName());
+                cell.getMasterProduct() != null
+                        ? registrationNameGenerator.generate(cell.getMasterProduct())
+                        : cell.getName());
         payload.put("vendorId", acct.getVendorId());
         payload.put("contents", gen != null ? gen.getDetailHtml() : null);
 
