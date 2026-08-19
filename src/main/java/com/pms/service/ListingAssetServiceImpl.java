@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.DetailTemplate;
 import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.MasterProduct;
@@ -11,6 +12,7 @@ import com.pms.domain.ProductListingProduct;
 import com.pms.domain.TemplateField;
 import com.pms.domain.ThumbnailTemplate;
 import com.pms.dto.response.DetailPreviewResponse;
+import com.pms.dto.response.DetailTemplateResponse;
 import com.pms.dto.response.GeneratedProductResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.GeneratedProductDataRepository;
@@ -91,6 +93,18 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         // Non-persistent AUTO preview from the current master + template (ignores any override — for comparison).
         return DetailPreviewResponse.builder()
                 .html(detailContentGenerator.generate(cell))
+                .build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public DetailTemplateResponse resolveDetailTemplate(Long listingId) {
+        ProductListing cell = requireScopedCell(listingId);            // ResourceNotFoundException(404) if absent/cross-tenant
+        DetailTemplate t = channelTemplateResolver.resolveDetail(cell); // account-assigned ?? tenant default
+        // Inline builder (6 fields) — no shared mapper (a separate util would be over-engineering here).
+        return DetailTemplateResponse.builder()
+                .id(t.getId()).name(t.getName()).blocks(t.getBlocks())
+                .active(t.getActive()).isDefault(t.getIsDefault())
                 .build();
     }
 

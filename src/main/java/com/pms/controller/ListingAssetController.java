@@ -4,6 +4,7 @@ import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.DetailHtmlOverrideRequest;
 import com.pms.dto.request.FieldValuesRequest;
 import com.pms.dto.response.DetailPreviewResponse;
+import com.pms.dto.response.DetailTemplateResponse;
 import com.pms.dto.response.GeneratedProductResponse;
 import com.pms.service.ListingAssetService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -47,6 +48,13 @@ public class ListingAssetController {
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<DetailPreviewResponse>> detailPreview(@PathVariable Long id) {
         return ResponseEntity.ok(ResponseDTO.success(listingAssetService.previewDetail(id)));
+    }
+
+    @GetMapping("/{id}/detail-template")
+    @Operation(summary = "Resolved detail template for this cell (account-assigned ?? tenant default)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<DetailTemplateResponse>> resolvedDetailTemplate(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(listingAssetService.resolveDetailTemplate(id)));
     }
 
     @PutMapping("/{id}/detail-html")
