@@ -1,0 +1,14 @@
+# Drop master_product.detail_source (FEATURE_2608_06 / 27, Design 2): the column was written/read on
+# create/update/response but never consumed by the detail-HTML generator (detail is built from field_values
+# + zone images + template only) — a Design 1 leftover. Data loss is intended (unused field). dropColumn is
+# H2<->MySQL portable, so no dbms branch is needed. Structured tags for portability.
+databaseChangeLog:
+
+  - changeSet:
+      id: 022-drop-master-detail-source
+      author: oclyx
+      comment: "27: drop unused master_product.detail_source (Design 1 leftover, never read by the generator)."
+      changes:
+        - dropColumn:
+            tableName: master_product
+            columnName: detail_source

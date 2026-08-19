@@ -116,6 +116,12 @@ class LiquibaseChangelogApplyTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM generated_product_data WHERE thumbnail_source IS NULL",
                 Integer.class)).isZero();
+
+        // changeset 022: master_product.detail_source dropped (INFORMATION_SCHEMA no longer lists the column).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE TABLE_NAME = 'MASTER_PRODUCT' AND COLUMN_NAME = 'DETAIL_SOURCE'",
+                Integer.class)).isZero();
     }
 
     @Test

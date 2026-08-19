@@ -1,6 +1,7 @@
 package com.pms.dto.request;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import lombok.AllArgsConstructor;
@@ -33,9 +34,6 @@ public class MasterProductRequest {
     @Schema(description = "Component product IDs (the master's product set)", example = "[3, 5]")
     private List<Long> componentProductIds;
 
-    @Schema(description = "Mall-shared detail-page source", nullable = true)
-    private String detailSource;
-
     @Schema(description = "UI input field values (key -> value)", nullable = true)
     private Map<String, String> fieldValues;
 
@@ -44,4 +42,10 @@ public class MasterProductRequest {
 
     @Schema(description = "Default box (Package) ID for the price engine", nullable = true, example = "5")
     private Long defaultPackageId;
+
+    @Valid
+    @Schema(description = "Options to create atomically with the master. null/empty allowed — each option "
+            + "must cover the full component set (validated before any save; a violation rolls the master back).",
+            nullable = true)
+    private List<MasterOptionRequest> options;
 }

@@ -167,6 +167,33 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.components.length()").value(2));
     }
 
+    // ------------------------------------------------------------- atomic create (master + options, 27)
+
+    @Test
+    void createMasterProduct_withOptions_returns201() throws Exception {
+        String body = "{\"name\":\"원자마스터\",\"componentProductIds\":[" + productId1 + "," + productId2 + "],"
+                + "\"options\":[{\"name\":\"2세트\",\"items\":["
+                + "{\"productId\":" + productId1 + ",\"quantity\":2},"
+                + "{\"productId\":" + productId2 + ",\"quantity\":2}]}]}";
+        mockMvc.perform(post(PATH).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.components.length()").value(2))
+                .andExpect(jsonPath("$.data.options.length()").value(1));
+    }
+
+    @Test
+    void createMasterProduct_invalidOption_returns400() throws Exception {
+        // option omits productId2 → subset of the component set; nothing is persisted (400).
+        String body = "{\"name\":\"원자마스터\",\"componentProductIds\":[" + productId1 + "," + productId2 + "],"
+                + "\"options\":[{\"name\":\"불완전\",\"items\":[{\"productId\":" + productId1 + ",\"quantity\":2}]}]}";
+        mockMvc.perform(post(PATH).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
     // ------------------------------------------------------------- create option (coverage validation)
 
     @Test

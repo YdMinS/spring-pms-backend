@@ -62,7 +62,7 @@ public class MasterProductController {
     }
 
     @PostMapping
-    @Operation(summary = "Create master product")
+    @Operation(summary = "Create master product (options included = atomic create)")
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<MasterProductResponse>> createMasterProduct(
             @Valid @RequestBody MasterProductRequest request) {
@@ -71,7 +71,7 @@ public class MasterProductController {
     }
 
     @PatchMapping("/{id}")
-    @Operation(summary = "Update master product content (name/detailSource/fieldValues/active/components)")
+    @Operation(summary = "Update master product content (name/fieldValues/active/components)")
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<MasterProductResponse>> updateMasterProduct(
             @PathVariable Long id, @Valid @RequestBody MasterProductUpdateRequest request) {

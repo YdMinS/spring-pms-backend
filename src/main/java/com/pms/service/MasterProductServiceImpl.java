@@ -166,10 +166,21 @@ public class MasterProductServiceImpl implements MasterProductService {
     @Transactional
     public MasterProductResponse createMasterProduct(MasterProductRequest request) {
         List<Product> products = requireProducts(request.getComponentProductIds());
+        Set<Long> componentIds = products.stream().map(Product::getId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        // Atomicity: pre-validate every option (coverage + quantity) BEFORE any save. A violation throws
+        // here, so the master is never persisted — provable by mock (masterProductRepository.save is never
+        // reached), not just by @Transactional rollback. null/empty options = master-only (backward compat).
+        List<MasterOptionRequest> options = request.getOptions();
+        if (options != null) {
+            for (MasterOptionRequest option : options) {
+                assertCoversComponents(componentIds, toVector(option), "옵션은 구성상품 전체를 포함해야 합니다");
+            }
+        }
 
         MasterProduct saved = masterProductRepository.save(MasterProduct.builder()
                 .name(request.getName())
-                .detailSource(request.getDetailSource())
                 .fieldValues(request.getFieldValues())
                 .active(true)
                 .defaultDelivery(request.getDefaultDeliveryId() != null
@@ -182,6 +193,12 @@ public class MasterProductServiceImpl implements MasterProductService {
             componentRepository.save(MasterProductComponent.builder()
                     .masterProduct(saved).product(product).build());
         }
+
+        if (options != null) {
+            for (MasterOptionRequest option : options) {
+                persistOption(saved, option, componentIds);
+            }
+        }
         return mapToResponse(saved);
     }
 
@@ -192,7 +209,6 @@ public class MasterProductServiceImpl implements MasterProductService {
 
         MasterProduct updated = masterProductRepository.save(existing.toBuilder()
                 .name(request.getName() != null ? request.getName() : existing.getName())
-                .detailSource(request.getDetailSource() != null ? request.getDetailSource() : existing.getDetailSource())
                 .fieldValues(request.getFieldValues() != null ? request.getFieldValues() : existing.getFieldValues())
                 .active(request.getActive() != null ? request.getActive() : existing.getActive())
                 // null = keep existing; a given id replaces (explicit unset via null is a follow-up).
@@ -261,16 +277,8 @@ public class MasterProductServiceImpl implements MasterProductService {
     @Transactional
     public MasterOptionResponse createOption(Long masterId, MasterOptionRequest request) {
         MasterProduct master = requireScopedMaster(masterId);
-        Map<Long, Integer> vector = toVector(request);
-        assertCoversComponents(componentProductIds(masterId), vector, "옵션은 구성상품 전체를 포함해야 합니다");
-
-        MasterProductOption option = optionRepository.save(MasterProductOption.builder()
-                .masterProduct(master).name(request.getName())
-                .delivery(request.getDeliveryId() != null ? requireDelivery(request.getDeliveryId()) : null)
-                .package_(request.getPackageId() != null ? requirePackage(request.getPackageId()) : null)
-                .build());
-        saveItems(option, vector);
-        return mapToOptionResponse(option, vector);
+        MasterProductOption option = persistOption(master, request, componentProductIds(masterId));
+        return mapToOptionResponse(option, toVector(request));
     }
 
     @Override
@@ -450,6 +458,24 @@ public class MasterProductServiceImpl implements MasterProductService {
                         (first, dup) -> dup, LinkedHashMap::new));
     }
 
+    /**
+     * Validate one option against the master's component set (full coverage, quantity ≥ 1) and persist the
+     * option row + its item vector. Single source of option persistence — shared by {@link #createOption}
+     * (single add) and {@link #createMasterProduct} (atomic batch). Coverage is re-asserted here so a direct
+     * add is safe; the atomic create additionally pre-validates all options before any save.
+     */
+    private MasterProductOption persistOption(MasterProduct master, MasterOptionRequest request, Set<Long> componentIds) {
+        Map<Long, Integer> vector = toVector(request);
+        assertCoversComponents(componentIds, vector, "옵션은 구성상품 전체를 포함해야 합니다");
+        MasterProductOption option = optionRepository.save(MasterProductOption.builder()
+                .masterProduct(master).name(request.getName())
+                .delivery(request.getDeliveryId() != null ? requireDelivery(request.getDeliveryId()) : null)
+                .package_(request.getPackageId() != null ? requirePackage(request.getPackageId()) : null)
+                .build());
+        saveItems(option, vector);
+        return option;
+    }
+
     private void saveItems(MasterProductOption option, Map<Long, Integer> vector) {
         Map<Long, Product> products = productRepository.findAllById(vector.keySet()).stream()
                 .collect(Collectors.toMap(Product::getId, p -> p));
@@ -504,7 +530,6 @@ public class MasterProductServiceImpl implements MasterProductService {
                 .name(master.getName())
                 .active(master.getActive())
                 .sourceImageUrl(master.getSourceImageUrl())
-                .detailSource(master.getDetailSource())
                 .fieldValues(master.getFieldValues())
                 .defaultDeliveryId(master.getDefaultDelivery() != null ? master.getDefaultDelivery().getId() : null)
                 .defaultPackageId(master.getDefaultPackage() != null ? master.getDefaultPackage().getId() : null)
