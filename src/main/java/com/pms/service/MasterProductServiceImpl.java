@@ -92,7 +92,8 @@ public class MasterProductServiceImpl implements MasterProductService {
 
     @Override
     public List<MasterProductResponse> getMasterProducts() {
-        return masterProductRepository.findAll().stream()
+        // Active only — soft-deleted (active=false) masters are hidden from the list (recover via PATCH active=true).
+        return masterProductRepository.findByActiveTrue().stream()
                 .map(this::mapToResponse)
                 .toList();
     }

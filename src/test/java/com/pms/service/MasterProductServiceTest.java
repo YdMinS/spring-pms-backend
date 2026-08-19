@@ -148,6 +148,32 @@ class MasterProductServiceTest {
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
+    // ------------------------------------------------------------- list / soft delete
+
+    @Test
+    void getMasterProducts_returnsOnlyActive_excludesSoftDeleted() {
+        // Repository filters active=true, so a soft-deleted master never reaches the response.
+        given(masterProductRepository.findByActiveTrue())
+                .willReturn(List.of(MasterProduct.builder().id(1L).name("활성").active(true).build()));
+
+        List<MasterProductResponse> result = service.getMasterProducts();
+
+        assertThat(result).extracting(MasterProductResponse::getId).containsExactly(1L);
+        verify(masterProductRepository, never()).findAll();
+    }
+
+    @Test
+    void deleteMasterProduct_softDeletes_setsActiveFalse() {
+        given(masterProductRepository.findScopedById(1L))
+                .willReturn(Optional.of(MasterProduct.builder().id(1L).name("마스터A").active(true).build()));
+
+        service.deleteMasterProduct(1L);
+
+        ArgumentCaptor<MasterProduct> captor = ArgumentCaptor.forClass(MasterProduct.class);
+        verify(masterProductRepository).save(captor.capture());
+        assertThat(captor.getValue().getActive()).isFalse();
+    }
+
     // ------------------------------------------------------------- master create
 
     @Test
