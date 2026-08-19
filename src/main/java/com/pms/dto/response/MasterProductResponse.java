@@ -12,15 +12,19 @@ import java.util.Map;
 @Getter
 @NoArgsConstructor
 @AllArgsConstructor
-@Builder
+@Builder(toBuilder = true)
 @Schema(description = "Master product response (Design 2)")
 public class MasterProductResponse {
 
     @Schema(description = "Master product ID", example = "1")
     private Long id;
 
-    @Schema(description = "Master product name", example = "Galaxy S21 Bundle")
+    @Schema(description = "Master product name (internal label)", example = "Galaxy S21 Bundle")
     private String name;
+
+    @Schema(description = "Computed registration name (sellerProductName), single-fetch only; null on the list",
+            nullable = true, example = "노브랜드 생수 x 6")
+    private String registrationName;
 
     @Schema(description = "Activation flag (false = soft deleted)", example = "true")
     private Boolean active;

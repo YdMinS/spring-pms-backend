@@ -7,10 +7,13 @@ import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.domain.MasterProduct;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.MasterChannelConfigService;
+import com.pms.service.RegistrationNameGenerator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -37,6 +40,7 @@ class CoupangListingAdapterTest {
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private MasterChannelConfigService masterChannelConfigService;
     @Mock private TagMergeService tagMergeService;
+    @Mock private RegistrationNameGenerator registrationNameGenerator;
     @org.mockito.Spy private ObjectMapper objectMapper = new ObjectMapper();
     @InjectMocks private CoupangListingAdapter adapter;
 
@@ -67,6 +71,26 @@ class CoupangListingAdapterTest {
         String sellerProductId = adapter.register(cell(), gen, acct());
 
         assertThat(sellerProductId).isEqualTo("987654321");
+    }
+
+    @Test
+    void register_usesGeneratedRegistrationNameForSellerProductName() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨").build();
+        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+                .platformProductId("123456789").masterProduct(master).build();
+        lenient().when(productListingOptionRepository.findByProductListingId(100L)).thenReturn(List.of());
+        GeneratedProductData gen = GeneratedProductData.builder()
+                .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+        given(masterChannelConfigService.resolveCategory(any()))
+                .willReturn(Category.builder().platformCategoryId("cat-1").build());
+        given(registrationNameGenerator.generate(master)).willReturn("노브랜드 생수 x 6");
+
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell, gen, acct());
+
+        assertThat(payload.getValue()).contains("\"sellerProductName\":\"노브랜드 생수 x 6\"");
     }
 
     @Test

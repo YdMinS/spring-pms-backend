@@ -76,6 +76,7 @@ class MasterProductServiceTest {
     @Mock private ProductListingRepository productListingRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private SellerRepository sellerRepository;
+    @Mock private RegistrationNameGenerator registrationNameGenerator;
     @InjectMocks private MasterProductServiceImpl service;
 
     private Seller seller(Long id, String name) {
@@ -160,7 +161,23 @@ class MasterProductServiceTest {
         List<MasterProductResponse> result = service.getMasterProducts();
 
         assertThat(result).extracting(MasterProductResponse::getId).containsExactly(1L);
+        // List path does NOT call the generator (N+1 guard) → registrationName stays null.
+        assertThat(result.get(0).getRegistrationName()).isNull();
+        verify(registrationNameGenerator, never()).generate(any());
         verify(masterProductRepository, never()).findAll();
+    }
+
+    @Test
+    void getMasterProduct_singlePath_exposesRegistrationName() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(componentRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(registrationNameGenerator.generate(master)).willReturn("노브랜드 생수 x 6");
+
+        MasterProductResponse response = service.getMasterProduct(1L);
+
+        assertThat(response.getRegistrationName()).isEqualTo("노브랜드 생수 x 6");
     }
 
     @Test

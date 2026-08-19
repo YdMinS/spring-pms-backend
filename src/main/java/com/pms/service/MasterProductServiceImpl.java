@@ -88,6 +88,7 @@ public class MasterProductServiceImpl implements MasterProductService {
     private final ImageValidator imageValidator;
     private final MasterPropagationService masterPropagationService;
     private final TagMergeService tagMergeService;
+    private final RegistrationNameGenerator registrationNameGenerator;
 
     private static final String IMAGE_STORAGE_CATEGORY = "master";
 
@@ -103,7 +104,12 @@ public class MasterProductServiceImpl implements MasterProductService {
 
     @Override
     public MasterProductResponse getMasterProduct(Long id) {
-        return mapToResponse(requireScopedMaster(id));
+        // Single-fetch path only computes the registration name (2~3 extra queries per master). The list
+        // path (mapToResponse) leaves it null to avoid an N×3 query amplification (32).
+        MasterProduct master = requireScopedMaster(id);
+        return mapToResponse(master).toBuilder()
+                .registrationName(registrationNameGenerator.generate(master))
+                .build();
     }
 
     @Override
