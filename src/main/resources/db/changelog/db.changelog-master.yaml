@@ -45,3 +45,5 @@ databaseChangeLog:
       file: db/changelog/changes/022-drop-master-detail-source.yaml
   - include:
       file: db/changelog/changes/023-product-tags.yaml
+  - include:
+      file: db/changelog/changes/024-master-image-pool.yaml

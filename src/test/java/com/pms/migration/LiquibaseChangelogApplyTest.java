@@ -131,6 +131,17 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM product_listing WHERE tags IS NULL", Integer.class)).isZero();
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM product_listing_tag_revision WHERE tags IS NULL", Integer.class)).isZero();
+
+        // changeset 024: master_image_zone_assignment table + columns materialized (a successful count proves it)...
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM master_image_zone_assignment "
+                        + "WHERE master_product_image_id IS NULL AND zone_id IS NULL AND sort_order IS NULL",
+                Integer.class)).isZero();
+        // ...and master_product_image.zone_id relaxed to nullable (pool asset; mapping owns zone membership).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE TABLE_NAME = 'MASTER_PRODUCT_IMAGE' AND COLUMN_NAME = 'ZONE_ID'",
+                String.class)).isEqualTo("YES");
     }
 
     @Test

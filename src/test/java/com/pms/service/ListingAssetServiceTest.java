@@ -12,6 +12,7 @@ import com.pms.domain.ProductListingProduct;
 import com.pms.domain.TemplateField;
 import com.pms.domain.ThumbnailTemplate;
 import com.pms.repository.GeneratedProductDataRepository;
+import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
@@ -51,6 +52,7 @@ class ListingAssetServiceTest {
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private ProductListingProductRepository productListingProductRepository;
     @Mock private MasterProductOptionRepository masterProductOptionRepository;
+    @Mock private MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     @Mock private GeneratedProductDataRepository generatedProductDataRepository;
     @Mock private ChannelTemplateResolver channelTemplateResolver;
     @Mock private ThumbnailRenderer thumbnailRenderer;

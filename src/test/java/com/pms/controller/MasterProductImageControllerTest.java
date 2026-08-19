@@ -3,9 +3,11 @@ package com.pms.controller;
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductImage;
+import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.MasterProductImageRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.service.ImageStorageService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,18 +25,20 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
- * Master input-image endpoints: authority (401/403/success) for POST/GET/PUT/DELETE + master 404.
- * {@link ImageStorageService} is stubbed (no disk/S3); {@code ImageValidator} runs for real against a PNG.
+ * Master image-pool endpoints (37): authority (401/403/success) for POST/GET/PUT-zones/PUT-source/DELETE
+ * + master 404. {@link ImageStorageService} is stubbed (no disk/S3); {@code ImageValidator} runs for real
+ * against a PNG.
  *
- * <p>{@code MasterProductImage} has no {@code @TenantId} (isolation via the master), so — unlike the
- * TemplateAsset tests — delete/reorder happy paths work under the single {@code @Transactional} session
- * (no live-tenant guard to mismatch). {@code findScopedById(master)} resolves within the test transaction,
- * same as {@code MasterProductControllerTest}. Rollback cleans up (master_product_image, master_product).</p>
+ * <p>Neither {@code MasterProductImage} nor {@code MasterImageZoneAssignment} has a {@code @TenantId}
+ * (isolation via the master), so happy paths work under the single {@code @Transactional} session (no
+ * live-tenant guard to mismatch), same as {@code MasterProductControllerTest}. The {@code @AfterEach}
+ * clears mappings before images before masters (FK order); rollback also cleans up.</p>
  */
 class MasterProductImageControllerTest extends BaseIntegrationTest {
 
     @Autowired private MasterProductRepository masterProductRepository;
     @Autowired private MasterProductImageRepository imageRepository;
+    @Autowired private MasterImageZoneAssignmentRepository assignmentRepository;
     @MockBean private ImageStorageService imageStorageService;
 
     private static final String ZONE = "product_photos";
@@ -44,6 +48,12 @@ class MasterProductImageControllerTest extends BaseIntegrationTest {
     void seedMaster() {
         masterId = masterProductRepository.save(
                 MasterProduct.builder().name("마스터A").active(true).build()).getId();
+    }
+
+    @AfterEach
+    void cleanup() {
+        assignmentRepository.deleteAll();
+        imageRepository.deleteAll();
     }
 
     private String path() {
@@ -57,45 +67,46 @@ class MasterProductImageControllerTest extends BaseIntegrationTest {
         return new MockMultipartFile("file", "photo.png", "image/png", out.toByteArray());
     }
 
-    private Long seedImage(int sortOrder) {
+    private Long seedPoolImage(int sortOrder) {
         return imageRepository.save(MasterProductImage.builder()
                 .masterProduct(masterProductRepository.findScopedById(masterId).orElseThrow())
-                .zoneId(ZONE).sortOrder(sortOrder).imageUrl("u" + sortOrder).build()).getId();
+                .sortOrder(sortOrder).imageUrl("u" + sortOrder).build()).getId();
     }
 
-    // ------------------------------------------------------------------ POST /images
+    // ------------------------------------------------------------------ POST /images (pool upload)
 
     @Test
     void upload_noToken_returns401() throws Exception {
-        mockMvc.perform(multipart(path()).file(pngUpload()).param("zoneId", ZONE))
+        mockMvc.perform(multipart(path()).file(pngUpload()))
                 .andExpect(status().isUnauthorized());
     }
 
     @Test
     void upload_userToken_returns403() throws Exception {
-        mockMvc.perform(multipart(path()).file(pngUpload()).param("zoneId", ZONE)
+        mockMvc.perform(multipart(path()).file(pngUpload())
                         .header("Authorization", "Bearer " + userToken))
                 .andExpect(status().isForbidden());
     }
 
     @Test
     void upload_adminToken_returns201() throws Exception {
-        given(imageStorageService.uploadBytes(any(), eq("master-detail"), anyString(), anyString()))
-                .willReturn("master-detail/photo.png");
+        given(imageStorageService.uploadBytes(any(), eq("master-pool"), anyString(), anyString()))
+                .willReturn("master-pool/photo.png");
 
-        mockMvc.perform(multipart(path()).file(pngUpload()).param("zoneId", ZONE)
+        mockMvc.perform(multipart(path()).file(pngUpload())
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.zoneId").value(ZONE))
                 .andExpect(jsonPath("$.data.sortOrder").value(0))
-                .andExpect(jsonPath("$.data.imageUrl").value("master-detail/photo.png"));
+                .andExpect(jsonPath("$.data.imageUrl").value("master-pool/photo.png"))
+                .andExpect(jsonPath("$.data.isSource").value(false))
+                .andExpect(jsonPath("$.data.assignedZones.length()").value(0));
     }
 
     @Test
     void upload_missingMaster_returns404() throws Exception {
         mockMvc.perform(multipart("/api/admin/master-products/999999/images")
-                        .file(pngUpload()).param("zoneId", ZONE)
+                        .file(pngUpload())
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isNotFound());
     }
@@ -115,41 +126,79 @@ class MasterProductImageControllerTest extends BaseIntegrationTest {
 
     @Test
     void list_adminToken_returns200() throws Exception {
-        seedImage(0);
+        seedPoolImage(0);
         mockMvc.perform(get(path()).header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.length()").value(1))
-                .andExpect(jsonPath("$.data[0].zoneId").value(ZONE));
+                .andExpect(jsonPath("$.data[0].isSource").value(false));
     }
 
-    // ------------------------------------------------------------------ PUT /images/reorder
+    // ------------------------------------------------------------------ PUT /zones/{zoneId}/images
 
     @Test
-    void reorder_noToken_returns401() throws Exception {
-        mockMvc.perform(put(path() + "/reorder").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"zoneId\":\"" + ZONE + "\",\"imageIds\":[1]}"))
+    void setZoneImages_noToken_returns401() throws Exception {
+        mockMvc.perform(put(path().replace("/images", "/zones/" + ZONE + "/images"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"imageIds\":[1]}"))
                 .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void reorder_userToken_returns403() throws Exception {
-        mockMvc.perform(put(path() + "/reorder").header("Authorization", "Bearer " + userToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"zoneId\":\"" + ZONE + "\",\"imageIds\":[1]}"))
+    void setZoneImages_userToken_returns403() throws Exception {
+        mockMvc.perform(put(path().replace("/images", "/zones/" + ZONE + "/images"))
+                        .header("Authorization", "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"imageIds\":[1]}"))
                 .andExpect(status().isForbidden());
     }
 
     @Test
-    void reorder_adminToken_returns200() throws Exception {
-        Long a = seedImage(0);
-        Long b = seedImage(1);
-        String body = "{\"zoneId\":\"" + ZONE + "\",\"imageIds\":[" + b + "," + a + "]}";
-        mockMvc.perform(put(path() + "/reorder").header("Authorization", "Bearer " + adminToken)
+    void setZoneImages_adminToken_returns200() throws Exception {
+        Long a = seedPoolImage(0);
+        Long b = seedPoolImage(1);
+        String body = "{\"imageIds\":[" + b + "," + a + "]}";
+        mockMvc.perform(put(path().replace("/images", "/zones/" + ZONE + "/images"))
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(2))
-                .andExpect(jsonPath("$.data[0].id").value(b));
+                .andExpect(jsonPath("$.data[0].id").value(b))
+                .andExpect(jsonPath("$.data[0].assignedZones[0]").value(ZONE));
+    }
+
+    // ------------------------------------------------------------------ PUT /source-image
+
+    @Test
+    void setSourceImage_noToken_returns401() throws Exception {
+        mockMvc.perform(put("/api/admin/master-products/" + masterId + "/source-image")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"imageId\":1}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void setSourceImage_userToken_returns403() throws Exception {
+        mockMvc.perform(put("/api/admin/master-products/" + masterId + "/source-image")
+                        .header("Authorization", "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"imageId\":1}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void setSourceImage_adminToken_returns200() throws Exception {
+        Long id = seedPoolImage(0);
+        mockMvc.perform(put("/api/admin/master-products/" + masterId + "/source-image")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"imageId\":" + id + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.id").value(id))
+                .andExpect(jsonPath("$.data.isSource").value(true));
+    }
+
+    @Test
+    void setSourceImage_null_returns204() throws Exception {
+        mockMvc.perform(put("/api/admin/master-products/" + masterId + "/source-image")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"imageId\":null}"))
+                .andExpect(status().isNoContent());
     }
 
     // ------------------------------------------------------------------ DELETE /images/{imageId}
@@ -167,7 +216,7 @@ class MasterProductImageControllerTest extends BaseIntegrationTest {
 
     @Test
     void delete_adminToken_returns204() throws Exception {
-        Long id = seedImage(0);
+        Long id = seedPoolImage(0);
         mockMvc.perform(delete(path() + "/" + id).header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isNoContent());
     }
