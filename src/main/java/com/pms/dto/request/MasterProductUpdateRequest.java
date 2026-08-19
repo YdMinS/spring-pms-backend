@@ -27,9 +27,6 @@ public class MasterProductUpdateRequest {
     @Schema(description = "Master product name", nullable = true)
     private String name;
 
-    @Schema(description = "Mall-shared detail-page source", nullable = true)
-    private String detailSource;
-
     @Schema(description = "UI input field values (key -> value)", nullable = true)
     private Map<String, String> fieldValues;
 

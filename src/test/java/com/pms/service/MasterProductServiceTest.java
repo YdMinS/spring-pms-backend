@@ -213,6 +213,76 @@ class MasterProductServiceTest {
         verify(componentRepository, times(2)).save(any());
     }
 
+    // ------------------------------------------------------------- master + options atomic create (27)
+
+    @Test
+    void createMasterProduct_withOptions_savesMasterComponentsOptions() {
+        MasterProduct saved = MasterProduct.builder().id(5L).name("마스터A").active(true).build();
+        MasterProductOption option = MasterProductOption.builder().id(10L).masterProduct(saved).name("2세트").build();
+
+        given(productRepository.findAllById(any()))
+                .willReturn(List.of(product(1L, "상품1"), product(2L, "상품2")));
+        given(masterProductRepository.save(any())).willReturn(saved);
+        given(optionRepository.save(any())).willReturn(option);
+        // mapToResponse re-reads the saved master's components + options + items
+        given(componentRepository.findByMasterProductId(5L))
+                .willReturn(List.of(component(saved, product(1L, "상품1")), component(saved, product(2L, "상품2"))));
+        given(optionRepository.findByMasterProductId(5L)).willReturn(List.of(option));
+        given(optionItemRepository.findByOptionIdIn(any())).willReturn(List.of(
+                MasterProductOptionItem.builder().option(option).product(product(1L, "상품1")).quantity(2).build(),
+                MasterProductOptionItem.builder().option(option).product(product(2L, "상품2")).quantity(2).build()));
+
+        MasterProductRequest request = MasterProductRequest.builder()
+                .name("마스터A").componentProductIds(List.of(1L, 2L))
+                .options(List.of(MasterOptionRequest.builder()
+                        .name("2세트").items(List.of(item(1L, 2), item(2L, 2))).build()))
+                .build();
+
+        MasterProductResponse response = service.createMasterProduct(request);
+
+        verify(masterProductRepository, times(1)).save(any());
+        verify(componentRepository, times(2)).save(any());
+        verify(optionRepository, times(1)).save(any());
+        verify(optionItemRepository, times(2)).save(any());
+        assertThat(response.getOptions()).hasSize(1);
+    }
+
+    @Test
+    void createMasterProduct_invalidOption_throws400AndDoesNotSaveMaster() {
+        // components {1, 2} but the option omits product 2 → subset. Pre-validation aborts before any save.
+        given(productRepository.findAllById(any()))
+                .willReturn(List.of(product(1L, "상품1"), product(2L, "상품2")));
+
+        MasterProductRequest request = MasterProductRequest.builder()
+                .name("마스터A").componentProductIds(List.of(1L, 2L))
+                .options(List.of(MasterOptionRequest.builder()
+                        .name("불완전").items(List.of(item(1L, 2))).build()))
+                .build();
+
+        assertThatThrownBy(() -> service.createMasterProduct(request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("옵션은 구성상품 전체를 포함해야 합니다");
+        // Atomicity: neither the master nor any option was persisted.
+        verify(masterProductRepository, never()).save(any());
+        verify(optionRepository, never()).save(any());
+    }
+
+    @Test
+    void createMasterProduct_noOptions_savesMasterOnly() {
+        MasterProductRequest request = MasterProductRequest.builder()
+                .name("마스터A").componentProductIds(List.of(1L)).build();   // options == null
+        given(productRepository.findAllById(any())).willReturn(List.of(product(1L, "상품1")));
+        given(masterProductRepository.save(any()))
+                .willReturn(MasterProduct.builder().id(5L).name("마스터A").active(true).build());
+        given(componentRepository.findByMasterProductId(5L)).willReturn(List.of());
+        given(optionRepository.findByMasterProductId(5L)).willReturn(List.of());
+
+        service.createMasterProduct(request);
+
+        verify(componentRepository, times(1)).save(any());
+        verify(optionRepository, never()).save(any());   // backward compat: no options → no option rows
+    }
+
     // ------------------------------------------------------------- option coverage validation
 
     @Test

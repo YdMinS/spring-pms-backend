@@ -16,7 +16,7 @@ import java.util.Map;
  * read-only</b> grouping node — one master per existing listing (shared-id 1:1 backfill).</p>
  *
  * <p>3b-1 (FEATURE_2608_06 / 3b-1) adds the content columns (source_image_url / field_values /
- * detail_source / active) plus the component + option sets ({@link MasterProductComponent},
+ * active) plus the component + option sets ({@link MasterProductComponent},
  * {@link MasterProductOption}). Thumbnail/detail/price auto-generation stays deferred to 3b-2.</p>
  *
  * <p>Tenant isolation: {@code @TenantId} auto-filters query-based SELECTs and auto-stamps INSERTs.
@@ -52,10 +52,6 @@ public class MasterProduct extends BaseEntity {
     @Convert(converter = MapStringConverter.class)
     @Column(name = "field_values", columnDefinition = "TEXT")
     private Map<String, String> fieldValues;
-
-    /** Mall-shared detail-page source (stub/manual until 3b-2). */
-    @Column(name = "detail_source", columnDefinition = "TEXT")
-    private String detailSource;
 
     /**
      * Soft-delete / activation flag. NOT nullable → create/service must always set it explicitly.

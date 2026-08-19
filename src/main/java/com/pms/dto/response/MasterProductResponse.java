@@ -28,9 +28,6 @@ public class MasterProductResponse {
     @Schema(description = "Base image override URL", nullable = true)
     private String sourceImageUrl;
 
-    @Schema(description = "Mall-shared detail-page source", nullable = true)
-    private String detailSource;
-
     @Schema(description = "UI input field values (key -> value)")
     private Map<String, String> fieldValues;
 
