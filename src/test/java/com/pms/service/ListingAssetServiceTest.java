@@ -1,5 +1,7 @@
 package com.pms.service;
 
+import com.pms.domain.DetailBlock;
+import com.pms.domain.DetailTemplate;
 import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.MasterProduct;
@@ -410,5 +412,35 @@ class ListingAssetServiceTest {
         assertThat(last.getThumbnailUrl()).isEqualTo("thumbnails/rerendered.jpg");
         assertThat(last.getThumbnailSource()).isEqualTo(GeneratedContentSource.AUTO);
         assertThat(last.getSource()).isEqualTo(GeneratedContentSource.AUTO);
+    }
+
+    // ---- resolved detail template (29) ----
+
+    @Test
+    void resolveDetailTemplate_mapsResolverResultToResponse() {
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        DetailTemplate resolved = DetailTemplate.builder().id(9L).name("판매채널 상세").active(true).isDefault(false)
+                .blocks(List.of(
+                        DetailBlock.builder().type("text").bind("brandName").build(),
+                        DetailBlock.builder().type("imageZone").bind("product_photos").build()))
+                .build();
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
+        given(channelTemplateResolver.resolveDetail(cell)).willReturn(resolved);
+
+        var res = service.resolveDetailTemplate(CELL_ID);
+
+        // The template the resolver returned is mapped through verbatim (id + blocks preserved).
+        assertThat(res.getId()).isEqualTo(9L);
+        assertThat(res.getName()).isEqualTo("판매채널 상세");
+        assertThat(res.getBlocks()).hasSize(2);
+        assertThat(res.getIsDefault()).isFalse();
+    }
+
+    @Test
+    void resolveDetailTemplate_cellAbsent_throws404() {
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.resolveDetailTemplate(CELL_ID))
+                .isInstanceOf(ResourceNotFoundException.class);
     }
 }

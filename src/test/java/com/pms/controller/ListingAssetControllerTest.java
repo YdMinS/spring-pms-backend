@@ -222,6 +222,40 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.thumbnailUrl").value("thumbnails/generated.jpg"));
     }
 
+    // ---- resolved detail template (29): authority + shape + 404 ----
+
+    @Test
+    void resolvedDetailTemplate_noToken_returns401() throws Exception {
+        mockMvc.perform(get(PATH + "/" + listingId + "/detail-template"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void resolvedDetailTemplate_userToken_returns403() throws Exception {
+        mockMvc.perform(get(PATH + "/" + listingId + "/detail-template")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void resolvedDetailTemplate_adminToken_returns200WithBlocks() throws Exception {
+        // Falls back to the tenant default detail template seeded in-session (no account override).
+        mockMvc.perform(get(PATH + "/" + listingId + "/detail-template")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.name").value("쿠팡 상세 기본"))
+                .andExpect(jsonPath("$.data.blocks").exists());
+    }
+
+    @Test
+    void resolvedDetailTemplate_missingCell_returns404() throws Exception {
+        mockMvc.perform(get(PATH + "/999999/detail-template")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
     // ---- field-values override (12): authority + reflected response + 404 ----
 
     private static final String FIELD_VALUES_BODY = "{\"fieldValues\":{\"brandName\":\"직접입력\"}}";

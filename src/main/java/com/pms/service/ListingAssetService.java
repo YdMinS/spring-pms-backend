@@ -3,6 +3,7 @@ package com.pms.service;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ProductListing;
 import com.pms.dto.response.DetailPreviewResponse;
+import com.pms.dto.response.DetailTemplateResponse;
 import com.pms.dto.response.GeneratedProductResponse;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -26,6 +27,14 @@ public interface ListingAssetService {
 
     /** Non-persistent AUTO detail-HTML preview for a tenant-scoped cell (404 if absent); ignores any override. */
     DetailPreviewResponse previewDetail(Long listingId);
+
+    /**
+     * The detail template actually applied to a tenant-scoped cell (404 if absent): the account-assigned
+     * template ?? the tenant default, via {@link ChannelTemplateResolver#resolveDetail(ProductListing)}
+     * (SSOT — the fallback rule is not re-implemented in the controller/frontend). Read-only; the frontend
+     * derives its zone/text keys from this instead of hard-coding {@code isDefault} (FEATURE_2608_06 / 29).
+     */
+    DetailTemplateResponse resolveDetailTemplate(Long listingId);
 
     /** Upsert a raw-HTML override (source=MANUAL_OVERRIDE) for a tenant-scoped cell (404 if absent). */
     GeneratedProductResponse overrideDetailHtml(Long listingId, String html);
