@@ -22,6 +22,7 @@ import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductResponse;
 import com.pms.exception.BusinessException;
+import com.pms.exception.MasterProductInUseException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.CategoryRepository;
@@ -146,6 +147,48 @@ class MasterProductServiceTest {
         given(masterProductRepository.findScopedById(99L)).willReturn(Optional.empty());
         assertThatThrownBy(() -> service.getMatrix(99L))
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    // ------------------------------------------------------------- list / soft delete
+
+    @Test
+    void getMasterProducts_returnsOnlyActive_excludesSoftDeleted() {
+        // Repository filters active=true, so a soft-deleted master never reaches the response.
+        given(masterProductRepository.findByActiveTrue())
+                .willReturn(List.of(MasterProduct.builder().id(1L).name("활성").active(true).build()));
+
+        List<MasterProductResponse> result = service.getMasterProducts();
+
+        assertThat(result).extracting(MasterProductResponse::getId).containsExactly(1L);
+        verify(masterProductRepository, never()).findAll();
+    }
+
+    @Test
+    void deleteMasterProduct_noOnMarketCells_softDeletesSetsActiveFalse() {
+        given(masterProductRepository.findScopedById(1L))
+                .willReturn(Optional.of(MasterProduct.builder().id(1L).name("마스터A").active(true).build()));
+        // Only a DRAFT (off-market, platformProductId == null) cell → delete allowed.
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(
+                ProductListing.builder().id(100L).platform("COUPANG").platformProductId(null).build()));
+
+        service.deleteMasterProduct(1L);
+
+        ArgumentCaptor<MasterProduct> captor = ArgumentCaptor.forClass(MasterProduct.class);
+        verify(masterProductRepository).save(captor.capture());
+        assertThat(captor.getValue().getActive()).isFalse();
+    }
+
+    @Test
+    void deleteMasterProduct_onMarketCell_throws409AndDoesNotSave() {
+        given(masterProductRepository.findScopedById(1L))
+                .willReturn(Optional.of(MasterProduct.builder().id(1L).name("마스터A").active(true).build()));
+        // An on-market cell (platformProductId != null) blocks deletion.
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(
+                ProductListing.builder().id(100L).platform("COUPANG").platformProductId("CP-1").build()));
+
+        assertThatThrownBy(() -> service.deleteMasterProduct(1L))
+                .isInstanceOf(MasterProductInUseException.class);
+        verify(masterProductRepository, never()).save(any());
     }
 
     // ------------------------------------------------------------- master create
