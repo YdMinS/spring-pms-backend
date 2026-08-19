@@ -70,6 +70,9 @@ public class ListingMatrixResponse {
         @Schema(description = "Product listing ID", example = "12")
         private Long productListingId;
 
+        @Schema(description = "Display name (노출상품명) — the listing's manual name", example = "행복상회 갤럭시 번들")
+        private String name;
+
         @Schema(description = "Platform product ID", example = "12345678")
         private String platformProductId;
 

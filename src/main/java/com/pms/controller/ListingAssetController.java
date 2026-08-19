@@ -2,6 +2,7 @@ package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.DetailHtmlOverrideRequest;
+import com.pms.dto.request.DisplayNameRequest;
 import com.pms.dto.request.FieldValuesRequest;
 import com.pms.dto.request.TagsRequest;
 import com.pms.dto.response.DetailPreviewResponse;
@@ -103,5 +104,14 @@ public class ListingAssetController {
     public ResponseEntity<ResponseDTO<GeneratedProductResponse>> updateTags(
             @PathVariable Long id, @Valid @RequestBody TagsRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(listingAssetService.updateTags(id, request.getTags())));
+    }
+
+    @PatchMapping("/{id}/name")
+    @Operation(summary = "Update this cell's display name (노출상품명 = listing name; internal only, no push)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<Void>> updateDisplayName(
+            @PathVariable Long id, @Valid @RequestBody DisplayNameRequest request) {
+        listingAssetService.updateDisplayName(id, request.getName());
+        return ResponseEntity.ok(ResponseDTO.success(null));
     }
 }

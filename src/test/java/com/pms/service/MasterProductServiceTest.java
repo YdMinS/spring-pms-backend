@@ -131,6 +131,7 @@ class MasterProductServiceTest {
         assertThat(row1.getSellerName()).isEqualTo("판매자1");
         assertThat(row1.getAccountLabel()).isEqualTo("메인");
         assertThat(row1.getCell().getProductListingId()).isEqualTo(100L);
+        assertThat(row1.getCell().getName()).isEqualTo("리스팅");   // 노출상품명 = listing name (35)
         assertThat(row1.getCell().getPlatformProductId()).isEqualTo("X");
         assertThat(row1.getCell().getSellingPrice()).isEqualByComparingTo("1000");
 
