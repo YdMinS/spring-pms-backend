@@ -46,6 +46,7 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
     private final GeneratedProductDataRepository generatedProductDataRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final ListingChannelResolver resolver;
+    private final TagMergeService tagMergeService;
 
     @Override
     @Transactional
@@ -62,6 +63,10 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
         ListingChannel adapter = resolver.resolve(cell.getPlatform());
 
         String sellerProductId = adapter.register(cell, gen, acct);
+
+        // Push succeeded → append the merged tag snapshot (33) if it changed. Failed cells never reach here.
+        List<String> merged = tagMergeService.resolveTags(cell);
+        tagMergeService.recordRevisionIfChanged(cell, merged);
 
         // Options keep NOT_APPROVED (not yet approved). Immutable entity → toBuilder + save.
         productListingRepository.save(cell.toBuilder()

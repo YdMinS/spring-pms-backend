@@ -3,6 +3,7 @@ package com.pms.controller;
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.DetailHtmlOverrideRequest;
 import com.pms.dto.request.FieldValuesRequest;
+import com.pms.dto.request.TagsRequest;
 import com.pms.dto.response.DetailPreviewResponse;
 import com.pms.dto.response.DetailTemplateResponse;
 import com.pms.dto.response.GeneratedProductResponse;
@@ -94,5 +95,13 @@ public class ListingAssetController {
             @PathVariable Long id, @Valid @RequestBody FieldValuesRequest request) {
         return ResponseEntity.ok(
                 ResponseDTO.success(listingAssetService.updateFieldValues(id, request.getFieldValues())));
+    }
+
+    @PatchMapping("/{id}/tags")
+    @Operation(summary = "Replace this cell's raw channel tags (33; deduped, empty clears)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<GeneratedProductResponse>> updateTags(
+            @PathVariable Long id, @Valid @RequestBody TagsRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(listingAssetService.updateTags(id, request.getTags())));
     }
 }

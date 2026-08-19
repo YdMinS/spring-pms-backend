@@ -31,6 +31,15 @@ public interface MasterProductService {
 
     MasterProductResponse updateMasterProduct(Long id, MasterProductUpdateRequest request);
 
+    /**
+     * Replace the master's tag pool (33). The list is order-preserving deduped; an empty list clears it.
+     *
+     * @param id   master product id (tenant-scoped; 404 if absent)
+     * @param tags the new tag pool (deduped on save)
+     * @return the updated master product (with {@code tags} exposed)
+     */
+    MasterProductResponse updateTags(Long id, java.util.List<String> tags);
+
     /** Soft delete: sets {@code active=false} (restore via PATCH {@code active=true}). */
     void deleteMasterProduct(Long id);
 

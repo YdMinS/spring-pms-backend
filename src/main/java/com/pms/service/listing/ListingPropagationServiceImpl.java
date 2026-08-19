@@ -38,6 +38,7 @@ public class ListingPropagationServiceImpl implements ListingPropagationService 
     private final GeneratedProductDataRepository generatedProductDataRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final ListingChannelResolver resolver;
+    private final TagMergeService tagMergeService;
 
     @Override
     public List<PendingSyncResponse> pendingSync() {
@@ -81,6 +82,9 @@ public class ListingPropagationServiceImpl implements ListingPropagationService 
             try {
                 ListingChannel adapter = resolver.resolve(cell.getPlatform());
                 adapter.update(cell, gen.get(), account.get());   // whole-object re-submit → PUT
+                // Push succeeded → append the merged tag snapshot (33) if it changed. Failed cells never reach here.
+                List<String> merged = tagMergeService.resolveTags(cell);
+                tagMergeService.recordRevisionIfChanged(cell, merged);
                 // Success: whole re-submit = re-review → SUBMITTED (no transition guard) + clear dirty marker.
                 // Option approvalStatus is left untouched here — fetchStatus/syncApprovals (3c) re-detect it.
                 productListingRepository.save(cell.toBuilder()

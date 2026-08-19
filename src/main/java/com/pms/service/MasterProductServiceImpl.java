@@ -39,6 +39,7 @@ import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.service.listing.MasterPropagationService;
+import com.pms.service.listing.TagMergeService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -86,6 +87,7 @@ public class MasterProductServiceImpl implements MasterProductService {
     private final ImageStorageService imageStorageService;
     private final ImageValidator imageValidator;
     private final MasterPropagationService masterPropagationService;
+    private final TagMergeService tagMergeService;
 
     private static final String IMAGE_STORAGE_CATEGORY = "master";
 
@@ -253,6 +255,16 @@ public class MasterProductServiceImpl implements MasterProductService {
         // rolls the master save back. Cells without generated assets are a no-op (skip) — safe for tests too.
         masterPropagationService.propagate(id);
 
+        return mapToResponse(updated);
+    }
+
+    @Override
+    @Transactional
+    public MasterProductResponse updateTags(Long id, List<String> tags) {
+        MasterProduct master = requireScopedMaster(id);
+        // Order-preserving dedup; an empty list clears the pool. UI reads the current value.
+        MasterProduct updated = masterProductRepository.save(
+                master.toBuilder().tags(tagMergeService.dedup(tags)).build());
         return mapToResponse(updated);
     }
 
@@ -531,6 +543,7 @@ public class MasterProductServiceImpl implements MasterProductService {
                 .active(master.getActive())
                 .sourceImageUrl(master.getSourceImageUrl())
                 .fieldValues(master.getFieldValues())
+                .tags(master.getTags())
                 .defaultDeliveryId(master.getDefaultDelivery() != null ? master.getDefaultDelivery().getId() : null)
                 .defaultPackageId(master.getDefaultPackage() != null ? master.getDefaultPackage().getId() : null)
                 .components(componentResponses)

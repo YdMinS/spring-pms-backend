@@ -284,6 +284,28 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
+    // ------------------------------------------------------------- tags (33)
+
+    @Test
+    void updateTags_noToken_returns401() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + masterId + "/tags")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"tags\":[\"신상\"]}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void updateTags_adminToken_returns200Deduped() throws Exception {
+        // Duplicate "신상" collapses (order-preserving dedup) → 2 tags exposed as current value.
+        mockMvc.perform(patch(PATH + "/" + masterId + "/tags")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"tags\":[\"신상\",\"신상\",\"봄\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.tags.length()").value(2))
+                .andExpect(jsonPath("$.data.tags[0]").value("신상"))
+                .andExpect(jsonPath("$.data.tags[1]").value("봄"));
+    }
+
     private String categoryBody() {
         return "{\"platform\":\"COUPANG\",\"categoryId\":" + categoryId + "}";
     }

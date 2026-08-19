@@ -1,10 +1,12 @@
 package com.pms.domain;
 
 import com.pms.domain.converter.MapStringConverter;
+import com.pms.domain.converter.StringListConverter;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.TenantId;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -52,6 +54,16 @@ public class MasterProduct extends BaseEntity {
     @Convert(converter = MapStringConverter.class)
     @Column(name = "field_values", columnDefinition = "TEXT")
     private Map<String, String> fieldValues;
+
+    /**
+     * Master tag pool (33): the shared tags folded into every channel cell at push time. Ordered, deduped on
+     * save (JSON TEXT, H2/MySQL portable). Merge order = channel tags first, then these master tags appended
+     * (duplicates already on the channel are skipped). {@code null} = no master tags. LLM auto-fill / presets
+     * are follow-up. See {@code TagMergeService}.
+     */
+    @Convert(converter = StringListConverter.class)
+    @Column(columnDefinition = "TEXT")
+    private List<String> tags;
 
     /**
      * Soft-delete / activation flag. NOT nullable → create/service must always set it explicitly.

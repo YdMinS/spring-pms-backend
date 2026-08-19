@@ -41,6 +41,7 @@ public class CoupangListingAdapter implements ListingChannel {
     private final ObjectMapper objectMapper;
     private final ProductListingOptionRepository productListingOptionRepository;
     private final MasterChannelConfigService masterChannelConfigService;
+    private final TagMergeService tagMergeService;
 
     @Override
     public String platform() {
@@ -122,6 +123,10 @@ public class CoupangListingAdapter implements ListingChannel {
             items.add(item);
         }
         payload.put("items", items);
+
+        // searchTags (33): channel tags first, then master tags appended (deduped, capped at 20). Coupang field
+        // name = searchTags (String array, max 20) — fixture-based, verified against a live account as follow-up.
+        payload.put("searchTags", tagMergeService.resolveTags(cell));
         return payload;
     }
 
