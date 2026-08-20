@@ -1,0 +1,40 @@
+# Product image gallery (FEATURE_2608_06 / 39).
+#   product_image = a product's 1:N source-image gallery (single source of the original images).
+# The master image pool (40) live-links these rows by id. No boolean columns -> no MySQL BIT trap.
+databaseChangeLog:
+
+  # ---- 1. product_image (product's 1:N gallery) ----
+  - changeSet:
+      id: 025-product-image
+      author: oclyx
+      comment: "Product image gallery: (product_id, sort_order, image_url). FK -> products."
+      changes:
+        - createTable:
+            tableName: product_image
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: product_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: sort_order, type: INT, constraints: { nullable: false } }
+              - column: { name: image_url, type: VARCHAR(1024), constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_product_image_product
+            baseTableName: product_image
+            baseColumnNames: product_id
+            referencedTableName: products
+            referencedColumnNames: id
+
+  # ---- 2. backfill existing products.image_url into the gallery (sortOrder 0) ----
+  # INSERT..SELECT is common H2/MySQL syntax (portable), so a single <sql> is allowed here by exception.
+  # NOW() matches the existing backfill convention (changesets 009/024). The apply-check runs on an empty
+  # H2 (no products) so this inserts nothing there; on prod it seeds each product's single image as slot 0.
+  - changeSet:
+      id: 025-backfill-product-image
+      author: oclyx
+      comment: "Backfill product_image from the legacy products.image_url single-image column."
+      changes:
+        - sql: >-
+            INSERT INTO product_image
+            (product_id, sort_order, image_url, created_date, modified_date)
+            SELECT id, 0, image_url, NOW(), NOW() FROM products WHERE image_url IS NOT NULL

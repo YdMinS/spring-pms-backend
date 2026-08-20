@@ -65,6 +65,7 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     private final MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     private final GeneratedProductDataRepository generatedProductDataRepository;
     private final ChannelTemplateResolver channelTemplateResolver;
+    private final ProductImageUrlResolver productImageUrlResolver;
     private final ThumbnailRenderer thumbnailRenderer;
     private final ProductImageLoader productImageLoader;
     private final ImageStorageService imageStorageService;
@@ -319,7 +320,8 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                     .findByImage_MasterProductIdAndZoneIdOrderBySortOrderAsc(
                             master.getId(), MasterImageZoneAssignment.SOURCE_ZONE);
             if (!cover.isEmpty()) {
-                return productImageLoader.loadUrl(cover.get(0).getImage().getImageUrl());
+                // Effective URL: a reference cover entry resolves to the live product image URL (40).
+                return productImageLoader.loadUrl(productImageUrlResolver.resolve(cover.get(0).getImage()));
             }
             if (StringUtils.hasText(master.getSourceImageUrl())) {
                 return productImageLoader.loadUrl(master.getSourceImageUrl());

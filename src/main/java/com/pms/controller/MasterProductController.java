@@ -1,6 +1,7 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.ImportProductImagesRequest;
 import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterOptionRequest;
 import com.pms.dto.request.MasterProductRequest;
@@ -163,6 +164,15 @@ public class MasterProductController {
             @PathVariable Long id, @RequestParam("file") MultipartFile file) {
         MasterProductImageResponse response = masterProductImageService.uploadToPool(id, file);
         return ResponseEntity.status(HttpStatus.CREATED).body(ResponseDTO.success(response));
+    }
+
+    @PostMapping("/{id}/images/import")
+    @Operation(summary = "Import product image slots into the pool as reference entries (live-links)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<List<MasterProductImageResponse>>> importProductImages(
+            @PathVariable Long id, @Valid @RequestBody ImportProductImagesRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                masterProductImageService.importProductImages(id, request.getProductImageIds())));
     }
 
     @GetMapping("/{id}/images")

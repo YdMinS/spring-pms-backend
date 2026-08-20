@@ -37,11 +37,21 @@ public interface MasterImageZoneAssignmentRepository extends JpaRepository<Maste
     void deleteByImageId(Long imageId);
 
     /**
-     * Batch-resolve one zone's mapped image URL per master (list cover thumbnail, no N+1).
-     * Returns rows of {@code [masterProductId (Long), imageUrl (String)]}; for {@code __source__} each
-     * master has at most one row (single-cover invariant).
+     * Delete-guard (40): true when any mapping places a reference entry of this product image slot onto a
+     * zone or the cover (a placed reference blocks the source {@code ProductImage} delete → 409). Includes
+     * DRAFT cells' mappings.
      */
-    @Query("SELECT a.image.masterProduct.id, a.image.imageUrl FROM MasterImageZoneAssignment a "
+    boolean existsByImage_ProductImageId(Long productImageId);
+
+    /**
+     * Batch-resolve one zone's mapped <b>effective</b> image URL per master (list cover thumbnail, no N+1).
+     * {@code COALESCE(reference productImage URL, edited imageUrl)} — same priority as
+     * {@code ProductImageUrlResolver} (40; a reference entry serves the live product URL). Returns rows of
+     * {@code [masterProductId (Long), imageUrl (String)]}; for {@code __source__} each master has at most
+     * one row (single-cover invariant).
+     */
+    @Query("SELECT a.image.masterProduct.id, COALESCE(a.image.productImage.imageUrl, a.image.imageUrl) "
+            + "FROM MasterImageZoneAssignment a "
             + "WHERE a.zoneId = :zoneId AND a.image.masterProduct.id IN :masterIds")
     List<Object[]> findZoneImageUrlsByMasterIds(
             @Param("zoneId") String zoneId, @Param("masterIds") Collection<Long> masterIds);

@@ -35,6 +35,17 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     Page<Product> searchByKeyword(@Param("keyword") String keyword, Pageable pageable);
 
     /**
+     * Tenant-scoped fetch by id. Returns empty for a cross-tenant id.
+     *
+     * <p>The inherited PK {@code findById()} is NOT tenant-filtered by Hibernate's {@code @TenantId}
+     * (only query-derived SELECTs are), so ownership checks that must respect tenant boundaries use this
+     * query-based finder — a cross-tenant id yields empty → a natural 404 with no manual tenant compare.
+     * Mirrors {@code MasterProductRepository.findScopedById}. Used by {@code ProductImageService} (39).</p>
+     */
+    @Query("SELECT p FROM Product p WHERE p.id = :id")
+    Optional<Product> findScopedById(@Param("id") Long id);
+
+    /**
      * Check if a product with given barcode exists
      */
     boolean existsByBarcodeId(String barcodeId);

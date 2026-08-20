@@ -20,6 +20,12 @@ public interface MasterProductImageService {
     /** Upload one image into the master's pool (no zone binding); appended after the current max sortOrder. */
     MasterProductImageResponse uploadToPool(Long masterId, MultipartFile file);
 
+    /**
+     * Import product image slots into the pool as reference entries (live-links, no copy — FEATURE_2608_06 / 40).
+     * Each slot's owning product is tenant-verified; returns the refreshed pool.
+     */
+    List<MasterProductImageResponse> importProductImages(Long masterId, List<Long> productImageIds);
+
     /** All pool images with their mapping state (assignedZones + isSource). */
     List<MasterProductImageResponse> listPool(Long masterId);
 

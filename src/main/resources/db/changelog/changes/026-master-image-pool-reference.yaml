@@ -1,0 +1,33 @@
+# Master image pool: reference/edited discriminator (FEATURE_2608_06 / 40).
+#   A pool entry (master_product_image) is either a REFERENCE (product_image_id set, live-links a
+#   product_image slot; image_url null) or EDITED (image_url set; product_image_id null). No boolean
+#   columns -> no MySQL BIT trap.
+databaseChangeLog:
+
+  # ---- 1. add product_image_id FK (reference discriminator) ----
+  - changeSet:
+      id: 026-add-product-image-ref
+      author: oclyx
+      comment: "master_product_image.product_image_id: live-link a product_image slot (reference entry)."
+      changes:
+        - addColumn:
+            tableName: master_product_image
+            columns:
+              - column: { name: product_image_id, type: BIGINT, constraints: { nullable: true } }
+        - addForeignKeyConstraint:
+            constraintName: fk_mpi_product_image
+            baseTableName: master_product_image
+            baseColumnNames: product_image_id
+            referencedTableName: product_image
+            referencedColumnNames: id
+
+  # ---- 2. relax image_url NOT NULL (reference entry keeps it null) ----
+  - changeSet:
+      id: 026-relax-pool-image-url-null
+      author: oclyx
+      comment: "master_product_image.image_url is null for a reference entry (URL comes from product_image)."
+      changes:
+        - dropNotNullConstraint:
+            tableName: master_product_image
+            columnName: image_url
+            columnDataType: VARCHAR(1024)

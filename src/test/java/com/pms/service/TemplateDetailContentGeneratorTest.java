@@ -38,6 +38,7 @@ import static org.mockito.Mockito.verify;
 class TemplateDetailContentGeneratorTest {
 
     @Mock private ChannelTemplateResolver channelTemplateResolver;
+    @Mock private ProductImageUrlResolver productImageUrlResolver;
     @Mock private MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private ProductListingProductRepository productListingProductRepository;
@@ -69,6 +70,9 @@ class TemplateDetailContentGeneratorTest {
                         assignment("product_photos", 1, "u1.jpg"),
                         // A __source__ mapping (cover photo) must be excluded from detail zones.
                         assignment(MasterImageZoneAssignment.SOURCE_ZONE, 0, "cover.jpg")));
+        // Effective URL resolution: edited entries here simply return their own imageUrl.
+        given(productImageUrlResolver.resolve(any()))
+                .willAnswer(inv -> ((MasterProductImage) inv.getArgument(0)).getImageUrl());
         given(detailHtmlRenderer.render(any(), any(), any())).willReturn("<html/>");
 
         String result = generator.generate(cell);
