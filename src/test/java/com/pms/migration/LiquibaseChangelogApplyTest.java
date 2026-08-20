@@ -149,6 +149,18 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM product_image "
                         + "WHERE product_id IS NULL AND sort_order IS NULL AND image_url IS NULL",
                 Integer.class)).isZero();
+
+        // changeset 027: processing_preset table + columns materialized (a successful count proves it)...
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM processing_preset WHERE name IS NULL AND operations IS NULL",
+                Integer.class)).isZero();
+        // ...and detail_template.image_processing_preset_id column materialized (the seeder committed a
+        // default detail_template row, so assert the column exists via INFORMATION_SCHEMA rather than a
+        // null count).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE TABLE_NAME = 'DETAIL_TEMPLATE' AND COLUMN_NAME = 'IMAGE_PROCESSING_PRESET_ID'",
+                Integer.class)).isEqualTo(1);
     }
 
     @Test

@@ -2,8 +2,11 @@ package com.pms.service;
 
 import com.pms.domain.DetailBlock;
 import com.pms.domain.DetailTemplate;
+import com.pms.domain.ProcessingPreset;
 import com.pms.dto.request.DetailTemplateRequest;
 import com.pms.dto.response.DetailTemplateResponse;
+import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.ProcessingPresetRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -32,6 +35,7 @@ import static org.mockito.Mockito.verify;
 class DetailTemplateServiceTest {
 
     @Mock private DetailTemplateRepository detailTemplateRepository;
+    @Mock private ProcessingPresetRepository processingPresetRepository;
 
     @InjectMocks private DetailTemplateServiceImpl service;
 
@@ -134,5 +138,47 @@ class DetailTemplateServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("알 수 없는 블록 타입");
         verify(detailTemplateRepository, never()).save(any());
+    }
+
+    // ---- image processing preset reference (FEATURE_2608_08) ----
+
+    @Test
+    void create_presetIdSet_resolvesAndAttaches() {
+        ProcessingPreset preset = ProcessingPreset.builder().id(7L).name("W").active(true).build();
+        given(processingPresetRepository.findScopedById(7L)).willReturn(Optional.of(preset));
+        given(detailTemplateRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+
+        DetailTemplateRequest request = DetailTemplateRequest.builder()
+                .name("T").imageProcessingPresetId(7L).build();
+        DetailTemplateResponse response = service.create(request);
+
+        assertThat(response.getImageProcessingPresetId()).isEqualTo(7L);
+    }
+
+    @Test
+    void create_presetIdNotFound_throws404() {
+        given(processingPresetRepository.findScopedById(9L)).willReturn(Optional.empty());
+
+        DetailTemplateRequest request = DetailTemplateRequest.builder()
+                .name("T").imageProcessingPresetId(9L).build();
+
+        assertThatThrownBy(() -> service.create(request))
+                .isInstanceOf(ResourceNotFoundException.class);
+        verify(detailTemplateRepository, never()).save(any());
+    }
+
+    @Test
+    void update_nullPresetId_keepsExistingPreset() {
+        ProcessingPreset preset = ProcessingPreset.builder().id(7L).name("W").active(true).build();
+        DetailTemplate existing = DetailTemplate.builder()
+                .id(1L).name("A").active(true).isDefault(false).imageProcessingPreset(preset).build();
+        given(detailTemplateRepository.findScopedById(1L)).willReturn(Optional.of(existing));
+        given(detailTemplateRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+
+        // request.imageProcessingPresetId == null → keep-existing
+        DetailTemplateRequest request = DetailTemplateRequest.builder().name("B").build();
+        DetailTemplateResponse response = service.update(1L, request);
+
+        assertThat(response.getImageProcessingPresetId()).isEqualTo(7L); // not cleared
     }
 }

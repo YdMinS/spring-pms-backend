@@ -30,4 +30,7 @@ public class DetailTemplateResponse {
 
     @Schema(description = "Whether this is the tenant default", example = "true")
     private Boolean isDefault;
+
+    @Schema(description = "Applied image-processing preset id (null = none)", example = "1", nullable = true)
+    private Long imageProcessingPresetId;
 }

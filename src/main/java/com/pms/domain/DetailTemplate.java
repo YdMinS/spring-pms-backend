@@ -51,4 +51,15 @@ public class DetailTemplate extends BaseEntity {
      */
     @Column(name = "is_default", nullable = false)
     private Boolean isDefault;
+
+    /**
+     * Image-processing preset applied to this template's detail images (FEATURE_2608_08). Nullable — when
+     * null, detail images are used verbatim (no compositing). Referenced per channel: since
+     * {@code ChannelTemplateResolver} already returns the per-channel DetailTemplate, the preset resolves
+     * per seller×platform automatically. Pattern mirrors {@code MarketplaceAccount.thumbnailTemplate}
+     * (nullable LAZY FK, no setter — rebuilt via toBuilder).
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "image_processing_preset_id", nullable = true)
+    private ProcessingPreset imageProcessingPreset;
 }

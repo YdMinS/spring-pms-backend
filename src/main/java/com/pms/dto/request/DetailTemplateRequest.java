@@ -35,4 +35,8 @@ public class DetailTemplateRequest {
     @Schema(description = "Make this the tenant default (demotes the existing default); defaults to false",
             example = "false", nullable = true)
     private Boolean isDefault;
+
+    @Schema(description = "Image-processing preset id to apply to detail images (null = none / keep on PATCH)",
+            example = "1", nullable = true)
+    private Long imageProcessingPresetId;
 }

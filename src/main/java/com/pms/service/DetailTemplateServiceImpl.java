@@ -2,10 +2,12 @@ package com.pms.service;
 
 import com.pms.domain.DetailBlock;
 import com.pms.domain.DetailTemplate;
+import com.pms.domain.ProcessingPreset;
 import com.pms.dto.request.DetailTemplateRequest;
 import com.pms.dto.response.DetailTemplateResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.DetailTemplateRepository;
+import com.pms.repository.ProcessingPresetRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,6 +32,7 @@ public class DetailTemplateServiceImpl implements DetailTemplateService {
     private static final Set<String> KNOWN_TYPES = Set.of("text", "imageZone", "asset", "spacer");
 
     private final DetailTemplateRepository detailTemplateRepository;
+    private final ProcessingPresetRepository processingPresetRepository;
 
     @Override
     public List<DetailTemplateResponse> list() {
@@ -56,6 +59,7 @@ public class DetailTemplateServiceImpl implements DetailTemplateService {
                 .blocks(request.getBlocks() == null ? List.of() : request.getBlocks())
                 .active(request.getActive() == null ? Boolean.TRUE : request.getActive())
                 .isDefault(makeDefault)
+                .imageProcessingPreset(resolvePreset(request.getImageProcessingPresetId()))
                 .build();
         return mapToResponse(detailTemplateRepository.save(template));
     }
@@ -74,6 +78,10 @@ public class DetailTemplateServiceImpl implements DetailTemplateService {
                 .blocks(request.getBlocks() != null ? request.getBlocks() : existing.getBlocks())
                 .active(request.getActive() != null ? request.getActive() : existing.getActive())
                 .isDefault(request.getIsDefault() != null ? request.getIsDefault() : existing.getIsDefault())
+                // PATCH: null preset id keeps the existing reference (secretKey convention); a value replaces it.
+                .imageProcessingPreset(request.getImageProcessingPresetId() != null
+                        ? resolvePreset(request.getImageProcessingPresetId())
+                        : existing.getImageProcessingPreset())
                 .build();
         return mapToResponse(detailTemplateRepository.save(updated));
     }
@@ -141,6 +149,15 @@ public class DetailTemplateServiceImpl implements DetailTemplateService {
                 .orElseThrow(() -> new ResourceNotFoundException("DetailTemplate", id));
     }
 
+    /** Resolve an optional preset reference: null id → null, else tenant-scoped fetch (404 if absent). */
+    private ProcessingPreset resolvePreset(Long presetId) {
+        if (presetId == null) {
+            return null;
+        }
+        return processingPresetRepository.findScopedById(presetId)
+                .orElseThrow(() -> new ResourceNotFoundException("ProcessingPreset", presetId));
+    }
+
     private DetailTemplateResponse mapToResponse(DetailTemplate template) {
         return DetailTemplateResponse.builder()
                 .id(template.getId())
@@ -148,6 +165,8 @@ public class DetailTemplateServiceImpl implements DetailTemplateService {
                 .blocks(template.getBlocks())
                 .active(template.getActive())
                 .isDefault(template.getIsDefault())
+                .imageProcessingPresetId(template.getImageProcessingPreset() == null
+                        ? null : template.getImageProcessingPreset().getId())
                 .build();
     }
 }

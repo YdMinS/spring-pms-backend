@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import javax.imageio.ImageIO;
@@ -42,6 +43,11 @@ class ThumbnailRendererTest {
 
     @Mock
     private ImageStorageService imageStorageService;
+
+    // Real primitive (spy) so the delegated final draw actually reaches the mock Graphics2D — proves the
+    // FEATURE_2608_08 delegation is pixel-identical (draw ordering/coords assertions stay valid).
+    @Spy
+    private ImageCompositeSupport imageCompositeSupport = new ImageCompositeSupport();
 
     @InjectMocks
     private ThumbnailRenderer renderer;
