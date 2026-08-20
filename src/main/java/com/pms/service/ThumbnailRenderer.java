@@ -45,6 +45,7 @@ public class ThumbnailRenderer {
 
     private final FontRegistry fontRegistry;
     private final ImageStorageService imageStorageService;
+    private final ImageCompositeSupport imageCompositeSupport;
 
     public byte[] render(ThumbnailTemplate template,
                          Map<String, String> textBindings,
@@ -228,12 +229,9 @@ public class ThumbnailRenderer {
         int y = r.getY() + (r.getH() - drawH) / 2;
 
         double opacity = element.getOpacity() == null ? 1.0 : clamp01(element.getOpacity());
-        Composite previous = g.getComposite();
-        if (opacity < 1.0) {
-            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) opacity));
-        }
-        g.drawImage(src, x, y, drawW, drawH, null);
-        g.setComposite(previous);
+        // Final pixel draw delegated to the shared composite primitive (FEATURE_2608_08). Region math
+        // above is unchanged — this is a pixel-identical delegation of the opacity+drawImage step only.
+        imageCompositeSupport.drawOverlay(g, src, x, y, drawW, drawH, opacity);
     }
 
     private void drawTextElement(Graphics2D g, TemplateElement element, Map<String, String> textBindings) {

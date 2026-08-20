@@ -1,8 +1,10 @@
 package com.pms.service;
 
 import com.pms.domain.DetailTemplate;
+import com.pms.domain.ImageOp;
 import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
+import com.pms.domain.ProcessingPreset;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -24,9 +26,15 @@ import java.util.Map;
  * changing the wiring. Composes a cell's detail HTML from the master's text {@code fieldValues}, its
  * zone input images, and the tenant's default {@link DetailTemplate}, delegating to {@link DetailHtmlRenderer}.
  *
- * <p>Pure composition (no I/O — image URLs are passed through verbatim), so it is Mockito-unit-testable.
- * ⚠️ The generator only fills {@code textBindings}; the {@code defaultValue} fallback is the renderer's
+ * <p>⚠️ The generator only fills {@code textBindings}; the {@code defaultValue} fallback is the renderer's
  * single responsibility (do NOT assemble defaults here).</p>
+ *
+ * <p>⚠️ Not pure anymore (FEATURE_2608_08): when the channel's {@link DetailTemplate} references an image
+ * {@link ProcessingPreset}, each zone image is loaded, composited through {@link ImageProcessor}
+ * (watermarks/badges burned per channel), re-uploaded, and its URL swapped before rendering. With no
+ * preset (or empty ops) the URLs pass through verbatim (no I/O). The processor/storage/loader are injected,
+ * so this stays a Mockito unit test. LAZY {@code template.getImageProcessingPreset()} /
+ * {@code preset.getOperations()} are read inside the existing {@code @Transactional(readOnly)} boundary.</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -39,6 +47,9 @@ public class TemplateDetailContentGenerator implements DetailContentGenerator {
     private final ProductListingOptionRepository productListingOptionRepository;
     private final ProductListingProductRepository productListingProductRepository;
     private final DetailHtmlRenderer detailHtmlRenderer;
+    private final ImageProcessor imageProcessor;
+    private final ImageStorageService imageStorageService;
+    private final ProductImageLoader productImageLoader;
 
     @Override
     public String generate(ProductListing cell) {
@@ -51,7 +62,37 @@ public class TemplateDetailContentGenerator implements DetailContentGenerator {
         DetailTemplate template = channelTemplateResolver.resolveDetail(cell);
         Map<String, String> textBindings = resolveTextBindings(cell);
         Map<String, List<String>> zoneImageUrls = resolveZoneImageUrls(master.getId());
+        zoneImageUrls = applyImageProcessing(template, master.getId(), zoneImageUrls);
         return detailHtmlRenderer.render(template, textBindings, zoneImageUrls);
+    }
+
+    /**
+     * Burn the channel template's image {@link ProcessingPreset} (watermark/badge overlays) into each zone
+     * image, returning URLs of the freshly uploaded composites. No preset / empty ops → the original URLs
+     * are returned verbatim (no I/O). Composites are per-cell files (channel-specific), so the filename is
+     * unique per {master, preset, zone, index}. Re-generation re-composites (previous files orphaned —
+     * best-effort cleanup is out of scope).
+     */
+    private Map<String, List<String>> applyImageProcessing(DetailTemplate template, Long masterId,
+                                                           Map<String, List<String>> zoneImageUrls) {
+        ProcessingPreset preset = template.getImageProcessingPreset();
+        List<ImageOp> ops = preset == null ? null : preset.getOperations();
+        if (ops == null || ops.isEmpty()) {
+            return zoneImageUrls; // no compositing — pass through
+        }
+        Map<String, List<String>> processed = new LinkedHashMap<>();
+        for (Map.Entry<String, List<String>> zone : zoneImageUrls.entrySet()) {
+            List<String> outUrls = new ArrayList<>();
+            List<String> urls = zone.getValue();
+            for (int i = 0; i < urls.size(); i++) {
+                byte[] baseBytes = productImageLoader.loadUrl(urls.get(i));
+                byte[] out = imageProcessor.process(baseBytes, ops);
+                String filename = masterId + "_" + preset.getId() + "_" + zone.getKey() + "_" + i + ".jpg";
+                outUrls.add(imageStorageService.uploadBytes(out, "master-detail", filename, "image/jpeg"));
+            }
+            processed.put(zone.getKey(), outUrls);
+        }
+        return processed;
     }
 
     /**
