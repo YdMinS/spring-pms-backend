@@ -142,6 +142,13 @@ class LiquibaseChangelogApplyTest {
                 "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
                         + "WHERE TABLE_NAME = 'MASTER_PRODUCT_IMAGE' AND COLUMN_NAME = 'ZONE_ID'",
                 String.class)).isEqualTo("YES");
+
+        // changeset 025: product_image table + columns materialized (a successful count proves it).
+        // The backfill inserts nothing on the empty apply-check DB (no products).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_image "
+                        + "WHERE product_id IS NULL AND sort_order IS NULL AND image_url IS NULL",
+                Integer.class)).isZero();
     }
 
     @Test
