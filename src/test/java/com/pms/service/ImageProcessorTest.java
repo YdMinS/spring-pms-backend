@@ -51,6 +51,35 @@ class ImageProcessorTest {
     }
 
     @Test
+    void overlay_topCenter_placesRedAtTopMiddle_cornersStayWhite() throws Exception {
+        given(imageStorageService.getBytes(KEY)).willReturn(solid(40, 40, Color.RED));
+
+        // scale 20% → 40px. TOP_CENTER, margin 0 → x ∈ [80,120), y ∈ [0,40).
+        ImageOp op = ImageOp.builder().type("overlay").assetStorageKey(KEY)
+                .anchor("TOP_CENTER").scalePercent(20).build();
+
+        BufferedImage out = decode(build().process(solid(SIZE, SIZE, Color.WHITE), List.of(op)));
+
+        assertRed(out, 100, 20);       // top-middle block
+        assertWhite(out, 20, 20);      // top-left corner untouched
+        assertWhite(out, 180, 20);     // top-right corner untouched
+    }
+
+    @Test
+    void overlay_centerLeft_placesRedAtMiddleLeft_oppositeStaysWhite() throws Exception {
+        given(imageStorageService.getBytes(KEY)).willReturn(solid(40, 40, Color.RED));
+
+        // CENTER_LEFT, margin 0 → x ∈ [0,40), y ∈ [80,120).
+        ImageOp op = ImageOp.builder().type("overlay").assetStorageKey(KEY)
+                .anchor("CENTER_LEFT").scalePercent(20).build();
+
+        BufferedImage out = decode(build().process(solid(SIZE, SIZE, Color.WHITE), List.of(op)));
+
+        assertRed(out, 20, 100);       // middle-left block
+        assertWhite(out, 180, 100);    // middle-right untouched
+    }
+
+    @Test
     void overlay_opacityHalf_blendsWithBase() throws Exception {
         given(imageStorageService.getBytes(KEY)).willReturn(solid(40, 40, Color.RED));
 

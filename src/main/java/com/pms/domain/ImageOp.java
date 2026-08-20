@@ -38,7 +38,10 @@ public class ImageOp {
     /** overlay = {@link TemplateAsset#getStorageKey()} of the overlay image (loaded via {@code getBytes}). */
     private String assetStorageKey;
 
-    /** {@code TOP_LEFT}/{@code TOP_RIGHT}/{@code BOTTOM_LEFT}/{@code BOTTOM_RIGHT}/{@code CENTER}. Null → BOTTOM_RIGHT. */
+    /**
+     * 3×3 grid anchor: {@code TOP_LEFT}/{@code TOP_CENTER}/{@code TOP_RIGHT}/{@code CENTER_LEFT}/{@code CENTER}/
+     * {@code CENTER_RIGHT}/{@code BOTTOM_LEFT}/{@code BOTTOM_CENTER}/{@code BOTTOM_RIGHT}. Null → BOTTOM_RIGHT.
+     */
     private String anchor;
 
     /** Overlay opacity 0..1 (SRC_OVER). Null → 1.0. */

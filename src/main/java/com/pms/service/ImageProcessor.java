@@ -93,12 +93,23 @@ public class ImageProcessor {
         String anchor = op.getAnchor() == null ? "BOTTOM_RIGHT" : op.getAnchor().toUpperCase();
         int x;
         int y;
+        // 3×3 grid: three columns (left=margin, center, right) × three rows (top=margin, middle, bottom).
+        int left = margin;
+        int centerX = (baseW - drawW) / 2;
+        int right = baseW - drawW - margin;
+        int top = margin;
+        int centerY = (baseH - drawH) / 2;
+        int bottom = baseH - drawH - margin;
         switch (anchor) {
-            case "TOP_LEFT" -> { x = margin; y = margin; }
-            case "TOP_RIGHT" -> { x = baseW - drawW - margin; y = margin; }
-            case "BOTTOM_LEFT" -> { x = margin; y = baseH - drawH - margin; }
-            case "CENTER" -> { x = (baseW - drawW) / 2; y = (baseH - drawH) / 2; }
-            default -> { x = baseW - drawW - margin; y = baseH - drawH - margin; } // BOTTOM_RIGHT
+            case "TOP_LEFT" -> { x = left; y = top; }
+            case "TOP_CENTER" -> { x = centerX; y = top; }
+            case "TOP_RIGHT" -> { x = right; y = top; }
+            case "CENTER_LEFT" -> { x = left; y = centerY; }
+            case "CENTER" -> { x = centerX; y = centerY; }
+            case "CENTER_RIGHT" -> { x = right; y = centerY; }
+            case "BOTTOM_LEFT" -> { x = left; y = bottom; }
+            case "BOTTOM_CENTER" -> { x = centerX; y = bottom; }
+            default -> { x = right; y = bottom; } // BOTTOM_RIGHT
         }
 
         double opacity = op.getOpacity() == null ? 1.0 : op.getOpacity();
