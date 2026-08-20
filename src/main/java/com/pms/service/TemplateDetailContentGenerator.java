@@ -34,6 +34,7 @@ import java.util.Map;
 public class TemplateDetailContentGenerator implements DetailContentGenerator {
 
     private final ChannelTemplateResolver channelTemplateResolver;
+    private final ProductImageUrlResolver productImageUrlResolver;
     private final MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
     private final ProductListingProductRepository productListingProductRepository;
@@ -72,7 +73,10 @@ public class TemplateDetailContentGenerator implements DetailContentGenerator {
             if (MasterImageZoneAssignment.SOURCE_ZONE.equals(a.getZoneId())) {
                 continue;
             }
-            zones.computeIfAbsent(a.getZoneId(), k -> new ArrayList<>()).add(a.getImage().getImageUrl());
+            // Effective URL: a reference entry resolves to the live product image URL (40, same priority
+            // as the batch COALESCE finder) — no new imageUrl access point.
+            zones.computeIfAbsent(a.getZoneId(), k -> new ArrayList<>())
+                    .add(productImageUrlResolver.resolve(a.getImage()));
         }
         return zones;
     }

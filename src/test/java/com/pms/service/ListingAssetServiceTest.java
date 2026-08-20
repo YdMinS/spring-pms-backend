@@ -4,7 +4,10 @@ import com.pms.domain.DetailBlock;
 import com.pms.domain.DetailTemplate;
 import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.GeneratedProductData;
+import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
+import com.pms.domain.MasterProductImage;
+import com.pms.domain.ProductImage;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -55,6 +58,7 @@ class ListingAssetServiceTest {
     @Mock private MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     @Mock private GeneratedProductDataRepository generatedProductDataRepository;
     @Mock private ChannelTemplateResolver channelTemplateResolver;
+    @Mock private ProductImageUrlResolver productImageUrlResolver;
     @Mock private ThumbnailRenderer thumbnailRenderer;
     @Mock private ProductImageLoader productImageLoader;
     @Mock private ImageStorageService imageStorageService;
@@ -132,6 +136,36 @@ class ListingAssetServiceTest {
         assertThat(dataCaptor.getValue().getId()).isNull();
         assertThat(dataCaptor.getValue().getProductListing()).isSameAs(cell);
         assertThat(dataCaptor.getValue().getDetailHtml()).isNotBlank();
+    }
+
+    @Test
+    void regenerateAssets_sourceReferenceEntry_usesLiveProductImageUrl() {
+        // The master cover is a __source__ mapping onto a REFERENCE pool entry (live-links a product slot).
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀")
+                .masterProduct(master).build();
+        MasterProductImage refEntry = MasterProductImage.builder()
+                .id(20L).masterProduct(master)
+                .productImage(ProductImage.builder().id(9L).imageUrl("products/live.jpg").build())
+                .build(); // imageUrl null — reference entry
+        given(masterImageZoneAssignmentRepository
+                .findByImage_MasterProductIdAndZoneIdOrderBySortOrderAsc(1L, MasterImageZoneAssignment.SOURCE_ZONE))
+                .willReturn(List.of(MasterImageZoneAssignment.builder()
+                        .image(refEntry).zoneId(MasterImageZoneAssignment.SOURCE_ZONE).sortOrder(0).build()));
+        given(productImageUrlResolver.resolve(refEntry)).willReturn("products/live.jpg");
+
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+        given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
+                .willReturn(List.of(ProductListingProduct.builder().product(product()).quantity(1).build()));
+        given(productImageLoader.loadUrl("products/live.jpg")).willReturn(new byte[]{9});
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID)).willReturn(Optional.empty());
+        commonRenderStubs();
+
+        service.regenerateAssets(cell);
+
+        // Base photo resolved through the reference → the live product image URL (not a stale copy).
+        verify(productImageLoader).loadUrl("products/live.jpg");
+        verify(productImageLoader, never()).load(any());
     }
 
     @Test

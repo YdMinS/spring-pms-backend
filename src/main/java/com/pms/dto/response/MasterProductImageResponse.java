@@ -22,8 +22,13 @@ public class MasterProductImageResponse {
     @Schema(description = "Position within the pool (0-based)", example = "0")
     private Integer sortOrder;
 
-    @Schema(description = "Stored image URL/path")
+    @Schema(description = "Effective (live) image URL — for a reference entry this is the linked product "
+            + "image's current URL; for an edited entry it is the master-owned URL")
     private String imageUrl;
+
+    @Schema(description = "Linked product image slot id when this is a reference entry; null for an edited "
+            + "(master-owned) entry", example = "42")
+    private Long productImageId;
 
     @Schema(description = "Detail zones this image is mapped to (excludes the cover-photo key)",
             example = "[\"product_photos\", \"detail_photos\"]")

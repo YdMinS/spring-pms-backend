@@ -2,6 +2,8 @@ package com.pms.repository;
 
 import com.pms.domain.MasterProductImage;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -20,4 +22,12 @@ public interface MasterProductImageRepository extends JpaRepository<MasterProduc
 
     /** All pool images of a master in pool order (list view + next-sortOrder computation). */
     List<MasterProductImage> findByMasterProductIdOrderBySortOrderAsc(Long masterProductId);
+
+    /** All reference entries live-linking one product image slot (delete-cleanup, 40). */
+    List<MasterProductImage> findByProductImageId(Long productImageId);
+
+    /** Remove every reference entry live-linking one product image slot (product image delete-cleanup, 40). */
+    @Modifying
+    @Transactional
+    void deleteByProductImageId(Long productImageId);
 }

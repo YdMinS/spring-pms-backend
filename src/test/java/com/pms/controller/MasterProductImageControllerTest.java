@@ -3,9 +3,13 @@ package com.pms.controller;
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductImage;
+import com.pms.domain.Product;
+import com.pms.domain.ProductImage;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.MasterProductImageRepository;
 import com.pms.repository.MasterProductRepository;
+import com.pms.repository.ProductImageRepository;
+import com.pms.repository.ProductRepository;
 import com.pms.service.ImageStorageService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,6 +43,8 @@ class MasterProductImageControllerTest extends BaseIntegrationTest {
     @Autowired private MasterProductRepository masterProductRepository;
     @Autowired private MasterProductImageRepository imageRepository;
     @Autowired private MasterImageZoneAssignmentRepository assignmentRepository;
+    @Autowired private ProductRepository productRepository;
+    @Autowired private ProductImageRepository productImageRepository;
     @MockBean private ImageStorageService imageStorageService;
 
     private static final String ZONE = "product_photos";
@@ -53,7 +59,9 @@ class MasterProductImageControllerTest extends BaseIntegrationTest {
     @AfterEach
     void cleanup() {
         assignmentRepository.deleteAll();
-        imageRepository.deleteAll();
+        imageRepository.deleteAll();          // master pool (incl. reference entries) before product_image (FK)
+        productImageRepository.deleteAll();
+        productRepository.deleteAll();
     }
 
     private String path() {
@@ -109,6 +117,44 @@ class MasterProductImageControllerTest extends BaseIntegrationTest {
                         .file(pngUpload())
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isNotFound());
+    }
+
+    // ------------------------------------------------------------------ POST /images/import (40)
+
+    private Long seedProductImageSlot() {
+        Long productId = productRepository.save(Product.builder().productName("상품A").active(true).build()).getId();
+        return productImageRepository.save(ProductImage.builder()
+                .product(productRepository.findScopedById(productId).orElseThrow())
+                .sortOrder(0).imageUrl("products/live.jpg").build()).getId();
+    }
+
+    @Test
+    void import_noToken_returns401() throws Exception {
+        mockMvc.perform(post(path() + "/import")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"productImageIds\":[1]}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void import_userToken_returns403() throws Exception {
+        mockMvc.perform(post(path() + "/import")
+                        .header("Authorization", "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"productImageIds\":[1]}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void import_adminToken_returns200_referenceEntryLiveUrl() throws Exception {
+        Long slotId = seedProductImageSlot();
+        mockMvc.perform(post(path() + "/import")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"productImageIds\":[" + slotId + "]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].productImageId").value(slotId))
+                .andExpect(jsonPath("$.data[0].imageUrl").value("products/live.jpg")); // live-resolved
     }
 
     // ------------------------------------------------------------------ GET /images

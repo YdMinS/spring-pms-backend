@@ -49,3 +49,5 @@ databaseChangeLog:
       file: db/changelog/changes/024-master-image-pool.yaml
   - include:
       file: db/changelog/changes/025-product-image.yaml
+  - include:
+      file: db/changelog/changes/026-master-image-pool-reference.yaml

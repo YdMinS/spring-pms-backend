@@ -3,11 +3,14 @@ package com.pms.service;
 import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductImage;
+import com.pms.domain.ProductImage;
 import com.pms.dto.response.MasterProductImageResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.MasterProductImageRepository;
 import com.pms.repository.MasterProductRepository;
+import com.pms.repository.ProductImageRepository;
+import com.pms.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -40,6 +43,9 @@ public class MasterProductImageServiceImpl implements MasterProductImageService 
     private final MasterProductImageRepository imageRepository;
     private final MasterImageZoneAssignmentRepository assignmentRepository;
     private final MasterProductRepository masterProductRepository;
+    private final ProductImageRepository productImageRepository;
+    private final ProductRepository productRepository;
+    private final ProductImageUrlResolver productImageUrlResolver;
     private final ImageStorageService imageStorageService;
     private final ImageValidator imageValidator;
 
@@ -70,8 +76,38 @@ public class MasterProductImageServiceImpl implements MasterProductImageService 
                 .masterProduct(master)
                 .sortOrder(nextOrder)
                 .imageUrl(url)
-                .build()); // zoneId left null — pool asset, mapping is separate
+                .build()); // zoneId + productImage left null — edited pool asset, mapping is separate
         return mapToResponse(saved, List.of());
+    }
+
+    @Override
+    @Transactional
+    public List<MasterProductImageResponse> importProductImages(Long masterId, List<Long> productImageIds) {
+        MasterProduct master = requireScopedMaster(masterId);
+
+        // Next position = max(sortOrder)+1 (do NOT use size() — a delete leaves a gap). Reused for the batch.
+        int nextOrder = imageRepository.findByMasterProductIdOrderBySortOrderAsc(masterId).stream()
+                .mapToInt(MasterProductImage::getSortOrder)
+                .max()
+                .orElse(-1) + 1;
+
+        List<MasterProductImage> toSave = new ArrayList<>();
+        for (Long productImageId : productImageIds) {
+            ProductImage slot = productImageRepository.findById(productImageId)
+                    .orElseThrow(() -> new ResourceNotFoundException("ProductImage", productImageId));
+            // Tenant ownership: the slot's owning product must be visible in this tenant (findScopedById is
+            // @TenantId-filtered, unlike a PK findById) — a cross-tenant slot yields an empty result → 400.
+            productRepository.findScopedById(slot.getProduct().getId())
+                    .orElseThrow(() -> new IllegalArgumentException("다른 테넌트의 상품 이미지는 가져올 수 없습니다"));
+            // Reference entry: live-links the slot, imageUrl stays null (URL resolved live from productImage).
+            toSave.add(MasterProductImage.builder()
+                    .masterProduct(master)
+                    .productImage(slot)
+                    .sortOrder(nextOrder++)
+                    .build());
+        }
+        imageRepository.saveAll(toSave); // single call
+        return listPool(masterId);
     }
 
     @Override
@@ -190,10 +226,13 @@ public class MasterProductImageServiceImpl implements MasterProductImageService 
                 .toList();
         boolean isSource = assignments.stream()
                 .anyMatch(a -> MasterImageZoneAssignment.SOURCE_ZONE.equals(a.getZoneId()));
+        // Effective URL resolved through the single helper: a reference entry serves the live product URL,
+        // an edited entry serves its own imageUrl (LAZY productImage read is safe — inside the service tx).
         return MasterProductImageResponse.builder()
                 .id(image.getId())
                 .sortOrder(image.getSortOrder())
-                .imageUrl(image.getImageUrl())
+                .imageUrl(productImageUrlResolver.resolve(image))
+                .productImageId(image.getProductImage() != null ? image.getProductImage().getId() : null)
                 .assignedZones(assignedZones)
                 .isSource(isSource)
                 .build();

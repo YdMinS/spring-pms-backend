@@ -3,7 +3,10 @@ package com.pms.service;
 import com.pms.domain.Product;
 import com.pms.domain.ProductImage;
 import com.pms.dto.response.ProductImageResponse;
+import com.pms.exception.ImageInUseException;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.MasterImageZoneAssignmentRepository;
+import com.pms.repository.MasterProductImageRepository;
 import com.pms.repository.ProductImageRepository;
 import com.pms.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
@@ -34,6 +37,9 @@ public class ProductImageServiceImpl implements ProductImageService {
 
     private final ProductRepository productRepository;
     private final ProductImageRepository imageRepository;
+    // Cross-aggregate refs for the 40 delete-guard + reference-entry cleanup.
+    private final MasterImageZoneAssignmentRepository assignmentRepository;
+    private final MasterProductImageRepository masterProductImageRepository;
     private final ImageStorageService imageStorageService;
     private final ImageValidator imageValidator;
 
@@ -116,7 +122,14 @@ public class ProductImageServiceImpl implements ProductImageService {
     public void deleteImage(Long productId, Long imageId) {
         Product product = requireScopedProduct(productId);
         ProductImage image = requireOwnedImage(productId, imageId);
-        // ⚠️ The 40 reference delete-guard will be added to this method (currently no referrers → simple delete).
+        // 40 reference guard: if a master pool reference of this slot is PLACED on a zone or the cover
+        // (DRAFT included), deleting the source would break the live-link → 409. The check is only the
+        // image↔master mapping existence (no ProductListing publish-state traversal / dangling cleanup).
+        if (assignmentRepository.existsByImage_ProductImageId(imageId)) {
+            throw new ImageInUseException();
+        }
+        // Not placed → drop any unmapped reference entries live-linking this slot (palette cleanup), then delete.
+        masterProductImageRepository.deleteByProductImageId(imageId);
         imageRepository.delete(image);
         List<ProductImage> remaining = imageRepository.findByProductIdOrderBySortOrderAsc(productId);
         // Physical delete is conditional: skip when this was the last image, because the representative

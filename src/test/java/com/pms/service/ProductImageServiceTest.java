@@ -3,7 +3,10 @@ package com.pms.service;
 import com.pms.domain.Product;
 import com.pms.domain.ProductImage;
 import com.pms.dto.response.ProductImageResponse;
+import com.pms.exception.ImageInUseException;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.MasterImageZoneAssignmentRepository;
+import com.pms.repository.MasterProductImageRepository;
 import com.pms.repository.ProductImageRepository;
 import com.pms.repository.ProductRepository;
 import org.junit.jupiter.api.Test;
@@ -30,6 +33,8 @@ class ProductImageServiceTest {
 
     @Mock private ProductRepository productRepository;
     @Mock private ProductImageRepository imageRepository;
+    @Mock private MasterImageZoneAssignmentRepository assignmentRepository;
+    @Mock private MasterProductImageRepository masterProductImageRepository;
     @Mock private ImageStorageService imageStorageService;
     @Mock private ImageValidator imageValidator;
 
@@ -193,5 +198,35 @@ class ProductImageServiceTest {
         verify(imageRepository).delete(target);
         verify(imageStorageService, never()).deleteImage(any());
         verify(productRepository, never()).save(any()); // representative kept (empty-gallery rule)
+    }
+
+    // ------------------------------------------------------------------ deleteImage 40 reference guard
+
+    @Test
+    void deleteImage_placedReference_409_preservesImage() {
+        given(productRepository.findScopedById(PRODUCT_ID)).willReturn(Optional.of(product()));
+        given(imageRepository.findById(5L)).willReturn(Optional.of(image(5L, 0)));
+        // A master pool reference of this slot is placed on a zone/cover (DRAFT included) → conflict.
+        given(assignmentRepository.existsByImage_ProductImageId(5L)).willReturn(true);
+
+        assertThatThrownBy(() -> service.deleteImage(PRODUCT_ID, 5L))
+                .isInstanceOf(ImageInUseException.class);
+        verify(imageRepository, never()).delete(any());                       // source image preserved
+        verify(masterProductImageRepository, never()).deleteByProductImageId(any());
+    }
+
+    @Test
+    void deleteImage_unplacedReference_deletes_cleansUpPaletteEntries() {
+        given(productRepository.findScopedById(PRODUCT_ID)).willReturn(Optional.of(product()));
+        ProductImage target = image(5L, 0);
+        given(imageRepository.findById(5L)).willReturn(Optional.of(target));
+        given(assignmentRepository.existsByImage_ProductImageId(5L)).willReturn(false);
+        given(imageRepository.findByProductIdOrderBySortOrderAsc(PRODUCT_ID)).willReturn(List.of(image(6L, 1)));
+
+        service.deleteImage(PRODUCT_ID, 5L);
+
+        verify(masterProductImageRepository).deleteByProductImageId(5L); // unmapped reference entries removed
+        verify(imageRepository).delete(target);
+        verify(imageStorageService).deleteImage("u5");                  // best-effort storage delete
     }
 }

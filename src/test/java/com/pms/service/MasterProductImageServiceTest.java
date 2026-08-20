@@ -3,11 +3,16 @@ package com.pms.service;
 import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductImage;
+import com.pms.domain.Product;
+import com.pms.domain.ProductImage;
 import com.pms.dto.response.MasterProductImageResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.MasterProductImageRepository;
 import com.pms.repository.MasterProductRepository;
+import com.pms.repository.ProductImageRepository;
+import com.pms.repository.ProductRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -35,10 +40,23 @@ class MasterProductImageServiceTest {
     @Mock private MasterProductImageRepository imageRepository;
     @Mock private MasterImageZoneAssignmentRepository assignmentRepository;
     @Mock private MasterProductRepository masterProductRepository;
+    @Mock private ProductImageRepository productImageRepository;
+    @Mock private ProductRepository productRepository;
+    @Mock private ProductImageUrlResolver productImageUrlResolver;
     @Mock private ImageStorageService imageStorageService;
     @Mock private ImageValidator imageValidator;
 
     @InjectMocks private MasterProductImageServiceImpl service;
+
+    /** Mirror the real resolver (edited → own imageUrl, reference → linked productImage's URL). Lenient: not
+     *  every test reaches {@code mapToResponse}. */
+    @BeforeEach
+    void stubUrlResolver() {
+        org.mockito.Mockito.lenient().when(productImageUrlResolver.resolve(any())).thenAnswer(inv -> {
+            MasterProductImage e = inv.getArgument(0);
+            return e.getProductImage() != null ? e.getProductImage().getImageUrl() : e.getImageUrl();
+        });
+    }
 
     private static final Long MASTER_ID = 1L;
     private static final String ZONE_A = "product_photos";
@@ -100,6 +118,72 @@ class MasterProductImageServiceTest {
         MultipartFile file = org.mockito.Mockito.mock(MultipartFile.class); // no stubs: fails before use
         assertThatThrownBy(() -> service.uploadToPool(MASTER_ID, file))
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    // ------------------------------------------------------------------ importProductImages (40)
+
+    @Test
+    void importProductImages_createsReferenceEntries_saveAllOnce_sortOrderMaxPlusOne() {
+        given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master()));
+        // pool sortOrder [0, 2] → next = 3 (max+1)
+        given(imageRepository.findByMasterProductIdOrderBySortOrderAsc(MASTER_ID))
+                .willReturn(List.of(image(10L, 0), image(11L, 2)));
+        Product product = Product.builder().id(500L).productName("p").build();
+        ProductImage slot = ProductImage.builder().id(70L).product(product).imageUrl("products/live.jpg").build();
+        given(productImageRepository.findById(70L)).willReturn(Optional.of(slot));
+        given(productRepository.findScopedById(500L)).willReturn(Optional.of(product));
+        given(imageRepository.saveAll(any())).willAnswer(inv -> inv.getArgument(0));
+        given(assignmentRepository.findByImage_MasterProductIdOrderByZoneIdAscSortOrderAsc(MASTER_ID))
+                .willReturn(List.of());
+
+        service.importProductImages(MASTER_ID, List.of(70L));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<MasterProductImage>> c = ArgumentCaptor.forClass(List.class);
+        verify(imageRepository).saveAll(c.capture()); // single call
+        assertThat(c.getValue()).hasSize(1);
+        MasterProductImage ref = c.getValue().get(0);
+        assertThat(ref.getProductImage().getId()).isEqualTo(70L); // reference entry
+        assertThat(ref.getImageUrl()).isNull();                    // no copy — URL resolved live
+        assertThat(ref.getSortOrder()).isEqualTo(3);               // max+1
+    }
+
+    @Test
+    void importProductImages_crossTenantProductImage_400_saveNever() {
+        given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master()));
+        given(imageRepository.findByMasterProductIdOrderBySortOrderAsc(MASTER_ID)).willReturn(List.of());
+        Product foreign = Product.builder().id(999L).build();
+        ProductImage slot = ProductImage.builder().id(70L).product(foreign).imageUrl("x").build();
+        given(productImageRepository.findById(70L)).willReturn(Optional.of(slot));
+        // Foreign product not visible in this tenant (findScopedById empty) → cross-tenant blocked.
+        given(productRepository.findScopedById(999L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.importProductImages(MASTER_ID, List.of(70L)))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(imageRepository, org.mockito.Mockito.never()).saveAll(any());
+    }
+
+    @Test
+    void listPool_referenceEntry_resolvesLiveUrl_fillsProductImageId() {
+        given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master()));
+        // One reference entry (imageUrl null, linked slot) + one edited entry (own imageUrl).
+        MasterProductImage ref = MasterProductImage.builder()
+                .id(1L).masterProduct(master()).sortOrder(0)
+                .productImage(ProductImage.builder().id(70L).imageUrl("products/live.jpg").build())
+                .build();
+        MasterProductImage edited = image(2L, 1); // imageUrl "u2", no productImage
+        given(imageRepository.findByMasterProductIdOrderBySortOrderAsc(MASTER_ID))
+                .willReturn(List.of(ref, edited));
+        given(assignmentRepository.findByImage_MasterProductIdOrderByZoneIdAscSortOrderAsc(MASTER_ID))
+                .willReturn(List.of());
+
+        List<MasterProductImageResponse> pool = service.listPool(MASTER_ID);
+
+        assertThat(pool).hasSize(2);
+        assertThat(pool.get(0).getImageUrl()).isEqualTo("products/live.jpg"); // live product URL
+        assertThat(pool.get(0).getProductImageId()).isEqualTo(70L);
+        assertThat(pool.get(1).getImageUrl()).isEqualTo("u2");                 // edited entry own URL
+        assertThat(pool.get(1).getProductImageId()).isNull();
     }
 
     // ------------------------------------------------------------------ setZoneImages
