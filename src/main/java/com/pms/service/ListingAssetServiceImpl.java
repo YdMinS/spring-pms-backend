@@ -413,6 +413,7 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                 .map(o -> GeneratedProductResponse.OptionPrice.builder()
                         .optionId(o.getId())
                         .sellingPrice(o.getSellingPrice())
+                        .active(o.getActive())
                         .build())
                 .toList();
         return GeneratedProductResponse.builder()
