@@ -53,3 +53,5 @@ databaseChangeLog:
       file: db/changelog/changes/026-master-image-pool-reference.yaml
   - include:
       file: db/changelog/changes/027-processing-preset.yaml
+  - include:
+      file: db/changelog/changes/028-listing-option-active.yaml

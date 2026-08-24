@@ -1,0 +1,48 @@
+# Per-channel option active flag (FEATURE_2608_06 / 42): additive boolean on product_listing_option.
+#   active = "this option is included in the channel's market register/update payload". A channel cell copies all
+#   master options (backward-compatible); this flag lets each channel carry a subset. Deactivating drops the
+#   option from the payload but keeps the row (re-activation + order mapping preserved). Pre-existing live rows
+#   backfill to true (defaultValueBoolean) = the prior "all options active" behavior.
+#
+# ⚠️ boolean = 006 BIT trap. On MySQL, Liquibase's abstract BOOLEAN materializes as TINYINT, but Hibernate 6
+# expects BIT(1) for boolean fields -> ddl-auto: validate fails on startup (crash loop). So mirror 006/014
+# exactly: a portable BOOLEAN changeset for all DBs + a dbms:mysql changeset re-typing to BIT(1). H2 (tests)
+# maps BOOLEAN in a Hibernate-compatible way and is left untouched.
+databaseChangeLog:
+
+  - changeSet:
+      id: 028-listing-option-active
+      author: oclyx
+      comment: "42: product_listing_option.active (BOOLEAN NOT NULL default true, backfills live rows)."
+      changes:
+        - addColumn:
+            tableName: product_listing_option
+            columns:
+              - column:
+                  name: active
+                  type: BOOLEAN
+                  defaultValueBoolean: true
+                  constraints:
+                    nullable: false
+
+  # MySQL only: abstract BOOLEAN -> TINYINT, but Hibernate expects BIT(1). Re-type + re-declare NOT NULL/DEFAULT
+  # (MySQL MODIFY drops them). Mirrors 006/014. H2 untouched.
+  - changeSet:
+      id: 028-listing-option-active-mysql-bit
+      author: oclyx
+      dbms: mysql
+      comment: "42: product_listing_option.active TINYINT -> BIT(1) to satisfy Hibernate schema validation."
+      changes:
+        - modifyDataType:
+            tableName: product_listing_option
+            columnName: active
+            newDataType: BIT(1)
+        - addNotNullConstraint:
+            tableName: product_listing_option
+            columnName: active
+            columnDataType: BIT(1)
+            defaultNullValue: true
+        - addDefaultValue:
+            tableName: product_listing_option
+            columnName: active
+            defaultValueBoolean: true

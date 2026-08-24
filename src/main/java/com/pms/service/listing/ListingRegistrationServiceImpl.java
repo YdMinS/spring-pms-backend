@@ -62,6 +62,14 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
         MarketplaceAccount acct = resolveAccount(cell);
         ListingChannel adapter = resolver.resolve(cell.getPlatform());
 
+        // 42: the payload pushes only active options → refuse a register with an empty active subset (defensive:
+        // setActiveOptions already enforces min 1 active, but the payload must never be empty).
+        boolean anyActive = productListingOptionRepository.findByProductListingId(listingId).stream()
+                .anyMatch(o -> Boolean.TRUE.equals(o.getActive()));
+        if (!anyActive) {
+            throw new IllegalArgumentException("활성 옵션 없음");
+        }
+
         String sellerProductId = adapter.register(cell, gen, acct);
 
         // Push succeeded → append the merged tag snapshot (33) if it changed. Failed cells never reach here.
