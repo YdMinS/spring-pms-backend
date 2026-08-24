@@ -151,7 +151,7 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
                 + "&status=INSTRUCT&maxPerPage=" + MAX_PER_PAGE;
     }
 
-    /** box(shipmentBox) 1개를 orderItems N개로 펼쳐 rows 에 누적. 발주가능수량 ≤ 0 라인은 제외. */
+    /** box(shipmentBox) 1개를 orderItems N개로 펼쳐 rows 에 누적. 전량 확정취소 라인만 제외. */
     private void flattenBox(MarketplaceAccount account, JsonNode box, List<ShippingLabelRow> rows) {
         JsonNode receiver = box.path("receiver");
         String receiverName = receiver.path("name").asText("");
@@ -168,10 +168,13 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
         for (JsonNode item : box.path("orderItems")) {
             int shipping = item.path("shippingCount").asInt(0);
             int cancel = item.path("cancelCount").asInt(0);
-            int hold = item.path("holdCountForCancel").asInt(0);
-            int quantity = shipping - (cancel + hold);         // 발주가능수량
+            // 발송 대상 수량은 확정취소(cancelCount)만 뺀다.
+            // holdCountForCancel(환불대기)은 아직 미확정이라 여기서 빼서 라인을 숨기면,
+            // 취소요청만 걸린 상품준비중(INSTRUCT) 주문이 송장 접수시트에서 통째로 사라진다
+            // (실서버 "상품준비중인데 조회 안 됨" 원인). 노출하고 판매자가 편집(V2)에서 판단한다.
+            int quantity = shipping - cancel;
             if (quantity <= 0) {
-                continue;                                       // 취소분 미발송
+                continue;                                       // 전량 확정취소만 미발송
             }
             String vendorItemId = item.path("vendorItemId").asText("");
             rows.add(new ShippingLabelRow(

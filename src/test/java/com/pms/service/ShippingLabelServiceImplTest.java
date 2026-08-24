@@ -92,6 +92,20 @@ class ShippingLabelServiceImplTest {
     }
 
     @Test
+    void collectRows_keepsPendingCancelLines() {
+        // 취소대기(holdCountForCancel)만 걸린 상품준비중 라인은 미확정이므로 숨기지 않는다.
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(coupangAccount));
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(oneBoxHeldLine());
+
+        List<ShippingLabelRow> rows = service.collectRows(null);
+
+        assertThat(rows).hasSize(1);
+        ShippingLabelRow held = rows.get(0);
+        assertThat(held.productName()).isEqualTo("취소대기옵션");
+        assertThat(held.quantity()).isEqualTo(2);   // shipping 2 − cancel 0 (hold 는 안 뺌)
+    }
+
+    @Test
     void collectRows_paginatesUntilNextTokenBlank() {
         given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(coupangAccount));
         given(coupangApiClient.get(anyString(), anyString(), any()))
@@ -187,6 +201,21 @@ class ShippingLabelServiceImplTest {
                   {"vendorItemId":3823839899,"sellerProductName":"양말세트","vendorItemName":"양말 블랙 L","shippingCount":2,"cancelCount":0,"holdCountForCancel":0},
                   {"vendorItemId":3823839900,"vendorItemName":"양말 화이트 M","shippingCount":1,"cancelCount":0,"holdCountForCancel":0},
                   {"vendorItemId":3823839901,"vendorItemName":"취소된옵션","shippingCount":1,"cancelCount":1,"holdCountForCancel":0}
+                ]}
+             ]}
+            """;
+    }
+
+    // 취소대기(hold)만 걸린 라인 1건 — 확정취소 아님 → 노출되어야 함
+    private String oneBoxHeldLine() {
+        return """
+            {"code":200,"message":"OK","nextToken":"",
+             "data":[
+               {"shipmentBoxId":302012345680,"orderId":4000019469462,"status":"INSTRUCT","parcelPrintMessage":"",
+                "receiver":{"name":"박지성","safeNumber":"+821011112222",
+                            "addr1":"서울시 마포구","addr2":"","postCode":"04001"},
+                "orderItems":[
+                  {"vendorItemId":3823839902,"vendorItemName":"취소대기옵션","shippingCount":2,"cancelCount":0,"holdCountForCancel":2}
                 ]}
              ]}
             """;
