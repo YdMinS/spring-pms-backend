@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -45,4 +46,16 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
      */
     @EntityGraph(attributePaths = "marketplaceAccount")
     List<OrderItem> findByExternalOrderId(String externalOrderId);
+
+    /**
+     * 아직 발송 전(status IN statuses) 상태로 남아 있는 이 계정 주문의 고유 주문번호 목록.
+     *
+     * 취소 보정 재조정용 — 판매자 품절취소(쿠팡 receiptType=RETURN)는 cancelType=CANCEL 조회에
+     * 안 잡혀 발송전 주문이 취소돼도 로컬 status/cancel_count 가 갱신되지 않는다. 이 주문번호들을
+     * returnRequests?orderId= (전체 타입) 로 재조회해 취소를 반영한다.
+     */
+    @Query("SELECT DISTINCT o.externalOrderId FROM OrderItem o " +
+            "WHERE o.marketplaceAccount.id = :accountId AND o.status IN :statuses")
+    List<String> findDistinctExternalOrderIdByAccountAndStatusIn(
+            @Param("accountId") Long accountId, @Param("statuses") Collection<String> statuses);
 }

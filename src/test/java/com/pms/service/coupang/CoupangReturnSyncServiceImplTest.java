@@ -13,11 +13,14 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -84,6 +87,31 @@ class CoupangReturnSyncServiceImplTest {
     }
 
     @Test
+    void syncCancels_reconcilesPreShipmentReturnTypeCancel() {
+        // 발송전(INSTRUCT) 주문의 판매자 품절취소는 쿠팡에서 receiptType=RETURN 으로 기록되어
+        // cancelType=CANCEL 배치엔 안 잡힌다 → orderId 재조정이 전체 타입을 조회해 cancel_count 반영.
+        given(orderItemRepository.findDistinctExternalOrderIdByAccountAndStatusIn(eq(1L), any()))
+                .willReturn(List.of("O1"));
+        given(coupangApiClient.get(anyString(), contains("cancelType=CANCEL"), any())).willReturn(emptyData());
+        given(coupangApiClient.get(anyString(), contains("orderId=O1"), any())).willReturn(oneReturn("O1", "B1", "I1", 2));
+
+        OrderItem existing = OrderItem.builder()
+                .id(20L).marketplaceAccount(account).platform("COUPANG")
+                .externalOrderId("O1").externalBoxId("B1").externalItemId("I1")
+                .orderCount(2).cancelCount(0).holdCount(0).status("INSTRUCT").build();
+        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
+                1L, "B1", "O1", "I1")).willReturn(Optional.of(existing));
+
+        CancelSyncResult result = service.syncCancels(account);
+
+        ArgumentCaptor<OrderItem> captor = ArgumentCaptor.forClass(OrderItem.class);
+        verify(orderItemRepository, times(1)).save(captor.capture());
+        assertThat(captor.getValue().getCancelCount()).isEqualTo(2);
+        assertThat(captor.getValue().isFullyCancelled()).isTrue();      // 2 >= orderCount 2 → 전량취소
+        assertThat(result.matchedUpdated()).isEqualTo(1);
+    }
+
+    @Test
     void syncCancels_paginates_untilNextTokenBlank() {
         given(coupangApiClient.get(anyString(), anyString(), any()))
                 .willReturn(pageWithToken("t"), pageWithToken(""));
@@ -102,6 +130,20 @@ class CoupangReturnSyncServiceImplTest {
         return """
             {"data":[
               {"orderId":"%s","receiptType":"CANCEL",
+               "returnItems":[{"shipmentBoxId":"%s","vendorItemId":"%s","cancelCount":%d}]}
+            ],"nextToken":""}
+            """.formatted(orderId, boxId, itemId, cancelCount);
+    }
+
+    private String emptyData() {
+        return "{\"data\":[],\"nextToken\":\"\"}";
+    }
+
+    /** 판매자 품절취소 응답 — receiptType=RETURN (cancelType=CANCEL 배치엔 안 잡히는 형태). */
+    private String oneReturn(String orderId, String boxId, String itemId, int cancelCount) {
+        return """
+            {"data":[
+              {"orderId":"%s","receiptType":"RETURN","receiptStatus":"RETURNS_COMPLETED",
                "returnItems":[{"shipmentBoxId":"%s","vendorItemId":"%s","cancelCount":%d}]}
             ],"nextToken":""}
             """.formatted(orderId, boxId, itemId, cancelCount);
