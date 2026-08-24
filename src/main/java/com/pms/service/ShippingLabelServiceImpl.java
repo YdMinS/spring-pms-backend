@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -38,6 +39,7 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
     private static final int MAX_PAGES = 100;                    // 무한루프 가드
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final String KST_OFFSET = "%2B09:00";        // +09:00, URL-encoded (+ → %2B)
+    private static final ZoneId KST = ZoneId.of("Asia/Seoul");  // 쿠팡 createdAt 창은 KST 달력 기준
 
     /** 택배수량(박스·라벨 수) 기본값 — 라인당 1박스. 추후 사용자 조정 가능하게 확장 예정. */
     private static final int DEFAULT_PARCEL_QUANTITY = 1;
@@ -144,7 +146,7 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
      * 날짜는 KST: "yyyy-MM-dd+09:00" (+ 는 %2B 로 인코딩, 서명/전송 동일 문자열 사용).
      */
     private String baseQuery() {
-        LocalDate to = LocalDate.now();
+        LocalDate to = LocalDate.now(KST);
         LocalDate from = to.minusDays(coupangProperties.getInstructDays());
         return "createdAtFrom=" + from.format(DATE) + KST_OFFSET
                 + "&createdAtTo=" + to.format(DATE) + KST_OFFSET

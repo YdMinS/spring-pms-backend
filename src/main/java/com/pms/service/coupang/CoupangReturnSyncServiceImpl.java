@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Optional;
@@ -38,6 +39,7 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
     // 아직 발송 전이라 취소가 가능한 상태들 — 재조정 대상.
     private static final List<String> PRE_SHIPMENT_STATUSES = List.of("ACCEPT", "INSTRUCT");
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    private static final ZoneId KST = ZoneId.of("Asia/Seoul");  // 쿠팡 createdAt 창은 KST 달력 기준
 
     private final CoupangApiClient coupangApiClient;
     private final OrderItemRepository orderItemRepository;
@@ -59,7 +61,7 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
     /** (1) 배치: cancelType=CANCEL 으로 최근 cancel-sync-days 의 결제취소 조회 (status·orderId 제외). */
     private CancelSyncResult syncCancelBatch(MarketplaceAccount account) {
         String path = coupangProperties.getReturnrequestsPath().replace("{vendorId}", account.getVendorId());
-        LocalDate to = LocalDate.now();
+        LocalDate to = LocalDate.now(KST);
         LocalDate from = to.minusDays(coupangProperties.getCancelSyncDays());
         String baseQuery = "cancelType=CANCEL"
                 + "&createdAtFrom=" + from.format(DATE)
@@ -80,7 +82,7 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
         }
 
         String path = coupangProperties.getReturnrequestsPath().replace("{vendorId}", account.getVendorId());
-        LocalDate to = LocalDate.now();
+        LocalDate to = LocalDate.now(KST);
         LocalDate from = to.minusDays(RECON_LOOKBACK_DAYS);
         String window = "&createdAtFrom=" + from.format(DATE)
                 + "&createdAtTo=" + to.format(DATE)
