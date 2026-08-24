@@ -51,6 +51,8 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 .holdCount(o.getHoldCount())
                 .purchasableQty(o.purchasableQty())
                 .status(o.getStatus())
+                .effectiveStatus(o.effectiveStatus())
+                .cancelled(o.isFullyCancelled())
                 .paidAt(o.getPaidAt())
                 .build();
     }

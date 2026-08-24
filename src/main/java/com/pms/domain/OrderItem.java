@@ -83,4 +83,22 @@ public class OrderItem extends BaseEntity {
     public int purchasableQty() {
         return Math.max(0, orderCount - (cancelCount + holdCount));
     }
+
+    /**
+     * 전량 취소 여부 = 확정취소+환불대기(cancelCount+holdCount) 가 주문수량 이상.
+     *
+     * 판매자 취소는 status 를 바꾸지 않고 취소수량만 반영되므로(returnRequests 동기화는 status 미변경,
+     * 또 전량취소된 주문은 INSTRUCT 목록에서 빠져 status 가 얼어붙는다), 취소수량으로 취소를 판정한다.
+     */
+    public boolean isFullyCancelled() {
+        return orderCount != null && orderCount > 0 && (cancelCount + holdCount) >= orderCount;
+    }
+
+    /**
+     * 화면 표시용 유효 상태 — 전량 취소면 {@code "CANCELLED"}, 아니면 원본 status.
+     * 원본 status(쿠팡 코드)는 별도로 유지하고, 이 값이 "취소했는데 상품준비중" 오표시를 막는다.
+     */
+    public String effectiveStatus() {
+        return isFullyCancelled() ? "CANCELLED" : status;
+    }
 }

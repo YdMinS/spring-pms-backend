@@ -27,7 +27,9 @@ public class OrderItemResponse {
     private int cancelCount;
     private int holdCount;
     private int purchasableQty;         // orderCount-(cancel+hold), 음수 0
-    private String status;
+    private String status;              // 쿠팡 원본 상태 (예: INSTRUCT)
+    private String effectiveStatus;     // 전량 취소면 "CANCELLED", 아니면 status — 화면 표시용
+    private boolean cancelled;          // 전량 취소 여부 (취소했는데 상품준비중 오표시 방지)
     private LocalDateTime paidAt;
     // raw(JSON 원본)는 응답에서 제외 — 목록 가벼움 유지
 }
