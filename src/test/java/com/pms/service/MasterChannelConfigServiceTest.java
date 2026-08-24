@@ -2,12 +2,12 @@ package com.pms.service;
 
 import com.pms.domain.CarrierRate;
 import com.pms.domain.Category;
+import com.pms.domain.CategoryMapping;
 import com.pms.domain.MasterProduct;
-import com.pms.domain.MasterProductCategory;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.Package;
 import com.pms.domain.ProductListing;
-import com.pms.repository.MasterProductCategoryRepository;
+import com.pms.repository.CategoryMappingRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -22,14 +22,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.BDDMockito.given;
 
 /**
- * Channel-config resolver (FEATURE_2608_06 / 13): category = master × platform (400 if unset), and
+ * Channel-config resolver (FEATURE_2608_06 / 44): standard category = master.category (400 if unset), the
+ * platform code = the standard category's CategoryMapping for the cell platform (400 if no mapping), and
  * delivery/box = option override ?? master default (400 if both null). The resolver is the single owner of
  * these null checks.
  */
 @ExtendWith(MockitoExtension.class)
 class MasterChannelConfigServiceTest {
 
-    @Mock private MasterProductCategoryRepository categoryRepository;
+    @Mock private CategoryMappingRepository categoryMappingRepository;
     @InjectMocks private MasterChannelConfigServiceImpl service;
 
     private CarrierRate carrier(String cost) {
@@ -44,28 +45,48 @@ class MasterChannelConfigServiceTest {
         return ProductListing.builder().id(1L).platform("COUPANG").masterProduct(master).build();
     }
 
-    // ---- category ----
+    // ---- standard category ----
 
     @Test
-    void resolveCategory_present_returnsMasterPlatformCategory() {
-        MasterProduct master = MasterProduct.builder().id(9L).build();
+    void resolveStandardCategory_present_returnsMasterCategory() {
         Category category = Category.builder().id(3L).name("신발").build();
-        given(categoryRepository.findByMasterProductIdAndPlatform(9L, "COUPANG"))
-                .willReturn(Optional.of(MasterProductCategory.builder()
-                        .masterProduct(master).platform("COUPANG").category(category).build()));
+        MasterProduct master = MasterProduct.builder().id(9L).category(category).build();
 
-        assertThat(service.resolveCategory(cell(master)).getId()).isEqualTo(3L);
+        assertThat(service.resolveStandardCategory(cell(master)).getId()).isEqualTo(3L);
     }
 
     @Test
-    void resolveCategory_missing_throws400() {
-        MasterProduct master = MasterProduct.builder().id(9L).build();
-        given(categoryRepository.findByMasterProductIdAndPlatform(9L, "COUPANG"))
+    void resolveStandardCategory_missing_throws400() {
+        MasterProduct master = MasterProduct.builder().id(9L).category(null).build();
+
+        assertThatThrownBy(() -> service.resolveStandardCategory(cell(master)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("표준 카테고리 미설정");
+    }
+
+    // ---- platform category code (standard category × platform mapping) ----
+
+    @Test
+    void resolvePlatformCategoryCode_mappingPresent_returnsCode() {
+        Category category = Category.builder().id(5L).name("신발").build();
+        MasterProduct master = MasterProduct.builder().id(9L).category(category).build();
+        given(categoryMappingRepository.findByCategoryIdAndPlatform(5L, "COUPANG"))
+                .willReturn(Optional.of(CategoryMapping.builder()
+                        .category(category).platform("COUPANG").platformCategoryId("101").build()));
+
+        assertThat(service.resolvePlatformCategoryCode(cell(master))).isEqualTo("101");
+    }
+
+    @Test
+    void resolvePlatformCategoryCode_noMapping_throws400() {
+        Category category = Category.builder().id(5L).name("신발").build();
+        MasterProduct master = MasterProduct.builder().id(9L).category(category).build();
+        given(categoryMappingRepository.findByCategoryIdAndPlatform(5L, "COUPANG"))
                 .willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.resolveCategory(cell(master)))
+        assertThatThrownBy(() -> service.resolvePlatformCategoryCode(cell(master)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("카테고리 미설정");
+                .hasMessage("COUPANG 카테고리 매핑 미설정");
     }
 
     // ---- delivery: option override ?? master default ----

@@ -55,3 +55,9 @@ databaseChangeLog:
       file: db/changelog/changes/027-processing-preset.yaml
   - include:
       file: db/changelog/changes/028-listing-option-active.yaml
+  - include:
+      file: db/changelog/changes/029-standard-category-mapping.yaml
+  - include:
+      file: db/changelog/changes/030-coupang-fee-reference.yaml
+  - include:
+      file: db/changelog/changes/031-category-meta.yaml

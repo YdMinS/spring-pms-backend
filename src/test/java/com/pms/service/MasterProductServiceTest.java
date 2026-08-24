@@ -5,7 +5,6 @@ import com.pms.domain.Category;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
-import com.pms.domain.MasterProductCategory;
 import com.pms.domain.MasterProductComponent;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
@@ -22,14 +21,12 @@ import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductResponse;
-import com.pms.exception.BusinessException;
 import com.pms.exception.MasterProductInUseException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
-import com.pms.repository.MasterProductCategoryRepository;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
@@ -66,7 +63,6 @@ import static org.mockito.Mockito.verify;
 class MasterProductServiceTest {
 
     @Mock private MasterProductRepository masterProductRepository;
-    @Mock private MasterProductCategoryRepository masterProductCategoryRepository;
     @Mock private MasterProductComponentRepository componentRepository;
     @Mock private MasterProductOptionRepository optionRepository;
     @Mock private MasterProductOptionItemRepository optionItemRepository;
@@ -446,58 +442,44 @@ class MasterProductServiceTest {
         assertThat(resp.getPackageId()).isEqualTo(5L);
     }
 
-    // ------------------------------------------------------------- category (master × platform, 13)
+    // ------------------------------------------------------------- standard category (single, 44)
 
     @Test
-    void upsertCategory_new_savesMasterPlatformCategory() {
+    void setCategory_savesMasterStandardCategory() {
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
         given(categoryRepository.findById(3L))
                 .willReturn(Optional.of(Category.builder().id(3L).name("신발").build()));
-        given(masterProductCategoryRepository.findByMasterProductIdAndPlatform(1L, "COUPANG"))
-                .willReturn(Optional.empty());
-        given(masterProductCategoryRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+        given(masterProductRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
 
-        MasterCategoryResponse resp = service.upsertCategory(1L,
-                MasterCategoryRequest.builder().platform("COUPANG").categoryId(3L).build());
+        MasterCategoryResponse resp = service.setCategory(1L,
+                MasterCategoryRequest.builder().categoryId(3L).build());
 
-        assertThat(resp.getPlatform()).isEqualTo("COUPANG");
         assertThat(resp.getCategoryId()).isEqualTo(3L);
         assertThat(resp.getCategoryName()).isEqualTo("신발");
-        ArgumentCaptor<MasterProductCategory> captor = ArgumentCaptor.forClass(MasterProductCategory.class);
-        verify(masterProductCategoryRepository).save(captor.capture());
-        assertThat(captor.getValue().getId()).isNull();                 // new insert, not update
+        ArgumentCaptor<MasterProduct> captor = ArgumentCaptor.forClass(MasterProduct.class);
+        verify(masterProductRepository).save(captor.capture());
+        assertThat(captor.getValue().getCategory().getId()).isEqualTo(3L);   // master now points to the category
     }
 
     @Test
-    void upsertCategory_existing_updatesSameRow() {
+    void setCategory_categoryNotFound_throws404() {
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
-        MasterProductCategory existing = MasterProductCategory.builder()
-                .id(9L).masterProduct(master).platform("COUPANG")
-                .category(Category.builder().id(2L).name("옛카테고리").build()).build();
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
-        given(categoryRepository.findById(3L))
-                .willReturn(Optional.of(Category.builder().id(3L).name("신발").build()));
-        given(masterProductCategoryRepository.findByMasterProductIdAndPlatform(1L, "COUPANG"))
-                .willReturn(Optional.of(existing));
-        given(masterProductCategoryRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+        given(categoryRepository.findById(99L)).willReturn(Optional.empty());
 
-        service.upsertCategory(1L, MasterCategoryRequest.builder().platform("COUPANG").categoryId(3L).build());
-
-        ArgumentCaptor<MasterProductCategory> captor = ArgumentCaptor.forClass(MasterProductCategory.class);
-        verify(masterProductCategoryRepository).save(captor.capture());
-        assertThat(captor.getValue().getId()).isEqualTo(9L);            // same row updated
-        assertThat(captor.getValue().getCategory().getId()).isEqualTo(3L);
+        assertThatThrownBy(() -> service.setCategory(1L, MasterCategoryRequest.builder().categoryId(99L).build()))
+                .isInstanceOf(ResourceNotFoundException.class);
     }
 
     @Test
-    void deleteCategory_missing_throws404() {
-        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+    void getCategory_unset_returnsNullFields() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).category(null).build();
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
-        given(masterProductCategoryRepository.findByMasterProductIdAndPlatform(1L, "NAVER"))
-                .willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.deleteCategory(1L, "NAVER"))
-                .isInstanceOf(BusinessException.class);
+        MasterCategoryResponse resp = service.getCategory(1L);
+
+        assertThat(resp.getCategoryId()).isNull();
+        assertThat(resp.getCategoryName()).isNull();
     }
 }

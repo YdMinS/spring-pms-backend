@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.Category;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
@@ -11,6 +12,7 @@ import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.request.ChannelAddRequest;
 import com.pms.exception.DuplicateChannelException;
+import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
@@ -52,15 +54,18 @@ class ChannelAddServiceTest {
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private ProductListingProductRepository productListingProductRepository;
     @Mock private SellerRepository sellerRepository;
-    @Mock private MasterChannelConfigService masterChannelConfigService;
+    @Mock private CategoryMappingRepository categoryMappingRepository;
     @Mock private ListingAssetService listingAssetService;
     @InjectMocks private ChannelAddServiceImpl service;
 
     private static final Long MASTER_ID = 1L;
     private static final Long SELLER_ID = 7L;
+    private static final Long CATEGORY_ID = 3L;
 
+    /** Master with a standard category set (the happy-path shape after 44). */
     private MasterProduct master() {
-        return MasterProduct.builder().id(MASTER_ID).name("마스터").active(true).build();
+        return MasterProduct.builder().id(MASTER_ID).name("마스터").active(true)
+                .category(Category.builder().id(CATEGORY_ID).name("신발").build()).build();
     }
 
     private MasterProductOption masterOption(Long id, String name) {
@@ -92,6 +97,8 @@ class ChannelAddServiceTest {
         // Master owns two options — channel-add copies BOTH (no subset selection).
         given(masterProductOptionRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(opt1, opt2));
         given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(Seller.builder().id(SELLER_ID).build()));
+        // Standard category set + a COUPANG mapping present → channel-add passes pre-validation (44).
+        given(categoryMappingRepository.existsByCategoryIdAndPlatform(CATEGORY_ID, "COUPANG")).willReturn(true);
         given(masterProductOptionItemRepository.findByOptionIdIn(List.of(10L, 20L)))
                 .willReturn(List.of(item(opt1, prodA, 2), item(opt2, prodB, 1)));
 
@@ -147,19 +154,37 @@ class ChannelAddServiceTest {
 
     @Test
     void addChannel_masterCategoryUnset_throwsBadRequest_beforeCellSave() {
+        // Master has no standard category (44) → 400 before the cell is created.
+        MasterProduct noCategory = MasterProduct.builder().id(MASTER_ID).name("마스터").active(true).build();
+        given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(noCategory));
+        given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(MASTER_ID, SELLER_ID, "COUPANG"))
+                .willReturn(false);
+        given(masterProductOptionRepository.findByMasterProductId(MASTER_ID))
+                .willReturn(List.of(masterOption(10L, "1세트")));
+        given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(Seller.builder().id(SELLER_ID).build()));
+
+        assertThatThrownBy(() -> service.addChannel(MASTER_ID, request()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("표준 카테고리 미설정");
+
+        verify(productListingRepository, never()).save(any());
+        verify(listingAssetService, never()).regenerateAssets(any());
+    }
+
+    @Test
+    void addChannel_noCategoryMappingForPlatform_throwsBadRequest_beforeCellSave() {
         given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master()));
         given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(MASTER_ID, SELLER_ID, "COUPANG"))
                 .willReturn(false);
         given(masterProductOptionRepository.findByMasterProductId(MASTER_ID))
                 .willReturn(List.of(masterOption(10L, "1세트")));
         given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(Seller.builder().id(SELLER_ID).build()));
-        // Master has no category for this platform → resolver 400, before the cell is created.
-        given(masterChannelConfigService.resolveCategory(MASTER_ID, "COUPANG"))
-                .willThrow(new IllegalArgumentException("카테고리 미설정"));
+        // Standard category set but no COUPANG mapping → 400, before the cell is created.
+        given(categoryMappingRepository.existsByCategoryIdAndPlatform(CATEGORY_ID, "COUPANG")).willReturn(false);
 
         assertThatThrownBy(() -> service.addChannel(MASTER_ID, request()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("카테고리 미설정");
+                .hasMessage("COUPANG 카테고리 매핑 미설정");
 
         verify(productListingRepository, never()).save(any());
         verify(listingAssetService, never()).regenerateAssets(any());

@@ -24,6 +24,9 @@ import java.nio.charset.StandardCharsets;
  *   <li>{@code returnRequests} 포함 → {@code fixtures/coupang/returnRequests.json}</li>
  *   <li>{@code seller-products} 포함(GET) → 승인완료 상태 + 옵션 id 인라인 fixture (3c fetchStatus)</li>
  *   <li>{@code seller-products} 포함(POST) → sellerProductId 인라인 fixture (3c register)</li>
+ *   <li>{@code display-categories/} 포함(GET) → 카테고리 트리 자식 fixture (45 browse)</li>
+ *   <li>{@code category-related-metas} 포함(GET) → 필수속성/고시 meta fixture (47)</li>
+ *   <li>{@code categorization/predict} 포함(POST) → 카테고리 추천 fixture (45 predict)</li>
  *   <li>그 외 → {@code {"code":200,"data":[]}}</li>
  * </ul>
  * 반환 JSON 은 실제 파서(예: CoupangOrderSyncServiceImpl.upsert, CoupangListingAdapter)가 그대로 소화할 수
@@ -47,6 +50,18 @@ public class MockCoupangApiClient implements CoupangApiClient {
                     + "\"items\":[{\"itemName\":\"1세트\",\"vendorItemId\":987654321,"
                     + "\"sellerProductItemId\":555666777}]}}";
 
+    // 45 category lookup fixtures (inline). Tree = data.child[] (displayCategoryCode/name/child/last):
+    // 1001 has a nested child + last=false → non-leaf, 1002 has empty child → leaf.
+    private static final String DISPLAY_CATEGORIES_FIXTURE =
+            "{\"code\":200,\"data\":{\"displayCategoryCode\":\"0\",\"name\":\"루트\",\"child\":["
+                    + "{\"displayCategoryCode\":\"1001\",\"name\":\"패션의류잡화\",\"last\":false,"
+                    + "\"child\":[{\"displayCategoryCode\":\"2001\",\"name\":\"여성의류\",\"last\":true}]},"
+                    + "{\"displayCategoryCode\":\"1002\",\"name\":\"여성 반팔티\",\"last\":true,\"child\":[]}"
+                    + "]}}";
+    // Predict = single candidate (data.predictedCategoryId + data.categoryName).
+    private static final String PREDICT_FIXTURE =
+            "{\"code\":\"SUCCESS\",\"data\":{\"predictedCategoryId\":\"56174\",\"categoryName\":\"여성 반팔티\"}}";
+
     @Override
     public String get(String path, String query, MarketplaceAccount account) {
         String body = resolve(path);
@@ -59,6 +74,10 @@ public class MockCoupangApiClient implements CoupangApiClient {
         if (path.contains("seller-products")) {
             log.info("[COUPANG-MOCK] POST {} → register fixture", path);
             return SELLER_PRODUCT_REGISTER;
+        }
+        if (path.contains("categorization/predict")) {
+            log.info("[COUPANG-MOCK] POST {} → predict fixture", path);
+            return PREDICT_FIXTURE;
         }
         log.info("[COUPANG-MOCK] POST {} → default empty", path);
         return EMPTY;
@@ -79,6 +98,12 @@ public class MockCoupangApiClient implements CoupangApiClient {
         }
         if (path.contains("seller-products")) {
             return SELLER_PRODUCT_FETCH;
+        }
+        if (path.contains("display-categories/")) {
+            return DISPLAY_CATEGORIES_FIXTURE;
+        }
+        if (path.contains("category-related-metas")) {
+            return com.pms.service.listing.category.CoupangCategoryMeta.META_FIXTURE_JSON;   // 47 meta
         }
         return EMPTY;
     }

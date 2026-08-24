@@ -4,8 +4,8 @@ import com.pms.common.TestJpaConfig;
 import com.pms.domain.Carrier;
 import com.pms.domain.CarrierRate;
 import com.pms.domain.Category;
+import com.pms.domain.CategoryMapping;
 import com.pms.domain.MasterProduct;
-import com.pms.domain.MasterProductCategory;
 import com.pms.domain.Package;
 import com.pms.domain.ProductListing;
 import com.pms.service.MasterChannelConfigServiceImpl;
@@ -22,21 +22,22 @@ import java.time.LocalDate;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Resolver + mapping regression against a real DB (FEATURE_2608_06 / 13): resolving a cell's category
- * (master × platform, lazy master.category link) and its delivery (lazy {@code master.defaultDelivery}) both
- * work through the persistence chain — mirroring the {@code account.getSeller()} lazy-init regression: the
- * config graph must be reachable when the resolver runs inside the caller's {@code @Transactional} boundary.
+ * Resolver + mapping regression against a real DB (FEATURE_2608_06 / 44): resolving a cell's standard
+ * category (lazy master.category link), its platform code (CategoryMapping) and its delivery (lazy
+ * {@code master.defaultDelivery}) all work through the persistence chain — mirroring the
+ * {@code account.getSeller()} lazy-init regression: the config graph must be reachable when the resolver runs
+ * inside the caller's {@code @Transactional} boundary.
  */
 @DataJpaTest
 @ActiveProfiles("test")
 @Import(TestJpaConfig.class)
 class MasterChannelConfigResolutionTest {
 
-    @Autowired private MasterProductCategoryRepository masterProductCategoryRepository;
+    @Autowired private CategoryMappingRepository categoryMappingRepository;
     @Autowired private TestEntityManager em;
 
     private MasterChannelConfigServiceImpl service() {
-        return new MasterChannelConfigServiceImpl(masterProductCategoryRepository);
+        return new MasterChannelConfigServiceImpl(categoryMappingRepository);
     }
 
     private Long persistMasterWithConfig() {
@@ -46,12 +47,12 @@ class MasterChannelConfigResolutionTest {
                 .effectiveDate(LocalDate.now()).isDefault(false).build());
         Package box = em.persist(Package.builder()
                 .type("M").cost(new BigDecimal("500")).effectiveDate(LocalDate.now()).isDefault(false).build());
-        Category category = em.persist(Category.builder()
-                .name("신발").platform("COUPANG").platformCategoryId("cat-1").build());
+        Category category = em.persist(Category.builder().name("신발").build());
+        em.persist(CategoryMapping.builder()
+                .category(category).platform("COUPANG").platformCategoryId("cat-1").build());
         MasterProduct master = em.persist(MasterProduct.builder()
-                .name("마스터").active(true).defaultDelivery(delivery).defaultPackage(box).build());
-        em.persist(MasterProductCategory.builder()
-                .masterProduct(master).platform("COUPANG").category(category).build());
+                .name("마스터").active(true).category(category)
+                .defaultDelivery(delivery).defaultPackage(box).build());
         em.flush();
         em.clear();
         return master.getId();
@@ -65,8 +66,10 @@ class MasterChannelConfigResolutionTest {
         MasterProduct master = em.find(MasterProduct.class, masterId);
         ProductListing cell = ProductListing.builder().platform("COUPANG").masterProduct(master).build();
 
-        // category = master × platform; delivery = master default (no option override) — no LazyInit exception.
-        assertThat(service().resolveCategory(cell).getPlatformCategoryId()).isEqualTo("cat-1");
+        // standard category = master.category; platform code = CategoryMapping; delivery = master default —
+        // no LazyInit exception.
+        assertThat(service().resolveStandardCategory(cell).getName()).isEqualTo("신발");
+        assertThat(service().resolvePlatformCategoryCode(cell)).isEqualTo("cat-1");
         assertThat(service().resolveDelivery(cell, null).getCost()).isEqualByComparingTo("2500");
         assertThat(service().resolvePackage(cell, null).getCost()).isEqualByComparingTo("500");
     }

@@ -1,6 +1,7 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.CategoryAttributesRequest;
 import com.pms.dto.request.ImportProductImagesRequest;
 import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterOptionRequest;
@@ -9,11 +10,13 @@ import com.pms.dto.request.MasterProductUpdateRequest;
 import com.pms.dto.request.MasterSourceImageRequest;
 import com.pms.dto.request.MasterZoneImagesRequest;
 import com.pms.dto.request.TagsRequest;
+import com.pms.dto.response.CategoryMetaResponse;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductImageResponse;
 import com.pms.dto.response.MasterProductResponse;
+import com.pms.service.CategoryMetaService;
 import com.pms.service.MasterProductImageService;
 import com.pms.service.MasterProductService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -42,6 +45,7 @@ public class MasterProductController {
 
     private final MasterProductService masterProductService;
     private final MasterProductImageService masterProductImageService;
+    private final CategoryMetaService categoryMetaService;
 
     @GetMapping
     @Operation(summary = "List master products")
@@ -130,29 +134,48 @@ public class MasterProductController {
         return ResponseEntity.ok(ResponseDTO.success(null));
     }
 
-    // ---------------------------------------------------------------- category (master × platform, 13)
+    // ---------------------------------------------------------------- standard category (single, 44)
 
     @PutMapping("/{id}/category")
-    @Operation(summary = "Upsert the category for a master × platform")
+    @Operation(summary = "Set the master's single standard category")
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<ResponseDTO<MasterCategoryResponse>> upsertCategory(
+    public ResponseEntity<ResponseDTO<MasterCategoryResponse>> setCategory(
             @PathVariable Long id, @Valid @RequestBody MasterCategoryRequest request) {
-        return ResponseEntity.ok(ResponseDTO.success(masterProductService.upsertCategory(id, request)));
+        return ResponseEntity.ok(ResponseDTO.success(masterProductService.setCategory(id, request)));
     }
 
-    @GetMapping("/{id}/categories")
-    @Operation(summary = "List a master's per-platform categories")
+    @GetMapping("/{id}/category")
+    @Operation(summary = "Get the master's standard category (null fields if unset)")
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<ResponseDTO<List<MasterCategoryResponse>>> getCategories(@PathVariable Long id) {
-        return ResponseEntity.ok(ResponseDTO.success(masterProductService.getCategories(id)));
+    public ResponseEntity<ResponseDTO<MasterCategoryResponse>> getCategory(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(masterProductService.getCategory(id)));
     }
 
-    @DeleteMapping("/{id}/categories/{platform}")
-    @Operation(summary = "Delete a master's category for a platform")
+    @DeleteMapping("/{id}/category")
+    @Operation(summary = "Clear the master's standard category")
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<Void> deleteCategory(@PathVariable Long id, @PathVariable String platform) {
-        masterProductService.deleteCategory(id, platform);
+    public ResponseEntity<Void> clearCategory(@PathVariable Long id) {
+        masterProductService.clearCategory(id);
         return ResponseEntity.noContent().build();
+    }
+
+    // ---------------------------------------------------------------- category meta (47)
+
+    @GetMapping("/{id}/category-meta")
+    @Operation(summary = "Get the (platform × category) required-attribute/notice schema + master values")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<CategoryMetaResponse>> getCategoryMeta(
+            @PathVariable Long id, @RequestParam String platform) {
+        return ResponseEntity.ok(ResponseDTO.success(categoryMetaService.getMeta(id, platform)));
+    }
+
+    @PatchMapping("/{id}/category-attributes")
+    @Operation(summary = "Store master-level category attribute + notice values (no regeneration)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<Void>> updateCategoryAttributes(
+            @PathVariable Long id, @RequestBody CategoryAttributesRequest request) {
+        categoryMetaService.updateCategoryAttributes(id, request.getAttributes(), request.getNotices());
+        return ResponseEntity.ok(ResponseDTO.success(null));
     }
 
     // ---------------------------------------------------------------- image pool + field mapping (37)

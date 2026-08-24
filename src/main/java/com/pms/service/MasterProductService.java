@@ -49,14 +49,14 @@ public interface MasterProductService {
 
     void deleteOption(Long masterId, Long optionId);
 
-    /** Upsert the category for (master, platform) — FEATURE_2608_06 / 13. 404 if master/category absent. */
-    MasterCategoryResponse upsertCategory(Long masterId, MasterCategoryRequest request);
+    /** Set the master's single standard category (FEATURE_2608_06 / 44). 404 if master/category absent. */
+    MasterCategoryResponse setCategory(Long masterId, MasterCategoryRequest request);
 
-    /** List the master's per-platform categories. */
-    List<MasterCategoryResponse> getCategories(Long masterId);
+    /** Get the master's standard category (both fields null if unset). */
+    MasterCategoryResponse getCategory(Long masterId);
 
-    /** Delete the master's category for a platform (404 if none). */
-    void deleteCategory(Long masterId, String platform);
+    /** Clear the master's standard category (idempotent; sets it to null). */
+    void clearCategory(Long masterId);
 
     /**
      * Upload a base-image override (FEATURE_2608_06 / 3b-2): validates + stores the file and sets

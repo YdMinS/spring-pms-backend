@@ -1,0 +1,19 @@
+# Coupang static commission fee reference (FEATURE_2608_06 / 46): a global (no tenant) lookup table for
+# the 2019 Coupang fee table, one flat row per (dae, jung, so) with the base rate. Blank jung/so mark the
+# major/middle-default rows. The DATA is loaded by CoupangFeeReferenceSeeder (idempotent ApplicationRunner),
+# NOT by this changeset — the test-profile H2 also runs that seeder. No boolean columns → no MySQL BIT trap.
+databaseChangeLog:
+
+  - changeSet:
+      id: 030-coupang-fee-reference
+      author: oclyx
+      comment: "Coupang static fee reference table (global, seeded from CSV by CoupangFeeReferenceSeeder)."
+      changes:
+        - createTable:
+            tableName: coupang_fee_reference
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: dae, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: jung, type: VARCHAR(100) }
+              - column: { name: so, type: VARCHAR(100) }
+              - column: { name: rate, type: "DECIMAL(5,4)", constraints: { nullable: false } }

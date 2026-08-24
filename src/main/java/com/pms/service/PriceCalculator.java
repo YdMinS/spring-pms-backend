@@ -47,7 +47,7 @@ public class PriceCalculator {
     public BigDecimal calculatePrice(ProductListing cell, MasterProductOption masterOption, BigDecimal costSum) {
         // Category, delivery and box now come from the master/option (the resolver owns the null checks).
         BigDecimal commissionRate = commissionRateService.findRate(
-                cell.getPlatform(), masterChannelConfigService.resolveCategory(cell).getId());
+                cell.getPlatform(), masterChannelConfigService.resolveStandardCategory(cell).getId());
 
         BigDecimal delivery = masterChannelConfigService.resolveDelivery(cell, masterOption).getCost();
         BigDecimal box = masterChannelConfigService.resolvePackage(cell, masterOption).getCost();

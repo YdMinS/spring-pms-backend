@@ -2,6 +2,7 @@ package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.Category;
+import com.pms.domain.CategoryMapping;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductComponent;
@@ -9,18 +10,20 @@ import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
+import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.MasterProductCategoryRepository;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
+import com.pms.service.coupang.CoupangApiClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 
 import java.math.BigDecimal;
@@ -51,7 +54,10 @@ class MasterProductControllerTest extends BaseIntegrationTest {
     @Autowired private MarketplaceAccountRepository marketplaceAccountRepository;
     @Autowired private SellerRepository sellerRepository;
     @Autowired private CategoryRepository categoryRepository;
-    @Autowired private MasterProductCategoryRepository masterProductCategoryRepository;
+    @Autowired private CategoryMappingRepository categoryMappingRepository;
+
+    // Mocked so category-meta's adapter makes no live Coupang call; unstubbed returns null → empty schema (200).
+    @MockBean private CoupangApiClient coupangApiClient;
 
     private static final String PATH = "/api/admin/master-products";
     private Long masterId;
@@ -234,17 +240,17 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.components.length()").value(2));
     }
 
-    // ------------------------------------------------------------- category (master × platform, 13)
+    // ------------------------------------------------------------- standard category (single, 44)
 
     @Test
-    void upsertCategory_noToken_returns401() throws Exception {
+    void setCategory_noToken_returns401() throws Exception {
         mockMvc.perform(put(PATH + "/" + masterId + "/category")
                         .contentType(MediaType.APPLICATION_JSON).content(categoryBody()))
                 .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void upsertCategory_userToken_returns403() throws Exception {
+    void setCategory_userToken_returns403() throws Exception {
         mockMvc.perform(put(PATH + "/" + masterId + "/category")
                         .header("Authorization", "Bearer " + userToken)
                         .contentType(MediaType.APPLICATION_JSON).content(categoryBody()))
@@ -252,36 +258,43 @@ class MasterProductControllerTest extends BaseIntegrationTest {
     }
 
     @Test
-    void upsertCategory_thenList_adminToken_returns200() throws Exception {
+    void setCategory_thenGet_adminToken_returns200() throws Exception {
         mockMvc.perform(put(PATH + "/" + masterId + "/category")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON).content(categoryBody()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.platform").value("COUPANG"))
-                .andExpect(jsonPath("$.data.categoryId").value(categoryId));
+                .andExpect(jsonPath("$.data.categoryId").value(categoryId))
+                .andExpect(jsonPath("$.data.categoryName").value("신발"));
 
-        mockMvc.perform(get(PATH + "/" + masterId + "/categories")
+        mockMvc.perform(get(PATH + "/" + masterId + "/category")
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(1))
-                .andExpect(jsonPath("$.data[0].platform").value("COUPANG"));
+                .andExpect(jsonPath("$.data.categoryId").value(categoryId));
     }
 
     @Test
-    void deleteCategory_present_returns204_missing_returns404() throws Exception {
+    void setCategory_missingMaster_returns404() throws Exception {
+        mockMvc.perform(put(PATH + "/999999/category")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(categoryBody()))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void clearCategory_adminToken_returns204_thenGetIsNull() throws Exception {
         mockMvc.perform(put(PATH + "/" + masterId + "/category")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON).content(categoryBody()))
                 .andExpect(status().isOk());
 
-        mockMvc.perform(delete(PATH + "/" + masterId + "/categories/COUPANG")
+        mockMvc.perform(delete(PATH + "/" + masterId + "/category")
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isNoContent());
 
-        // Now absent → 404.
-        mockMvc.perform(delete(PATH + "/" + masterId + "/categories/COUPANG")
+        mockMvc.perform(get(PATH + "/" + masterId + "/category")
                         .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.categoryId").doesNotExist());
     }
 
     // ------------------------------------------------------------- tags (33)
@@ -306,8 +319,87 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.tags[1]").value("봄"));
     }
 
+    // ------------------------------------------------------------- category meta (47)
+
+    /** Set the master's standard category + a COUPANG mapping so resolvePlatformCategoryCode succeeds. */
+    private void prepareMeta() {
+        Category category = categoryRepository.findById(categoryId).orElseThrow();
+        MasterProduct master = masterProductRepository.findById(masterId).orElseThrow();
+        masterProductRepository.save(master.toBuilder().category(category).build());
+        categoryMappingRepository.save(CategoryMapping.builder()
+                .category(category).platform("COUPANG").platformCategoryId("cat-1").build());
+    }
+
+    @Test
+    void categoryMeta_noToken_returns401() throws Exception {
+        mockMvc.perform(get(PATH + "/" + masterId + "/category-meta?platform=COUPANG"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void categoryMeta_userToken_returns403() throws Exception {
+        mockMvc.perform(get(PATH + "/" + masterId + "/category-meta?platform=COUPANG")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void categoryMeta_adminToken_returns200_emptySchemaTolerated() throws Exception {
+        prepareMeta();
+        // The mocked client returns null → the adapter tolerates it as an empty schema → still 200.
+        mockMvc.perform(get(PATH + "/" + masterId + "/category-meta?platform=COUPANG")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.attributes").isArray())
+                .andExpect(jsonPath("$.data.values").exists());
+    }
+
+    @Test
+    void categoryMeta_missingMaster_returns404() throws Exception {
+        mockMvc.perform(get(PATH + "/999999/category-meta?platform=COUPANG")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void categoryAttributes_noToken_returns401() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + masterId + "/category-attributes")
+                        .contentType(MediaType.APPLICATION_JSON).content(attributesBody()))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void categoryAttributes_userToken_returns403() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + masterId + "/category-attributes")
+                        .header("Authorization", "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(attributesBody()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void categoryAttributes_adminToken_returns200() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + masterId + "/category-attributes")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(attributesBody()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"));
+    }
+
+    @Test
+    void categoryAttributes_missingMaster_returns404() throws Exception {
+        mockMvc.perform(patch(PATH + "/999999/category-attributes")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(attributesBody()))
+                .andExpect(status().isNotFound());
+    }
+
+    private String attributesBody() {
+        return "{\"attributes\":{\"원산지\":\"국내산\"},\"notices\":{}}";
+    }
+
     private String categoryBody() {
-        return "{\"platform\":\"COUPANG\",\"categoryId\":" + categoryId + "}";
+        return "{\"categoryId\":" + categoryId + "}";
     }
 
     private String createMasterBody() {

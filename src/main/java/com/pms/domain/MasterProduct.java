@@ -89,4 +89,33 @@ public class MasterProduct extends BaseEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "default_package_id", nullable = true)
     private Package defaultPackage;
+
+    /**
+     * Single standard category for this master (FEATURE_2608_06 / 44). Nullable (transitional / unset). The
+     * commission lookup uses this category's id; the per-platform marketplace code is resolved from
+     * {@link CategoryMapping} (standard × platform). Replaces the old {@code MasterProductCategory}
+     * (master × platform) — the master now picks one standard category, not one per platform.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "category_id", nullable = true)
+    private Category category;
+
+    /**
+     * Category required-attribute values (FEATURE_2608_06 / 47): key = {@code CategoryAttribute.name},
+     * value = the master-level value (원산지·사이즈 etc.). The wizard fills as many keys as the schema
+     * requires. ⚠️ No {@code @Builder.Default} — {@code null} means "not entered" (JSON TEXT, H2/MySQL
+     * portable). A missing required value blocks registration (orchestration pre-check).
+     */
+    @Convert(converter = MapStringConverter.class)
+    @Column(name = "category_attributes", columnDefinition = "TEXT")
+    private Map<String, String> categoryAttributes;
+
+    /**
+     * Product-info disclosure ("상품정보제공고시") values (FEATURE_2608_06 / 47): key =
+     * {@code CategoryNotice.key}, value = the master-level value. ⚠️ No {@code @Builder.Default} —
+     * {@code null} means "not entered" (JSON TEXT, H2/MySQL portable).
+     */
+    @Convert(converter = MapStringConverter.class)
+    @Column(name = "category_notices", columnDefinition = "TEXT")
+    private Map<String, String> categoryNotices;
 }
