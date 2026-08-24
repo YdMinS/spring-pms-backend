@@ -161,6 +161,11 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
                         + "WHERE TABLE_NAME = 'DETAIL_TEMPLATE' AND COLUMN_NAME = 'IMAGE_PROCESSING_PRESET_ID'",
                 Integer.class)).isEqualTo(1);
+
+        // changeset 028: product_listing_option.active materialized (a successful count proves it; the empty
+        // apply-check DB has no options, so the NOT-NULL backfill leaves nothing null).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing_option WHERE active IS NULL", Integer.class)).isZero();
     }
 
     @Test

@@ -82,6 +82,8 @@ class ListingRegistrationServiceTest {
         given(generatedProductDataRepository.findByProductListingId(CELL_ID))
                 .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
         stubAccountAndAdapter();
+        // 42 register guard reads the options to confirm at least one is active (option() defaults active=true).
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
         given(adapter.register(any(), any(), any())).willReturn("SP-999");
 
         ListingRegisterResponse response = service.register(CELL_ID);
@@ -112,6 +114,20 @@ class ListingRegistrationServiceTest {
         given(generatedProductDataRepository.findByProductListingId(CELL_ID)).willReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.register(CELL_ID)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // 42: register with no active option → 400 & adapter never called (payload would be empty).
+    @Test
+    void register_noActiveOptions_throwsAndAdapterNotCalled() {
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell(ListingStatus.DRAFT, null)));
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID))
+                .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
+        stubAccountAndAdapter();
+        ProductListingOption inactive = option().toBuilder().active(false).build();
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(inactive));
+
+        assertThatThrownBy(() -> service.register(CELL_ID)).isInstanceOf(IllegalArgumentException.class);
+        verify(adapter, never()).register(any(), any(), any());
     }
 
     // account resolution: none → 404 (ResourceNotFoundException).

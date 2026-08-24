@@ -4,11 +4,14 @@ import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
+import com.pms.domain.OptionApprovalStatus;
 import com.pms.domain.ProductListing;
+import com.pms.domain.ProductListingOption;
 import com.pms.dto.response.PendingSyncResponse;
 import com.pms.dto.response.PushSyncResponse;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -35,6 +38,7 @@ public class ListingPropagationServiceImpl implements ListingPropagationService 
     private static final Logger log = LoggerFactory.getLogger(ListingPropagationServiceImpl.class);
 
     private final ProductListingRepository productListingRepository;
+    private final ProductListingOptionRepository productListingOptionRepository;
     private final GeneratedProductDataRepository generatedProductDataRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final ListingChannelResolver resolver;
@@ -81,7 +85,19 @@ public class ListingPropagationServiceImpl implements ListingPropagationService 
 
             try {
                 ListingChannel adapter = resolver.resolve(cell.getPlatform());
-                adapter.update(cell, gen.get(), account.get());   // whole-object re-submit → PUT
+                adapter.update(cell, gen.get(), account.get());   // whole-object re-submit → PUT (active options only)
+                // 42: options deactivated on this channel are dropped from the re-submitted payload → they are no
+                // longer live on the market. Revert any previously-APPROVED deactivated option to NOT_APPROVED
+                // (active options keep their approval). ⚠️ Orchestration owns this state change (@Transactional
+                // boundary); the adapter only filters items[]. Coupang cannot physically delete an approved option
+                // (stop-selling API = follow-up) — this step is payload-exclusion + local status only.
+                for (ProductListingOption option : productListingOptionRepository.findByProductListingId(id)) {
+                    if (!Boolean.TRUE.equals(option.getActive())
+                            && option.getApprovalStatus() == OptionApprovalStatus.APPROVED) {
+                        productListingOptionRepository.save(
+                                option.toBuilder().approvalStatus(OptionApprovalStatus.NOT_APPROVED).build());
+                    }
+                }
                 // Push succeeded → append the merged tag snapshot (33) if it changed. Failed cells never reach here.
                 List<String> merged = tagMergeService.resolveTags(cell);
                 tagMergeService.recordRevisionIfChanged(cell, merged);

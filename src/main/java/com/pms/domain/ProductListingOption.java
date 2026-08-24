@@ -105,4 +105,19 @@ public class ProductListingOption {
     @Column(length = 255, nullable = true, name = "seller_product_item_id")
     @Schema(description = "Coupang seller product item id (for option updates)", example = "555666")
     private String sellerProductItemId;
+
+    /**
+     * Per-channel active flag (FEATURE_2608_06 / 42). The master is the single option universe, but a channel
+     * (market) may carry a different subset of options: a channel cell copies <em>all</em> master options
+     * (backward-compatible) and then toggles this flag per channel. {@code active=false} only excludes the option
+     * from the market register/update payload — the row is <b>kept</b> (re-activation + order mapping preserved).
+     *
+     * <p>Two default roles (not duplicated): entity {@code @Builder.Default = true} = the create path
+     * (channel-add copy) default; changeset 028 {@code defaultValueBoolean:true} backfills pre-existing live rows.
+     * ⚠️ 006 BIT trap: boolean needs an explicit MySQL physical type (BIT(1)) — see changeset 028.</p>
+     */
+    @Column(name = "active", nullable = false)
+    @Builder.Default
+    @Schema(description = "Per-channel active flag (excluded from market payload when false)", example = "true")
+    private Boolean active = true;
 }

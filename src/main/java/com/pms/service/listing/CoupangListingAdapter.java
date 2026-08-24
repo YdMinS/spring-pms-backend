@@ -120,9 +120,13 @@ public class CoupangListingAdapter implements ListingChannel {
         image.put("vendorPath", gen != null ? gen.getThumbnailUrl() : null);
         payload.put("images", List.of(image));
 
-        // items[] (max 200): one per listing option (new options carry no vendorItemId yet).
+        // items[] (max 200): one per ACTIVE listing option (42 — per-channel subset; inactive options are
+        // excluded from the payload but keep their row). New options carry no vendorItemId yet.
         List<Map<String, Object>> items = new ArrayList<>();
         for (ProductListingOption option : productListingOptionRepository.findByProductListingId(cell.getId())) {
+            if (!Boolean.TRUE.equals(option.getActive())) {
+                continue;   // deactivated on this channel → not pushed
+            }
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("itemName", option.getOptionName());
             item.put("salePrice", option.getSellingPrice());

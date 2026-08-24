@@ -93,6 +93,31 @@ class CoupangListingAdapterTest {
         assertThat(payload.getValue()).contains("\"sellerProductName\":\"노브랜드 생수 x 6\"");
     }
 
+    // 42: register payload items[] = active options only (inactive excluded).
+    @Test
+    void register_payloadItems_onlyActiveOptions() {
+        ProductListingOption active1 = ProductListingOption.builder().id(1L).optionName("A")
+                .sellingPrice(new BigDecimal("6000")).active(true).build();
+        ProductListingOption inactive = ProductListingOption.builder().id(2L).optionName("B")
+                .sellingPrice(new BigDecimal("6000")).active(false).build();
+        ProductListingOption active2 = ProductListingOption.builder().id(3L).optionName("C")
+                .sellingPrice(new BigDecimal("6000")).active(true).build();
+        given(productListingOptionRepository.findByProductListingId(100L))
+                .willReturn(List.of(active1, inactive, active2));
+        GeneratedProductData gen = GeneratedProductData.builder()
+                .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+        given(masterChannelConfigService.resolveCategory(any()))
+                .willReturn(Category.builder().platformCategoryId("cat-1").build());
+
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell(), gen, acct());
+
+        assertThat(payload.getValue()).contains("\"itemName\":\"A\"").contains("\"itemName\":\"C\"");
+        assertThat(payload.getValue()).doesNotContain("\"itemName\":\"B\"");
+    }
+
     @Test
     void fetchStatus_approved_mapsSellingAndOptionIds() {
         given(client.get(anyString(), eq(""), any())).willReturn(

@@ -3,11 +3,14 @@ package com.pms.service.listing;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.OptionApprovalStatus;
 import com.pms.domain.ProductListing;
+import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
 import com.pms.dto.response.PushSyncResponse;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,6 +38,7 @@ import static org.mockito.Mockito.verify;
 class ListingPropagationServiceTest {
 
     @Mock private ProductListingRepository productListingRepository;
+    @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private GeneratedProductDataRepository generatedProductDataRepository;
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock private ListingChannelResolver resolver;
@@ -119,5 +123,26 @@ class ListingPropagationServiceTest {
 
         assertThat(response.getPushed()).isEqualTo(1);
         assertThat(response.getFailed()).isEqualTo(1);
+    }
+
+    // (d) 42: after update, a deactivated APPROVED option is reverted to NOT_APPROVED; the active one is untouched.
+    @Test
+    void pushSync_deactivatedApprovedOption_revertedToNotApproved() {
+        ProductListing pending = cell(1L, "SP-1", true);
+        given(productListingRepository.findScopedById(1L)).willReturn(Optional.of(pending));
+        stubAccountAndGenAndAdapter(1L);
+        ProductListingOption keptActive = ProductListingOption.builder().id(10L).optionName("A")
+                .active(true).approvalStatus(OptionApprovalStatus.APPROVED).build();
+        ProductListingOption deactivated = ProductListingOption.builder().id(11L).optionName("B")
+                .active(false).approvalStatus(OptionApprovalStatus.APPROVED).build();
+        given(productListingOptionRepository.findByProductListingId(1L))
+                .willReturn(List.of(keptActive, deactivated));
+
+        service.pushSync(List.of(1L));
+
+        ArgumentCaptor<ProductListingOption> captor = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository).save(captor.capture());   // exactly one option saved
+        assertThat(captor.getValue().getId()).isEqualTo(11L);
+        assertThat(captor.getValue().getApprovalStatus()).isEqualTo(OptionApprovalStatus.NOT_APPROVED);
     }
 }
