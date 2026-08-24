@@ -55,9 +55,22 @@ public class CoupangCancelDiagnosticService {
         }
 
         MarketplaceAccount account = rows.get(0).getMarketplaceAccount();
-        out.put("returnRequests", probeReturnRequests(account, orderId));
+        // 판매자 취소가 어떤 returnRequests 변형에 잡히는지 3가지로 찔러본다.
+        out.put("returnRequests_CANCEL", probe(account, orderId, windowQuery("cancelType=CANCEL")));
+        out.put("returnRequests_RETURN", probe(account, orderId, windowQuery("cancelType=RETURN")));
+        out.put("returnRequests_byOrderId", probe(account, orderId, "orderId=" + orderId + "&maxPerPage=" + MAX_PER_PAGE));
         out.put("singleOrdersheets", probeSingleBoxes(account, rows));
         return out;
+    }
+
+    /** 최근 LOOKBACK_DAYS 창 + 주어진 필터로 returnRequests 기본 쿼리 조립. */
+    private String windowQuery(String filter) {
+        LocalDate to = LocalDate.now();
+        LocalDate from = to.minusDays(LOOKBACK_DAYS);
+        return filter
+                + "&createdAtFrom=" + from.format(DATE)
+                + "&createdAtTo=" + to.format(DATE)
+                + "&maxPerPage=" + MAX_PER_PAGE;
     }
 
     private Map<String, Object> rowView(OrderItem o) {
@@ -73,16 +86,11 @@ public class CoupangCancelDiagnosticService {
         return m;
     }
 
-    /** returnRequests(cancelType=CANCEL, 최근 30일) 페이징하며 이 orderId 매칭 receipt + 구조를 수집. */
-    private Map<String, Object> probeReturnRequests(MarketplaceAccount account, String orderId) {
+    /** 주어진 returnRequests 쿼리를 페이징하며 이 orderId 매칭 receipt + 구조를 수집. */
+    private Map<String, Object> probe(MarketplaceAccount account, String orderId, String baseQuery) {
         Map<String, Object> result = new LinkedHashMap<>();
+        result.put("query", baseQuery);
         String path = coupangProperties.getReturnrequestsPath().replace("{vendorId}", account.getVendorId());
-        LocalDate to = LocalDate.now();
-        LocalDate from = to.minusDays(LOOKBACK_DAYS);
-        String baseQuery = "cancelType=CANCEL"
-                + "&createdAtFrom=" + from.format(DATE)
-                + "&createdAtTo=" + to.format(DATE)
-                + "&maxPerPage=" + MAX_PER_PAGE;
 
         List<JsonNode> matching = new ArrayList<>();
         List<String> allOrderIds = new ArrayList<>();
@@ -122,7 +130,6 @@ public class CoupangCancelDiagnosticService {
             result.put("error", e.getMessage());
         }
 
-        result.put("window", from.format(DATE) + " ~ " + to.format(DATE));
         result.put("pages", pages);
         result.put("totalReceipts", totalReceipts);
         result.put("receiptFieldNamesSample", receiptKeysSample);
