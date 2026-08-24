@@ -7,21 +7,18 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 /**
- * Master category (master × platform) response (FEATURE_2608_06 / 13).
+ * Master standard-category response (FEATURE_2608_06 / 44). Both fields null when unset.
  */
 @Getter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-@Schema(description = "Master category (master × platform) response")
+@Schema(description = "Master standard-category response")
 public class MasterCategoryResponse {
 
-    @Schema(description = "Platform identifier", example = "COUPANG")
-    private String platform;
-
-    @Schema(description = "Category ID", example = "3")
+    @Schema(description = "Standard category ID (null if unset)", example = "3")
     private Long categoryId;
 
-    @Schema(description = "Category name", example = "신발")
+    @Schema(description = "Standard category name (null if unset)", example = "신발")
     private String categoryName;
 }

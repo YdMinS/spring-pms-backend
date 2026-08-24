@@ -8,16 +8,16 @@ import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.CategoryMapping;
 import com.pms.domain.MasterProduct;
-import com.pms.domain.MasterProductCategory;
 import com.pms.domain.Package;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.GeneratedProductDataRepository;
+import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.MasterProductCategoryRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
@@ -51,7 +51,7 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
     @Autowired private SellerRepository sellerRepository;
     @Autowired private CategoryRepository categoryRepository;
     @Autowired private MasterProductRepository masterProductRepository;
-    @Autowired private MasterProductCategoryRepository masterProductCategoryRepository;
+    @Autowired private CategoryMappingRepository categoryMappingRepository;
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
     @Autowired private GeneratedProductDataRepository generatedProductDataRepository;
@@ -66,19 +66,19 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
     void seed() {
         Seller seller = sellerRepository.save(Seller.builder()
                 .sellerName("행복상회").businessRegistration("111-22-33333").build());
-        Category category = categoryRepository.save(Category.builder()
-                .name("신발").platform("COUPANG").platformCategoryId("cat-1").build());
+        Category category = categoryRepository.save(Category.builder().name("신발").build());
         Carrier carrier = carrierRepository.saveAndFlush(Carrier.builder().name("CJ").isActive(true).build());
         CarrierRate delivery = carrierRateRepository.saveAndFlush(CarrierRate.builder()
                 .carrier(carrier).type("STANDARD").cost(new BigDecimal("2500"))
                 .effectiveDate(LocalDate.now()).isDefault(false).build());
         Package box = packageRepository.saveAndFlush(Package.builder()
                 .type("M").cost(new BigDecimal("500")).effectiveDate(LocalDate.now()).isDefault(false).build());
+        // Standard category on the master (44) + a COUPANG mapping: the adapter payload resolves
+        // displayCategoryCode from the mapping.
         MasterProduct master = masterProductRepository.save(MasterProduct.builder()
-                .name("운동화 마스터").active(true).build());
-        // Category = master × platform (13): the adapter payload resolves displayCategoryCode from here.
-        masterProductCategoryRepository.save(MasterProductCategory.builder()
-                .masterProduct(master).platform("COUPANG").category(category).build());
+                .name("운동화 마스터").active(true).category(category).build());
+        categoryMappingRepository.save(CategoryMapping.builder()
+                .category(category).platform("COUPANG").platformCategoryId("cat-1").build());
 
         ProductListing cell = productListingRepository.save(ProductListing.builder()
                 .platform("COUPANG").platformProductId(null).name("셀").status(ListingStatus.DRAFT)

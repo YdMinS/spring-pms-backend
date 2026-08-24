@@ -62,15 +62,17 @@ class CoupangListingAdapterTest {
                         .sellingPrice(new BigDecimal("6000")).build()));
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
-        // Category now comes from the master (master × platform), not the cell.
-        given(masterChannelConfigService.resolveCategory(any()))
-                .willReturn(Category.builder().platformCategoryId("cat-1").build());
-        given(client.post(anyString(), anyString(), any()))
+        // Category code now comes from the master's standard category × platform mapping (44).
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any()))
                 .willReturn("{\"code\":\"SUCCESS\",\"data\":987654321}");
 
         String sellerProductId = adapter.register(cell(), gen, acct());
 
         assertThat(sellerProductId).isEqualTo("987654321");
+        // displayCategoryCode = resolvePlatformCategoryCode result (44).
+        assertThat(payload.getValue()).contains("\"displayCategoryCode\":\"cat-1\"");
     }
 
     @Test
@@ -81,8 +83,7 @@ class CoupangListingAdapterTest {
         lenient().when(productListingOptionRepository.findByProductListingId(100L)).thenReturn(List.of());
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
-        given(masterChannelConfigService.resolveCategory(any()))
-                .willReturn(Category.builder().platformCategoryId("cat-1").build());
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
         given(registrationNameGenerator.generate(master)).willReturn("노브랜드 생수 x 6");
 
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
@@ -106,8 +107,7 @@ class CoupangListingAdapterTest {
                 .willReturn(List.of(active1, inactive, active2));
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
-        given(masterChannelConfigService.resolveCategory(any()))
-                .willReturn(Category.builder().platformCategoryId("cat-1").build());
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
 
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");

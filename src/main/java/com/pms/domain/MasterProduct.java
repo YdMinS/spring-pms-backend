@@ -89,4 +89,14 @@ public class MasterProduct extends BaseEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "default_package_id", nullable = true)
     private Package defaultPackage;
+
+    /**
+     * Single standard category for this master (FEATURE_2608_06 / 44). Nullable (transitional / unset). The
+     * commission lookup uses this category's id; the per-platform marketplace code is resolved from
+     * {@link CategoryMapping} (standard × platform). Replaces the old {@code MasterProductCategory}
+     * (master × platform) — the master now picks one standard category, not one per platform.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "category_id", nullable = true)
+    private Category category;
 }

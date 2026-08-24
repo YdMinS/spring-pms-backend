@@ -11,7 +11,6 @@ import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.MasterProductCategoryRepository;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -51,7 +50,6 @@ class MasterProductControllerTest extends BaseIntegrationTest {
     @Autowired private MarketplaceAccountRepository marketplaceAccountRepository;
     @Autowired private SellerRepository sellerRepository;
     @Autowired private CategoryRepository categoryRepository;
-    @Autowired private MasterProductCategoryRepository masterProductCategoryRepository;
 
     private static final String PATH = "/api/admin/master-products";
     private Long masterId;
@@ -234,17 +232,17 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.components.length()").value(2));
     }
 
-    // ------------------------------------------------------------- category (master × platform, 13)
+    // ------------------------------------------------------------- standard category (single, 44)
 
     @Test
-    void upsertCategory_noToken_returns401() throws Exception {
+    void setCategory_noToken_returns401() throws Exception {
         mockMvc.perform(put(PATH + "/" + masterId + "/category")
                         .contentType(MediaType.APPLICATION_JSON).content(categoryBody()))
                 .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void upsertCategory_userToken_returns403() throws Exception {
+    void setCategory_userToken_returns403() throws Exception {
         mockMvc.perform(put(PATH + "/" + masterId + "/category")
                         .header("Authorization", "Bearer " + userToken)
                         .contentType(MediaType.APPLICATION_JSON).content(categoryBody()))
@@ -252,36 +250,43 @@ class MasterProductControllerTest extends BaseIntegrationTest {
     }
 
     @Test
-    void upsertCategory_thenList_adminToken_returns200() throws Exception {
+    void setCategory_thenGet_adminToken_returns200() throws Exception {
         mockMvc.perform(put(PATH + "/" + masterId + "/category")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON).content(categoryBody()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.platform").value("COUPANG"))
-                .andExpect(jsonPath("$.data.categoryId").value(categoryId));
+                .andExpect(jsonPath("$.data.categoryId").value(categoryId))
+                .andExpect(jsonPath("$.data.categoryName").value("신발"));
 
-        mockMvc.perform(get(PATH + "/" + masterId + "/categories")
+        mockMvc.perform(get(PATH + "/" + masterId + "/category")
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(1))
-                .andExpect(jsonPath("$.data[0].platform").value("COUPANG"));
+                .andExpect(jsonPath("$.data.categoryId").value(categoryId));
     }
 
     @Test
-    void deleteCategory_present_returns204_missing_returns404() throws Exception {
+    void setCategory_missingMaster_returns404() throws Exception {
+        mockMvc.perform(put(PATH + "/999999/category")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(categoryBody()))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void clearCategory_adminToken_returns204_thenGetIsNull() throws Exception {
         mockMvc.perform(put(PATH + "/" + masterId + "/category")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON).content(categoryBody()))
                 .andExpect(status().isOk());
 
-        mockMvc.perform(delete(PATH + "/" + masterId + "/categories/COUPANG")
+        mockMvc.perform(delete(PATH + "/" + masterId + "/category")
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isNoContent());
 
-        // Now absent → 404.
-        mockMvc.perform(delete(PATH + "/" + masterId + "/categories/COUPANG")
+        mockMvc.perform(get(PATH + "/" + masterId + "/category")
                         .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.categoryId").doesNotExist());
     }
 
     // ------------------------------------------------------------- tags (33)
@@ -307,7 +312,7 @@ class MasterProductControllerTest extends BaseIntegrationTest {
     }
 
     private String categoryBody() {
-        return "{\"platform\":\"COUPANG\",\"categoryId\":" + categoryId + "}";
+        return "{\"categoryId\":" + categoryId + "}";
     }
 
     private String createMasterBody() {

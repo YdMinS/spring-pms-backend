@@ -130,28 +130,28 @@ public class MasterProductController {
         return ResponseEntity.ok(ResponseDTO.success(null));
     }
 
-    // ---------------------------------------------------------------- category (master × platform, 13)
+    // ---------------------------------------------------------------- standard category (single, 44)
 
     @PutMapping("/{id}/category")
-    @Operation(summary = "Upsert the category for a master × platform")
+    @Operation(summary = "Set the master's single standard category")
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<ResponseDTO<MasterCategoryResponse>> upsertCategory(
+    public ResponseEntity<ResponseDTO<MasterCategoryResponse>> setCategory(
             @PathVariable Long id, @Valid @RequestBody MasterCategoryRequest request) {
-        return ResponseEntity.ok(ResponseDTO.success(masterProductService.upsertCategory(id, request)));
+        return ResponseEntity.ok(ResponseDTO.success(masterProductService.setCategory(id, request)));
     }
 
-    @GetMapping("/{id}/categories")
-    @Operation(summary = "List a master's per-platform categories")
+    @GetMapping("/{id}/category")
+    @Operation(summary = "Get the master's standard category (null fields if unset)")
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<ResponseDTO<List<MasterCategoryResponse>>> getCategories(@PathVariable Long id) {
-        return ResponseEntity.ok(ResponseDTO.success(masterProductService.getCategories(id)));
+    public ResponseEntity<ResponseDTO<MasterCategoryResponse>> getCategory(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(masterProductService.getCategory(id)));
     }
 
-    @DeleteMapping("/{id}/categories/{platform}")
-    @Operation(summary = "Delete a master's category for a platform")
+    @DeleteMapping("/{id}/category")
+    @Operation(summary = "Clear the master's standard category")
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<Void> deleteCategory(@PathVariable Long id, @PathVariable String platform) {
-        masterProductService.deleteCategory(id, platform);
+    public ResponseEntity<Void> clearCategory(@PathVariable Long id) {
+        masterProductService.clearCategory(id);
         return ResponseEntity.noContent().build();
     }
 

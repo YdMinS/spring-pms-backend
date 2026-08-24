@@ -100,10 +100,10 @@ public class CoupangListingAdapter implements ListingChannel {
     private Map<String, Object> buildPayload(ProductListing cell, GeneratedProductData gen,
                                              MarketplaceAccount acct) {
         Map<String, Object> payload = new LinkedHashMap<>();
-        // Category now comes from the master (master × platform); the channel-add cell's own category column is
-        // null. Resolved-not-set (400) is already validated before registration.
+        // Category code = the master's standard category × platform, resolved from CategoryMapping (44). The
+        // channel-add cell's own category column is null. Missing mapping (400) is validated before registration.
         payload.put("displayCategoryCode",
-                masterChannelConfigService.resolveCategory(cell).getPlatformCategoryId());
+                masterChannelConfigService.resolvePlatformCategoryCode(cell));
         // Registration name = rule-generated from the master's components/options (not the free-text
         // master label). master null fallback = cell.getName() (backfill transition window).
         payload.put("sellerProductName",

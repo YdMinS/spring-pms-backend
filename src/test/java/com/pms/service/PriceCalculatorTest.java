@@ -44,7 +44,7 @@ class PriceCalculatorTest {
     private final Category category = Category.builder().id(3L).build();
 
     private void stubConfig(String deliveryCost, String boxCost) {
-        given(masterChannelConfigService.resolveCategory(cell)).willReturn(category);
+        given(masterChannelConfigService.resolveStandardCategory(cell)).willReturn(category);
         given(masterChannelConfigService.resolveDelivery(cell, masterOption))
                 .willReturn(CarrierRate.builder().cost(new BigDecimal(deliveryCost)).build());
         given(masterChannelConfigService.resolvePackage(cell, masterOption))
@@ -91,11 +91,11 @@ class PriceCalculatorTest {
 
     @Test
     void calculatePrice_categoryUnset_resolverThrows400_propagates() {
-        given(masterChannelConfigService.resolveCategory(cell))
-                .willThrow(new IllegalArgumentException("카테고리 미설정"));
+        given(masterChannelConfigService.resolveStandardCategory(cell))
+                .willThrow(new IllegalArgumentException("표준 카테고리 미설정"));
 
         assertThatThrownBy(() -> priceCalculator.calculatePrice(cell, masterOption, new BigDecimal("5000")))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("카테고리 미설정");
+                .hasMessage("표준 카테고리 미설정");
     }
 }

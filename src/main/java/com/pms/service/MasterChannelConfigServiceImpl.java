@@ -6,7 +6,7 @@ import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.Package;
 import com.pms.domain.ProductListing;
-import com.pms.repository.MasterProductCategoryRepository;
+import com.pms.repository.CategoryMappingRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -18,23 +18,26 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class MasterChannelConfigServiceImpl implements MasterChannelConfigService {
 
-    private final MasterProductCategoryRepository categoryRepository;
+    private final CategoryMappingRepository categoryMappingRepository;
 
     @Override
-    public Category resolveCategory(ProductListing cell) {
+    public Category resolveStandardCategory(ProductListing cell) {
         MasterProduct master = cell.getMasterProduct();
-        if (master == null) {
-            // Transitional guard: a master-less cell cannot be priced/registered.
-            throw new IllegalArgumentException("카테고리 미설정");
+        // ⚠️ LAZY master.category — the caller (PriceCalculator / CoupangListingAdapter / regenerate) runs
+        // this inside a @Transactional boundary (open-in-view=false).
+        Category category = master == null ? null : master.getCategory();
+        if (category == null) {
+            throw new IllegalArgumentException("표준 카테고리 미설정");
         }
-        return resolveCategory(master.getId(), cell.getPlatform());
+        return category;
     }
 
     @Override
-    public Category resolveCategory(Long masterProductId, String platform) {
-        return categoryRepository.findByMasterProductIdAndPlatform(masterProductId, platform)
-                .map(mpc -> mpc.getCategory())
-                .orElseThrow(() -> new IllegalArgumentException("카테고리 미설정"));
+    public String resolvePlatformCategoryCode(ProductListing cell) {
+        Category standard = resolveStandardCategory(cell);
+        return categoryMappingRepository.findByCategoryIdAndPlatform(standard.getId(), cell.getPlatform())
+                .map(mapping -> mapping.getPlatformCategoryId())
+                .orElseThrow(() -> new IllegalArgumentException(cell.getPlatform() + " 카테고리 매핑 미설정"));
     }
 
     @Override

@@ -14,6 +14,7 @@ import com.pms.dto.response.BatchChannelAddResponse;
 import com.pms.dto.response.ChannelAddResponse;
 import com.pms.exception.DuplicateChannelException;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
@@ -62,7 +63,7 @@ public class ChannelAddServiceImpl implements ChannelAddService {
     private final ProductListingOptionRepository productListingOptionRepository;
     private final ProductListingProductRepository productListingProductRepository;
     private final SellerRepository sellerRepository;
-    private final MasterChannelConfigService masterChannelConfigService;
+    private final CategoryMappingRepository categoryMappingRepository;
     private final ListingAssetService listingAssetService;
 
     /**
@@ -97,10 +98,17 @@ public class ChannelAddServiceImpl implements ChannelAddService {
         Seller seller = sellerRepository.findById(request.getSellerId())
                 .orElseThrow(() -> new ResourceNotFoundException("Seller", request.getSellerId()));
 
-        // Category/delivery/box are now derived from the master (13). Pre-validate the master has a category for
-        // this platform before creating the cell (missing → 400 "카테고리 미설정"); delivery/box are checked by the
-        // reused regenerate seam. The cell's own category/delivery/package columns stay null (deprecated).
-        masterChannelConfigService.resolveCategory(masterProductId, request.getPlatform());
+        // Category/delivery/box are derived from the master (13). Standard category = master.category (44), and
+        // the platform code is resolved from CategoryMapping — pre-validate both before creating the cell so an
+        // un-mappable channel is blocked (SSOT §4). delivery/box are checked by the reused regenerate seam. The
+        // cell's own category/delivery/package columns stay null (deprecated).
+        if (master.getCategory() == null) {
+            throw new IllegalArgumentException("표준 카테고리 미설정");
+        }
+        if (!categoryMappingRepository.existsByCategoryIdAndPlatform(
+                master.getCategory().getId(), request.getPlatform())) {
+            throw new IllegalArgumentException(request.getPlatform() + " 카테고리 매핑 미설정");
+        }
 
         // --- copy: master options → listing options + BOM ---
         ProductListing cell = productListingRepository.save(ProductListing.builder()

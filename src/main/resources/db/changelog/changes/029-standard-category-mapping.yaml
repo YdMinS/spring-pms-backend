@@ -1,0 +1,124 @@
+# Standard category + CategoryMapping (FEATURE_2608_06 / 44): promote Category to an oclyx-independent
+# standard category (platform/platform_category_id become nullable, deprecated), add category_mapping
+# (standard × platform → code), give master_product a single standard category_id FK, backfill from the old
+# master_product_category, then drop it. No boolean columns → no MySQL BIT trap.
+#
+# ⚠️ NON-REVERSIBLE backfill: the master_product UPDATE below assumes at most one master_product_category
+# row per master (the current shared-id 1:1 window from 13/019). Before applying this changeset on dev/prod,
+# the executor MUST confirm 0 rows from:
+#   SELECT master_product_id, COUNT(*) FROM master_product_category GROUP BY master_product_id HAVING COUNT(*) > 1;
+# 1+ rows means a master has multiple per-platform categories → an arbitrary one would be frozen as the
+# standard category with no recovery. Stop and map manually in that case.
+databaseChangeLog:
+
+  # ---- 1. relax the deprecated platform columns on category (standard category has no platform/code) ----
+  - changeSet:
+      id: 029-relax-category-platform-null
+      author: oclyx
+      comment: "Standard category: category.platform / platform_category_id become nullable (deprecated)."
+      changes:
+        - dropNotNullConstraint:
+            tableName: category
+            columnName: platform
+            columnDataType: VARCHAR(50)
+        - dropNotNullConstraint:
+            tableName: category
+            columnName: platform_category_id
+            columnDataType: VARCHAR(50)
+
+  # ---- 2. category_mapping (standard × platform → code) ----
+  - changeSet:
+      id: 029-category-mapping
+      author: oclyx
+      comment: "Standard category to platform code mapping: at most one row per (category, platform)."
+      changes:
+        - createTable:
+            tableName: category_mapping
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: category_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: platform, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: platform_category_id, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: platform_category_name, type: VARCHAR(255) }
+        - addForeignKeyConstraint:
+            constraintName: fk_catmap_category
+            baseTableName: category_mapping
+            baseColumnNames: category_id
+            referencedTableName: category
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            tableName: category_mapping
+            columnNames: "category_id, platform"
+            constraintName: uq_catmap_category_platform
+
+  # ---- 3. master_product single standard category (additive nullable FK) ----
+  - changeSet:
+      id: 029-master-product-category-id
+      author: oclyx
+      comment: "Additive: master_product.category_id (single standard category, nullable)."
+      changes:
+        - addColumn:
+            tableName: master_product
+            columns:
+              - column: { name: category_id, type: BIGINT }
+        - addForeignKeyConstraint:
+            constraintName: fk_master_category
+            baseTableName: master_product
+            baseColumnNames: category_id
+            referencedTableName: category
+            referencedColumnNames: id
+
+  # ---- 4. backfill category_mapping from the existing platform-bound categories (MySQL only) ----
+  # Each existing platform-bound Category becomes its own standard, mapping to itself; display name = the
+  # category name cached. Current data is small/Coupang-centric so (category, platform) has no collision.
+  # The H2 apply-check skips this (dbms:mysql) and has no data anyway.
+  - changeSet:
+      id: 029-backfill-category-mapping
+      author: oclyx
+      dbms: mysql
+      comment: "Backfill category_mapping from platform-bound categories (self-mapping)."
+      preConditions:
+        - onFail: MARK_RAN
+        - sqlCheck:
+            expectedResult: 0
+            sql: "SELECT count(*) FROM category_mapping"
+      changes:
+        - sql: >-
+            INSERT INTO category_mapping (category_id, platform, platform_category_id, platform_category_name)
+            SELECT id, platform, platform_category_id, name FROM category
+            WHERE platform IS NOT NULL AND platform_category_id IS NOT NULL
+
+  # ---- 5. backfill master_product.category_id from the old master_product_category (MySQL only) ----
+  # ⚠️ Assumes 1:1 (see the header check). Runs only while master_product.category_id is still all-null.
+  # ⚠️ tableExists guard: on any DB where 019 was never actually executed (e.g. an earlier changelogSync
+  # marked it applied without creating the table), master_product_category is absent — skip rather than crash.
+  - changeSet:
+      id: 029-backfill-master-category
+      author: oclyx
+      dbms: mysql
+      comment: "Backfill master_product.category_id from master_product_category (1:1 window only)."
+      preConditions:
+        - onFail: MARK_RAN
+        - tableExists:
+            tableName: master_product_category
+        - sqlCheck:
+            expectedResult: 0
+            sql: "SELECT count(*) FROM master_product WHERE category_id IS NOT NULL"
+      changes:
+        - sql: >-
+            UPDATE master_product mp JOIN master_product_category mpc ON mpc.master_product_id = mp.id
+            SET mp.category_id = mpc.category_id
+
+  # ---- 6. drop the superseded master_product_category (after the backfill above) ----
+  # tableExists guard: skip if the table was never created (partial/synced changelog state) instead of failing.
+  - changeSet:
+      id: 029-drop-master-product-category
+      author: oclyx
+      comment: "Drop master_product_category — replaced by the master's single standard category FK."
+      preConditions:
+        - onFail: MARK_RAN
+        - tableExists:
+            tableName: master_product_category
+      changes:
+        - dropTable:
+            tableName: master_product_category

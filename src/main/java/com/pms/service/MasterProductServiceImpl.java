@@ -5,7 +5,6 @@ import com.pms.domain.Category;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
-import com.pms.domain.MasterProductCategory;
 import com.pms.domain.MasterProductComponent;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
@@ -23,14 +22,12 @@ import com.pms.dto.response.ListingMatrixResponse.MatrixRow;
 import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductResponse;
-import com.pms.exception.BusinessException;
 import com.pms.exception.MasterProductInUseException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
-import com.pms.repository.MasterProductCategoryRepository;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
@@ -43,7 +40,6 @@ import com.pms.repository.SellerRepository;
 import com.pms.service.listing.MasterPropagationService;
 import com.pms.service.listing.TagMergeService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -74,7 +70,6 @@ import java.util.stream.Collectors;
 public class MasterProductServiceImpl implements MasterProductService {
 
     private final MasterProductRepository masterProductRepository;
-    private final MasterProductCategoryRepository masterProductCategoryRepository;
     private final MasterProductComponentRepository componentRepository;
     private final MasterProductOptionRepository optionRepository;
     private final MasterProductOptionItemRepository optionItemRepository;
@@ -352,50 +347,38 @@ public class MasterProductServiceImpl implements MasterProductService {
         optionRepository.delete(option);
     }
 
-    // ---------------------------------------------------------------- category (master × platform, 13)
+    // ---------------------------------------------------------------- standard category (single, 44)
 
     @Override
     @Transactional
-    public MasterCategoryResponse upsertCategory(Long masterId, MasterCategoryRequest request) {
+    public MasterCategoryResponse setCategory(Long masterId, MasterCategoryRequest request) {
         MasterProduct master = requireScopedMaster(masterId);
         Category category = categoryRepository.findById(request.getCategoryId())
                 .orElseThrow(() -> new ResourceNotFoundException("Category", request.getCategoryId()));
-
-        MasterProductCategory existing = masterProductCategoryRepository
-                .findByMasterProductIdAndPlatform(masterId, request.getPlatform()).orElse(null);
-        MasterProductCategory toSave = existing != null
-                ? existing.toBuilder().category(category).build()
-                : MasterProductCategory.builder()
-                        .masterProduct(master).platform(request.getPlatform()).category(category).build();
-        MasterProductCategory saved = masterProductCategoryRepository.save(toSave);
-        return toCategoryResponse(saved);
+        masterProductRepository.save(master.toBuilder().category(category).build());
+        return toCategoryResponse(category);
     }
 
     @Override
-    public List<MasterCategoryResponse> getCategories(Long masterId) {
-        requireScopedMaster(masterId);
-        return masterProductCategoryRepository.findByMasterProductId(masterId).stream()
-                .map(this::toCategoryResponse)
-                .toList();
+    public MasterCategoryResponse getCategory(Long masterId) {
+        MasterProduct master = requireScopedMaster(masterId);
+        return toCategoryResponse(master.getCategory());
     }
 
     @Override
     @Transactional
-    public void deleteCategory(Long masterId, String platform) {
-        requireScopedMaster(masterId);
-        MasterProductCategory existing = masterProductCategoryRepository
-                .findByMasterProductIdAndPlatform(masterId, platform)
-                .orElseThrow(() -> new BusinessException(
-                        "MasterProductCategory not found for platform: " + platform, HttpStatus.NOT_FOUND));
-        masterProductCategoryRepository.delete(existing);
+    public void clearCategory(Long masterId) {
+        MasterProduct master = requireScopedMaster(masterId);
+        masterProductRepository.save(master.toBuilder().category(null).build());
     }
 
-    private MasterCategoryResponse toCategoryResponse(MasterProductCategory mpc) {
-        return MasterCategoryResponse.builder()
-                .platform(mpc.getPlatform())
-                .categoryId(mpc.getCategory().getId())
-                .categoryName(mpc.getCategory().getName())
-                .build();
+    private MasterCategoryResponse toCategoryResponse(Category category) {
+        return category == null
+                ? MasterCategoryResponse.builder().build()
+                : MasterCategoryResponse.builder()
+                        .categoryId(category.getId())
+                        .categoryName(category.getName())
+                        .build();
     }
 
     // ---------------------------------------------------------------- image override (3b-2)

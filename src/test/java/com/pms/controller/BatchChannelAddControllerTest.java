@@ -7,7 +7,7 @@ import com.pms.domain.Category;
 import com.pms.domain.CommissionRate;
 import com.pms.domain.MarginPolicy;
 import com.pms.domain.MasterProduct;
-import com.pms.domain.MasterProductCategory;
+import com.pms.domain.CategoryMapping;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.Package;
@@ -22,7 +22,7 @@ import com.pms.repository.CategoryRepository;
 import com.pms.repository.CommissionRateRepository;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarginPolicyRepository;
-import com.pms.repository.MasterProductCategoryRepository;
+import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
@@ -89,7 +89,7 @@ class BatchChannelAddControllerTest {
     @Autowired private CommissionRateRepository commissionRateRepository;
     @Autowired private MarginPolicyRepository marginPolicyRepository;
     @Autowired private MasterProductRepository masterProductRepository;
-    @Autowired private MasterProductCategoryRepository masterProductCategoryRepository;
+    @Autowired private CategoryMappingRepository categoryMappingRepository;
     @Autowired private MasterProductOptionRepository masterProductOptionRepository;
     @Autowired private MasterProductOptionItemRepository masterProductOptionItemRepository;
     @Autowired private ProductListingRepository productListingRepository;
@@ -137,8 +137,7 @@ class BatchChannelAddControllerTest {
         Product product = productRepository.save(Product.builder()
                 .productName("운동화").brand("나이키")
                 .price(new BigDecimal("1500")).imageUrl("products/p.jpg").active(true).build());
-        Category category = categoryRepository.save(Category.builder()
-                .name("신발").platform("COUPANG").platformCategoryId("cat-1").build());
+        Category category = categoryRepository.save(Category.builder().name("신발").build());
 
         commissionRateRepository.save(CommissionRate.builder()
                 .platform("COUPANG").category(null).rate(new BigDecimal("0.10")).isDefault(true).build());
@@ -156,13 +155,14 @@ class BatchChannelAddControllerTest {
                 .type("M").cost(new BigDecimal("500"))
                 .effectiveDate(LocalDate.now()).isDefault(false).build());
 
-        // Master has a category for COUPANG only — NAVER targets fail category pre-validation (400).
+        // Master has a standard category (44) + a COUPANG mapping only — NAVER targets have no mapping and fail
+        // channel-add pre-validation (400).
         MasterProduct master = masterProductRepository.save(MasterProduct.builder()
-                .name("운동화 마스터").active(true)
+                .name("운동화 마스터").active(true).category(category)
                 .defaultDelivery(delivery).defaultPackage(box).build());
         masterId = master.getId();
-        masterProductCategoryRepository.save(MasterProductCategory.builder()
-                .masterProduct(master).platform("COUPANG").category(category).build());
+        categoryMappingRepository.save(CategoryMapping.builder()
+                .category(category).platform("COUPANG").platformCategoryId("cat-1").build());
         MasterProductOption option = masterProductOptionRepository.save(MasterProductOption.builder()
                 .masterProduct(master).name("1세트").build());
         masterProductOptionItemRepository.save(MasterProductOptionItem.builder()
@@ -185,7 +185,7 @@ class BatchChannelAddControllerTest {
         productListingProductRepository.deleteAll();
         productListingOptionRepository.deleteAll();
         productListingRepository.deleteAll();
-        masterProductCategoryRepository.deleteAll();
+        categoryMappingRepository.deleteAll();
         masterProductOptionItemRepository.deleteAll();
         masterProductOptionRepository.deleteAll();
         masterProductRepository.deleteAll();
