@@ -66,4 +66,35 @@ class OrderQueryServiceImplTest {
         assertThat(r.getExternalItemId()).isEqualTo("I1");
         // raw 필드는 DTO에 존재하지 않음 → 직렬화/노출 불가 (목록 가벼움)
     }
+
+    @Test
+    void list_partialCancel_keepsRawStatus() {
+        // 일부만 취소 → status 원본 유지, cancelled=false
+        given(coupangProperties.getSyncDays()).willReturn(14);
+        given(orderItemRepository.findRecentOrders(any(LocalDateTime.class))).willReturn(List.of(sample()));
+
+        OrderItemResponse r = service.list(null).get(0);       // orderCount 10, cancel 2, hold 1
+        assertThat(r.getStatus()).isEqualTo("ACCEPT");
+        assertThat(r.getEffectiveStatus()).isEqualTo("ACCEPT");
+        assertThat(r.isCancelled()).isFalse();
+    }
+
+    @Test
+    void list_fullyCancelledInstruct_mapsToCancelled() {
+        // 상품준비중(INSTRUCT)인데 전량 취소 → effectiveStatus=CANCELLED, status 원본 보존
+        given(coupangProperties.getSyncDays()).willReturn(14);
+        MarketplaceAccount acc = MarketplaceAccount.builder().id(7L).platform("COUPANG").build();
+        OrderItem fully = OrderItem.builder()
+                .id(2L).marketplaceAccount(acc).platform("COUPANG")
+                .externalOrderId("O2").externalBoxId("B2").externalItemId("I2")
+                .itemName("모자").orderCount(3).cancelCount(3).holdCount(0)
+                .status("INSTRUCT").build();
+        given(orderItemRepository.findRecentOrders(any(LocalDateTime.class))).willReturn(List.of(fully));
+
+        OrderItemResponse r = service.list(null).get(0);
+        assertThat(r.getStatus()).isEqualTo("INSTRUCT");       // 원본 보존
+        assertThat(r.getEffectiveStatus()).isEqualTo("CANCELLED");
+        assertThat(r.isCancelled()).isTrue();
+        assertThat(r.getPurchasableQty()).isZero();
+    }
 }
