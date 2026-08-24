@@ -107,7 +107,9 @@ public class CoupangOrderSyncServiceImpl implements CoupangOrderSyncService {
      * 날짜는 ISO-8601 KST: "yyyy-MM-dd+09:00" (+ 는 %2B 로 인코딩, 서명/전송 동일 문자열 사용).
      */
     private String baseQuery(CoupangOrderStatus status) {
-        LocalDate to = LocalDate.now();
+        // 쿠팡 createdAt 필터는 KST 기준 → 서버 TZ(UTC)로 계산하면 KST 자정~오전9시에 만든 주문이
+        // 전날로 밀려 창 밖으로 빠진다. 반드시 KST 달력으로 오늘을 계산한다.
+        LocalDate to = LocalDate.now(KST);
         LocalDate from = to.minusDays(coupangProperties.getSyncDays());
         return "createdAtFrom=" + from.format(DATE) + KST_OFFSET
                 + "&createdAtTo=" + to.format(DATE) + KST_OFFSET
