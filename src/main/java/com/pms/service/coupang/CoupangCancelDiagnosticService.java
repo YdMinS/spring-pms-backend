@@ -55,10 +55,10 @@ public class CoupangCancelDiagnosticService {
         }
 
         MarketplaceAccount account = rows.get(0).getMarketplaceAccount();
-        // 판매자 취소가 어떤 returnRequests 변형에 잡히는지 3가지로 찔러본다.
+        // 이 주문의 취소/반품 기록이 returnRequests 에 존재하는지 2가지로 확인한다.
+        // (RETURN=배송후 반품이라 상품준비중 취소엔 무관 → 제외. 날짜범위는 항상 필수.)
         out.put("returnRequests_CANCEL", probe(account, orderId, windowQuery("cancelType=CANCEL")));
-        out.put("returnRequests_RETURN", probe(account, orderId, windowQuery("cancelType=RETURN")));
-        out.put("returnRequests_byOrderId", probe(account, orderId, "orderId=" + orderId + "&maxPerPage=" + MAX_PER_PAGE));
+        out.put("returnRequests_byOrderId", probe(account, orderId, windowQuery("orderId=" + orderId)));
         out.put("singleOrdersheets", probeSingleBoxes(account, rows));
         return out;
     }
