@@ -21,7 +21,9 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.verify;
 
 /**
@@ -33,6 +35,7 @@ class CategoryMappingServiceTest {
 
     @Mock private CategoryMappingRepository categoryMappingRepository;
     @Mock private CategoryRepository categoryRepository;
+    @Mock private CommissionPrefillService commissionPrefillService;
     @InjectMocks private CategoryMappingServiceImpl service;
 
     private CategoryMappingRequest request(String code) {
@@ -71,6 +74,31 @@ class CategoryMappingServiceTest {
         verify(categoryMappingRepository).save(captor.capture());
         assertThat(captor.getValue().getId()).isEqualTo(9L);                // same row updated
         assertThat(captor.getValue().getPlatformCategoryId()).isEqualTo("102");
+    }
+
+    @Test
+    void upsert_invokesCommissionPrefill() {
+        given(categoryRepository.findById(3L)).willReturn(Optional.of(Category.builder().id(3L).name("신발").build()));
+        given(categoryMappingRepository.findByCategoryIdAndPlatform(3L, "COUPANG")).willReturn(Optional.empty());
+        given(categoryMappingRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+
+        service.upsertMapping(3L, request("101"));
+
+        verify(commissionPrefillService).prefillIfAbsent(eq(3L), eq("COUPANG"), eq("경로"));
+    }
+
+    @Test
+    void upsert_prefillFailure_stillSavesMapping() {
+        given(categoryRepository.findById(3L)).willReturn(Optional.of(Category.builder().id(3L).name("신발").build()));
+        given(categoryMappingRepository.findByCategoryIdAndPlatform(3L, "COUPANG")).willReturn(Optional.empty());
+        given(categoryMappingRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+        willThrow(new RuntimeException("prefill boom"))
+                .given(commissionPrefillService).prefillIfAbsent(any(), any(), any());
+
+        CategoryMappingResponse resp = service.upsertMapping(3L, request("101"));   // must not throw
+
+        assertThat(resp.getPlatformCategoryId()).isEqualTo("101");
+        verify(categoryMappingRepository).save(any());
     }
 
     @Test

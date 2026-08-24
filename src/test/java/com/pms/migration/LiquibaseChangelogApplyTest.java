@@ -166,6 +166,11 @@ class LiquibaseChangelogApplyTest {
         // apply-check DB has no options, so the NOT-NULL backfill leaves nothing null).
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM product_listing_option WHERE active IS NULL", Integer.class)).isZero();
+
+        // changeset 030: coupang_fee_reference table + columns materialized. The CoupangFeeReferenceSeeder
+        // (a startup ApplicationRunner, not the changeset) populates it, so assert the seeded row count.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM coupang_fee_reference", Integer.class)).isEqualTo(125);
     }
 
     @Test
