@@ -18,8 +18,11 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -92,6 +95,30 @@ class CoupangListingAdapterTest {
         adapter.register(cell, gen, acct());
 
         assertThat(payload.getValue()).contains("\"sellerProductName\":\"노브랜드 생수 x 6\"");
+    }
+
+    // 47: register payload assembles master-level category attributes + notices into Coupang shape.
+    @Test
+    void register_payloadIncludesCategoryAttributesAndNotices() throws Exception {
+        MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨")
+                .categoryAttributes(Map.of("원산지", "국내산"))
+                .categoryNotices(Map.of("제품소재", "면 100%")).build();
+        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+                .platformProductId("123456789").masterProduct(master).build();
+        lenient().when(productListingOptionRepository.findByProductListingId(100L)).thenReturn(List.of());
+        GeneratedProductData gen = GeneratedProductData.builder()
+                .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(registrationNameGenerator.generate(master)).willReturn("원산지 상품");
+
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell, gen, acct());
+
+        JsonNode json = objectMapper.readTree(payload.getValue());
+        assertThat(json.path("attributes").get(0).path("attributeTypeName").asText()).isEqualTo("원산지");
+        assertThat(json.path("notices")).isNotEmpty();
     }
 
     // 42: register payload items[] = active options only (inactive excluded).

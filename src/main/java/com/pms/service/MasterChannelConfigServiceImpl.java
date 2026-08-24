@@ -32,12 +32,23 @@ public class MasterChannelConfigServiceImpl implements MasterChannelConfigServic
         return category;
     }
 
+    // resolvePlatformCategoryCode(MasterProduct, String) is defined below (shared by the cell overload).
+
     @Override
     public String resolvePlatformCategoryCode(ProductListing cell) {
-        Category standard = resolveStandardCategory(cell);
-        return categoryMappingRepository.findByCategoryIdAndPlatform(standard.getId(), cell.getPlatform())
+        return resolvePlatformCategoryCode(cell.getMasterProduct(), cell.getPlatform());
+    }
+
+    @Override
+    public String resolvePlatformCategoryCode(MasterProduct master, String platform) {
+        // ⚠️ LAZY master.category — the caller runs inside a @Transactional boundary (open-in-view=false).
+        Category standard = master == null ? null : master.getCategory();
+        if (standard == null) {
+            throw new IllegalArgumentException("표준 카테고리 미설정");
+        }
+        return categoryMappingRepository.findByCategoryIdAndPlatform(standard.getId(), platform)
                 .map(mapping -> mapping.getPlatformCategoryId())
-                .orElseThrow(() -> new IllegalArgumentException(cell.getPlatform() + " 카테고리 매핑 미설정"));
+                .orElseThrow(() -> new IllegalArgumentException(platform + " 카테고리 매핑 미설정"));
     }
 
     @Override

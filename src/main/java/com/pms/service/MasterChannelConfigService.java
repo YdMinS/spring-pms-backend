@@ -1,6 +1,7 @@
 package com.pms.service;
 
 import com.pms.domain.Category;
+import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.Package;
 import com.pms.domain.CarrierRate;
@@ -41,6 +42,14 @@ public interface MasterChannelConfigService {
      * (adapter payload use).
      */
     String resolvePlatformCategoryCode(ProductListing cell);
+
+    /**
+     * Platform marketplace code for a (master × platform), for callers that hold the master directly (e.g.
+     * the category-meta endpoint, which has master id + platform but no cell). 400 if the master has no
+     * standard category or that category has no mapping for the platform. Same logic as
+     * {@link #resolvePlatformCategoryCode(ProductListing)}.
+     */
+    String resolvePlatformCategoryCode(MasterProduct master, String platform);
 
     /** Delivery = option override ?? master default. 400 if both are null. */
     CarrierRate resolveDelivery(ProductListing cell, MasterProductOption masterOption);

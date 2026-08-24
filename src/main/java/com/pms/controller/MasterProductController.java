@@ -1,6 +1,7 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.CategoryAttributesRequest;
 import com.pms.dto.request.ImportProductImagesRequest;
 import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterOptionRequest;
@@ -9,11 +10,13 @@ import com.pms.dto.request.MasterProductUpdateRequest;
 import com.pms.dto.request.MasterSourceImageRequest;
 import com.pms.dto.request.MasterZoneImagesRequest;
 import com.pms.dto.request.TagsRequest;
+import com.pms.dto.response.CategoryMetaResponse;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductImageResponse;
 import com.pms.dto.response.MasterProductResponse;
+import com.pms.service.CategoryMetaService;
 import com.pms.service.MasterProductImageService;
 import com.pms.service.MasterProductService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -42,6 +45,7 @@ public class MasterProductController {
 
     private final MasterProductService masterProductService;
     private final MasterProductImageService masterProductImageService;
+    private final CategoryMetaService categoryMetaService;
 
     @GetMapping
     @Operation(summary = "List master products")
@@ -153,6 +157,25 @@ public class MasterProductController {
     public ResponseEntity<Void> clearCategory(@PathVariable Long id) {
         masterProductService.clearCategory(id);
         return ResponseEntity.noContent().build();
+    }
+
+    // ---------------------------------------------------------------- category meta (47)
+
+    @GetMapping("/{id}/category-meta")
+    @Operation(summary = "Get the (platform × category) required-attribute/notice schema + master values")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<CategoryMetaResponse>> getCategoryMeta(
+            @PathVariable Long id, @RequestParam String platform) {
+        return ResponseEntity.ok(ResponseDTO.success(categoryMetaService.getMeta(id, platform)));
+    }
+
+    @PatchMapping("/{id}/category-attributes")
+    @Operation(summary = "Store master-level category attribute + notice values (no regeneration)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<Void>> updateCategoryAttributes(
+            @PathVariable Long id, @RequestBody CategoryAttributesRequest request) {
+        categoryMetaService.updateCategoryAttributes(id, request.getAttributes(), request.getNotices());
+        return ResponseEntity.ok(ResponseDTO.success(null));
     }
 
     // ---------------------------------------------------------------- image pool + field mapping (37)

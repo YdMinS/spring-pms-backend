@@ -137,6 +137,33 @@ public class CoupangListingAdapter implements ListingChannel {
         // searchTags (33): channel tags first, then master tags appended (deduped, capped at 20). Coupang field
         // name = searchTags (String array, max 20) — fixture-based, verified against a live account as follow-up.
         payload.put("searchTags", tagMergeService.resolveTags(cell));
+
+        // Category required-attributes + product-info disclosure (47): master-level values → Coupang shape.
+        // Missing required attributes are pre-validated in the orchestration (register); the adapter only
+        // assembles. Empty schema (e.g. NAVER) leaves the master maps null → skipped (harmless).
+        com.pms.domain.MasterProduct master = cell.getMasterProduct();
+        Map<String, String> attributeValues = master != null ? master.getCategoryAttributes() : null;
+        if (attributeValues != null && !attributeValues.isEmpty()) {
+            List<Map<String, Object>> attributes = new ArrayList<>();
+            for (Map.Entry<String, String> entry : attributeValues.entrySet()) {
+                Map<String, Object> attribute = new LinkedHashMap<>();
+                attribute.put("attributeTypeName", entry.getKey());
+                attribute.put("attributeValueName", entry.getValue());
+                attributes.add(attribute);
+            }
+            payload.put("attributes", attributes);
+        }
+        Map<String, String> noticeValues = master != null ? master.getCategoryNotices() : null;
+        if (noticeValues != null && !noticeValues.isEmpty()) {
+            List<Map<String, Object>> notices = new ArrayList<>();
+            for (Map.Entry<String, String> entry : noticeValues.entrySet()) {
+                Map<String, Object> notice = new LinkedHashMap<>();
+                notice.put("noticeCategoryDetailName", entry.getKey());
+                notice.put("content", entry.getValue());
+                notices.add(notice);
+            }
+            payload.put("notices", notices);
+        }
         return payload;
     }
 

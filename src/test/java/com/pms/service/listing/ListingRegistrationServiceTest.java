@@ -12,8 +12,14 @@ import com.pms.dto.response.ListingSyncResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.domain.MasterProduct;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
+import com.pms.service.MasterChannelConfigService;
+import com.pms.service.listing.category.CategoryAttribute;
+import com.pms.service.listing.category.CategoryMetaAdapter;
+import com.pms.service.listing.category.CategoryMetaResolver;
+import com.pms.service.listing.category.CategoryMetaSchema;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -23,6 +29,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -49,6 +56,9 @@ class ListingRegistrationServiceTest {
     @Mock private ListingChannelResolver resolver;
     @Mock private ListingChannel adapter;
     @Mock private TagMergeService tagMergeService;
+    @Mock private MasterChannelConfigService masterChannelConfigService;
+    @Mock private CategoryMetaResolver categoryMetaResolver;
+    @Mock private CategoryMetaAdapter categoryMetaAdapter;
     @InjectMocks private ListingRegistrationServiceImpl service;
 
     private static final Long CELL_ID = 100L;
@@ -75,6 +85,14 @@ class ListingRegistrationServiceTest {
         given(resolver.resolve("COUPANG")).willReturn(adapter);
     }
 
+    /** Stub the 47 category-meta lookup (orchestration pre-validation) to return the given schema. */
+    private void stubCategoryMeta(CategoryMetaSchema schema) {
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any(ProductListing.class)))
+                .willReturn("1001");
+        given(categoryMetaResolver.resolve("COUPANG")).willReturn(categoryMetaAdapter);
+        given(categoryMetaAdapter.getMeta(any(), any())).willReturn(schema);
+    }
+
     // (a) register happy: DRAFT + gen → SUBMITTED + platformProductId; options untouched.
     @Test
     void register_draftWithGen_promotesToSubmitted_optionsUnchanged() {
@@ -84,6 +102,7 @@ class ListingRegistrationServiceTest {
         stubAccountAndAdapter();
         // 42 register guard reads the options to confirm at least one is active (option() defaults active=true).
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+        stubCategoryMeta(new CategoryMetaSchema(List.of(), List.of()));   // 47: empty schema → validation skips
         given(adapter.register(any(), any(), any())).willReturn("SP-999");
 
         ListingRegisterResponse response = service.register(CELL_ID);
@@ -140,6 +159,46 @@ class ListingRegistrationServiceTest {
                 .willReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.register(CELL_ID)).isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    // 47: a required category attribute with no master value blocks the push (400, adapter never called).
+    @Test
+    void register_missingRequiredCategoryAttribute_throwsAndAdapterNotCalled() {
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell(ListingStatus.DRAFT, null)));
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID))
+                .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
+        stubAccountAndAdapter();
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+        // Schema requires 원산지, but the cell's master carries no value → block (cell() has no master).
+        stubCategoryMeta(new CategoryMetaSchema(
+                List.of(new CategoryAttribute("원산지", true, "TEXT", List.of())), List.of()));
+
+        assertThatThrownBy(() -> service.register(CELL_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("필수 카테고리 속성 누락: 원산지");
+        verify(adapter, never()).register(any(), any(), any());
+    }
+
+    // 47: a required attribute whose value is present on the master → the push proceeds.
+    @Test
+    void register_requiredCategoryAttributeSatisfied_registers() {
+        MasterProduct master = MasterProduct.builder().categoryAttributes(Map.of("원산지", "국내산")).build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀")
+                .seller(Seller.builder().id(SELLER_ID).build())
+                .status(ListingStatus.DRAFT).masterProduct(master).build();
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID))
+                .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
+        stubAccountAndAdapter();
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+        stubCategoryMeta(new CategoryMetaSchema(
+                List.of(new CategoryAttribute("원산지", true, "TEXT", List.of())), List.of()));
+        given(adapter.register(any(), any(), any())).willReturn("SP-777");
+
+        ListingRegisterResponse response = service.register(CELL_ID);
+
+        assertThat(response.getPlatformProductId()).isEqualTo("SP-777");
+        verify(adapter).register(any(), any(), any());
     }
 
     // (c) fetchStatus SELLING: matched option → market ids + APPROVED saved; status saved.

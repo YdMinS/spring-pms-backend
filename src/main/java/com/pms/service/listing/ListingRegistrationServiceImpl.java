@@ -14,6 +14,10 @@ import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
+import com.pms.service.MasterChannelConfigService;
+import com.pms.service.listing.category.CategoryAttribute;
+import com.pms.service.listing.category.CategoryMetaResolver;
+import com.pms.service.listing.category.CategoryMetaSchema;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,6 +51,8 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final ListingChannelResolver resolver;
     private final TagMergeService tagMergeService;
+    private final MasterChannelConfigService masterChannelConfigService;
+    private final CategoryMetaResolver categoryMetaResolver;
 
     @Override
     @Transactional
@@ -69,6 +75,9 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
         if (!anyActive) {
             throw new IllegalArgumentException("활성 옵션 없음");
         }
+
+        // 47: required category attributes must be filled on the master before push (empty schema = skip).
+        assertRequiredCategoryAttributes(cell, acct);
 
         String sellerProductId = adapter.register(cell, gen, acct);
 
@@ -162,6 +171,30 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
                 .stillPending(stillPending)
                 .failed(failed)
                 .build();
+    }
+
+    /**
+     * MUST-KEEP (47): every required category attribute must have a non-blank master-level value before the
+     * cell is pushed. Register targets a single (master × channel) cell → one category → one {@code getMeta}
+     * call (not a batch). An empty schema (e.g. NAVER) skips both the meta lookup's validation and assembly.
+     */
+    private void assertRequiredCategoryAttributes(ProductListing cell, MarketplaceAccount acct) {
+        String code = masterChannelConfigService.resolvePlatformCategoryCode(cell);
+        CategoryMetaSchema schema = categoryMetaResolver.resolve(cell.getPlatform()).getMeta(acct, code);
+        if (schema.attributes().isEmpty()) {
+            return;   // empty schema = nothing required (harmless)
+        }
+        Map<String, String> values = cell.getMasterProduct() != null
+                && cell.getMasterProduct().getCategoryAttributes() != null
+                ? cell.getMasterProduct().getCategoryAttributes() : Map.of();
+        for (CategoryAttribute attribute : schema.attributes()) {
+            if (attribute.required()) {
+                String value = values.get(attribute.name());
+                if (value == null || value.isBlank()) {
+                    throw new IllegalArgumentException("필수 카테고리 속성 누락: " + attribute.name());
+                }
+            }
+        }
     }
 
     /** Resolve the (seller, platform) marketplace account for a cell (404 if none, 400 if inactive). */

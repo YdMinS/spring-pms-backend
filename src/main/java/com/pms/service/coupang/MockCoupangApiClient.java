@@ -25,6 +25,7 @@ import java.nio.charset.StandardCharsets;
  *   <li>{@code seller-products} 포함(GET) → 승인완료 상태 + 옵션 id 인라인 fixture (3c fetchStatus)</li>
  *   <li>{@code seller-products} 포함(POST) → sellerProductId 인라인 fixture (3c register)</li>
  *   <li>{@code display-categories/} 포함(GET) → 카테고리 트리 자식 fixture (45 browse)</li>
+ *   <li>{@code category-related-metas} 포함(GET) → 필수속성/고시 meta fixture (47)</li>
  *   <li>{@code categorization/predict} 포함(POST) → 카테고리 추천 fixture (45 predict)</li>
  *   <li>그 외 → {@code {"code":200,"data":[]}}</li>
  * </ul>
@@ -100,6 +101,9 @@ public class MockCoupangApiClient implements CoupangApiClient {
         }
         if (path.contains("display-categories/")) {
             return DISPLAY_CATEGORIES_FIXTURE;
+        }
+        if (path.contains("category-related-metas")) {
+            return com.pms.service.listing.category.CoupangCategoryMeta.META_FIXTURE_JSON;   // 47 meta
         }
         return EMPTY;
     }
