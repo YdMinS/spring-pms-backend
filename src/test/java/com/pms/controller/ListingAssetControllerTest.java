@@ -191,7 +191,9 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.thumbnailUrl").value("thumbnails/generated.jpg"))
                 .andExpect(jsonPath("$.data.optionPrices.length()").value(1))
                 // (1500 + 2500 + 500) / 0.75 = 6000, rounded to nearest 10 won
-                .andExpect(jsonPath("$.data.optionPrices[0].sellingPrice").value(6000.00));
+                .andExpect(jsonPath("$.data.optionPrices[0].sellingPrice").value(6000.00))
+                // per-channel active flag (42) surfaced so the matrix can render inline (43)
+                .andExpect(jsonPath("$.data.optionPrices[0].active").value(true));
     }
 
     @Test

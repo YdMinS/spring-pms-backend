@@ -34,5 +34,7 @@ public class GeneratedProductResponse {
     public static class OptionPrice {
         private Long optionId;
         private BigDecimal sellingPrice;
+        /** Per-channel active flag (42): only active options are pushed to the market. */
+        private Boolean active;
     }
 }
