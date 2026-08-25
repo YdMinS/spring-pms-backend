@@ -178,6 +178,18 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM master_product "
                         + "WHERE category_attributes IS NULL AND category_notices IS NULL",
                 Integer.class)).isZero();
+
+        // changeset 032: platform_category table + its columns materialized (a successful count over the
+        // columns proves the table + code/commission structure)...
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM platform_category "
+                        + "WHERE platform IS NULL AND name IS NULL AND code IS NULL "
+                        + "AND parent_id IS NULL AND commission_rate IS NULL",
+                Integer.class)).isZero();
+        // ...and category_mapping.platform_category_id_fk (the FK promotion column) materialized.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM category_mapping WHERE platform_category_id_fk IS NULL",
+                Integer.class)).isZero();
     }
 
     @Test

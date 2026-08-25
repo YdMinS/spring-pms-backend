@@ -9,6 +9,7 @@ import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.CategoryMapping;
+import com.pms.domain.PlatformCategory;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.Package;
 import com.pms.domain.ProductListing;
@@ -17,6 +18,7 @@ import com.pms.domain.Seller;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.CategoryMappingRepository;
+import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -52,6 +54,7 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
     @Autowired private CategoryRepository categoryRepository;
     @Autowired private MasterProductRepository masterProductRepository;
     @Autowired private CategoryMappingRepository categoryMappingRepository;
+    @Autowired private PlatformCategoryRepository platformCategoryRepository;
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
     @Autowired private GeneratedProductDataRepository generatedProductDataRepository;
@@ -77,8 +80,14 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
         // displayCategoryCode from the mapping.
         MasterProduct master = masterProductRepository.save(MasterProduct.builder()
                 .name("운동화 마스터").active(true).category(category).build());
+        // 52: the mapping's linked PlatformCategory owns the mall code — the adapter payload resolves
+        // displayCategoryCode from it.
+        PlatformCategory platformCategory = platformCategoryRepository.save(PlatformCategory.builder()
+                .platform("COUPANG").code("cat-1").name("운동화")
+                .commissionRate(new BigDecimal("0.10")).build());
         categoryMappingRepository.save(CategoryMapping.builder()
-                .category(category).platform("COUPANG").platformCategoryId("cat-1").build());
+                .category(category).platform("COUPANG").platformCategoryId("cat-1")
+                .platformCategory(platformCategory).build());
 
         ProductListing cell = productListingRepository.save(ProductListing.builder()
                 .platform("COUPANG").platformProductId(null).name("셀").status(ListingStatus.DRAFT)

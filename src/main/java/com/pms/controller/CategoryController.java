@@ -4,6 +4,7 @@ import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.CreateCategoryRequest;
 import com.pms.dto.request.UpdateCategoryRequest;
 import com.pms.dto.response.CategoryResponse;
+import com.pms.dto.response.CategoryTreeNode;
 import com.pms.service.CategoryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -81,6 +82,26 @@ public class CategoryController {
             ? categoryService.getCategoriesByPlatform(platform)
             : categoryService.getAllCategories();
         return ResponseEntity.ok(ResponseDTO.success(responses));
+    }
+
+    /**
+     * Browse the standard-category tree one level at a time (FEATURE_2608_06 / 52).
+     * Path covered by the {@code GET /api/admin/**} = ADMIN rule in SecurityConfig.
+     *
+     * @param parentId Optional parent id; omitted = root level
+     * @return 200 OK with the children as CategoryTreeNode (leaf flag per node)
+     */
+    @GetMapping("/tree")
+    @Operation(summary = "Browse category tree", description = "Children of the given parent (or root when omitted), each flagged leaf")
+    @SecurityRequirement(name = "bearerAuth")
+    @ApiResponse(responseCode = "200", description = "Success", content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "401", description = "Unauthorized", content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "403", description = "Forbidden", content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    public ResponseEntity<ResponseDTO<List<CategoryTreeNode>>> browseTree(
+        @Parameter(description = "Parent category id (optional; root when omitted)")
+        @RequestParam(required = false) Long parentId
+    ) {
+        return ResponseEntity.ok(ResponseDTO.success(categoryService.browse(parentId)));
     }
 
     /**

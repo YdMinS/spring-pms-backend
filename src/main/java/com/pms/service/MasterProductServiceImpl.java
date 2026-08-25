@@ -25,6 +25,7 @@ import com.pms.dto.response.MasterProductResponse;
 import com.pms.exception.MasterProductInUseException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CarrierRateRepository;
+import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
@@ -75,6 +76,7 @@ public class MasterProductServiceImpl implements MasterProductService {
     private final MasterProductOptionItemRepository optionItemRepository;
     private final ProductRepository productRepository;
     private final CategoryRepository categoryRepository;
+    private final CategoryMappingRepository categoryMappingRepository;
     private final CarrierRateRepository carrierRateRepository;
     private final PackageRepository packageRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
@@ -355,6 +357,13 @@ public class MasterProductServiceImpl implements MasterProductService {
         MasterProduct master = requireScopedMaster(masterId);
         Category category = categoryRepository.findById(request.getCategoryId())
                 .orElseThrow(() -> new ResourceNotFoundException("Category", request.getCategoryId()));
+        // A master may only pick a selectable leaf that is mapped to Coupang (FEATURE_2608_06 / 52).
+        if (categoryRepository.existsByParentId(request.getCategoryId())) {
+            throw new IllegalArgumentException("세부(leaf) 카테고리만 지정할 수 있습니다.");
+        }
+        if (!categoryMappingRepository.existsByCategoryIdAndPlatform(request.getCategoryId(), "COUPANG")) {
+            throw new IllegalArgumentException("쿠팡 카테고리 매핑이 없습니다.");
+        }
         masterProductRepository.save(master.toBuilder().category(category).build());
         return toCategoryResponse(category);
     }

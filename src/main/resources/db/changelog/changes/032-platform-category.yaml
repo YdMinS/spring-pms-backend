@@ -1,0 +1,73 @@
+# Platform category model (FEATURE_2608_06 / 52): platform_category owns the mall code + commission
+# (per-tenant marketplace tree, @TenantId) and category_mapping is promoted to reference it by FK. The
+# existing string columns on category_mapping stay (expand-contract; physical removal is a follow-up). No
+# boolean columns → no MySQL BIT trap. The commission migration off CommissionRate is logical only
+# (deprecated, data kept); no data move here — 53 import seeds platform_category + links the FK.
+# ⚠️ tenant_id follows the 002 tenant pattern (FK to tenant). The unique index (platform, code) tolerates
+# multiple NULL codes (intermediate nodes) on both MySQL and H2 MODE=MySQL.
+databaseChangeLog:
+
+  # ---- 1. platform_category (marketplace tree node: mall code + commission owner) ----
+  - changeSet:
+      id: 032-platform-category
+      author: oclyx
+      comment: "Marketplace category tree owning code + commission (per-tenant); self-referencing parent."
+      changes:
+        - createTable:
+            tableName: platform_category
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: platform, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: code, type: VARCHAR(100) }
+              - column: { name: name, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: parent_id, type: BIGINT }
+              - column: { name: commission_rate, type: "DECIMAL(5,2)" }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_platcat_tenant
+            baseTableName: platform_category
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_platcat_parent
+            baseTableName: platform_category
+            baseColumnNames: parent_id
+            referencedTableName: platform_category
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            tableName: platform_category
+            columnNames: "platform, code"
+            constraintName: uq_platcat_platform_code
+        - createIndex:
+            tableName: platform_category
+            indexName: idx_platcat_platform_parent_name
+            columns:
+              - column: { name: platform }
+              - column: { name: parent_id }
+              - column: { name: name }
+        - createIndex:
+            tableName: platform_category
+            indexName: idx_platcat_parent
+            columns:
+              - column: { name: parent_id }
+
+  # ---- 2. category_mapping FK promotion (additive, nullable during transition) ----
+  # New column name platform_category_id_fk (the string platform_category_id column already exists).
+  - changeSet:
+      id: 032-category-mapping-fk
+      author: oclyx
+      comment: "Promote category_mapping to reference platform_category by FK (additive nullable)."
+      changes:
+        - addColumn:
+            tableName: category_mapping
+            columns:
+              - column: { name: platform_category_id_fk, type: BIGINT }
+        - addForeignKeyConstraint:
+            constraintName: fk_catmap_platform_category
+            baseTableName: category_mapping
+            baseColumnNames: platform_category_id_fk
+            referencedTableName: platform_category
+            referencedColumnNames: id

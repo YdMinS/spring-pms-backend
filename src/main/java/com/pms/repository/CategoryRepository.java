@@ -26,4 +26,11 @@ import java.util.List;
 @Repository
 public interface CategoryRepository extends JpaRepository<Category, Long> {
     List<Category> findByPlatform(String platform);
+
+    // Tree browse (FEATURE_2608_06 / 52): root nodes, a parent's children, and leaf detection.
+    List<Category> findByParentIsNull();
+
+    List<Category> findByParentId(Long parentId);
+
+    boolean existsByParentId(Long parentId);
 }

@@ -1,10 +1,10 @@
 package com.pms.service;
 
 import com.pms.domain.CarrierRate;
-import com.pms.domain.Category;
 import com.pms.domain.MarginPolicy;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.Package;
+import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.domain.Seller;
 import com.pms.repository.MarginPolicyRepository;
@@ -22,16 +22,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.BDDMockito.given;
 
 /**
- * Margin reverse-calc engine (FEATURE_2608_06 / 3b-2, rewired / 13): category/delivery/box now come from the
- * {@link MasterChannelConfigService} (option override ?? master default), so those inputs are mocked here.
- * This test covers the price formula + rounding, the missing-margin 400, the denominator ≤ 0 400, and that a
- * resolver 400 (unset config) propagates. The resolver's own null-check logic is covered by
+ * Margin reverse-calc engine (FEATURE_2608_06 / 3b-2, rewired / 13 and / 52): commission now comes from the
+ * mapped {@link PlatformCategory} owned by the {@link MasterChannelConfigService} (52), and delivery/box from
+ * the same resolver (option override ?? master default), so those inputs are mocked here. This test covers the
+ * price formula + rounding, the missing-commission 400, the missing-margin 400, the denominator ≤ 0 400, and
+ * that a resolver 400 (unset config) propagates. The resolver's own null-check logic is covered by
  * {@code MasterChannelConfigServiceTest}.
  */
 @ExtendWith(MockitoExtension.class)
 class PriceCalculatorTest {
 
-    @Mock private CommissionRateService commissionRateService;
     @Mock private MarginPolicyRepository marginPolicyRepository;
     @Mock private MasterChannelConfigService masterChannelConfigService;
     @InjectMocks private PriceCalculator priceCalculator;
@@ -41,10 +41,14 @@ class PriceCalculatorTest {
             .seller(Seller.builder().id(7L).sellerName("판매자").build())
             .build();
     private final MasterProductOption masterOption = MasterProductOption.builder().id(5L).name("기본").build();
-    private final Category category = Category.builder().id(3L).build();
 
-    private void stubConfig(String deliveryCost, String boxCost) {
-        given(masterChannelConfigService.resolveStandardCategory(cell)).willReturn(category);
+    private PlatformCategory platformCategory(String commission) {
+        return PlatformCategory.builder().id(3L).platform("COUPANG").code("cat-1")
+                .commissionRate(commission == null ? null : new BigDecimal(commission)).build();
+    }
+
+    private void stubConfig(String commission, String deliveryCost, String boxCost) {
+        given(masterChannelConfigService.resolvePlatformCategory(cell)).willReturn(platformCategory(commission));
         given(masterChannelConfigService.resolveDelivery(cell, masterOption))
                 .willReturn(CarrierRate.builder().cost(new BigDecimal(deliveryCost)).build());
         given(masterChannelConfigService.resolvePackage(cell, masterOption))
@@ -54,8 +58,7 @@ class PriceCalculatorTest {
     @Test
     void calculatePrice_appliesFormulaAndRoundsToTenWon() {
         // cost 5000 + delivery 2500 + box 500 = 8000; 1 − 0.10 − 0.15 = 0.75; 8000/0.75 = 10666.67 → 10670
-        stubConfig("2500", "500");
-        given(commissionRateService.findRate("COUPANG", 3L)).willReturn(new BigDecimal("0.10"));
+        stubConfig("0.10", "2500", "500");
         given(marginPolicyRepository.findBySellerIdAndPlatform(7L, "COUPANG"))
                 .willReturn(Optional.of(MarginPolicy.builder().marginRate(new BigDecimal("0.15")).build()));
 
@@ -65,9 +68,18 @@ class PriceCalculatorTest {
     }
 
     @Test
+    void calculatePrice_commissionUnsetOnPlatformCategory_throws400() {
+        // Mapped PlatformCategory has null commission = seeding gap, no runtime fallback.
+        given(masterChannelConfigService.resolvePlatformCategory(cell)).willReturn(platformCategory(null));
+
+        assertThatThrownBy(() -> priceCalculator.calculatePrice(cell, masterOption, new BigDecimal("5000")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("수수료 미설정 — 카테고리 시드 필요");
+    }
+
+    @Test
     void calculatePrice_missingMarginPreset_throws400() {
-        stubConfig("2500", "500");
-        given(commissionRateService.findRate("COUPANG", 3L)).willReturn(new BigDecimal("0.10"));
+        stubConfig("0.10", "2500", "500");
         given(marginPolicyRepository.findBySellerIdAndPlatform(7L, "COUPANG"))
                 .willReturn(Optional.empty());
 
@@ -79,8 +91,7 @@ class PriceCalculatorTest {
     @Test
     void calculatePrice_denominatorNotPositive_throws400() {
         // commission 0.60 + margin 0.50 = 1.10 → 1 − 1.10 = −0.10 ≤ 0
-        stubConfig("2500", "500");
-        given(commissionRateService.findRate("COUPANG", 3L)).willReturn(new BigDecimal("0.60"));
+        stubConfig("0.60", "2500", "500");
         given(marginPolicyRepository.findBySellerIdAndPlatform(7L, "COUPANG"))
                 .willReturn(Optional.of(MarginPolicy.builder().marginRate(new BigDecimal("0.50")).build()));
 
@@ -91,7 +102,7 @@ class PriceCalculatorTest {
 
     @Test
     void calculatePrice_categoryUnset_resolverThrows400_propagates() {
-        given(masterChannelConfigService.resolveStandardCategory(cell))
+        given(masterChannelConfigService.resolvePlatformCategory(cell))
                 .willThrow(new IllegalArgumentException("표준 카테고리 미설정"));
 
         assertThatThrownBy(() -> priceCalculator.calculatePrice(cell, masterOption, new BigDecimal("5000")))
