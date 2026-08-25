@@ -5,6 +5,7 @@ import com.pms.domain.Carrier;
 import com.pms.domain.CarrierRate;
 import com.pms.domain.Category;
 import com.pms.domain.CommissionRate;
+import com.pms.domain.PlatformCategory;
 import com.pms.domain.MarginPolicy;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.CategoryMapping;
@@ -20,6 +21,7 @@ import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.CarrierRepository;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.CommissionRateRepository;
+import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarginPolicyRepository;
 import com.pms.repository.CategoryMappingRepository;
@@ -86,6 +88,7 @@ class ChannelAddControllerTest {
     @Autowired private ProductRepository productRepository;
     @Autowired private CategoryRepository categoryRepository;
     @Autowired private CommissionRateRepository commissionRateRepository;
+    @Autowired private PlatformCategoryRepository platformCategoryRepository;
     @Autowired private MarginPolicyRepository marginPolicyRepository;
     @Autowired private MasterProductRepository masterProductRepository;
     @Autowired private CategoryMappingRepository categoryMappingRepository;
@@ -151,8 +154,12 @@ class ChannelAddControllerTest {
                 .name("운동화 마스터").active(true).category(category)
                 .defaultDelivery(delivery).defaultPackage(box).build());
         masterId = master.getId();
+        PlatformCategory platformCategory = platformCategoryRepository.save(PlatformCategory.builder()
+                .platform("COUPANG").code("cat-1").name("운동화")
+                .commissionRate(new BigDecimal("0.10")).build());
         categoryMappingRepository.save(CategoryMapping.builder()
-                .category(category).platform("COUPANG").platformCategoryId("cat-1").build());
+                .category(category).platform("COUPANG").platformCategoryId("cat-1")
+                .platformCategory(platformCategory).build());
         MasterProductOption option = masterProductOptionRepository.save(MasterProductOption.builder()
                 .masterProduct(master).name("1세트").build());
         masterProductOptionItemRepository.save(MasterProductOptionItem.builder()
@@ -177,6 +184,7 @@ class ChannelAddControllerTest {
         productListingOptionRepository.deleteAll();
         productListingRepository.deleteAll();
         categoryMappingRepository.deleteAll();
+        platformCategoryRepository.deleteAll();
         masterProductOptionItemRepository.deleteAll();
         masterProductOptionRepository.deleteAll();
         masterProductRepository.deleteAll();

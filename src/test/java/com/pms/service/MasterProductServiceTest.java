@@ -24,6 +24,7 @@ import com.pms.dto.response.MasterProductResponse;
 import com.pms.exception.MasterProductInUseException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CarrierRateRepository;
+import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
@@ -68,6 +69,7 @@ class MasterProductServiceTest {
     @Mock private MasterProductOptionItemRepository optionItemRepository;
     @Mock private ProductRepository productRepository;
     @Mock private CategoryRepository categoryRepository;
+    @Mock private CategoryMappingRepository categoryMappingRepository;
     @Mock private CarrierRateRepository carrierRateRepository;
     @Mock private PackageRepository packageRepository;
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
@@ -445,11 +447,14 @@ class MasterProductServiceTest {
     // ------------------------------------------------------------- standard category (single, 44)
 
     @Test
-    void setCategory_savesMasterStandardCategory() {
+    void setCategory_leafMappedToCoupang_savesMasterStandardCategory() {
+        // 52: a master may only pick a selectable leaf that is mapped to Coupang.
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
         given(categoryRepository.findById(3L))
                 .willReturn(Optional.of(Category.builder().id(3L).name("신발").build()));
+        given(categoryRepository.existsByParentId(3L)).willReturn(false);            // leaf
+        given(categoryMappingRepository.existsByCategoryIdAndPlatform(3L, "COUPANG")).willReturn(true);
         given(masterProductRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
 
         MasterCategoryResponse resp = service.setCategory(1L,
@@ -460,6 +465,35 @@ class MasterProductServiceTest {
         ArgumentCaptor<MasterProduct> captor = ArgumentCaptor.forClass(MasterProduct.class);
         verify(masterProductRepository).save(captor.capture());
         assertThat(captor.getValue().getCategory().getId()).isEqualTo(3L);   // master now points to the category
+    }
+
+    @Test
+    void setCategory_nonLeaf_throws400() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(categoryRepository.findById(3L))
+                .willReturn(Optional.of(Category.builder().id(3L).name("의류").build()));
+        given(categoryRepository.existsByParentId(3L)).willReturn(true);             // has children = not leaf
+
+        assertThatThrownBy(() -> service.setCategory(1L, MasterCategoryRequest.builder().categoryId(3L).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("세부(leaf) 카테고리만 지정할 수 있습니다.");
+        verify(masterProductRepository, never()).save(any());
+    }
+
+    @Test
+    void setCategory_leafWithoutCoupangMapping_throws400() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(categoryRepository.findById(3L))
+                .willReturn(Optional.of(Category.builder().id(3L).name("신발").build()));
+        given(categoryRepository.existsByParentId(3L)).willReturn(false);            // leaf
+        given(categoryMappingRepository.existsByCategoryIdAndPlatform(3L, "COUPANG")).willReturn(false);
+
+        assertThatThrownBy(() -> service.setCategory(1L, MasterCategoryRequest.builder().categoryId(3L).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("쿠팡 카테고리 매핑이 없습니다.");
+        verify(masterProductRepository, never()).save(any());
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.MarginPolicy;
 import com.pms.domain.MasterProductOption;
+import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.repository.MarginPolicyRepository;
 import lombok.RequiredArgsConstructor;
@@ -11,27 +12,27 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 
 /**
- * Selling-price engine (margin reverse-calc) — FEATURE_2608_06 / 3b-2, rewired in / 13.
+ * Selling-price engine (margin reverse-calc) — FEATURE_2608_06 / 3b-2, rewired in / 13 and / 52.
  *
  * <p>Per option, given the option's cost sum (Σ product.price × quantity), its parent cell and its matched
  * master option:</p>
  * <pre>
  *   sellingPrice = (costSum + delivery + box) / (1 − commissionRate − marginRate)
  * </pre>
- * where commissionRate = {@code CommissionRateService.findRate(platform, master-category id)} (always
- * returns a fallback — never null), delivery = {@code resolveDelivery(cell, option).cost}, box =
- * {@code resolvePackage(cell, option).cost} (both from {@link MasterChannelConfigService} = option override
- * ?? master default), and marginRate = {@code MarginPolicy(seller, platform).marginRate}. The result is
- * rounded to the nearest 10 won ({@code setScale(-1, HALF_UP)}).
+ * where commissionRate = {@code resolvePlatformCategory(cell).getCommissionRate()} (the mapped
+ * {@link PlatformCategory} owns the commission — 52), delivery = {@code resolveDelivery(cell, option).cost},
+ * box = {@code resolvePackage(cell, option).cost} (both from {@link MasterChannelConfigService} = option
+ * override ?? master default), and marginRate = {@code MarginPolicy(seller, platform).marginRate}. The result
+ * is rounded to the nearest 10 won ({@code setScale(-1, HALF_UP)}).
  *
- * <p>400 ({@link IllegalArgumentException}) when: category/delivery/box unset (raised by the resolver),
- * margin preset missing, or the denominator {@code (1 − commission − margin) ≤ 0}.</p>
+ * <p>400 ({@link IllegalArgumentException}) when: category/mapping/delivery/box unset (raised by the
+ * resolver), commission unset on the mapped PlatformCategory (seeding gap — no runtime tree fallback), margin
+ * preset missing, or the denominator {@code (1 − commission − margin) ≤ 0}.</p>
  */
 @Service
 @RequiredArgsConstructor
 public class PriceCalculator {
 
-    private final CommissionRateService commissionRateService;
     private final MarginPolicyRepository marginPolicyRepository;
     private final MasterChannelConfigService masterChannelConfigService;
 
@@ -45,9 +46,13 @@ public class PriceCalculator {
      * @throws IllegalArgumentException (→400) on missing category/delivery/box/margin or denominator ≤ 0
      */
     public BigDecimal calculatePrice(ProductListing cell, MasterProductOption masterOption, BigDecimal costSum) {
-        // Category, delivery and box now come from the master/option (the resolver owns the null checks).
-        BigDecimal commissionRate = commissionRateService.findRate(
-                cell.getPlatform(), masterChannelConfigService.resolveStandardCategory(cell).getId());
+        // Commission is owned by the mapped PlatformCategory (52). null = the category was not seeded with a
+        // commission — a seeding gap, not a runtime fallback: 400. (Prefilled once at import/mapping time.)
+        PlatformCategory platformCategory = masterChannelConfigService.resolvePlatformCategory(cell);
+        BigDecimal commissionRate = platformCategory.getCommissionRate();
+        if (commissionRate == null) {
+            throw new IllegalArgumentException("수수료 미설정 — 카테고리 시드 필요");
+        }
 
         BigDecimal delivery = masterChannelConfigService.resolveDelivery(cell, masterOption).getCost();
         BigDecimal box = masterChannelConfigService.resolvePackage(cell, masterOption).getCost();

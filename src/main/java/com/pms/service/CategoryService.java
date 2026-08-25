@@ -3,6 +3,7 @@ package com.pms.service;
 import com.pms.dto.request.CreateCategoryRequest;
 import com.pms.dto.request.UpdateCategoryRequest;
 import com.pms.dto.response.CategoryResponse;
+import com.pms.dto.response.CategoryTreeNode;
 
 import java.util.List;
 
@@ -66,4 +67,12 @@ public interface CategoryService {
      * @return List of categories for the platform
      */
     List<CategoryResponse> getCategoriesByPlatform(String platform);
+
+    /**
+     * Browse the standard-category tree one level at a time (FEATURE_2608_06 / 52).
+     *
+     * @param parentId parent category id; {@code null} = root level
+     * @return the children (or root nodes) as {@link CategoryTreeNode}, each flagged leaf/non-leaf, name-sorted
+     */
+    List<CategoryTreeNode> browse(Long parentId);
 }

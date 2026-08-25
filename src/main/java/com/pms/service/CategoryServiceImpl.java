@@ -4,12 +4,14 @@ import com.pms.domain.Category;
 import com.pms.dto.request.CreateCategoryRequest;
 import com.pms.dto.request.UpdateCategoryRequest;
 import com.pms.dto.response.CategoryResponse;
+import com.pms.dto.response.CategoryTreeNode;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CategoryRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -109,6 +111,18 @@ public class CategoryServiceImpl implements CategoryService {
             .stream()
             .map(this::toResponse)
             .toList();
+    }
+
+    @Override
+    public List<CategoryTreeNode> browse(Long parentId) {
+        List<Category> children = parentId == null
+                ? categoryRepository.findByParentIsNull()
+                : categoryRepository.findByParentId(parentId);
+        return children.stream()
+                .map(c -> new CategoryTreeNode(c.getId(), c.getName(),
+                        !categoryRepository.existsByParentId(c.getId())))
+                .sorted(Comparator.comparing(CategoryTreeNode::name))
+                .toList();
     }
 
     private CategoryResponse toResponse(Category category) {

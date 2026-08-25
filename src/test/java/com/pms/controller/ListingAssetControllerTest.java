@@ -9,6 +9,7 @@ import com.pms.domain.CommissionRate;
 import com.pms.domain.MarginPolicy;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.Package;
+import com.pms.domain.PlatformCategory;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -18,6 +19,7 @@ import com.pms.repository.CategoryRepository;
 import com.pms.repository.CommissionRateRepository;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.CategoryMappingRepository;
+import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.MarginPolicyRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -68,6 +70,7 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
     @Autowired private CategoryRepository categoryRepository;
     @Autowired private MasterProductRepository masterProductRepository;
     @Autowired private CategoryMappingRepository categoryMappingRepository;
+    @Autowired private PlatformCategoryRepository platformCategoryRepository;
     // carrierRepository / carrierRateRepository / packageRepository are inherited from BaseIntegrationTest.
 
     @MockBean private ThumbnailRenderer thumbnailRenderer;
@@ -85,9 +88,8 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                 .productName("운동화").brand("나이키")
                 .price(new BigDecimal("1500")).imageUrl("products/p.jpg").active(true).build());
 
-        // Commission (COUPANG default) + margin preset so the price engine resolves.
-        commissionRateRepository.save(CommissionRate.builder()
-                .platform("COUPANG").category(null).rate(new BigDecimal("0.10")).isDefault(true).build());
+        // Commission is now owned by the mapped PlatformCategory (52); the legacy CommissionRate is kept but
+        // unused by the price engine. Margin preset so the price engine resolves.
         marginPolicyRepository.save(MarginPolicy.builder()
                 .seller(seller).platform("COUPANG").marginRate(new BigDecimal("0.1500")).build());
 
@@ -109,8 +111,13 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
         MasterProduct master = masterProductRepository.save(MasterProduct.builder()
                 .name("운동화 마스터").active(true).category(category)
                 .defaultDelivery(delivery).defaultPackage(box).build());
+        // 52: the mapped PlatformCategory owns the mall code + commission (0.10 = the old rate → same price).
+        PlatformCategory platformCategory = platformCategoryRepository.save(PlatformCategory.builder()
+                .platform("COUPANG").code("cat-1").name("운동화")
+                .commissionRate(new BigDecimal("0.10")).build());
         categoryMappingRepository.save(CategoryMapping.builder()
-                .category(category).platform("COUPANG").platformCategoryId("cat-1").build());
+                .category(category).platform("COUPANG").platformCategoryId("cat-1")
+                .platformCategory(platformCategory).build());
 
         ProductListing listing = productListingRepository.save(ProductListing.builder()
                 .platform("COUPANG").platformProductId("X").name("셀").seller(seller)

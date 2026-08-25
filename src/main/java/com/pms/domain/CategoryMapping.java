@@ -44,4 +44,17 @@ public class CategoryMapping {
     /** Display path cached at lookup time (nullable). */
     @Column(name = "platform_category_name", length = 255)
     private String platformCategoryName;
+
+    /**
+     * FK promotion (FEATURE_2608_06 / 52): the marketplace category node that owns the mall code + commission.
+     * Nullable during the transition (the string {@code platformCategoryId} columns above are kept, expand-
+     * contract; physical removal is a follow-up). New logic resolves the code/commission through this FK.
+     *
+     * <p>⚠️ Tenant asymmetry: {@code category_mapping} has no tenant column (it is reached via a tenant-scoped
+     * {@link Category}), but {@link PlatformCategory} IS tenant-scoped — a mapping must only link a
+     * PlatformCategory of the same tenant (guaranteed by the 53 import / mapping service). LAZY.</p>
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "platform_category_id_fk", nullable = true)
+    private PlatformCategory platformCategory;
 }

@@ -6,6 +6,7 @@ import com.pms.domain.CategoryMapping;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.Package;
+import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.repository.CategoryMappingRepository;
 import org.junit.jupiter.api.Test;
@@ -67,13 +68,18 @@ class MasterChannelConfigServiceTest {
     // ---- platform category code (standard category × platform mapping) ----
 
     @Test
-    void resolvePlatformCategoryCode_mappingPresent_returnsCode() {
+    void resolvePlatformCategoryCode_mappingLinked_returnsPlatformCategoryCode() {
+        // 52: the code comes from the mapping's linked PlatformCategory FK, not the (deprecated) string column.
         Category category = Category.builder().id(5L).name("신발").build();
         MasterProduct master = MasterProduct.builder().id(9L).category(category).build();
+        PlatformCategory platformCategory = PlatformCategory.builder()
+                .id(20L).platform("COUPANG").code("101").name("운동화").build();
         given(categoryMappingRepository.findByCategoryIdAndPlatform(5L, "COUPANG"))
                 .willReturn(Optional.of(CategoryMapping.builder()
-                        .category(category).platform("COUPANG").platformCategoryId("101").build()));
+                        .category(category).platform("COUPANG").platformCategoryId("legacy")
+                        .platformCategory(platformCategory).build()));
 
+        assertThat(service.resolvePlatformCategory(cell(master)).getCommissionRate()).isNull();
         assertThat(service.resolvePlatformCategoryCode(cell(master))).isEqualTo("101");
     }
 
@@ -85,6 +91,20 @@ class MasterChannelConfigServiceTest {
                 .willReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.resolvePlatformCategoryCode(cell(master)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("COUPANG 카테고리 매핑 미설정");
+    }
+
+    @Test
+    void resolvePlatformCategory_mappingNotLinked_throws400() {
+        // Mapping present but its PlatformCategory FK is still null (transition) = not seeded yet → 400.
+        Category category = Category.builder().id(5L).name("신발").build();
+        MasterProduct master = MasterProduct.builder().id(9L).category(category).build();
+        given(categoryMappingRepository.findByCategoryIdAndPlatform(5L, "COUPANG"))
+                .willReturn(Optional.of(CategoryMapping.builder()
+                        .category(category).platform("COUPANG").platformCategoryId("legacy").build()));
+
+        assertThatThrownBy(() -> service.resolvePlatformCategory(cell(master)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("COUPANG 카테고리 매핑 미설정");
     }

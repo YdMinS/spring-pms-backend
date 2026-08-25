@@ -5,6 +5,7 @@ import com.pms.domain.Category;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.Package;
+import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.repository.CategoryMappingRepository;
 import lombok.RequiredArgsConstructor;
@@ -32,23 +33,40 @@ public class MasterChannelConfigServiceImpl implements MasterChannelConfigServic
         return category;
     }
 
-    // resolvePlatformCategoryCode(MasterProduct, String) is defined below (shared by the cell overload).
+    @Override
+    public PlatformCategory resolvePlatformCategory(ProductListing cell) {
+        return resolvePlatformCategory(cell.getMasterProduct(), cell.getPlatform());
+    }
 
     @Override
     public String resolvePlatformCategoryCode(ProductListing cell) {
-        return resolvePlatformCategoryCode(cell.getMasterProduct(), cell.getPlatform());
+        return resolvePlatformCategory(cell).getCode();
     }
 
     @Override
     public String resolvePlatformCategoryCode(MasterProduct master, String platform) {
-        // ⚠️ LAZY master.category — the caller runs inside a @Transactional boundary (open-in-view=false).
+        return resolvePlatformCategory(master, platform).getCode();
+    }
+
+    /**
+     * Shared resolution: standard category → CategoryMapping(platform) → its linked PlatformCategory FK.
+     * 400 when the master has no standard category, no mapping for the platform, or the mapping is not yet
+     * linked to a PlatformCategory (transition — the code/commission owner has not been seeded).
+     * ⚠️ LAZY master.category / mapping.platformCategory — callers run inside a @Transactional boundary.
+     */
+    private PlatformCategory resolvePlatformCategory(MasterProduct master, String platform) {
         Category standard = master == null ? null : master.getCategory();
         if (standard == null) {
             throw new IllegalArgumentException("표준 카테고리 미설정");
         }
-        return categoryMappingRepository.findByCategoryIdAndPlatform(standard.getId(), platform)
-                .map(mapping -> mapping.getPlatformCategoryId())
+        PlatformCategory platformCategory = categoryMappingRepository
+                .findByCategoryIdAndPlatform(standard.getId(), platform)
+                .map(mapping -> mapping.getPlatformCategory())
                 .orElseThrow(() -> new IllegalArgumentException(platform + " 카테고리 매핑 미설정"));
+        if (platformCategory == null) {
+            throw new IllegalArgumentException(platform + " 카테고리 매핑 미설정");
+        }
+        return platformCategory;
     }
 
     @Override

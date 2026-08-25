@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Repository for Category entity.
@@ -26,4 +27,17 @@ import java.util.List;
 @Repository
 public interface CategoryRepository extends JpaRepository<Category, Long> {
     List<Category> findByPlatform(String platform);
+
+    // Tree browse (FEATURE_2608_06 / 52): root nodes, a parent's children, and leaf detection.
+    List<Category> findByParentIsNull();
+
+    List<Category> findByParentId(Long parentId);
+
+    boolean existsByParentId(Long parentId);
+
+    /**
+     * Intermediate oclyx mirror match for the 53 import (a non-root path segment under a known parent).
+     * Root-level segments use {@link #findByParentIsNull()} filtered by name.
+     */
+    Optional<Category> findByParentIdAndName(Long parentId, String name);
 }

@@ -5,6 +5,7 @@ import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.Package;
 import com.pms.domain.CarrierRate;
+import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 
 /**
@@ -37,9 +38,16 @@ public interface MasterChannelConfigService {
     Category resolveStandardCategory(ProductListing cell);
 
     /**
-     * Platform marketplace code for this cell = the standard category's {@link com.pms.domain.CategoryMapping}
-     * for {@code cell.platform}. 400 if the standard category is unset or has no mapping for that platform
-     * (adapter payload use).
+     * Marketplace category node ({@link PlatformCategory}) that owns the mall code + commission for this cell
+     * (FEATURE_2608_06 / 52) = the standard category's {@link com.pms.domain.CategoryMapping} for
+     * {@code cell.platform} → its linked {@code platformCategory} FK. 400 if the standard category is unset, if
+     * there is no mapping for that platform, or if the mapping is not yet linked to a PlatformCategory.
+     */
+    PlatformCategory resolvePlatformCategory(ProductListing cell);
+
+    /**
+     * Platform marketplace code for this cell = {@code resolvePlatformCategory(cell).getCode()} (adapter
+     * payload use). 400 conditions as {@link #resolvePlatformCategory(ProductListing)}.
      */
     String resolvePlatformCategoryCode(ProductListing cell);
 

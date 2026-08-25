@@ -3,6 +3,7 @@ package com.pms.controller;
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.Category;
 import com.pms.domain.CategoryMapping;
+import com.pms.domain.PlatformCategory;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductComponent;
@@ -12,6 +13,7 @@ import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.CategoryRepository;
+import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductRepository;
@@ -55,6 +57,7 @@ class MasterProductControllerTest extends BaseIntegrationTest {
     @Autowired private SellerRepository sellerRepository;
     @Autowired private CategoryRepository categoryRepository;
     @Autowired private CategoryMappingRepository categoryMappingRepository;
+    @Autowired private PlatformCategoryRepository platformCategoryRepository;
 
     // Mocked so category-meta's adapter makes no live Coupang call; unstubbed returns null → empty schema (200).
     @MockBean private CoupangApiClient coupangApiClient;
@@ -84,6 +87,16 @@ class MasterProductControllerTest extends BaseIntegrationTest {
         Category category = categoryRepository.save(Category.builder()
                 .name("신발").platform("COUPANG").platformCategoryId("cat-1").build());
         categoryId = category.getId();
+        // 52: setCategory now requires the standard category to be a leaf AND mapped to Coupang, and
+        // resolvePlatformCategoryCode reads the mapping's linked PlatformCategory FK (owns code + commission).
+        // The category above has no children (leaf); add the Coupang mapping + platform category so both the
+        // happy-path setCategory and the category-meta resolution succeed.
+        PlatformCategory platformCategory = platformCategoryRepository.save(PlatformCategory.builder()
+                .platform("COUPANG").code("cat-1").name("운동화")
+                .commissionRate(new java.math.BigDecimal("0.10")).build());
+        categoryMappingRepository.save(CategoryMapping.builder()
+                .category(category).platform("COUPANG").platformCategoryId("cat-1")
+                .platformCategory(platformCategory).build());
         componentRepository.save(MasterProductComponent.builder()
                 .masterProduct(master).product(product1).build());
         componentRepository.save(MasterProductComponent.builder()
@@ -321,13 +334,15 @@ class MasterProductControllerTest extends BaseIntegrationTest {
 
     // ------------------------------------------------------------- category meta (47)
 
-    /** Set the master's standard category + a COUPANG mapping so resolvePlatformCategoryCode succeeds. */
+    /**
+     * Set the master's standard category so resolvePlatformCategoryCode succeeds. The COUPANG mapping (with a
+     * linked PlatformCategory FK) is already created in {@code @BeforeEach} — adding another here would violate
+     * UNIQUE(category_id, platform).
+     */
     private void prepareMeta() {
         Category category = categoryRepository.findById(categoryId).orElseThrow();
         MasterProduct master = masterProductRepository.findById(masterId).orElseThrow();
         masterProductRepository.save(master.toBuilder().category(category).build());
-        categoryMappingRepository.save(CategoryMapping.builder()
-                .category(category).platform("COUPANG").platformCategoryId("cat-1").build());
     }
 
     @Test
