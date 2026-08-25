@@ -5,12 +5,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.MasterProduct;
+import com.pms.domain.MasterProductOption;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.MasterChannelConfigService;
 import com.pms.service.RegistrationNameGenerator;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.listing.category.OptionCategoryMeta;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +24,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Coupang {@link ListingChannel} adapter (FEATURE_2608_06 / 3c) — HTTP only, no cell state changes.
@@ -41,6 +47,7 @@ public class CoupangListingAdapter implements ListingChannel {
     private final CoupangApiClient client;
     private final ObjectMapper objectMapper;
     private final ProductListingOptionRepository productListingOptionRepository;
+    private final MasterProductOptionRepository masterProductOptionRepository;
     private final MasterChannelConfigService masterChannelConfigService;
     private final TagMergeService tagMergeService;
     private final RegistrationNameGenerator registrationNameGenerator;
@@ -120,8 +127,20 @@ public class CoupangListingAdapter implements ListingChannel {
         image.put("vendorPath", gen != null ? gen.getThumbnailUrl() : null);
         payload.put("images", List.of(image));
 
+        // Category required-attributes + product-info disclosure (47/59) are per-vendorItem in Coupang's model.
+        // Master carries the shared default values; each option overrides only the keys it provides (59). Fetch
+        // the master options in ONE query (N+1 guard); matching axis = ProductListingOption.optionName ↔
+        // MasterProductOption.name. master==null (backfill transition) → master values only / empty.
+        MasterProduct master = cell.getMasterProduct();
+        Map<String, MasterProductOption> byName = master == null ? Map.of()
+                : masterProductOptionRepository.findByMasterProductId(master.getId()).stream()
+                        .collect(Collectors.toMap(MasterProductOption::getName, Function.identity(), (a, b) -> a));
+        Map<String, String> masterAttributes = master != null ? master.getCategoryAttributes() : null;
+        Map<String, String> masterNotices = master != null ? master.getCategoryNotices() : null;
+
         // items[] (max 200): one per ACTIVE listing option (42 — per-channel subset; inactive options are
-        // excluded from the payload but keep their row). New options carry no vendorItemId yet.
+        // excluded from the payload but keep their row). New options carry no vendorItemId yet. attributes/
+        // notices are assembled per item = merge(master, option) → Coupang shape (empty maps skipped, harmless).
         List<Map<String, Object>> items = new ArrayList<>();
         for (ProductListingOption option : productListingOptionRepository.findByProductListingId(cell.getId())) {
             if (!Boolean.TRUE.equals(option.getActive())) {
@@ -130,6 +149,18 @@ public class CoupangListingAdapter implements ListingChannel {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("itemName", option.getOptionName());
             item.put("salePrice", option.getSellingPrice());
+
+            MasterProductOption mo = byName.get(option.getOptionName());
+            Map<String, String> attrs = OptionCategoryMeta.merge(
+                    masterAttributes, mo != null ? mo.getCategoryAttributes() : null);
+            if (!attrs.isEmpty()) {
+                item.put("attributes", toAttributes(attrs));
+            }
+            Map<String, String> notices = OptionCategoryMeta.merge(
+                    masterNotices, mo != null ? mo.getCategoryNotices() : null);
+            if (!notices.isEmpty()) {
+                item.put("notices", toNotices(notices));
+            }
             items.add(item);
         }
         payload.put("items", items);
@@ -138,33 +169,31 @@ public class CoupangListingAdapter implements ListingChannel {
         // name = searchTags (String array, max 20) — fixture-based, verified against a live account as follow-up.
         payload.put("searchTags", tagMergeService.resolveTags(cell));
 
-        // Category required-attributes + product-info disclosure (47): master-level values → Coupang shape.
-        // Missing required attributes are pre-validated in the orchestration (register); the adapter only
-        // assembles. Empty schema (e.g. NAVER) leaves the master maps null → skipped (harmless).
-        com.pms.domain.MasterProduct master = cell.getMasterProduct();
-        Map<String, String> attributeValues = master != null ? master.getCategoryAttributes() : null;
-        if (attributeValues != null && !attributeValues.isEmpty()) {
-            List<Map<String, Object>> attributes = new ArrayList<>();
-            for (Map.Entry<String, String> entry : attributeValues.entrySet()) {
-                Map<String, Object> attribute = new LinkedHashMap<>();
-                attribute.put("attributeTypeName", entry.getKey());
-                attribute.put("attributeValueName", entry.getValue());
-                attributes.add(attribute);
-            }
-            payload.put("attributes", attributes);
-        }
-        Map<String, String> noticeValues = master != null ? master.getCategoryNotices() : null;
-        if (noticeValues != null && !noticeValues.isEmpty()) {
-            List<Map<String, Object>> notices = new ArrayList<>();
-            for (Map.Entry<String, String> entry : noticeValues.entrySet()) {
-                Map<String, Object> notice = new LinkedHashMap<>();
-                notice.put("noticeCategoryDetailName", entry.getKey());
-                notice.put("content", entry.getValue());
-                notices.add(notice);
-            }
-            payload.put("notices", notices);
-        }
         return payload;
+    }
+
+    /** Merged category-attribute map → Coupang vendorItem {@code attributes[]} shape (47/59). */
+    private static List<Map<String, Object>> toAttributes(Map<String, String> values) {
+        List<Map<String, Object>> attributes = new ArrayList<>();
+        for (Map.Entry<String, String> entry : values.entrySet()) {
+            Map<String, Object> attribute = new LinkedHashMap<>();
+            attribute.put("attributeTypeName", entry.getKey());
+            attribute.put("attributeValueName", entry.getValue());
+            attributes.add(attribute);
+        }
+        return attributes;
+    }
+
+    /** Merged product-info-disclosure map → Coupang vendorItem {@code notices[]} shape (47/59). */
+    private static List<Map<String, Object>> toNotices(Map<String, String> values) {
+        List<Map<String, Object>> notices = new ArrayList<>();
+        for (Map.Entry<String, String> entry : values.entrySet()) {
+            Map<String, Object> notice = new LinkedHashMap<>();
+            notice.put("noticeCategoryDetailName", entry.getKey());
+            notice.put("content", entry.getValue());
+            notices.add(notice);
+        }
+        return notices;
     }
 
     /** Coupang statusName → cell {@link ListingStatus}. Unknown → SUBMITTED (conservative). */

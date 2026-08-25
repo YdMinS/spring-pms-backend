@@ -7,6 +7,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Master option response (FEATURE_2608_06 / 3b-1). {@code items} carries product names resolved in one
@@ -33,6 +34,14 @@ public class MasterOptionResponse {
 
     @Schema(description = "Box override (Package) ID; null = master default", nullable = true)
     private Long packageId;
+
+    @Schema(description = "Per-option category required-attribute override (key -> value); null = no override "
+            + "(FEATURE_2608_06 / 59). Prefill for the option editor.", nullable = true)
+    private Map<String, String> categoryAttributes;
+
+    @Schema(description = "Per-option product-info disclosure override (key -> value); null = no override "
+            + "(FEATURE_2608_06 / 59)", nullable = true)
+    private Map<String, String> categoryNotices;
 
     @Getter
     @NoArgsConstructor

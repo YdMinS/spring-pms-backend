@@ -10,6 +10,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Master option create/update request (FEATURE_2608_06 / 3b-1).
@@ -38,6 +39,15 @@ public class MasterOptionRequest {
 
     @Schema(description = "Box override (Package) ID; null = use master default", nullable = true)
     private Long packageId;
+
+    @Schema(description = "Per-option category required-attribute override (key -> value); null = keep on "
+            + "update / no override on create (FEATURE_2608_06 / 59). Resolution = master ++ this.",
+            nullable = true)
+    private Map<String, String> categoryAttributes;
+
+    @Schema(description = "Per-option product-info disclosure override (key -> value); null = keep on update / "
+            + "no override on create (FEATURE_2608_06 / 59)", nullable = true)
+    private Map<String, String> categoryNotices;
 
     @Getter
     @NoArgsConstructor

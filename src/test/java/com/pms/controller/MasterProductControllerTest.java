@@ -228,6 +228,22 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.items.length()").value(2));
     }
 
+    // 59: per-option category-meta override round-trips through create (stored + exposed in the response).
+    @Test
+    void createOption_withCategoryMetaOverride_returns200_exposesMaps() throws Exception {
+        String body = "{\"name\":\"30포\",\"items\":["
+                + "{\"productId\":" + productId1 + ",\"quantity\":2},"
+                + "{\"productId\":" + productId2 + ",\"quantity\":2}],"
+                + "\"categoryAttributes\":{\"개당중량\":\"30g\"},"
+                + "\"categoryNotices\":{\"용량\":\"30포\"}}";
+        mockMvc.perform(post(PATH + "/" + masterId + "/options")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.categoryAttributes.개당중량").value("30g"))
+                .andExpect(jsonPath("$.data.categoryNotices.용량").value("30포"));
+    }
+
     @Test
     void createOption_missingComponent_returns400() throws Exception {
         // items omit productId2 → subset of the component set
