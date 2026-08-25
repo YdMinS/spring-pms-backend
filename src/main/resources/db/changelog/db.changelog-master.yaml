@@ -63,3 +63,5 @@ databaseChangeLog:
       file: db/changelog/changes/031-category-meta.yaml
   - include:
       file: db/changelog/changes/032-platform-category.yaml
+  - include:
+      file: db/changelog/changes/033-category-name-length.yaml
