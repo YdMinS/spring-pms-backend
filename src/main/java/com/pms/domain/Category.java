@@ -44,7 +44,8 @@ public class Category extends BaseEntity {
      * Max 100 characters, required field.
      * Examples: "Electronics", "Clothing", "Books"
      */
-    @Column(nullable = false, length = 100)
+    // 255 to mirror platform_category.name (FEATURE_2608_06 / 53): real Coupang category names exceed 100.
+    @Column(nullable = false, length = 255)
     private String name;
 
     /**

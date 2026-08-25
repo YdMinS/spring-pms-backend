@@ -1,5 +1,6 @@
 package com.pms.service.category;
 
+import org.apache.poi.openxml4j.util.ZipSecureFile;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.usermodel.Row;
@@ -47,6 +48,10 @@ public class CoupangCategoryXlsxParser {
     private final DataFormatter formatter = new DataFormatter();
 
     public List<ParsedLeaf> parse(InputStream xlsx) {
+        // The Coupang bulk template's xl/styles.xml (166 styled columns) inflates below POI's default
+        // zip-bomb ratio guard (0.01) → larger files throw "Zip bomb detected!" on open. These are trusted
+        // admin uploads, so disable the ratio check. Global static, set once per parse (idempotent).
+        ZipSecureFile.setMinInflateRatio(0d);
         Map<String, ParsedLeaf> byCode = new LinkedHashMap<>(); // dedup by code, first row wins, order preserved
         try (XSSFWorkbook workbook = new XSSFWorkbook(xlsx)) {
             Sheet sheet = resolveDataSheet(workbook);
