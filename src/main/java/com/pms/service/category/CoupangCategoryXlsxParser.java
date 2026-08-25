@@ -1,6 +1,7 @@
 package com.pms.service.category;
 
 import org.apache.poi.openxml4j.util.ZipSecureFile;
+import org.apache.poi.util.IOUtils;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.usermodel.Row;
@@ -52,6 +53,9 @@ public class CoupangCategoryXlsxParser {
         // zip-bomb ratio guard (0.01) → larger files throw "Zip bomb detected!" on open. These are trusted
         // admin uploads, so disable the ratio check. Global static, set once per parse (idempotent).
         ZipSecureFile.setMinInflateRatio(0d);
+        // Some files carry a huge hidden sheet part (e.g. 뷰티's sheet2.xml ≈ 103MB uncompressed) that POI
+        // still loads on open — over its default 100MB per-byte-array cap → RecordFormatException. Raise it.
+        IOUtils.setByteArrayMaxOverride(500_000_000);
         Map<String, ParsedLeaf> byCode = new LinkedHashMap<>(); // dedup by code, first row wins, order preserved
         try (XSSFWorkbook workbook = new XSSFWorkbook(xlsx)) {
             Sheet sheet = resolveDataSheet(workbook);
