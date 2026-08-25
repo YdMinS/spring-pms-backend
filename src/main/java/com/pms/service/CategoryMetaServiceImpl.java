@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.Category;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
 import com.pms.dto.response.CategoryMetaResponse;
@@ -30,11 +31,23 @@ public class CategoryMetaServiceImpl implements CategoryMetaService {
     private final CategoryMetaResolver metaResolver;
 
     @Override
+    public CategoryMetaSchema getSchema(Long categoryId, String platform) {
+        // Schema is (platform × category)-dependent, not master-dependent — resolve the code from the category
+        // id directly. Missing category / missing mapping → 400.
+        String code = masterChannelConfigService.resolvePlatformCategoryCode(categoryId, platform);
+        MarketplaceAccount account = resolveAccount(platform);
+        return metaResolver.resolve(platform).getMeta(account, code);   // empty schema allowed
+    }
+
+    @Override
     public CategoryMetaResponse getMeta(Long masterId, String platform) {
         MasterProduct master = requireScopedMaster(masterId);
-        String code = masterChannelConfigService.resolvePlatformCategoryCode(master, platform);   // 400 if unset
-        MarketplaceAccount account = resolveAccount(platform);
-        CategoryMetaSchema schema = metaResolver.resolve(platform).getMeta(account, code);   // empty allowed
+        Category standard = master.getCategory();
+        if (standard == null) {
+            throw new IllegalArgumentException("표준 카테고리 미설정");
+        }
+        // Reuse the category-scoped schema lookup, then layer the master's stored values on top.
+        CategoryMetaSchema schema = getSchema(standard.getId(), platform);
 
         return CategoryMetaResponse.builder()
                 .attributes(schema.attributes())

@@ -1,9 +1,11 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.response.CategoryMetaSchemaResponse;
 import com.pms.dto.response.CategoryNodeResponse;
 import com.pms.dto.response.CategorySuggestionResponse;
 import com.pms.service.CategoryLookupService;
+import com.pms.service.CategoryMetaService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -25,6 +27,7 @@ import java.util.List;
 public class CategoryLookupController {
 
     private final CategoryLookupService categoryLookupService;
+    private final CategoryMetaService categoryMetaService;
 
     @GetMapping("/{platform}/tree")
     @Operation(summary = "List category tree children (drill-down; parentCode blank = root)")
@@ -51,5 +54,16 @@ public class CategoryLookupController {
                         .map(CategorySuggestionResponse::from)
                         .toList();
         return ResponseEntity.ok(ResponseDTO.success(suggestions));
+    }
+
+    @GetMapping("/{platform}/meta")
+    @Operation(summary = "Category meta schema (required attributes + notices) by category id; empty allowed")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<CategoryMetaSchemaResponse>> meta(
+            @PathVariable String platform,
+            @RequestParam Long categoryId) {
+        CategoryMetaSchemaResponse schema =
+                CategoryMetaSchemaResponse.from(categoryMetaService.getSchema(categoryId, platform));
+        return ResponseEntity.ok(ResponseDTO.success(schema));
     }
 }

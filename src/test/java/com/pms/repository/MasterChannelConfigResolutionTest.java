@@ -35,10 +35,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 class MasterChannelConfigResolutionTest {
 
     @Autowired private CategoryMappingRepository categoryMappingRepository;
+    @Autowired private CategoryRepository categoryRepository;
     @Autowired private TestEntityManager em;
 
     private MasterChannelConfigServiceImpl service() {
-        return new MasterChannelConfigServiceImpl(categoryMappingRepository);
+        return new MasterChannelConfigServiceImpl(categoryMappingRepository, categoryRepository);
     }
 
     private Long persistMasterWithConfig() {

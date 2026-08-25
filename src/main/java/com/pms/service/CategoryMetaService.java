@@ -1,6 +1,7 @@
 package com.pms.service;
 
 import com.pms.dto.response.CategoryMetaResponse;
+import com.pms.service.listing.category.CategoryMetaSchema;
 
 import java.util.Map;
 
@@ -20,6 +21,18 @@ public interface CategoryMetaService {
      * @return schema + current values
      */
     CategoryMetaResponse getMeta(Long masterId, String platform);
+
+    /**
+     * The (platform × category) meta <b>schema</b> only (no values), keyed by a category id — so the master
+     * <i>add</i> screen can fetch the schema before a master (and thus a masterId) exists (FEATURE_2608_06 / 57).
+     * The schema is category-dependent, not master-dependent; the master version reuses this. An empty schema
+     * is a normal 200.
+     *
+     * @param categoryId standard category id (400 if absent or it has no mapping for the platform)
+     * @param platform   platform key (e.g. "COUPANG")
+     * @return the schema (possibly empty)
+     */
+    CategoryMetaSchema getSchema(Long categoryId, String platform);
 
     /**
      * Store the master-level attribute + notice values ({@code toBuilder} save). Does NOT trigger
