@@ -8,6 +8,7 @@ import com.pms.domain.Package;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.repository.CategoryMappingRepository;
+import com.pms.repository.CategoryRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -20,6 +21,7 @@ import org.springframework.stereotype.Service;
 public class MasterChannelConfigServiceImpl implements MasterChannelConfigService {
 
     private final CategoryMappingRepository categoryMappingRepository;
+    private final CategoryRepository categoryRepository;
 
     @Override
     public Category resolveStandardCategory(ProductListing cell) {
@@ -48,14 +50,25 @@ public class MasterChannelConfigServiceImpl implements MasterChannelConfigServic
         return resolvePlatformCategory(master, platform).getCode();
     }
 
-    /**
-     * Shared resolution: standard category → CategoryMapping(platform) → its linked PlatformCategory FK.
-     * 400 when the master has no standard category, no mapping for the platform, or the mapping is not yet
-     * linked to a PlatformCategory (transition — the code/commission owner has not been seeded).
-     * ⚠️ LAZY master.category / mapping.platformCategory — callers run inside a @Transactional boundary.
-     */
+    @Override
+    public String resolvePlatformCategoryCode(Long categoryId, String platform) {
+        Category standard = categoryRepository.findById(categoryId)
+                .orElseThrow(() -> new IllegalArgumentException("카테고리 없음"));
+        return resolvePlatformCategory(standard, platform).getCode();
+    }
+
+    /** Master-arg overload: pulls the master's single standard category and delegates to the core. */
     private PlatformCategory resolvePlatformCategory(MasterProduct master, String platform) {
-        Category standard = master == null ? null : master.getCategory();
+        return resolvePlatformCategory(master == null ? null : master.getCategory(), platform);
+    }
+
+    /**
+     * Core resolution: standard category → CategoryMapping(platform) → its linked PlatformCategory FK.
+     * 400 when there is no standard category, no mapping for the platform, or the mapping is not yet linked
+     * to a PlatformCategory (transition — the code/commission owner has not been seeded).
+     * ⚠️ LAZY category / mapping.platformCategory — callers run inside a @Transactional boundary.
+     */
+    private PlatformCategory resolvePlatformCategory(Category standard, String platform) {
         if (standard == null) {
             throw new IllegalArgumentException("표준 카테고리 미설정");
         }

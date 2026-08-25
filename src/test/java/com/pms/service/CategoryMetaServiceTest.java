@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.Category;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
 import com.pms.dto.response.CategoryMetaResponse;
@@ -45,9 +46,11 @@ class CategoryMetaServiceTest {
     @InjectMocks private CategoryMetaServiceImpl service;
 
     private static final Long MASTER_ID = 10L;
+    private static final Long CATEGORY_ID = 5L;
 
     private MasterProduct master(Map<String, String> attributeValues) {
         return MasterProduct.builder().id(MASTER_ID).name("마스터").active(true)
+                .category(Category.builder().id(CATEGORY_ID).build())
                 .categoryAttributes(attributeValues).build();
     }
 
@@ -59,7 +62,7 @@ class CategoryMetaServiceTest {
     void getMeta_returnsSchemaAndCurrentValues() {
         given(masterProductRepository.findScopedById(MASTER_ID))
                 .willReturn(Optional.of(master(Map.of("원산지", "국내산"))));
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any(MasterProduct.class), eq("COUPANG")))
+        given(masterChannelConfigService.resolvePlatformCategoryCode(CATEGORY_ID, "COUPANG"))
                 .willReturn("1001");
         given(marketplaceAccountRepository.findFirstByPlatformAndIsActiveTrue("COUPANG"))
                 .willReturn(Optional.of(account()));
@@ -86,7 +89,7 @@ class CategoryMetaServiceTest {
     @Test
     void getMeta_missingMapping_throws400() {
         given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master(Map.of())));
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any(MasterProduct.class), eq("COUPANG")))
+        given(masterChannelConfigService.resolvePlatformCategoryCode(CATEGORY_ID, "COUPANG"))
                 .willThrow(new IllegalArgumentException("COUPANG 카테고리 매핑 미설정"));
 
         assertThatThrownBy(() -> service.getMeta(MASTER_ID, "COUPANG"))
@@ -96,7 +99,7 @@ class CategoryMetaServiceTest {
     @Test
     void getMeta_emptySchema_returns200WithEmptyLists() {
         given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master(null)));
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any(MasterProduct.class), eq("NAVER")))
+        given(masterChannelConfigService.resolvePlatformCategoryCode(CATEGORY_ID, "NAVER"))
                 .willReturn("N1");
         given(marketplaceAccountRepository.findFirstByPlatformAndIsActiveTrue("NAVER"))
                 .willReturn(Optional.of(account()));
@@ -109,6 +112,56 @@ class CategoryMetaServiceTest {
         assertThat(response.getAttributes()).isEmpty();
         assertThat(response.getNotices()).isEmpty();
         assertThat(response.getValues().getAttributes()).isEmpty();
+    }
+
+    // ---- getSchema (57 — category-scoped schema, no master, no values) ----
+
+    @Test
+    void getSchema_returnsResolverSchema() {
+        given(masterChannelConfigService.resolvePlatformCategoryCode(CATEGORY_ID, "COUPANG")).willReturn("1001");
+        given(marketplaceAccountRepository.findFirstByPlatformAndIsActiveTrue("COUPANG"))
+                .willReturn(Optional.of(account()));
+        given(metaResolver.resolve("COUPANG")).willReturn(metaAdapter);
+        CategoryMetaSchema schema = new CategoryMetaSchema(
+                List.of(new CategoryAttribute("원산지", true, "TEXT", List.of())),
+                List.of(new CategoryNotice("제품소재", "제품소재", true)));
+        given(metaAdapter.getMeta(any(), eq("1001"))).willReturn(schema);
+
+        assertThat(service.getSchema(CATEGORY_ID, "COUPANG")).isSameAs(schema);
+    }
+
+    @Test
+    void getSchema_missingMapping_throws400() {
+        given(masterChannelConfigService.resolvePlatformCategoryCode(CATEGORY_ID, "COUPANG"))
+                .willThrow(new IllegalArgumentException("COUPANG 카테고리 매핑 미설정"));
+
+        assertThatThrownBy(() -> service.getSchema(CATEGORY_ID, "COUPANG"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void getSchema_noActiveAccount_throws400() {
+        given(masterChannelConfigService.resolvePlatformCategoryCode(CATEGORY_ID, "COUPANG")).willReturn("1001");
+        given(marketplaceAccountRepository.findFirstByPlatformAndIsActiveTrue("COUPANG"))
+                .willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.getSchema(CATEGORY_ID, "COUPANG"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("활성 계정 없음");
+    }
+
+    @Test
+    void getSchema_emptySchema_returnsEmptyLists() {
+        given(masterChannelConfigService.resolvePlatformCategoryCode(CATEGORY_ID, "NAVER")).willReturn("N1");
+        given(marketplaceAccountRepository.findFirstByPlatformAndIsActiveTrue("NAVER"))
+                .willReturn(Optional.of(account()));
+        given(metaResolver.resolve("NAVER")).willReturn(metaAdapter);
+        given(metaAdapter.getMeta(any(), eq("N1"))).willReturn(new CategoryMetaSchema(List.of(), List.of()));
+
+        CategoryMetaSchema schema = service.getSchema(CATEGORY_ID, "NAVER");
+
+        assertThat(schema.attributes()).isEmpty();
+        assertThat(schema.notices()).isEmpty();
     }
 
     @Test

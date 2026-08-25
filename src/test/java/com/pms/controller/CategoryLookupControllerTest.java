@@ -1,9 +1,15 @@
 package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
+import com.pms.domain.Category;
+import com.pms.domain.CategoryMapping;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.PlatformCategory;
 import com.pms.domain.Seller;
+import com.pms.repository.CategoryMappingRepository;
+import com.pms.repository.CategoryRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import org.junit.jupiter.api.AfterEach;
@@ -30,6 +36,9 @@ class CategoryLookupControllerTest extends BaseIntegrationTest {
 
     @Autowired private SellerRepository sellerRepository;
     @Autowired private MarketplaceAccountRepository marketplaceAccountRepository;
+    @Autowired private CategoryRepository categoryRepository;
+    @Autowired private CategoryMappingRepository categoryMappingRepository;
+    @Autowired private PlatformCategoryRepository platformCategoryRepository;
 
     @MockBean private CoupangApiClient coupangApiClient;
 
@@ -52,6 +61,24 @@ class CategoryLookupControllerTest extends BaseIntegrationTest {
     void cleanup() {
         marketplaceAccountRepository.deleteAll();
         sellerRepository.deleteAll();
+        categoryMappingRepository.deleteAll();
+        platformCategoryRepository.deleteAll();
+        categoryRepository.deleteAll();
+    }
+
+    /**
+     * Seed a leaf standard category with a COUPANG mapping linked to a PlatformCategory (owns the mall code) so
+     * meta schema resolution succeeds. Returns the category id. Mirrors {@code MasterProductControllerTest}.
+     */
+    private Long seedMappedCategory() {
+        Category category = categoryRepository.save(Category.builder()
+                .name("신발").platform("COUPANG").platformCategoryId("cat-1").build());
+        PlatformCategory platformCategory = platformCategoryRepository.save(PlatformCategory.builder()
+                .platform("COUPANG").code("cat-1").name("운동화").build());
+        categoryMappingRepository.save(CategoryMapping.builder()
+                .category(category).platform("COUPANG").platformCategoryId("cat-1")
+                .platformCategory(platformCategory).build());
+        return category.getId();
     }
 
     /** Seed a seller with an active COUPANG account (needed for the account-resolution happy paths). */
@@ -115,6 +142,50 @@ class CategoryLookupControllerTest extends BaseIntegrationTest {
         seedActiveCoupangAccount();
         mockMvc.perform(get("/api/admin/category-lookup/COUPANG/predict")
                         .param("productName", "")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest());
+    }
+
+    // ---- meta schema (57): authority + empty schema 200 + missing mapping 400 + missing param 400 ----
+
+    @Test
+    void meta_noToken_returns401() throws Exception {
+        mockMvc.perform(get("/api/admin/category-lookup/COUPANG/meta").param("categoryId", "1"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void meta_userToken_returns403() throws Exception {
+        mockMvc.perform(get("/api/admin/category-lookup/COUPANG/meta")
+                        .param("categoryId", "1")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void meta_adminToken_returns200_emptySchemaTolerated() throws Exception {
+        seedActiveCoupangAccount();
+        Long categoryId = seedMappedCategory();
+        // The category-related-metas GET is unstubbed → null → adapter yields an empty (but valid) schema.
+        mockMvc.perform(get("/api/admin/category-lookup/COUPANG/meta")
+                        .param("categoryId", categoryId.toString())
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.attributes").isEmpty())
+                .andExpect(jsonPath("$.data.notices").isEmpty());
+    }
+
+    @Test
+    void meta_unknownCategoryId_returns400() throws Exception {
+        mockMvc.perform(get("/api/admin/category-lookup/COUPANG/meta")
+                        .param("categoryId", "999999")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void meta_missingCategoryId_returns400() throws Exception {
+        mockMvc.perform(get("/api/admin/category-lookup/COUPANG/meta")
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isBadRequest());
     }

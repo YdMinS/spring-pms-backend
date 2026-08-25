@@ -9,6 +9,7 @@ import com.pms.domain.Package;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.repository.CategoryMappingRepository;
+import com.pms.repository.CategoryRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -32,6 +33,7 @@ import static org.mockito.BDDMockito.given;
 class MasterChannelConfigServiceTest {
 
     @Mock private CategoryMappingRepository categoryMappingRepository;
+    @Mock private CategoryRepository categoryRepository;
     @InjectMocks private MasterChannelConfigServiceImpl service;
 
     private CarrierRate carrier(String cost) {
@@ -93,6 +95,42 @@ class MasterChannelConfigServiceTest {
         assertThatThrownBy(() -> service.resolvePlatformCategoryCode(cell(master)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("COUPANG 카테고리 매핑 미설정");
+    }
+
+    // ---- platform category code by category id (57 — schema lookup before a master exists) ----
+
+    @Test
+    void resolvePlatformCategoryCodeByCategoryId_mappingLinked_returnsCode() {
+        Category category = Category.builder().id(7L).name("신발").build();
+        PlatformCategory platformCategory = PlatformCategory.builder()
+                .id(20L).platform("COUPANG").code("202").name("운동화").build();
+        given(categoryRepository.findById(7L)).willReturn(Optional.of(category));
+        given(categoryMappingRepository.findByCategoryIdAndPlatform(7L, "COUPANG"))
+                .willReturn(Optional.of(CategoryMapping.builder()
+                        .category(category).platform("COUPANG").platformCategory(platformCategory).build()));
+
+        assertThat(service.resolvePlatformCategoryCode(7L, "COUPANG")).isEqualTo("202");
+    }
+
+    @Test
+    void resolvePlatformCategoryCodeByCategoryId_noMapping_throws400() {
+        Category category = Category.builder().id(7L).name("신발").build();
+        given(categoryRepository.findById(7L)).willReturn(Optional.of(category));
+        given(categoryMappingRepository.findByCategoryIdAndPlatform(7L, "COUPANG"))
+                .willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.resolvePlatformCategoryCode(7L, "COUPANG"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("COUPANG 카테고리 매핑 미설정");
+    }
+
+    @Test
+    void resolvePlatformCategoryCodeByCategoryId_categoryNotFound_throws400() {
+        given(categoryRepository.findById(99L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.resolvePlatformCategoryCode(99L, "COUPANG"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("카테고리 없음");
     }
 
     @Test

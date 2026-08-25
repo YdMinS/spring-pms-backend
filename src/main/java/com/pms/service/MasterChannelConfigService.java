@@ -59,6 +59,14 @@ public interface MasterChannelConfigService {
      */
     String resolvePlatformCategoryCode(MasterProduct master, String platform);
 
+    /**
+     * Platform marketplace code for a (standard category × platform), for callers that hold only a category id
+     * (FEATURE_2608_06 / 57 — the category-scoped meta schema lookup, which needs a schema <b>before</b> a
+     * master exists). 400 if the category id does not exist, or the category has no mapping for the platform.
+     * Same core resolution as {@link #resolvePlatformCategoryCode(ProductListing)}.
+     */
+    String resolvePlatformCategoryCode(Long categoryId, String platform);
+
     /** Delivery = option override ?? master default. 400 if both are null. */
     CarrierRate resolveDelivery(ProductListing cell, MasterProductOption masterOption);
 
