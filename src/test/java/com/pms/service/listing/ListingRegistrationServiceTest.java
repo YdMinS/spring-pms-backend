@@ -13,6 +13,8 @@ import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.domain.MasterProduct;
+import com.pms.domain.MasterProductOption;
+import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.service.MasterChannelConfigService;
@@ -51,6 +53,7 @@ class ListingRegistrationServiceTest {
 
     @Mock private ProductListingRepository productListingRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
+    @Mock private MasterProductOptionRepository masterProductOptionRepository;
     @Mock private GeneratedProductDataRepository generatedProductDataRepository;
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock private ListingChannelResolver resolver;
@@ -175,14 +178,15 @@ class ListingRegistrationServiceTest {
 
         assertThatThrownBy(() -> service.register(CELL_ID))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("필수 카테고리 속성 누락: 원산지");
+                .hasMessageContaining("필수 카테고리 속성 누락: 기본 / 원산지");
         verify(adapter, never()).register(any(), any(), any());
     }
 
-    // 47: a required attribute whose value is present on the master → the push proceeds.
+    // 47/59: a required attribute satisfied by the master value (no per-option override) → the push proceeds.
     @Test
-    void register_requiredCategoryAttributeSatisfied_registers() {
-        MasterProduct master = MasterProduct.builder().categoryAttributes(Map.of("원산지", "국내산")).build();
+    void register_requiredCategoryAttributeSatisfiedByMaster_registers() {
+        MasterProduct master = MasterProduct.builder().id(1L)
+                .categoryAttributes(Map.of("원산지", "국내산")).build();
         ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀")
                 .seller(Seller.builder().id(SELLER_ID).build())
                 .status(ListingStatus.DRAFT).masterProduct(master).build();
@@ -191,6 +195,7 @@ class ListingRegistrationServiceTest {
                 .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
         stubAccountAndAdapter();
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
         stubCategoryMeta(new CategoryMetaSchema(
                 List.of(new CategoryAttribute("원산지", true, "TEXT", List.of())), List.of()));
         given(adapter.register(any(), any(), any())).willReturn("SP-777");
@@ -199,6 +204,35 @@ class ListingRegistrationServiceTest {
 
         assertThat(response.getPlatformProductId()).isEqualTo("SP-777");
         verify(adapter).register(any(), any(), any());
+    }
+
+    // 59: option A override satisfies the required attribute, but active option B leaves it blank → 400 naming B.
+    @Test
+    void register_optionMissingRequiredCategoryAttribute_throwsNamingThatOption() {
+        MasterProduct master = MasterProduct.builder().id(1L).build();   // master carries no value
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀")
+                .seller(Seller.builder().id(SELLER_ID).build())
+                .status(ListingStatus.DRAFT).masterProduct(master).build();
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID))
+                .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
+        stubAccountAndAdapter();
+        ProductListingOption a = ProductListingOption.builder().id(1L).optionName("A")
+                .sellingPrice(new BigDecimal("6000")).active(true).build();
+        ProductListingOption b = ProductListingOption.builder().id(2L).optionName("B")
+                .sellingPrice(new BigDecimal("6000")).active(true).build();
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(a, b));
+        // A overrides 원산지; B has no override and master is blank → B fails validation.
+        MasterProductOption moA = MasterProductOption.builder().name("A")
+                .categoryAttributes(Map.of("원산지", "수입산")).build();
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of(moA));
+        stubCategoryMeta(new CategoryMetaSchema(
+                List.of(new CategoryAttribute("원산지", true, "TEXT", List.of())), List.of()));
+
+        assertThatThrownBy(() -> service.register(CELL_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("필수 카테고리 속성 누락: B / 원산지");
+        verify(adapter, never()).register(any(), any(), any());
     }
 
     // (c) fetchStatus SELLING: matched option → market ids + APPROVED saved; status saved.

@@ -1,7 +1,10 @@
 package com.pms.domain;
 
+import com.pms.domain.converter.MapStringConverter;
 import jakarta.persistence.*;
 import lombok.*;
+
+import java.util.Map;
 
 /**
  * An option (SKU variant) of a master product, e.g. "1세트" / "2세트" (FEATURE_2608_06 / 3b-1).
@@ -44,4 +47,23 @@ public class MasterProductOption extends BaseEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "package_id", nullable = true)
     private Package package_;
+
+    /**
+     * Per-option override of the master's category required-attribute values (FEATURE_2608_06 / 59). Mirrors
+     * {@link MasterProduct#getCategoryAttributes()}. Resolution = {@code master.categoryAttributes ++ this}
+     * (only the keys present here override; see {@code OptionCategoryMeta.merge}). ⚠️ No {@code @Builder.Default}
+     * — {@code null} means "no override" (JSON TEXT, H2/MySQL portable). @Setter forbidden (toBuilder).
+     */
+    @Convert(converter = MapStringConverter.class)
+    @Column(name = "category_attributes", columnDefinition = "TEXT")
+    private Map<String, String> categoryAttributes;
+
+    /**
+     * Per-option override of the master's product-info disclosure ("상품정보제공고시") values
+     * (FEATURE_2608_06 / 59). Mirrors {@link MasterProduct#getCategoryNotices()}. ⚠️ No {@code @Builder.Default}
+     * — {@code null} means "no override" (JSON TEXT, H2/MySQL portable).
+     */
+    @Convert(converter = MapStringConverter.class)
+    @Column(name = "category_notices", columnDefinition = "TEXT")
+    private Map<String, String> categoryNotices;
 }

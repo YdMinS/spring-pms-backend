@@ -3,6 +3,8 @@ package com.pms.service.listing;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.MasterProduct;
+import com.pms.domain.MasterProductOption;
 import com.pms.domain.OptionApprovalStatus;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -12,12 +14,14 @@ import com.pms.dto.response.ListingSyncResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.service.MasterChannelConfigService;
 import com.pms.service.listing.category.CategoryAttribute;
 import com.pms.service.listing.category.CategoryMetaResolver;
 import com.pms.service.listing.category.CategoryMetaSchema;
+import com.pms.service.listing.category.OptionCategoryMeta;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,6 +51,7 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
 
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
+    private final MasterProductOptionRepository masterProductOptionRepository;
     private final GeneratedProductDataRepository generatedProductDataRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final ListingChannelResolver resolver;
@@ -174,9 +179,11 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
     }
 
     /**
-     * MUST-KEEP (47): every required category attribute must have a non-blank master-level value before the
-     * cell is pushed. Register targets a single (master × channel) cell → one category → one {@code getMeta}
-     * call (not a batch). An empty schema (e.g. NAVER) skips both the meta lookup's validation and assembly.
+     * MUST-KEEP (47/59): every required category attribute must have a non-blank value on each ACTIVE option
+     * (master shared default {@code ++} per-option override) before the cell is pushed. Register targets a
+     * single (master × channel) cell → one category → one {@code getMeta} call (schema is category-scoped, not
+     * per-option). An empty schema (e.g. NAVER) skips it. Options unmatched to a master option (by name) fall
+     * back to the master values only (no override).
      */
     private void assertRequiredCategoryAttributes(ProductListing cell, MarketplaceAccount acct) {
         String code = masterChannelConfigService.resolvePlatformCategoryCode(cell);
@@ -184,14 +191,26 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
         if (schema.attributes().isEmpty()) {
             return;   // empty schema = nothing required (harmless)
         }
-        Map<String, String> values = cell.getMasterProduct() != null
-                && cell.getMasterProduct().getCategoryAttributes() != null
-                ? cell.getMasterProduct().getCategoryAttributes() : Map.of();
-        for (CategoryAttribute attribute : schema.attributes()) {
-            if (attribute.required()) {
-                String value = values.get(attribute.name());
-                if (value == null || value.isBlank()) {
-                    throw new IllegalArgumentException("필수 카테고리 속성 누락: " + attribute.name());
+        MasterProduct master = cell.getMasterProduct();
+        Map<String, String> masterAttributes = master != null ? master.getCategoryAttributes() : null;
+        Map<String, MasterProductOption> byName = master == null ? Map.of()
+                : masterProductOptionRepository.findByMasterProductId(master.getId()).stream()
+                        .collect(Collectors.toMap(MasterProductOption::getName, o -> o, (a, b) -> a));
+
+        for (ProductListingOption option : productListingOptionRepository.findByProductListingId(cell.getId())) {
+            if (!Boolean.TRUE.equals(option.getActive())) {
+                continue;   // only active options are pushed → only they need required values
+            }
+            MasterProductOption mo = byName.get(option.getOptionName());
+            Map<String, String> values = OptionCategoryMeta.merge(
+                    masterAttributes, mo != null ? mo.getCategoryAttributes() : null);
+            for (CategoryAttribute attribute : schema.attributes()) {
+                if (attribute.required()) {
+                    String value = values.get(attribute.name());
+                    if (value == null || value.isBlank()) {
+                        throw new IllegalArgumentException(
+                                "필수 카테고리 속성 누락: " + option.getOptionName() + " / " + attribute.name());
+                    }
                 }
             }
         }

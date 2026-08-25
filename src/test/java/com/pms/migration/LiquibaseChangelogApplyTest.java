@@ -190,6 +190,13 @@ class LiquibaseChangelogApplyTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM category_mapping WHERE platform_category_id_fk IS NULL",
                 Integer.class)).isZero();
+
+        // changeset 034: master_product_option.category_attributes + category_notices materialized
+        // (a successful count over both columns proves they exist; per-option meta override, 59).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM master_product_option "
+                        + "WHERE category_attributes IS NULL AND category_notices IS NULL",
+                Integer.class)).isZero();
     }
 
     @Test

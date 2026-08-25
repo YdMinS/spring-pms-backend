@@ -331,11 +331,16 @@ public class MasterProductServiceImpl implements MasterProductService {
                     .collect(Collectors.toMap(it -> it.getProduct().getId(), MasterProductOptionItem::getQuantity));
         }
 
-        // Override fields follow the items rule: a given id replaces, null keeps the existing override.
+        // Override fields follow the items rule: a given id/map replaces, null keeps the existing override.
+        // For the category-meta maps, null = keep existing; a value (empty map included) = replace (59).
         MasterProductOption updated = optionRepository.save(option.toBuilder()
                 .name(request.getName())
                 .delivery(request.getDeliveryId() != null ? requireDelivery(request.getDeliveryId()) : option.getDelivery())
                 .package_(request.getPackageId() != null ? requirePackage(request.getPackageId()) : option.getPackage_())
+                .categoryAttributes(request.getCategoryAttributes() != null
+                        ? request.getCategoryAttributes() : option.getCategoryAttributes())
+                .categoryNotices(request.getCategoryNotices() != null
+                        ? request.getCategoryNotices() : option.getCategoryNotices())
                 .build());
         return mapToOptionResponse(updated, vector);
     }
@@ -499,6 +504,8 @@ public class MasterProductServiceImpl implements MasterProductService {
                 .masterProduct(master).name(request.getName())
                 .delivery(request.getDeliveryId() != null ? requireDelivery(request.getDeliveryId()) : null)
                 .package_(request.getPackageId() != null ? requirePackage(request.getPackageId()) : null)
+                .categoryAttributes(request.getCategoryAttributes())    // null = no override (59)
+                .categoryNotices(request.getCategoryNotices())
                 .build());
         saveItems(option, vector);
         return option;
@@ -543,6 +550,8 @@ public class MasterProductServiceImpl implements MasterProductService {
                         .name(o.getName())
                         .deliveryId(o.getDelivery() != null ? o.getDelivery().getId() : null)
                         .packageId(o.getPackage_() != null ? o.getPackage_().getId() : null)
+                        .categoryAttributes(o.getCategoryAttributes())
+                        .categoryNotices(o.getCategoryNotices())
                         .items(itemsByOption.getOrDefault(o.getId(), List.of()).stream()
                                 .map(it -> MasterOptionResponse.Item.builder()
                                         .productId(it.getProduct().getId())
@@ -584,6 +593,8 @@ public class MasterProductServiceImpl implements MasterProductService {
                 .name(option.getName())
                 .deliveryId(option.getDelivery() != null ? option.getDelivery().getId() : null)
                 .packageId(option.getPackage_() != null ? option.getPackage_().getId() : null)
+                .categoryAttributes(option.getCategoryAttributes())
+                .categoryNotices(option.getCategoryNotices())
                 .items(items)
                 .build();
     }

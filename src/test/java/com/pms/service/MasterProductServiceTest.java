@@ -444,6 +444,53 @@ class MasterProductServiceTest {
         assertThat(resp.getPackageId()).isEqualTo(5L);
     }
 
+    // ------------------------------------------------------------- option category-meta override (59)
+
+    @Test
+    void createOption_withCategoryMetaOverride_savesAndExposesMaps() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(componentRepository.findByMasterProductId(1L))
+                .willReturn(List.of(component(master, product(1L, "상품1"))));
+        given(optionRepository.save(any()))
+                .willAnswer(inv -> ((MasterProductOption) inv.getArgument(0)).toBuilder().id(10L).build());
+        given(productRepository.findAllById(any())).willReturn(List.of(product(1L, "상품1")));
+
+        MasterOptionResponse resp = service.createOption(1L, MasterOptionRequest.builder()
+                .name("30포").items(List.of(item(1L, 1)))
+                .categoryAttributes(java.util.Map.of("개당중량", "30g"))
+                .categoryNotices(java.util.Map.of("용량", "30포")).build());
+
+        // saved with the override maps...
+        ArgumentCaptor<MasterProductOption> captor = ArgumentCaptor.forClass(MasterProductOption.class);
+        verify(optionRepository).save(captor.capture());
+        assertThat(captor.getValue().getCategoryAttributes()).containsEntry("개당중량", "30g");
+        assertThat(captor.getValue().getCategoryNotices()).containsEntry("용량", "30포");
+        // ...and echoed back in the response (prefill for the option editor).
+        assertThat(resp.getCategoryAttributes()).containsEntry("개당중량", "30g");
+        assertThat(resp.getCategoryNotices()).containsEntry("용량", "30포");
+    }
+
+    @Test
+    void updateOption_nullCategoryMeta_keepsExistingOverride() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        MasterProductOption existing = MasterProductOption.builder().id(10L).masterProduct(master).name("30포")
+                .categoryAttributes(java.util.Map.of("개당중량", "30g")).build();
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findById(10L)).willReturn(Optional.of(existing));
+        given(optionItemRepository.findByOptionId(10L)).willReturn(List.of(
+                MasterProductOptionItem.builder().option(existing).product(product(1L, "상품1")).quantity(1).build()));
+        given(optionRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+        given(productRepository.findAllById(any())).willReturn(List.of(product(1L, "상품1")));
+
+        // name-only update (no items, no category maps) → existing override kept.
+        service.updateOption(1L, 10L, MasterOptionRequest.builder().name("30포-수정").build());
+
+        ArgumentCaptor<MasterProductOption> captor = ArgumentCaptor.forClass(MasterProductOption.class);
+        verify(optionRepository).save(captor.capture());
+        assertThat(captor.getValue().getCategoryAttributes()).containsEntry("개당중량", "30g");
+    }
+
     // ------------------------------------------------------------- standard category (single, 44)
 
     @Test

@@ -1,0 +1,20 @@
+# Per-option category meta override (FEATURE_2608_06 / 59): master_product_option.category_attributes +
+# category_notices, both JSON TEXT nullable (key -> option-level override value). TEXT columns → the MySQL BIT
+# trap does not apply; nullable so no backfill is needed (null = no override). Structured JSON for H2<->MySQL
+# portability (MapStringConverter), mirroring master_product (031).
+databaseChangeLog:
+
+  - changeSet:
+      id: 034-option-category-meta
+      author: oclyx
+      comment: "59: master_product_option.category_attributes + category_notices (JSON TEXT, nullable, per-option override)."
+      changes:
+        - addColumn:
+            tableName: master_product_option
+            columns:
+              - column:
+                  name: category_attributes
+                  type: TEXT
+              - column:
+                  name: category_notices
+                  type: TEXT

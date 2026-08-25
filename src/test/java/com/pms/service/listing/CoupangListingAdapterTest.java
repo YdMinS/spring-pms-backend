@@ -8,6 +8,8 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.MasterProduct;
+import com.pms.domain.MasterProductOption;
+import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.MasterChannelConfigService;
 import com.pms.service.RegistrationNameGenerator;
@@ -41,6 +43,7 @@ class CoupangListingAdapterTest {
 
     @Mock private com.pms.service.coupang.CoupangApiClient client;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
+    @Mock private MasterProductOptionRepository masterProductOptionRepository;
     @Mock private MasterChannelConfigService masterChannelConfigService;
     @Mock private TagMergeService tagMergeService;
     @Mock private RegistrationNameGenerator registrationNameGenerator;
@@ -84,6 +87,7 @@ class CoupangListingAdapterTest {
         ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
                 .platformProductId("123456789").masterProduct(master).build();
         lenient().when(productListingOptionRepository.findByProductListingId(100L)).thenReturn(List.of());
+        lenient().when(masterProductOptionRepository.findByMasterProductId(1L)).thenReturn(List.of());
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
         given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
@@ -97,15 +101,24 @@ class CoupangListingAdapterTest {
         assertThat(payload.getValue()).contains("\"sellerProductName\":\"노브랜드 생수 x 6\"");
     }
 
-    // 47: register payload assembles master-level category attributes + notices into Coupang shape.
+    // 47/59: attributes + notices are assembled PER item (vendorItem) = merge(master, option). Option A
+    // overrides 원산지; option B has no override → master value. No payload-level attributes.
     @Test
-    void register_payloadIncludesCategoryAttributesAndNotices() throws Exception {
+    void register_payloadItemsCarryMergedCategoryAttributesAndNotices() throws Exception {
         MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨")
                 .categoryAttributes(Map.of("원산지", "국내산"))
                 .categoryNotices(Map.of("제품소재", "면 100%")).build();
         ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
                 .platformProductId("123456789").masterProduct(master).build();
-        lenient().when(productListingOptionRepository.findByProductListingId(100L)).thenReturn(List.of());
+        ProductListingOption optA = ProductListingOption.builder().id(1L).optionName("A")
+                .sellingPrice(new BigDecimal("6000")).active(true).build();
+        ProductListingOption optB = ProductListingOption.builder().id(2L).optionName("B")
+                .sellingPrice(new BigDecimal("6000")).active(true).build();
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(optA, optB));
+        // master option A overrides 원산지=수입산; option B not present in the master map → master value only.
+        MasterProductOption moA = MasterProductOption.builder().name("A")
+                .categoryAttributes(Map.of("원산지", "수입산")).build();
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of(moA));
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
         given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
@@ -117,8 +130,12 @@ class CoupangListingAdapterTest {
         adapter.register(cell, gen, acct());
 
         JsonNode json = objectMapper.readTree(payload.getValue());
-        assertThat(json.path("attributes").get(0).path("attributeTypeName").asText()).isEqualTo("원산지");
-        assertThat(json.path("notices")).isNotEmpty();
+        assertThat(json.path("attributes").isMissingNode()).isTrue();  // moved to per-item
+        JsonNode itemA = json.path("items").get(0);
+        JsonNode itemB = json.path("items").get(1);
+        assertThat(itemA.path("attributes").get(0).path("attributeValueName").asText()).isEqualTo("수입산");
+        assertThat(itemA.path("notices").get(0).path("content").asText()).isEqualTo("면 100%");
+        assertThat(itemB.path("attributes").get(0).path("attributeValueName").asText()).isEqualTo("국내산");
     }
 
     // 42: register payload items[] = active options only (inactive excluded).
