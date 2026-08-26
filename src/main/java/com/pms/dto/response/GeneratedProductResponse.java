@@ -33,6 +33,9 @@ public class GeneratedProductResponse {
     @Builder
     public static class OptionPrice {
         private Long optionId;
+        /** Channel option display name (matches MasterProductOption.name); lets the UI show the name
+         *  without resolving optionId against the master's option list (different id space). */
+        private String optionName;
         private BigDecimal sellingPrice;
         /** Per-channel active flag (42): only active options are pushed to the market. */
         private Boolean active;
