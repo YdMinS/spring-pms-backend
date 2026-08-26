@@ -11,6 +11,7 @@ import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.Package;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
+import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
 import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterOptionRequest;
@@ -140,21 +141,30 @@ public class MasterProductServiceImpl implements MasterProductService {
     public ListingMatrixResponse getMatrix(Long id) {
         MasterProduct master = requireScopedMaster(id);
 
-        // Auto-generated registration name (65): computed ONCE outside the loop (single master → not N+1).
-        // master is non-null here (requireScopedMaster), so no null-fallback branch is needed. Each cell then
-        // shows its override when set, else this shared base.
-        String autoName = registrationNameGenerator.generate(master);
+        // Master options, loaded ONCE (67): the registration name is generated per cell from that cell's active
+        // options, but the master option list feeding the single-option name lookup is shared (no per-cell re-query).
+        List<MasterProductOption> masterOptions = optionRepository.findByMasterProductId(id);
 
-        // Right side: listings under this master (1 query), then their options batched (1 query).
+        // Right side: listings under this master (1 query), then their options batched (1 query) — reused for both
+        // the selling price and each listing's active option-name set (drives the per-channel registration name).
         List<ProductListing> listings = productListingRepository.findByMasterProductId(id);
         List<Long> listingIds = listings.stream().map(ProductListing::getId).toList();
-        Map<Long, BigDecimal> priceByListing = listingIds.isEmpty()
-                ? Map.of()
-                : productListingOptionRepository.findByProductListingIdIn(listingIds).stream()
-                        .collect(Collectors.toMap(
-                                o -> o.getProductListing().getId(),
-                                o -> o.getSellingPrice(),
-                                (first, dup) -> first));   // single SKU expected; keep first on dupes
+        List<ProductListingOption> allOptions = listingIds.isEmpty()
+                ? List.of()
+                : productListingOptionRepository.findByProductListingIdIn(listingIds);
+        Map<Long, BigDecimal> priceByListing = allOptions.stream()
+                .collect(Collectors.toMap(
+                        o -> o.getProductListing().getId(),
+                        o -> o.getSellingPrice(),
+                        (first, dup) -> first));   // single SKU expected; keep first on dupes
+        Map<Long, Set<String>> activeNamesByListing = new LinkedHashMap<>();
+        for (ProductListingOption o : allOptions) {
+            if (Boolean.TRUE.equals(o.getActive())) {
+                activeNamesByListing
+                        .computeIfAbsent(o.getProductListing().getId(), k -> new LinkedHashSet<>())
+                        .add(o.getOptionName());
+            }
+        }
 
         // Index listings by (sellerId|platform); first wins.
         Map<String, ProductListing> listingByKey = new LinkedHashMap<>();
@@ -176,16 +186,14 @@ public class MasterProductServiceImpl implements MasterProductService {
             ProductListing pl = listingByKey.get(matchKey(sellerId, acc.getPlatform()));
             MatrixCell cell = null;
             if (pl != null) {
-                // 65: effective registration name = override (non-blank) else the shared auto-generated base.
-                String ov = pl.getRegistrationNameOverride();
-                boolean overridden = ov != null && !ov.isBlank();
+                // 67: registration name is always auto-generated per channel from this listing's active options.
+                Set<String> activeNames = activeNamesByListing.getOrDefault(pl.getId(), Set.of());
                 cell = MatrixCell.builder()
                         .productListingId(pl.getId())
                         .name(pl.getName())
                         .platformProductId(pl.getPlatformProductId())
                         .sellingPrice(priceByListing.get(pl.getId()))
-                        .registrationName(overridden ? ov : autoName)
-                        .registrationNameOverridden(overridden)
+                        .registrationName(registrationNameGenerator.generate(master, activeNames, masterOptions))
                         .build();
             }
             return MatrixRow.builder()

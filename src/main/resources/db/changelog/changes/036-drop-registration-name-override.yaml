@@ -1,0 +1,16 @@
+# Drop the per-channel registration-name override column (FEATURE_2608_06 / 67). 65 introduced
+# product_listing.registration_name_override (changeset 035) for a manual sellerProductName override; 67
+# reverts that decision — the registration name is now ALWAYS auto-generated per channel from the listing's
+# active options (RegistrationNameGenerator). 035 is kept (it may already be applied on real DBs); this
+# changeset drops the column so the two are consistent whether or not 035 was deployed. dbms-agnostic
+# dropColumn (no BIT concern — the dropped column is a VARCHAR).
+databaseChangeLog:
+
+  - changeSet:
+      id: 036-drop-registration-name-override
+      author: oclyx
+      comment: "67: drop product_listing.registration_name_override — registration name is now always auto-generated per channel."
+      changes:
+        - dropColumn:
+            tableName: product_listing
+            columnName: registration_name_override

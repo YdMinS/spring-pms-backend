@@ -1,12 +1,16 @@
 package com.pms.service.listing;
 
 import com.pms.domain.ListingStatus;
+import com.pms.domain.MasterProduct;
+import com.pms.domain.MasterProductOption;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.dto.response.ListingOptionsResponse;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
+import com.pms.service.RegistrationNameGenerator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,6 +28,8 @@ public class ListingOptionServiceImpl implements ListingOptionService {
 
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
+    private final MasterProductOptionRepository masterProductOptionRepository;
+    private final RegistrationNameGenerator registrationNameGenerator;
 
     @Override
     public ListingOptionsResponse getOptions(Long listingId) {
@@ -31,7 +37,7 @@ public class ListingOptionServiceImpl implements ListingOptionService {
                 .orElseThrow(() -> new ResourceNotFoundException("ProductListing", listingId));
         List<ProductListingOption> options = productListingOptionRepository.findByProductListingId(listingId);
         // Read is never a resync trigger → needsResync = false.
-        return ListingOptionsResponse.of(listing, options, false);
+        return ListingOptionsResponse.of(listing, options, false, registrationName(listing, options));
     }
 
     @Override
@@ -65,6 +71,25 @@ public class ListingOptionServiceImpl implements ListingOptionService {
         // Listing-level needsResync (single boolean, OR aggregate): if this listing is already pushed, the
         // active-set change alone does not reach the market → the front must re-register/update. No auto-push here.
         boolean needsResync = listing.getStatus() != null && listing.getStatus() != ListingStatus.DRAFT;
-        return ListingOptionsResponse.of(listing, updated, needsResync);
+        return ListingOptionsResponse.of(listing, updated, needsResync, registrationName(listing, updated));
+    }
+
+    /**
+     * The auto-generated registration name (등록상품명, 67) for this listing's current active options — carried in
+     * the response so the front can patch the matrix cell in place after a toggle. master null → the listing's
+     * display name (backfill transition window).
+     */
+    private String registrationName(ProductListing listing, List<ProductListingOption> options) {
+        MasterProduct master = listing.getMasterProduct();
+        if (master == null) {
+            return listing.getName();
+        }
+        List<String> activeNames = options.stream()
+                .filter(o -> Boolean.TRUE.equals(o.getActive()))
+                .map(ProductListingOption::getOptionName)
+                .toList();
+        List<MasterProductOption> masterOptions =
+                masterProductOptionRepository.findByMasterProductId(master.getId());
+        return registrationNameGenerator.generate(master, activeNames, masterOptions);
     }
 }

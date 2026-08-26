@@ -65,19 +65,6 @@ public interface ListingAssetService {
     void updateDisplayName(Long listingId, String name);
 
     /**
-     * Set the registration-name override (등록상품명, 쿠팡 {@code sellerProductName}) of a tenant-scoped cell
-     * (404 if absent, 65). No asset regeneration and no marketplace push — the override is only sent at the
-     * next register/propagate. The name is trimmed before saving. Mirrors {@link #updateDisplayName}.
-     */
-    void updateRegistrationName(Long listingId, String registrationName);
-
-    /**
-     * Clear the registration-name override of a tenant-scoped cell (404 if absent, 65) — set back to
-     * {@code null} so the auto-generated name (32) is used again. No regeneration/push.
-     */
-    void clearRegistrationName(Long listingId);
-
-    /**
      * Override the cell's thumbnail with an uploaded image (thumbnailSource=MANUAL_OVERRIDE) for a
      * tenant-scoped cell. 404 if the cell or its generated assets are absent (the cell must be generated
      * first via the matrix). Detail HTML and its source are untouched (the two origins are independent).

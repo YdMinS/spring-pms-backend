@@ -51,6 +51,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -146,41 +147,52 @@ class MasterProductServiceTest {
     }
 
     @Test
-    void getMatrix_exposesRegistrationNameOverrideAndAutoBase() {
-        // 65: an overridden cell shows its override (overridden=true); a non-overridden cell shows the shared
-        // auto-generated base (overridden=false). The generator is called ONCE outside the loop (not per cell).
+    void getMatrix_registrationNameIsGeneratedPerChannelFromActiveOptions() {
+        // 67: the registration name differs per channel — listing A has 1 active option (single form), listing B
+        // has 2 (옵션확인 form). The master options are loaded exactly ONCE (not per cell → N+1 guard).
         Seller seller1 = seller(1L, "판매자1");
         Seller seller2 = seller(2L, "판매자2");
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
 
-        MarketplaceAccount acc1 = account(10L, seller1, "COUPANG", "메인");   // has override
-        MarketplaceAccount acc2 = account(12L, seller2, "COUPANG", "서브");   // no override → auto base
+        MarketplaceAccount acc1 = account(10L, seller1, "COUPANG", "메인");   // listing A: 1 active option
+        MarketplaceAccount acc2 = account(12L, seller2, "COUPANG", "서브");   // listing B: 2 active options
 
-        ProductListing overridden = ProductListing.builder()
-                .id(100L).seller(seller1).platform("COUPANG").platformProductId("X").name("리스팅1")
-                .registrationNameOverride("손수 지은 이름").build();
-        ProductListing auto = ProductListing.builder()
+        ProductListing listingA = ProductListing.builder()
+                .id(100L).seller(seller1).platform("COUPANG").platformProductId("X").name("리스팅1").build();
+        ProductListing listingB = ProductListing.builder()
                 .id(101L).seller(seller2).platform("COUPANG").platformProductId("Y").name("리스팅2").build();
 
+        ProductListingOption a1 = ProductListingOption.builder().id(1L).productListing(listingA)
+                .optionName("1세트").sellingPrice(new BigDecimal("6000")).active(true).build();
+        ProductListingOption b1 = ProductListingOption.builder().id(2L).productListing(listingB)
+                .optionName("1세트").sellingPrice(new BigDecimal("6000")).active(true).build();
+        ProductListingOption b2 = ProductListingOption.builder().id(3L).productListing(listingB)
+                .optionName("2세트").sellingPrice(new BigDecimal("12000")).active(true).build();
+
+        List<MasterProductOption> masterOptions = List.of(
+                MasterProductOption.builder().id(5L).name("1세트").build(),
+                MasterProductOption.builder().id(6L).name("2세트").build());
+
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(masterOptions);
         given(marketplaceAccountRepository.findAll()).willReturn(List.of(acc1, acc2));
-        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(overridden, auto));
-        given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of());
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(listingA, listingB));
+        given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of(a1, b1, b2));
         given(sellerRepository.findAllById(any())).willReturn(List.of(seller1, seller2));
-        given(registrationNameGenerator.generate(master)).willReturn("노브랜드 생수 x 6");
+        // Generator is driven by each listing's active option-name set (A={1세트}, B={1세트,2세트}).
+        given(registrationNameGenerator.generate(eq(master), eq(java.util.Set.of("1세트")), any()))
+                .willReturn("노브랜드 생수 x 6");
+        given(registrationNameGenerator.generate(eq(master), eq(java.util.Set.of("1세트", "2세트")), any()))
+                .willReturn("노브랜드 생수, 다우니 섬유유연제 - 옵션확인");
 
         ListingMatrixResponse matrix = service.getMatrix(1L);
 
-        ListingMatrixResponse.MatrixCell cell1 = matrix.getRows().get(0).getCell();
-        assertThat(cell1.getRegistrationName()).isEqualTo("손수 지은 이름");
-        assertThat(cell1.isRegistrationNameOverridden()).isTrue();
+        assertThat(matrix.getRows().get(0).getCell().getRegistrationName()).isEqualTo("노브랜드 생수 x 6");
+        assertThat(matrix.getRows().get(1).getCell().getRegistrationName())
+                .isEqualTo("노브랜드 생수, 다우니 섬유유연제 - 옵션확인");
 
-        ListingMatrixResponse.MatrixCell cell2 = matrix.getRows().get(1).getCell();
-        assertThat(cell2.getRegistrationName()).isEqualTo("노브랜드 생수 x 6");   // shared auto base
-        assertThat(cell2.isRegistrationNameOverridden()).isFalse();
-
-        // Base computed once, not per cell (no N+1).
-        verify(registrationNameGenerator, times(1)).generate(master);
+        // Master options loaded once (N+1 guard) — the generator re-reads no options from the repo.
+        verify(optionRepository, times(1)).findByMasterProductId(1L);
     }
 
     @Test

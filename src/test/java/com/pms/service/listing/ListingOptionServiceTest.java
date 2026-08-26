@@ -1,11 +1,15 @@
 package com.pms.service.listing;
 
 import com.pms.domain.ListingStatus;
+import com.pms.domain.MasterProduct;
+import com.pms.domain.MasterProductOption;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.dto.response.ListingOptionsResponse;
+import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
+import com.pms.service.RegistrationNameGenerator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -22,6 +26,7 @@ import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.never;
@@ -36,6 +41,8 @@ class ListingOptionServiceTest {
 
     @Mock private ProductListingRepository productListingRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
+    @Mock private MasterProductOptionRepository masterProductOptionRepository;
+    @Mock private RegistrationNameGenerator registrationNameGenerator;
     @InjectMocks private ListingOptionServiceImpl service;
 
     private static final Long LISTING_ID = 100L;
@@ -105,5 +112,28 @@ class ListingOptionServiceTest {
 
         verify(productListingOptionRepository).saveAll(any());
         assertThat(response.isNeedsResync()).isTrue();
+    }
+
+    // (e) 67: the response carries the auto-generated registration name for the current active set — reducing
+    // 2 → 1 active option yields the single-option name (front patches the matrix cell in place, no extra call).
+    @Test
+    void setActiveOptions_carriesPerChannelRegistrationNameForActiveSet() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터").build();
+        ProductListing listing = ProductListing.builder().id(LISTING_ID).platform("COUPANG").name("셀")
+                .status(ListingStatus.DRAFT).masterProduct(master).build();
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(listing));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(option(1L, true), option(2L, true)));
+        List<MasterProductOption> masterOptions = List.of(
+                MasterProductOption.builder().id(5L).name("opt1").build(),
+                MasterProductOption.builder().id(6L).name("opt2").build());
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(masterOptions);
+        // Only opt1 stays active → generator receives ["opt1"] → single-option name.
+        given(registrationNameGenerator.generate(eq(master), eq(List.of("opt1")), any()))
+                .willReturn("노브랜드 생수 x 6");
+
+        ListingOptionsResponse response = service.setActiveOptions(LISTING_ID, List.of(1L));
+
+        assertThat(response.getRegistrationName()).isEqualTo("노브랜드 생수 x 6");
     }
 }

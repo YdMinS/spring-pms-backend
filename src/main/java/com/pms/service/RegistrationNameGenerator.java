@@ -12,6 +12,7 @@ import com.pms.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -45,7 +46,10 @@ public class RegistrationNameGenerator {
     private final MasterProductComponentRepository componentRepository;
     private final ProductRepository productRepository;
 
-    /** Build the registration name for the given master (see class doc for the rule). */
+    /**
+     * Build the master-level registration name (34 {@code MasterProductResponse.registrationName}) — branches
+     * on the master's <b>full</b> option count (see class doc for the rule).
+     */
     public String generate(MasterProduct master) {
         List<MasterProductOption> options = optionRepository.findByMasterProductId(master.getId());
         if (options.size() >= 2) {
@@ -55,6 +59,33 @@ public class RegistrationNameGenerator {
             return singleOptionName(options.get(0));
         }
         return master.getName();
+    }
+
+    /**
+     * Build the per-channel (listing) registration name (67) — branches on the number of <b>active</b> options
+     * of that listing, so the same master yields a different name per channel when option selections differ.
+     *
+     * <p>⚠️ No repository read here (a matrix loop would N+1): the caller injects {@code masterOptions} (the
+     * master options it already batch-loaded). Because every option covers the whole component set (domain
+     * invariant, 3b-1), the "≥2" listing = the master's component listing unchanged (no union needed).</p>
+     *
+     * @param master            the listing's master (non-null; callers guard master==null before calling)
+     * @param activeOptionNames the active {@code ProductListingOption.optionName}s of this listing
+     * @param masterOptions     the master's options, pre-loaded by the caller (matching key = option name)
+     */
+    public String generate(MasterProduct master, Collection<String> activeOptionNames,
+                           List<MasterProductOption> masterOptions) {
+        int n = activeOptionNames.size();
+        if (n >= 2) {
+            return multiOptionName(master);          // each option covers all components → master listing is exact
+        }
+        if (n == 1) {
+            String only = activeOptionNames.iterator().next();
+            MasterProductOption opt = masterOptions.stream()
+                    .filter(o -> only.equals(o.getName())).findFirst().orElse(null);
+            return opt != null ? singleOptionName(opt) : master.getName();   // defensive: name-match miss
+        }
+        return master.getName();   // defensive: 0 active options
     }
 
     /** options ≥ 2 → all master components as "{brand?} {name}" joined by ", " + " - 옵션확인". */

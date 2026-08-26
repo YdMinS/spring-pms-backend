@@ -40,8 +40,6 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
 
 /**
  * Coupang adapter (FEATURE_2608_06 / 3c): register returns the parsed sellerProductId; fetchStatus maps the
@@ -102,16 +100,21 @@ class CoupangListingAdapterTest {
     }
 
     @Test
-    void register_usesGeneratedRegistrationNameForSellerProductName() {
+    void register_usesPerChannelGeneratedRegistrationNameForSellerProductName() {
+        // 67: sellerProductName is always the auto-generated per-channel name (active options → generator).
         MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨").build();
         ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
                 .platformProductId("123456789").masterProduct(master).build();
-        lenient().when(productListingOptionRepository.findByProductListingId(100L)).thenReturn(List.of());
-        lenient().when(masterProductOptionRepository.findByMasterProductId(1L)).thenReturn(List.of());
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("1세트")
+                        .sellingPrice(new BigDecimal("6000")).active(true).build()));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
         given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
-        given(registrationNameGenerator.generate(master)).willReturn("노브랜드 생수 x 6");
+        // Generator receives the cell's active option names ("1세트") + the master options.
+        given(registrationNameGenerator.generate(eq(master), eq(List.of("1세트")), any()))
+                .willReturn("노브랜드 생수 x 6");
 
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
@@ -119,28 +122,6 @@ class CoupangListingAdapterTest {
         adapter.register(cell, gen, acct());
 
         assertThat(payload.getValue()).contains("\"sellerProductName\":\"노브랜드 생수 x 6\"");
-    }
-
-    @Test
-    void register_registrationNameOverride_winsOverGeneratedName() {
-        // 65: a non-blank per-channel override is used verbatim (trimmed) — the generator is never called.
-        MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨").build();
-        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
-                .platformProductId("123456789").masterProduct(master)
-                .registrationNameOverride("  손수 지은 등록상품명  ").build();
-        lenient().when(productListingOptionRepository.findByProductListingId(100L)).thenReturn(List.of());
-        lenient().when(masterProductOptionRepository.findByMasterProductId(1L)).thenReturn(List.of());
-        GeneratedProductData gen = GeneratedProductData.builder()
-                .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
-
-        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
-        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
-
-        adapter.register(cell, gen, acct());
-
-        assertThat(payload.getValue()).contains("\"sellerProductName\":\"손수 지은 등록상품명\"");
-        verify(registrationNameGenerator, never()).generate(any());
     }
 
     // 47/59: attributes + notices are assembled PER item (vendorItem) = merge(master, option). Option A
@@ -167,7 +148,6 @@ class CoupangListingAdapterTest {
         // 61: the notice group (noticeCategoryName) is derived from the category meta for this code.
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(), List.of(new CategoryNotice("제품소재", "제품소재", true, "의류"))));
-        given(registrationNameGenerator.generate(master)).willReturn("원산지 상품");
 
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
@@ -202,7 +182,6 @@ class CoupangListingAdapterTest {
         // Meta only knows "제품소재" → "미매핑detail" has no group → skipped.
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(), List.of(new CategoryNotice("제품소재", "제품소재", true, "의류"))));
-        given(registrationNameGenerator.generate(master)).willReturn("상품");
 
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
@@ -250,7 +229,6 @@ class CoupangListingAdapterTest {
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
         given(masterProductService.isBundle(1L)).willReturn(false);   // 1 component → SINGLE
         given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
-        given(registrationNameGenerator.generate(master)).willReturn("6개입");
         GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
@@ -278,7 +256,6 @@ class CoupangListingAdapterTest {
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
         given(masterProductService.isBundle(1L)).willReturn(true);   // 2+ components → AB
         given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
-        given(registrationNameGenerator.generate(master)).willReturn("혼합");
         // 61: notices need a noticeCategoryName group mapping to survive the payload — stub it so the AB notice
         // is emitted (attributes are forbidden for AB, but notices are not).
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(

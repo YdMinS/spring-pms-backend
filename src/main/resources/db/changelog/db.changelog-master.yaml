@@ -69,3 +69,5 @@ databaseChangeLog:
       file: db/changelog/changes/034-option-category-meta.yaml
   - include:
       file: db/changelog/changes/035-listing-registration-name-override.yaml
+  - include:
+      file: db/changelog/changes/036-drop-registration-name-override.yaml

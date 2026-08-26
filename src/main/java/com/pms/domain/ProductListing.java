@@ -196,18 +196,4 @@ public class ProductListing {
     @Column(columnDefinition = "TEXT")
     @Schema(description = "Per-channel raw tags")
     private List<String> tags;
-
-    /**
-     * Per-channel manual override for the registration name (쿠팡 {@code sellerProductName}, 65). When
-     * non-blank it wins over the rule-generated name ({@code RegistrationNameGenerator}, 32); when
-     * {@code null} the auto-generated name is used (so a master composition change is reflected on every
-     * channel that has not been overridden).
-     *
-     * <p>⚠️ {@code null} = "no override" (NOT a {@code @Builder.Default} empty string): the legacy CRUD/
-     * create path and pre-existing rows leave it unset (nullable, no live backfill). Cleared back to
-     * {@code null} = auto-generated fallback. See changeset 035.</p>
-     */
-    @Column(name = "registration_name_override", length = 255, nullable = true)
-    @Schema(description = "Per-channel registration-name override (null = auto-generated)")
-    private String registrationNameOverride;
 }
