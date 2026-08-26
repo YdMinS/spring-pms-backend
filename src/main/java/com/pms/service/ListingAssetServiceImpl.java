@@ -412,6 +412,7 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                 .findByProductListingId(cell.getId()).stream()
                 .map(o -> GeneratedProductResponse.OptionPrice.builder()
                         .optionId(o.getId())
+                        .optionName(o.getOptionName())
                         .sellingPrice(o.getSellingPrice())
                         .active(o.getActive())
                         .build())
