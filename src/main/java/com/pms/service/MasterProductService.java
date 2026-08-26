@@ -25,6 +25,17 @@ public interface MasterProductService {
 
     MasterProductResponse getMasterProduct(Long id);
 
+    /**
+     * Whether the master is a mixed-composition (AB) product (FEATURE_2608_06 / 63). Determined by the master's
+     * component count: {@code >= 2} components → AB (bundle), {@code 1} → SINGLE, {@code masterId == null} →
+     * SINGLE (backfill transition window). Platform-neutral domain fact (component count) — channel adapters
+     * reuse it (Coupang skips attributes for AB; NAVER may reuse the judgment too).
+     *
+     * @param masterId the master product id (nullable → false)
+     * @return true if AB (2+ components), false otherwise
+     */
+    boolean isBundle(Long masterId);
+
     ListingMatrixResponse getMatrix(Long id);
 
     MasterProductResponse createMasterProduct(MasterProductRequest request);

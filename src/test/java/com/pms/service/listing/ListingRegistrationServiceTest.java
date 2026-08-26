@@ -12,26 +12,18 @@ import com.pms.dto.response.ListingSyncResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.domain.MasterProduct;
-import com.pms.domain.MasterProductOption;
-import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
-import com.pms.service.MasterChannelConfigService;
-import com.pms.service.listing.category.CategoryAttribute;
-import com.pms.service.listing.category.CategoryMetaAdapter;
-import com.pms.service.listing.category.CategoryMetaResolver;
-import com.pms.service.listing.category.CategoryMetaSchema;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,6 +32,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -53,15 +47,11 @@ class ListingRegistrationServiceTest {
 
     @Mock private ProductListingRepository productListingRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
-    @Mock private MasterProductOptionRepository masterProductOptionRepository;
     @Mock private GeneratedProductDataRepository generatedProductDataRepository;
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock private ListingChannelResolver resolver;
     @Mock private ListingChannel adapter;
     @Mock private TagMergeService tagMergeService;
-    @Mock private MasterChannelConfigService masterChannelConfigService;
-    @Mock private CategoryMetaResolver categoryMetaResolver;
-    @Mock private CategoryMetaAdapter categoryMetaAdapter;
     @InjectMocks private ListingRegistrationServiceImpl service;
 
     private static final Long CELL_ID = 100L;
@@ -88,14 +78,6 @@ class ListingRegistrationServiceTest {
         given(resolver.resolve("COUPANG")).willReturn(adapter);
     }
 
-    /** Stub the 47 category-meta lookup (orchestration pre-validation) to return the given schema. */
-    private void stubCategoryMeta(CategoryMetaSchema schema) {
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any(ProductListing.class)))
-                .willReturn("1001");
-        given(categoryMetaResolver.resolve("COUPANG")).willReturn(categoryMetaAdapter);
-        given(categoryMetaAdapter.getMeta(any(), any())).willReturn(schema);
-    }
-
     // (a) register happy: DRAFT + gen → SUBMITTED + platformProductId; options untouched.
     @Test
     void register_draftWithGen_promotesToSubmitted_optionsUnchanged() {
@@ -105,7 +87,6 @@ class ListingRegistrationServiceTest {
         stubAccountAndAdapter();
         // 42 register guard reads the options to confirm at least one is active (option() defaults active=true).
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
-        stubCategoryMeta(new CategoryMetaSchema(List.of(), List.of()));   // 47: empty schema → validation skips
         given(adapter.register(any(), any(), any())).willReturn("SP-999");
 
         ListingRegisterResponse response = service.register(CELL_ID);
@@ -164,74 +145,36 @@ class ListingRegistrationServiceTest {
         assertThatThrownBy(() -> service.register(CELL_ID)).isInstanceOf(ResourceNotFoundException.class);
     }
 
-    // 47: a required category attribute with no master value blocks the push (400, adapter never called).
+    // 63: the orchestration delegates the registration policy to the adapter — validateRegistrable runs before
+    // register (channel-vocabulary-free). The Coupang required-attribute / AB-skip details live in the adapter.
     @Test
-    void register_missingRequiredCategoryAttribute_throwsAndAdapterNotCalled() {
+    void register_delegatesValidateRegistrableBeforeRegister() {
         given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell(ListingStatus.DRAFT, null)));
         given(generatedProductDataRepository.findByProductListingId(CELL_ID))
                 .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
         stubAccountAndAdapter();
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
-        // Schema requires 원산지, but the cell's master carries no value → block (cell() has no master).
-        stubCategoryMeta(new CategoryMetaSchema(
-                List.of(new CategoryAttribute("원산지", true, "TEXT", List.of())), List.of()));
+        given(adapter.register(any(), any(), any())).willReturn("SP-1");
 
-        assertThatThrownBy(() -> service.register(CELL_ID))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("필수 카테고리 속성 누락: 기본 / 원산지");
-        verify(adapter, never()).register(any(), any(), any());
+        service.register(CELL_ID);
+
+        InOrder inOrder = inOrder(adapter);
+        inOrder.verify(adapter).validateRegistrable(any(), any(), any());
+        inOrder.verify(adapter).register(any(), any(), any());
     }
 
-    // 47/59: a required attribute satisfied by the master value (no per-option override) → the push proceeds.
+    // 63: validateRegistrable throwing (e.g. missing required attribute) blocks register (never reached).
     @Test
-    void register_requiredCategoryAttributeSatisfiedByMaster_registers() {
-        MasterProduct master = MasterProduct.builder().id(1L)
-                .categoryAttributes(Map.of("원산지", "국내산")).build();
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀")
-                .seller(Seller.builder().id(SELLER_ID).build())
-                .status(ListingStatus.DRAFT).masterProduct(master).build();
-        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
+    void register_validateRegistrableThrows_registerNotCalled() {
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell(ListingStatus.DRAFT, null)));
         given(generatedProductDataRepository.findByProductListingId(CELL_ID))
                 .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
         stubAccountAndAdapter();
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
-        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
-        stubCategoryMeta(new CategoryMetaSchema(
-                List.of(new CategoryAttribute("원산지", true, "TEXT", List.of())), List.of()));
-        given(adapter.register(any(), any(), any())).willReturn("SP-777");
+        willThrow(new IllegalArgumentException("필수 카테고리 속성 누락"))
+                .given(adapter).validateRegistrable(any(), any(), any());
 
-        ListingRegisterResponse response = service.register(CELL_ID);
-
-        assertThat(response.getPlatformProductId()).isEqualTo("SP-777");
-        verify(adapter).register(any(), any(), any());
-    }
-
-    // 59: option A override satisfies the required attribute, but active option B leaves it blank → 400 naming B.
-    @Test
-    void register_optionMissingRequiredCategoryAttribute_throwsNamingThatOption() {
-        MasterProduct master = MasterProduct.builder().id(1L).build();   // master carries no value
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀")
-                .seller(Seller.builder().id(SELLER_ID).build())
-                .status(ListingStatus.DRAFT).masterProduct(master).build();
-        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
-        given(generatedProductDataRepository.findByProductListingId(CELL_ID))
-                .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
-        stubAccountAndAdapter();
-        ProductListingOption a = ProductListingOption.builder().id(1L).optionName("A")
-                .sellingPrice(new BigDecimal("6000")).active(true).build();
-        ProductListingOption b = ProductListingOption.builder().id(2L).optionName("B")
-                .sellingPrice(new BigDecimal("6000")).active(true).build();
-        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(a, b));
-        // A overrides 원산지; B has no override and master is blank → B fails validation.
-        MasterProductOption moA = MasterProductOption.builder().name("A")
-                .categoryAttributes(Map.of("원산지", "수입산")).build();
-        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of(moA));
-        stubCategoryMeta(new CategoryMetaSchema(
-                List.of(new CategoryAttribute("원산지", true, "TEXT", List.of())), List.of()));
-
-        assertThatThrownBy(() -> service.register(CELL_ID))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("필수 카테고리 속성 누락: B / 원산지");
+        assertThatThrownBy(() -> service.register(CELL_ID)).isInstanceOf(IllegalArgumentException.class);
         verify(adapter, never()).register(any(), any(), any());
     }
 
