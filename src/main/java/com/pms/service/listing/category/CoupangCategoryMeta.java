@@ -89,12 +89,15 @@ public class CoupangCategoryMeta implements CategoryMetaAdapter {
     }
 
     private List<CategoryNotice> parseNotices(JsonNode data) {
+        // Multiple noticeCategories are possible (a category may cover several 품목); flatten every detail into
+        // one list but keep each one's parent noticeCategoryName as groupName (61 — the front groups by it).
         List<CategoryNotice> notices = new ArrayList<>();
         for (JsonNode noticeCategory : data.path("noticeCategories")) {
+            String group = noticeCategory.path("noticeCategoryName").asText(null);
             for (JsonNode detail : noticeCategory.path("noticeCategoryDetailNames")) {
                 String key = detail.path("noticeCategoryDetailName").asText(null);
                 notices.add(new CategoryNotice(
-                        key, key, "MANDATORY".equals(detail.path("required").asText(""))));
+                        key, key, "MANDATORY".equals(detail.path("required").asText("")), group));
             }
         }
         return notices;

@@ -69,7 +69,7 @@ class CategoryMetaServiceTest {
         given(metaResolver.resolve("COUPANG")).willReturn(metaAdapter);
         given(metaAdapter.getMeta(any(), eq("1001"))).willReturn(new CategoryMetaSchema(
                 List.of(new CategoryAttribute("원산지", true, "TEXT", List.of())),
-                List.of(new CategoryNotice("제품소재", "제품소재", true))));
+                List.of(new CategoryNotice("제품소재", "제품소재", true, "의류"))));
 
         CategoryMetaResponse response = service.getMeta(MASTER_ID, "COUPANG");
 
@@ -124,7 +124,7 @@ class CategoryMetaServiceTest {
         given(metaResolver.resolve("COUPANG")).willReturn(metaAdapter);
         CategoryMetaSchema schema = new CategoryMetaSchema(
                 List.of(new CategoryAttribute("원산지", true, "TEXT", List.of())),
-                List.of(new CategoryNotice("제품소재", "제품소재", true)));
+                List.of(new CategoryNotice("제품소재", "제품소재", true, "의류")));
         given(metaAdapter.getMeta(any(), eq("1001"))).willReturn(schema);
 
         assertThat(service.getSchema(CATEGORY_ID, "COUPANG")).isSameAs(schema);
