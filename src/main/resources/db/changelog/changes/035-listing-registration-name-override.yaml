@@ -1,0 +1,17 @@
+# Per-channel registration-name override (FEATURE_2608_06 / 65): a nullable VARCHAR(255) column on
+# product_listing holding this cell's manual sellerProductName override. When non-blank it wins over the
+# rule-generated name (RegistrationNameGenerator, 32); null = auto-generated fallback. Nullable, no
+# backfill (null = no override). No boolean column (VARCHAR → BIT trap does not apply).
+databaseChangeLog:
+
+  - changeSet:
+      id: 035-listing-registration-name-override
+      author: oclyx
+      comment: "65: product_listing.registration_name_override (VARCHAR(255), nullable) — per-channel override."
+      changes:
+        - addColumn:
+            tableName: product_listing
+            columns:
+              - column:
+                  name: registration_name_override
+                  type: VARCHAR(255)

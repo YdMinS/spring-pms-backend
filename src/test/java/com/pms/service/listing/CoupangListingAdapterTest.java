@@ -40,6 +40,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 /**
  * Coupang adapter (FEATURE_2608_06 / 3c): register returns the parsed sellerProductId; fetchStatus maps the
@@ -117,6 +119,28 @@ class CoupangListingAdapterTest {
         adapter.register(cell, gen, acct());
 
         assertThat(payload.getValue()).contains("\"sellerProductName\":\"노브랜드 생수 x 6\"");
+    }
+
+    @Test
+    void register_registrationNameOverride_winsOverGeneratedName() {
+        // 65: a non-blank per-channel override is used verbatim (trimmed) — the generator is never called.
+        MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨").build();
+        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+                .platformProductId("123456789").masterProduct(master)
+                .registrationNameOverride("  손수 지은 등록상품명  ").build();
+        lenient().when(productListingOptionRepository.findByProductListingId(100L)).thenReturn(List.of());
+        lenient().when(masterProductOptionRepository.findByMasterProductId(1L)).thenReturn(List.of());
+        GeneratedProductData gen = GeneratedProductData.builder()
+                .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell, gen, acct());
+
+        assertThat(payload.getValue()).contains("\"sellerProductName\":\"손수 지은 등록상품명\"");
+        verify(registrationNameGenerator, never()).generate(any());
     }
 
     // 47/59: attributes + notices are assembled PER item (vendorItem) = merge(master, option). Option A

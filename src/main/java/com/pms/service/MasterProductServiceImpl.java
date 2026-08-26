@@ -140,6 +140,11 @@ public class MasterProductServiceImpl implements MasterProductService {
     public ListingMatrixResponse getMatrix(Long id) {
         MasterProduct master = requireScopedMaster(id);
 
+        // Auto-generated registration name (65): computed ONCE outside the loop (single master → not N+1).
+        // master is non-null here (requireScopedMaster), so no null-fallback branch is needed. Each cell then
+        // shows its override when set, else this shared base.
+        String autoName = registrationNameGenerator.generate(master);
+
         // Right side: listings under this master (1 query), then their options batched (1 query).
         List<ProductListing> listings = productListingRepository.findByMasterProductId(id);
         List<Long> listingIds = listings.stream().map(ProductListing::getId).toList();
@@ -169,12 +174,20 @@ public class MasterProductServiceImpl implements MasterProductService {
         List<MatrixRow> rows = accounts.stream().map(acc -> {
             Long sellerId = acc.getSeller().getId();
             ProductListing pl = listingByKey.get(matchKey(sellerId, acc.getPlatform()));
-            MatrixCell cell = pl == null ? null : MatrixCell.builder()
-                    .productListingId(pl.getId())
-                    .name(pl.getName())
-                    .platformProductId(pl.getPlatformProductId())
-                    .sellingPrice(priceByListing.get(pl.getId()))
-                    .build();
+            MatrixCell cell = null;
+            if (pl != null) {
+                // 65: effective registration name = override (non-blank) else the shared auto-generated base.
+                String ov = pl.getRegistrationNameOverride();
+                boolean overridden = ov != null && !ov.isBlank();
+                cell = MatrixCell.builder()
+                        .productListingId(pl.getId())
+                        .name(pl.getName())
+                        .platformProductId(pl.getPlatformProductId())
+                        .sellingPrice(priceByListing.get(pl.getId()))
+                        .registrationName(overridden ? ov : autoName)
+                        .registrationNameOverridden(overridden)
+                        .build();
+            }
             return MatrixRow.builder()
                     .sellerId(sellerId)
                     .sellerName(sellerNames.get(sellerId))
