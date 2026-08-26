@@ -14,6 +14,8 @@ import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.MasterChannelConfigService;
 import com.pms.service.RegistrationNameGenerator;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.listing.category.CategoryNotice;
+import com.pms.service.listing.category.CoupangCategoryMeta;
 import com.pms.service.listing.category.OptionCategoryMeta;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -48,6 +50,10 @@ public class CoupangListingAdapter implements ListingChannel {
     private final ObjectMapper objectMapper;
     private final ProductListingOptionRepository productListingOptionRepository;
     private final MasterProductOptionRepository masterProductOptionRepository;
+    // Concrete (not the CategoryMetaAdapter interface) so a future NAVER impl doesn't make the bean ambiguous;
+    // used only to derive the notice detail→group map for the payload (61). No cyclic dependency: the meta
+    // adapter depends on the client + ObjectMapper only.
+    private final CoupangCategoryMeta metaAdapter;
     private final MasterChannelConfigService masterChannelConfigService;
     private final TagMergeService tagMergeService;
     private final RegistrationNameGenerator registrationNameGenerator;
@@ -108,9 +114,10 @@ public class CoupangListingAdapter implements ListingChannel {
                                              MarketplaceAccount acct) {
         Map<String, Object> payload = new LinkedHashMap<>();
         // Category code = the master's standard category × platform, resolved from CategoryMapping (44). The
-        // channel-add cell's own category column is null. Missing mapping (400) is validated before registration.
-        payload.put("displayCategoryCode",
-                masterChannelConfigService.resolvePlatformCategoryCode(cell));
+        // channel-add cell's own category column is null. The resolver THROWS 400 on a missing mapping (never
+        // returns null), so by this point the code is always non-null and reused below for the notice groups.
+        String categoryCode = masterChannelConfigService.resolvePlatformCategoryCode(cell);
+        payload.put("displayCategoryCode", categoryCode);
         // Registration name = rule-generated from the master's components/options (not the free-text
         // master label). master null fallback = cell.getName() (backfill transition window).
         payload.put("sellerProductName",
@@ -137,6 +144,12 @@ public class CoupangListingAdapter implements ListingChannel {
                         .collect(Collectors.toMap(MasterProductOption::getName, Function.identity(), (a, b) -> a));
         Map<String, String> masterAttributes = master != null ? master.getCategoryAttributes() : null;
         Map<String, String> masterNotices = master != null ? master.getCategoryNotices() : null;
+        // Notice detail(noticeCategoryDetailName) → group(noticeCategoryName) for this category (61). Coupang
+        // requires noticeCategoryName on every notice item; the stored values map is pure detail→value, so the
+        // group is derived here from the category meta (one extra getMeta per register — accepted, §60).
+        Map<String, String> groupByDetail = metaAdapter.getMeta(acct, categoryCode).notices().stream()
+                .filter(n -> n.groupName() != null)
+                .collect(Collectors.toMap(CategoryNotice::key, CategoryNotice::groupName, (a, b) -> a));
 
         // items[] (max 200): one per ACTIVE listing option (42 — per-channel subset; inactive options are
         // excluded from the payload but keep their row). New options carry no vendorItemId yet. attributes/
@@ -159,7 +172,10 @@ public class CoupangListingAdapter implements ListingChannel {
             Map<String, String> notices = OptionCategoryMeta.merge(
                     masterNotices, mo != null ? mo.getCategoryNotices() : null);
             if (!notices.isEmpty()) {
-                item.put("notices", toNotices(notices));
+                List<Map<String, Object>> noticeItems = toNotices(notices, groupByDetail);
+                if (!noticeItems.isEmpty()) {
+                    item.put("notices", noticeItems);
+                }
             }
             items.add(item);
         }
@@ -184,11 +200,23 @@ public class CoupangListingAdapter implements ListingChannel {
         return attributes;
     }
 
-    /** Merged product-info-disclosure map → Coupang vendorItem {@code notices[]} shape (47/59). */
-    private static List<Map<String, Object>> toNotices(Map<String, String> values) {
+    /**
+     * Merged product-info-disclosure map → Coupang vendorItem {@code notices[]} shape (47/59/61). Each item
+     * carries the required {@code noticeCategoryName}, derived from {@code groupByDetail}. A detail with no
+     * group mapping (unknown/legacy key) is skipped (warn) to avoid pushing an incomplete notice.
+     */
+    private static List<Map<String, Object>> toNotices(Map<String, String> values,
+                                                       Map<String, String> groupByDetail) {
         List<Map<String, Object>> notices = new ArrayList<>();
         for (Map.Entry<String, String> entry : values.entrySet()) {
+            String group = groupByDetail.get(entry.getKey());
+            if (group == null) {
+                log.warn("[COUPANG-ADAPTER] notice detail '{}' has no noticeCategoryName group — skipped",
+                        entry.getKey());
+                continue;
+            }
             Map<String, Object> notice = new LinkedHashMap<>();
+            notice.put("noticeCategoryName", group);
             notice.put("noticeCategoryDetailName", entry.getKey());
             notice.put("content", entry.getValue());
             notices.add(notice);

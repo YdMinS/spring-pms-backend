@@ -13,6 +13,10 @@ import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.MasterChannelConfigService;
 import com.pms.service.RegistrationNameGenerator;
+import com.pms.service.listing.category.CategoryMetaSchema;
+import com.pms.service.listing.category.CategoryNotice;
+import com.pms.service.listing.category.CoupangCategoryMeta;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -44,11 +48,20 @@ class CoupangListingAdapterTest {
     @Mock private com.pms.service.coupang.CoupangApiClient client;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private MasterProductOptionRepository masterProductOptionRepository;
+    @Mock private CoupangCategoryMeta metaAdapter;
     @Mock private MasterChannelConfigService masterChannelConfigService;
     @Mock private TagMergeService tagMergeService;
     @Mock private RegistrationNameGenerator registrationNameGenerator;
     @org.mockito.Spy private ObjectMapper objectMapper = new ObjectMapper();
     @InjectMocks private CoupangListingAdapter adapter;
+
+    @BeforeEach
+    void metaDefault() {
+        // buildPayload derives the notice group map from getMeta unconditionally (61); default = empty schema so
+        // register tests without notices don't NPE. The notice test overrides this with a "cat-1" group.
+        lenient().when(metaAdapter.getMeta(any(), anyString()))
+                .thenReturn(new CategoryMetaSchema(List.of(), List.of()));
+    }
 
     private ProductListing cell() {
         return ProductListing.builder().id(100L).platform("COUPANG").name("셀")
@@ -122,6 +135,9 @@ class CoupangListingAdapterTest {
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
         given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        // 61: the notice group (noticeCategoryName) is derived from the category meta for this code.
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
+                List.of(), List.of(new CategoryNotice("제품소재", "제품소재", true, "의류"))));
         given(registrationNameGenerator.generate(master)).willReturn("원산지 상품");
 
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
@@ -135,7 +151,37 @@ class CoupangListingAdapterTest {
         JsonNode itemB = json.path("items").get(1);
         assertThat(itemA.path("attributes").get(0).path("attributeValueName").asText()).isEqualTo("수입산");
         assertThat(itemA.path("notices").get(0).path("content").asText()).isEqualTo("면 100%");
+        // 61: every notice item carries the required noticeCategoryName group.
+        assertThat(itemA.path("notices").get(0).path("noticeCategoryName").asText()).isEqualTo("의류");
         assertThat(itemB.path("attributes").get(0).path("attributeValueName").asText()).isEqualTo("국내산");
+    }
+
+    // 61: a notice detail with no group mapping (unknown/legacy key) is skipped — the item carries no notices.
+    @Test
+    void register_noticeWithoutGroupMapping_isSkipped() throws Exception {
+        MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨")
+                .categoryNotices(Map.of("미매핑detail", "x")).build();
+        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+                .platformProductId("123456789").masterProduct(master).build();
+        ProductListingOption optA = ProductListingOption.builder().id(1L).optionName("A")
+                .sellingPrice(new BigDecimal("6000")).active(true).build();
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(optA));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        GeneratedProductData gen = GeneratedProductData.builder()
+                .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        // Meta only knows "제품소재" → "미매핑detail" has no group → skipped.
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
+                List.of(), List.of(new CategoryNotice("제품소재", "제품소재", true, "의류"))));
+        given(registrationNameGenerator.generate(master)).willReturn("상품");
+
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell, gen, acct());
+
+        JsonNode itemA = objectMapper.readTree(payload.getValue()).path("items").get(0);
+        assertThat(itemA.path("notices").isMissingNode()).isTrue();
     }
 
     // 42: register payload items[] = active options only (inactive excluded).

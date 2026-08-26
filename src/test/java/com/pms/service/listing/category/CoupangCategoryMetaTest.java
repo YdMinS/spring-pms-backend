@@ -47,9 +47,10 @@ class CoupangCategoryMetaTest {
                 .singleElement()
                 .extracting(CategoryAttribute::options).asList()
                 .containsExactly("S", "M", "L");
+        // 61: both details keep their parent noticeCategoryName ("의류") as groupName.
         assertThat(schema.notices())
-                .extracting(CategoryNotice::key, CategoryNotice::required)
-                .contains(tuple("제품소재", true), tuple("제조자", false));
+                .extracting(CategoryNotice::key, CategoryNotice::required, CategoryNotice::groupName)
+                .contains(tuple("제품소재", true, "의류"), tuple("제조자", false, "의류"));
     }
 
     @Test
