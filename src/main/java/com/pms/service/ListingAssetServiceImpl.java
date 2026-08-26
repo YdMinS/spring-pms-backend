@@ -164,6 +164,24 @@ public class ListingAssetServiceImpl implements ListingAssetService {
 
     @Override
     @Transactional
+    public void updateRegistrationName(Long listingId, String registrationName) {
+        ProductListing cell = requireScopedCell(listingId);
+        // Column-store only (65): registrationName is not a thumbnail/detail binding key, so no
+        // regenerateAssets. The override is sent to Coupang by the register/propagate path.
+        productListingRepository.save(
+                cell.toBuilder().registrationNameOverride(registrationName.trim()).build());
+    }
+
+    @Override
+    @Transactional
+    public void clearRegistrationName(Long listingId) {
+        ProductListing cell = requireScopedCell(listingId);
+        // Back to null = the auto-generated name (32) is used again.
+        productListingRepository.save(cell.toBuilder().registrationNameOverride(null).build());
+    }
+
+    @Override
+    @Transactional
     public GeneratedProductResponse clearDetailHtml(Long listingId) {
         ProductListing cell = requireScopedCell(listingId);
         GeneratedProductData existing = generatedProductDataRepository.findByProductListingId(listingId)

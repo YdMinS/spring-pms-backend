@@ -146,6 +146,44 @@ class MasterProductServiceTest {
     }
 
     @Test
+    void getMatrix_exposesRegistrationNameOverrideAndAutoBase() {
+        // 65: an overridden cell shows its override (overridden=true); a non-overridden cell shows the shared
+        // auto-generated base (overridden=false). The generator is called ONCE outside the loop (not per cell).
+        Seller seller1 = seller(1L, "판매자1");
+        Seller seller2 = seller(2L, "판매자2");
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
+
+        MarketplaceAccount acc1 = account(10L, seller1, "COUPANG", "메인");   // has override
+        MarketplaceAccount acc2 = account(12L, seller2, "COUPANG", "서브");   // no override → auto base
+
+        ProductListing overridden = ProductListing.builder()
+                .id(100L).seller(seller1).platform("COUPANG").platformProductId("X").name("리스팅1")
+                .registrationNameOverride("손수 지은 이름").build();
+        ProductListing auto = ProductListing.builder()
+                .id(101L).seller(seller2).platform("COUPANG").platformProductId("Y").name("리스팅2").build();
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(marketplaceAccountRepository.findAll()).willReturn(List.of(acc1, acc2));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(overridden, auto));
+        given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of());
+        given(sellerRepository.findAllById(any())).willReturn(List.of(seller1, seller2));
+        given(registrationNameGenerator.generate(master)).willReturn("노브랜드 생수 x 6");
+
+        ListingMatrixResponse matrix = service.getMatrix(1L);
+
+        ListingMatrixResponse.MatrixCell cell1 = matrix.getRows().get(0).getCell();
+        assertThat(cell1.getRegistrationName()).isEqualTo("손수 지은 이름");
+        assertThat(cell1.isRegistrationNameOverridden()).isTrue();
+
+        ListingMatrixResponse.MatrixCell cell2 = matrix.getRows().get(1).getCell();
+        assertThat(cell2.getRegistrationName()).isEqualTo("노브랜드 생수 x 6");   // shared auto base
+        assertThat(cell2.isRegistrationNameOverridden()).isFalse();
+
+        // Base computed once, not per cell (no N+1).
+        verify(registrationNameGenerator, times(1)).generate(master);
+    }
+
+    @Test
     void getMatrix_missingMaster_throws404() {
         given(masterProductRepository.findScopedById(99L)).willReturn(Optional.empty());
         assertThatThrownBy(() -> service.getMatrix(99L))

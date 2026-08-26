@@ -164,12 +164,15 @@ public class CoupangListingAdapter implements ListingChannel {
         // returns null), so by this point the code is always non-null and reused below for the notice groups.
         String categoryCode = masterChannelConfigService.resolvePlatformCategoryCode(cell);
         payload.put("displayCategoryCode", categoryCode);
-        // Registration name = rule-generated from the master's components/options (not the free-text
-        // master label). master null fallback = cell.getName() (backfill transition window).
+        // Registration name (65): a non-blank per-channel override wins; otherwise rule-generated from the
+        // master's components/options (32); master null fallback = cell.getName() (backfill transition window).
+        String override = cell.getRegistrationNameOverride();
         payload.put("sellerProductName",
-                cell.getMasterProduct() != null
-                        ? registrationNameGenerator.generate(cell.getMasterProduct())
-                        : cell.getName());
+                (override != null && !override.isBlank())
+                        ? override.trim()
+                        : (cell.getMasterProduct() != null
+                                ? registrationNameGenerator.generate(cell.getMasterProduct())
+                                : cell.getName()));
         payload.put("vendorId", acct.getVendorId());
         payload.put("contents", gen != null ? gen.getDetailHtml() : null);
 
