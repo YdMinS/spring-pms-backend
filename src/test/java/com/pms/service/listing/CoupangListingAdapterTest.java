@@ -12,7 +12,9 @@ import com.pms.domain.MasterProductOption;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.MasterChannelConfigService;
+import com.pms.service.MasterProductService;
 import com.pms.service.RegistrationNameGenerator;
+import com.pms.service.listing.category.CategoryAttribute;
 import com.pms.service.listing.category.CategoryMetaSchema;
 import com.pms.service.listing.category.CategoryNotice;
 import com.pms.service.listing.category.CoupangCategoryMeta;
@@ -31,6 +33,8 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -52,6 +56,7 @@ class CoupangListingAdapterTest {
     @Mock private MasterChannelConfigService masterChannelConfigService;
     @Mock private TagMergeService tagMergeService;
     @Mock private RegistrationNameGenerator registrationNameGenerator;
+    @Mock private MasterProductService masterProductService;
     @org.mockito.Spy private ObjectMapper objectMapper = new ObjectMapper();
     @InjectMocks private CoupangListingAdapter adapter;
 
@@ -206,6 +211,117 @@ class CoupangListingAdapterTest {
 
         assertThat(payload.getValue()).contains("\"itemName\":\"A\"").contains("\"itemName\":\"C\"");
         assertThat(payload.getValue()).doesNotContain("\"itemName\":\"B\"");
+    }
+
+    // 63: SINGLE (1 component) → bundleType=SINGLE, item carries attributes + unitCount=1.
+    @Test
+    void register_single_payloadHasSingleWithAttributesAndUnitCount() throws Exception {
+        MasterProduct master = MasterProduct.builder().id(1L).name("라벨")
+                .categoryAttributes(Map.of("원산지", "국내산")).build();
+        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+                .platformProductId("123").masterProduct(master).build();
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("6개입")
+                        .sellingPrice(new BigDecimal("12000")).active(true).build()));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(masterProductService.isBundle(1L)).willReturn(false);   // 1 component → SINGLE
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(registrationNameGenerator.generate(master)).willReturn("6개입");
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell, gen, acct());
+
+        JsonNode json = objectMapper.readTree(payload.getValue());
+        assertThat(json.path("bundleType").asText()).isEqualTo("SINGLE");
+        JsonNode item = json.path("items").get(0);
+        assertThat(item.has("attributes")).isTrue();
+        assertThat(item.path("unitCount").asInt()).isEqualTo(1);
+    }
+
+    // 63: AB (2+ components) → bundleType=AB, item has NO attributes key, still unitCount=1, notices unchanged.
+    @Test
+    void register_ab_payloadHasAbNoAttributesButUnitCountAndNotices() throws Exception {
+        MasterProduct master = MasterProduct.builder().id(1L).name("라벨")
+                .categoryAttributes(Map.of("원산지", "국내산"))
+                .categoryNotices(Map.of("제품소재", "면 100%")).build();
+        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+                .platformProductId("123").masterProduct(master).build();
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("혼합구성")
+                        .sellingPrice(new BigDecimal("20000")).active(true).build()));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(masterProductService.isBundle(1L)).willReturn(true);   // 2+ components → AB
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(registrationNameGenerator.generate(master)).willReturn("혼합");
+        // 61: notices need a noticeCategoryName group mapping to survive the payload — stub it so the AB notice
+        // is emitted (attributes are forbidden for AB, but notices are not).
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
+                List.of(), List.of(new CategoryNotice("제품소재", "제품소재", false, "의류"))));
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell, gen, acct());
+
+        JsonNode json = objectMapper.readTree(payload.getValue());
+        assertThat(json.path("bundleType").asText()).isEqualTo("AB");
+        JsonNode item = json.path("items").get(0);
+        assertThat(item.has("attributes")).isFalse();                       // AB forbids attributes
+        assertThat(item.path("unitCount").asInt()).isEqualTo(1);
+        assertThat(item.path("notices").get(0).path("content").asText()).isEqualTo("면 100%");
+    }
+
+    // 63: master==null (backfill transition) → SINGLE default path (isBundle(null)=false).
+    @Test
+    void register_masterNull_defaultsToSingle() throws Exception {
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("A")
+                        .sellingPrice(new BigDecimal("6000")).active(true).build()));
+        given(masterProductService.isBundle(null)).willReturn(false);
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell(), gen, acct());   // cell() has no master
+
+        JsonNode json = objectMapper.readTree(payload.getValue());
+        assertThat(json.path("bundleType").asText()).isEqualTo("SINGLE");
+        assertThat(json.path("items").get(0).path("unitCount").asInt()).isEqualTo(1);
+    }
+
+    // 63: validateRegistrable — AB skips the required-attribute check entirely (can't send attributes anyway).
+    @Test
+    void validateRegistrable_ab_skipsRequiredAttributeCheck() {
+        MasterProduct master = MasterProduct.builder().id(1L).build();   // no attribute values at all
+        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+                .masterProduct(master).build();
+        given(masterProductService.isBundle(1L)).willReturn(true);
+
+        assertThatCode(() -> adapter.validateRegistrable(cell, null, acct()))
+                .doesNotThrowAnyException();
+    }
+
+    // 63: validateRegistrable — SINGLE with a required attribute left blank → 400 (schema enforced).
+    @Test
+    void validateRegistrable_single_enforcesRequiredAttribute() {
+        MasterProduct master = MasterProduct.builder().id(1L).build();   // no value for the required attr
+        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+                .masterProduct(master).build();
+        given(masterProductService.isBundle(1L)).willReturn(false);
+        given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
+                List.of(new CategoryAttribute("원산지", true, "TEXT", List.of())), List.of()));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("A")
+                        .sellingPrice(new BigDecimal("6000")).active(true).build()));
+
+        assertThatThrownBy(() -> adapter.validateRegistrable(cell, null, acct()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("필수 카테고리 속성 누락");
     }
 
     @Test

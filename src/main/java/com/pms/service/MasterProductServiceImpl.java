@@ -127,6 +127,16 @@ public class MasterProductServiceImpl implements MasterProductService {
     }
 
     @Override
+    public boolean isBundle(Long masterId) {
+        // 63: mixed-composition (AB) = 2+ components. master null (backfill transition) → SINGLE. Single entry
+        // point shared by the Coupang adapter (attributes skip + register validation) so the two can't diverge.
+        if (masterId == null) {
+            return false;
+        }
+        return componentRepository.findByMasterProductId(masterId).size() >= 2;
+    }
+
+    @Override
     public ListingMatrixResponse getMatrix(Long id) {
         MasterProduct master = requireScopedMaster(id);
 

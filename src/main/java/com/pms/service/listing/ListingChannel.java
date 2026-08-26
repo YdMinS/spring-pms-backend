@@ -18,6 +18,19 @@ public interface ListingChannel {
     String platform();
 
     /**
+     * Validate that the cell may be registered under this channel's own registration policy (FEATURE_2608_06 /
+     * 63). A violation throws (e.g. {@code IllegalArgumentException} → 400). The orchestration delegates here
+     * before {@link #register} — the channel owns the policy (Coupang: skip for AB / required-attribute check
+     * for SINGLE; NAVER implements its own). The {@code gen} parameter is kept for contract symmetry with
+     * {@link #register}/{@link #update} even when an implementation does not use it.
+     *
+     * @param cell the DRAFT channel cell
+     * @param gen  generated assets (payload source; may be unused by an implementation)
+     * @param acct the marketplace account (credentials)
+     */
+    void validateRegistrable(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct);
+
+    /**
      * Register the product on the market → returns the market product id (sellerProductId).
      * Does NOT wait for approval.
      *

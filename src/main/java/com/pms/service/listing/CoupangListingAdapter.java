@@ -12,8 +12,11 @@ import com.pms.domain.ProductListingOption;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.MasterChannelConfigService;
+import com.pms.service.MasterProductService;
 import com.pms.service.RegistrationNameGenerator;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.listing.category.CategoryAttribute;
+import com.pms.service.listing.category.CategoryMetaSchema;
 import com.pms.service.listing.category.CategoryNotice;
 import com.pms.service.listing.category.CoupangCategoryMeta;
 import com.pms.service.listing.category.OptionCategoryMeta;
@@ -57,6 +60,7 @@ public class CoupangListingAdapter implements ListingChannel {
     private final MasterChannelConfigService masterChannelConfigService;
     private final TagMergeService tagMergeService;
     private final RegistrationNameGenerator registrationNameGenerator;
+    private final MasterProductService masterProductService;
 
     @Override
     public String platform() {
@@ -108,6 +112,48 @@ public class CoupangListingAdapter implements ListingChannel {
         client.put(SELLER_PRODUCTS + "/" + cell.getPlatformProductId() + "/sales/stop", "{}", acct);
     }
 
+    @Override
+    public void validateRegistrable(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct) {
+        // 63: AB (mixed-composition) forbids attributes entirely → a required-attribute check would make it
+        // un-registrable (contradiction). Skip the whole check for AB; SINGLE keeps it. Same isBundle call as
+        // buildPayload (§attributes skip) → the payload and the validation can't structurally diverge.
+        // gen is unused here (kept for the ListingChannel contract symmetry — see interface Javadoc).
+        MasterProduct master = cell.getMasterProduct();
+        if (masterProductService.isBundle(master == null ? null : master.getId())) {
+            return;
+        }
+        // 47/59: every required category attribute must have a non-blank value on each ACTIVE option (master
+        // shared default ++ per-option override). Register targets a single (master × channel) cell → one
+        // category → one getMeta call (reusing the Coupang concrete metaAdapter, 61). Empty schema (NAVER) skips.
+        String code = masterChannelConfigService.resolvePlatformCategoryCode(cell);
+        CategoryMetaSchema schema = metaAdapter.getMeta(acct, code);
+        if (schema.attributes().isEmpty()) {
+            return;
+        }
+        Map<String, String> masterAttributes = master != null ? master.getCategoryAttributes() : null;
+        Map<String, MasterProductOption> byName = master == null ? Map.of()
+                : masterProductOptionRepository.findByMasterProductId(master.getId()).stream()
+                        .collect(Collectors.toMap(MasterProductOption::getName, o -> o, (a, b) -> a));
+
+        for (ProductListingOption option : productListingOptionRepository.findByProductListingId(cell.getId())) {
+            if (!Boolean.TRUE.equals(option.getActive())) {
+                continue;   // only active options are pushed → only they need required values
+            }
+            MasterProductOption mo = byName.get(option.getOptionName());
+            Map<String, String> values = OptionCategoryMeta.merge(
+                    masterAttributes, mo != null ? mo.getCategoryAttributes() : null);
+            for (CategoryAttribute attribute : schema.attributes()) {
+                if (attribute.required()) {
+                    String value = values.get(attribute.name());
+                    if (value == null || value.isBlank()) {
+                        throw new IllegalArgumentException(
+                                "필수 카테고리 속성 누락: " + option.getOptionName() + " / " + attribute.name());
+                    }
+                }
+            }
+        }
+    }
+
     // --- payload (§4-4, summary — not over-detailed) ---
 
     private Map<String, Object> buildPayload(ProductListing cell, GeneratedProductData gen,
@@ -151,6 +197,11 @@ public class CoupangListingAdapter implements ListingChannel {
                 .filter(n -> n.groupName() != null)
                 .collect(Collectors.toMap(CategoryNotice::key, CategoryNotice::groupName, (a, b) -> a));
 
+        // 63: bundleType = product-level SINGLE (single composition) / AB (mixed composition). Determined once
+        // (loop-invariant local boolean, no N+1) by the master's component count. AB forbids attributes entirely.
+        boolean bundle = masterProductService.isBundle(master == null ? null : master.getId());
+        payload.put("bundleType", bundle ? "AB" : "SINGLE");
+
         // items[] (max 200): one per ACTIVE listing option (42 — per-channel subset; inactive options are
         // excluded from the payload but keep their row). New options carry no vendorItemId yet. attributes/
         // notices are assembled per item = merge(master, option) → Coupang shape (empty maps skipped, harmless).
@@ -162,12 +213,17 @@ public class CoupangListingAdapter implements ListingChannel {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("itemName", option.getOptionName());
             item.put("salePrice", option.getSellingPrice());
+            item.put("unitCount", 1);   // 63: unit quantity (SINGLE = 1; AB unitCount is a live-account follow-up)
 
             MasterProductOption mo = byName.get(option.getOptionName());
-            Map<String, String> attrs = OptionCategoryMeta.merge(
-                    masterAttributes, mo != null ? mo.getCategoryAttributes() : null);
-            if (!attrs.isEmpty()) {
-                item.put("attributes", toAttributes(attrs));
+            // 63: AB forbids attributes ("혼합 구성 상품 등록할 때, 속성 입력할 수 없습니다") → skip the whole block for AB.
+            // SINGLE keeps per-item merged category attributes (47/59). notices are NOT forbidden → unchanged below.
+            if (!bundle) {
+                Map<String, String> attrs = OptionCategoryMeta.merge(
+                        masterAttributes, mo != null ? mo.getCategoryAttributes() : null);
+                if (!attrs.isEmpty()) {
+                    item.put("attributes", toAttributes(attrs));
+                }
             }
             Map<String, String> notices = OptionCategoryMeta.merge(
                     masterNotices, mo != null ? mo.getCategoryNotices() : null);
