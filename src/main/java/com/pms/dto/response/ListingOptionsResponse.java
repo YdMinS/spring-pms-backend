@@ -32,6 +32,10 @@ public class ListingOptionsResponse {
             example = "false")
     private boolean needsResync;
 
+    @Schema(description = "Auto-generated registration name (등록상품명) for this listing's current active options (67)",
+            example = "노브랜드 생수 x 6")
+    private String registrationName;
+
     @Schema(description = "Every option of the listing (active + inactive)")
     private List<OptionItem> options;
 
@@ -67,11 +71,12 @@ public class ListingOptionsResponse {
     }
 
     public static ListingOptionsResponse of(ProductListing listing, List<ProductListingOption> options,
-                                            boolean needsResync) {
+                                            boolean needsResync, String registrationName) {
         return ListingOptionsResponse.builder()
                 .productListingId(listing.getId())
                 .status(listing.getStatus() != null ? listing.getStatus().name() : null)
                 .needsResync(needsResync)
+                .registrationName(registrationName)
                 .options(options.stream().map(OptionItem::from).toList())
                 .build();
     }

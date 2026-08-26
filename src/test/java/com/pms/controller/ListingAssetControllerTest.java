@@ -371,64 +371,6 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
-    // ---- registration name override (65): 등록상품명 override set/clear, internal only (no regenerate/push) ----
-
-    @Test
-    void updateRegistrationName_adminToken_returns200AndReflectsOverride() throws Exception {
-        mockMvc.perform(patch(PATH + "/" + listingId + "/registration-name")
-                        .header("Authorization", "Bearer " + adminToken)
-                        .contentType("application/json").content("{\"registrationName\":\"  손수 지은 이름  \"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("SUCCESS"));
-        assertThat(productListingRepository.findById(listingId).orElseThrow().getRegistrationNameOverride())
-                .isEqualTo("손수 지은 이름");
-    }
-
-    @Test
-    void clearRegistrationName_adminToken_returns200AndResetsToNull() throws Exception {
-        // Set an override first, then clear it back to null (auto-generated fallback).
-        mockMvc.perform(patch(PATH + "/" + listingId + "/registration-name")
-                        .header("Authorization", "Bearer " + adminToken)
-                        .contentType("application/json").content("{\"registrationName\":\"임시\"}"))
-                .andExpect(status().isOk());
-        mockMvc.perform(delete(PATH + "/" + listingId + "/registration-name")
-                        .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk());
-        assertThat(productListingRepository.findById(listingId).orElseThrow().getRegistrationNameOverride())
-                .isNull();
-    }
-
-    @Test
-    void updateRegistrationName_blank_returns400() throws Exception {
-        mockMvc.perform(patch(PATH + "/" + listingId + "/registration-name")
-                        .header("Authorization", "Bearer " + adminToken)
-                        .contentType("application/json").content("{\"registrationName\":\"   \"}"))
-                .andExpect(status().isBadRequest());
-    }
-
-    @Test
-    void updateRegistrationName_noToken_returns401() throws Exception {
-        mockMvc.perform(patch(PATH + "/" + listingId + "/registration-name")
-                        .contentType("application/json").content("{\"registrationName\":\"x\"}"))
-                .andExpect(status().isUnauthorized());
-    }
-
-    @Test
-    void updateRegistrationName_userToken_returns403() throws Exception {
-        mockMvc.perform(patch(PATH + "/" + listingId + "/registration-name")
-                        .header("Authorization", "Bearer " + userToken)
-                        .contentType("application/json").content("{\"registrationName\":\"x\"}"))
-                .andExpect(status().isForbidden());
-    }
-
-    @Test
-    void updateRegistrationName_missingId_returns404() throws Exception {
-        mockMvc.perform(patch(PATH + "/999999/registration-name")
-                        .header("Authorization", "Bearer " + adminToken)
-                        .contentType("application/json").content("{\"registrationName\":\"x\"}"))
-                .andExpect(status().isNotFound());
-    }
-
     // ---- thumbnail override / clear (25): authority + happy path + empty file 400 ----
 
     /** Valid minimal JPEG (magic bytes FF D8 FF...) so the real ImageValidator passes. */

@@ -79,10 +79,7 @@ public class ListingMatrixResponse {
         @Schema(description = "Selling price of the (single-SKU) listing option", example = "12999.99")
         private BigDecimal sellingPrice;
 
-        @Schema(description = "Effective registration name (override if set, else auto-generated, 65)", example = "노브랜드 생수 x 6")
+        @Schema(description = "Auto-generated registration name from this channel's active options (67)", example = "노브랜드 생수 x 6")
         private String registrationName;
-
-        @Schema(description = "True when the registration name is a manual channel override (65)", example = "false")
-        private boolean registrationNameOverridden;
     }
 }

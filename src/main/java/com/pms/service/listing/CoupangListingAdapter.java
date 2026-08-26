@@ -164,15 +164,6 @@ public class CoupangListingAdapter implements ListingChannel {
         // returns null), so by this point the code is always non-null and reused below for the notice groups.
         String categoryCode = masterChannelConfigService.resolvePlatformCategoryCode(cell);
         payload.put("displayCategoryCode", categoryCode);
-        // Registration name (65): a non-blank per-channel override wins; otherwise rule-generated from the
-        // master's components/options (32); master null fallback = cell.getName() (backfill transition window).
-        String override = cell.getRegistrationNameOverride();
-        payload.put("sellerProductName",
-                (override != null && !override.isBlank())
-                        ? override.trim()
-                        : (cell.getMasterProduct() != null
-                                ? registrationNameGenerator.generate(cell.getMasterProduct())
-                                : cell.getName()));
         payload.put("vendorId", acct.getVendorId());
         payload.put("contents", gen != null ? gen.getDetailHtml() : null);
 
@@ -188,9 +179,24 @@ public class CoupangListingAdapter implements ListingChannel {
         // the master options in ONE query (N+1 guard); matching axis = ProductListingOption.optionName ↔
         // MasterProductOption.name. master==null (backfill transition) → master values only / empty.
         MasterProduct master = cell.getMasterProduct();
-        Map<String, MasterProductOption> byName = master == null ? Map.of()
-                : masterProductOptionRepository.findByMasterProductId(master.getId()).stream()
-                        .collect(Collectors.toMap(MasterProductOption::getName, Function.identity(), (a, b) -> a));
+        List<MasterProductOption> masterOptions = master == null ? List.of()
+                : masterProductOptionRepository.findByMasterProductId(master.getId());
+        Map<String, MasterProductOption> byName = masterOptions.stream()
+                .collect(Collectors.toMap(MasterProductOption::getName, Function.identity(), (a, b) -> a));
+
+        // Listing options, queried ONCE and reused for the active-name set (registration name) and items[] below.
+        List<ProductListingOption> listingOptions =
+                productListingOptionRepository.findByProductListingId(cell.getId());
+        List<String> activeOptionNames = listingOptions.stream()
+                .filter(o -> Boolean.TRUE.equals(o.getActive()))
+                .map(ProductListingOption::getOptionName)
+                .toList();
+        // Registration name (67): always auto-generated per channel from this cell's active options (32 rule).
+        // master null fallback = cell.getName() (backfill transition window).
+        payload.put("sellerProductName", master != null
+                ? registrationNameGenerator.generate(master, activeOptionNames, masterOptions)
+                : cell.getName());
+
         Map<String, String> masterAttributes = master != null ? master.getCategoryAttributes() : null;
         Map<String, String> masterNotices = master != null ? master.getCategoryNotices() : null;
         // Notice detail(noticeCategoryDetailName) → group(noticeCategoryName) for this category (61). Coupang
@@ -209,7 +215,7 @@ public class CoupangListingAdapter implements ListingChannel {
         // excluded from the payload but keep their row). New options carry no vendorItemId yet. attributes/
         // notices are assembled per item = merge(master, option) → Coupang shape (empty maps skipped, harmless).
         List<Map<String, Object>> items = new ArrayList<>();
-        for (ProductListingOption option : productListingOptionRepository.findByProductListingId(cell.getId())) {
+        for (ProductListingOption option : listingOptions) {
             if (!Boolean.TRUE.equals(option.getActive())) {
                 continue;   // deactivated on this channel → not pushed
             }

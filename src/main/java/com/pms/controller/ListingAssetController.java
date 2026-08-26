@@ -4,7 +4,6 @@ import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.DetailHtmlOverrideRequest;
 import com.pms.dto.request.DisplayNameRequest;
 import com.pms.dto.request.FieldValuesRequest;
-import com.pms.dto.request.RegistrationNameOverrideRequest;
 import com.pms.dto.request.TagsRequest;
 import com.pms.dto.response.DetailPreviewResponse;
 import com.pms.dto.response.DetailTemplateResponse;
@@ -116,20 +115,4 @@ public class ListingAssetController {
         return ResponseEntity.ok(ResponseDTO.success(null));
     }
 
-    @PatchMapping("/{id}/registration-name")
-    @Operation(summary = "Set this cell's registration-name override (등록상품명 = sellerProductName; no push)")
-    @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<ResponseDTO<Void>> updateRegistrationName(
-            @PathVariable Long id, @Valid @RequestBody RegistrationNameOverrideRequest request) {
-        listingAssetService.updateRegistrationName(id, request.getRegistrationName());
-        return ResponseEntity.ok(ResponseDTO.success(null));
-    }
-
-    @DeleteMapping("/{id}/registration-name")
-    @Operation(summary = "Clear this cell's registration-name override (back to the auto-generated name, 32)")
-    @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<ResponseDTO<Void>> clearRegistrationName(@PathVariable Long id) {
-        listingAssetService.clearRegistrationName(id);
-        return ResponseEntity.ok(ResponseDTO.success(null));
-    }
 }
