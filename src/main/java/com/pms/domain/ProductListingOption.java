@@ -74,6 +74,15 @@ public class ProductListingOption {
     private BigDecimal sellingPrice;
 
     /**
+     * Display "original" (strike-through) price for Coupang register (73). Reverse-calculated from
+     * {@code sellingPrice} and the seller×platform display discount rate: {@code sellingPrice / (1 − rate)}.
+     * Nullable (rate=0 → equals sellingPrice; register falls back to sellingPrice when null).
+     */
+    @Column(precision = 10, scale = 2, name = "original_price")
+    @Schema(description = "Display original (strike-through) price", example = "16249.99")
+    private BigDecimal originalPrice;
+
+    /**
      * Platform-specific option ID (e.g., Coupang option ID).
      * Max 255 chars. Nullable (not all platforms provide this).
      *

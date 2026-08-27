@@ -77,3 +77,7 @@ databaseChangeLog:
       file: db/changelog/changes/038-account-vendor-user-id.yaml
   - include:
       file: db/changelog/changes/039-marketplace-shipping-config.yaml
+  - include:
+      file: db/changelog/changes/040-margin-display-discount-rate.yaml
+  - include:
+      file: db/changelog/changes/041-listing-option-original-price.yaml

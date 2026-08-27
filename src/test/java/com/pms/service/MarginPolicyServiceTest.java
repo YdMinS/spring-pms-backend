@@ -66,6 +66,46 @@ class MarginPolicyServiceTest {
         assertThat(response.getMarginRate()).isEqualByComparingTo("0.1500");
     }
 
+    // 73: displayDiscountRate is persisted on create and returned in the response.
+    @Test
+    void create_persistsAndReturnsDisplayDiscountRate() {
+        Seller seller = seller();
+        MarginPolicyRequest req = MarginPolicyRequest.builder()
+                .sellerId(3L).platform("COUPANG").marginRate(new BigDecimal("0.1500"))
+                .displayDiscountRate(new BigDecimal("0.2000")).build();
+        given(marginPolicyRepository.findBySellerIdAndPlatform(3L, "COUPANG")).willReturn(Optional.empty());
+        given(sellerRepository.findById(3L)).willReturn(Optional.of(seller));
+        given(marginPolicyRepository.save(any())).willAnswer(inv -> {
+            MarginPolicy p = inv.getArgument(0);
+            return p.toBuilder().id(7L).build();
+        });
+
+        MarginPolicyResponse response = service.createMarginPolicy(req);
+
+        org.mockito.ArgumentCaptor<MarginPolicy> captor = org.mockito.ArgumentCaptor.forClass(MarginPolicy.class);
+        verify(marginPolicyRepository).save(captor.capture());
+        assertThat(captor.getValue().getDisplayDiscountRate()).isEqualByComparingTo("0.2000");
+        assertThat(response.getDisplayDiscountRate()).isEqualByComparingTo("0.2000");
+    }
+
+    // 73: displayDiscountRate=null on update keeps the existing value (optional-field convention).
+    @Test
+    void update_nullDisplayDiscountRate_keepsExisting() {
+        Seller seller = seller();
+        MarginPolicy self = MarginPolicy.builder().id(5L).seller(seller)
+                .platform("COUPANG").marginRate(new BigDecimal("0.1000"))
+                .displayDiscountRate(new BigDecimal("0.3000")).build();
+        given(marginPolicyRepository.findById(5L)).willReturn(Optional.of(self));
+        given(marginPolicyRepository.findBySellerIdAndPlatform(3L, "COUPANG")).willReturn(Optional.empty());
+        given(sellerRepository.findById(3L)).willReturn(Optional.of(seller));
+        given(marginPolicyRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+
+        // request() carries no displayDiscountRate (null) → existing 0.3000 preserved.
+        MarginPolicyResponse response = service.updateMarginPolicy(5L, request("COUPANG"));
+
+        assertThat(response.getDisplayDiscountRate()).isEqualByComparingTo("0.3000");
+    }
+
     @Test
     void update_duplicateOnAnotherRecord_throws400_andDoesNotSave() {
         MarginPolicy self = MarginPolicy.builder().id(5L).seller(seller())

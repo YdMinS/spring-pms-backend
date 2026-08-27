@@ -1,0 +1,13 @@
+# Display discount rate for Coupang originalPrice reverse-calc (FEATURE_2608_06 / 73):
+# margin_policy.display_discount_rate. Nullable (= 0 / no discount), no backfill. No boolean → no MySQL BIT trap.
+databaseChangeLog:
+
+  - changeSet:
+      id: 040-margin-display-discount-rate
+      author: oclyx
+      comment: "Additive: margin_policy.display_discount_rate (originalPrice reverse-calc, nullable DECIMAL(5,4))."
+      changes:
+        - addColumn:
+            tableName: margin_policy
+            columns:
+              - column: { name: display_discount_rate, type: "DECIMAL(5,4)" }

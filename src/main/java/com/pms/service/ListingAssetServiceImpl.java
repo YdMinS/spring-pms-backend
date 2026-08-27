@@ -279,8 +279,11 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                         .collect(Collectors.toMap(MasterProductOption::getName, Function.identity(), (a, b) -> a));
         for (ProductListingOption option : options) {
             MasterProductOption mo = masterOptionsByName.get(option.getOptionName());
-            BigDecimal price = priceCalculator.calculatePrice(cell, mo, optionCostSum(option));
-            productListingOptionRepository.save(option.toBuilder().sellingPrice(price).build());
+            PriceCalculator.PriceResult price = priceCalculator.calculatePrices(cell, mo, optionCostSum(option));
+            productListingOptionRepository.save(option.toBuilder()
+                    .sellingPrice(price.salePrice())
+                    .originalPrice(price.originalPrice())
+                    .build());
         }
 
         // 4. Upsert the assets row.

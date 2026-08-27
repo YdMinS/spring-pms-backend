@@ -5,10 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.MarketplaceShippingConfig;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.repository.MarketplaceShippingConfigRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.MasterChannelConfigService;
@@ -26,6 +28,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -50,6 +54,14 @@ public class CoupangListingAdapter implements ListingChannel {
     private static final String SELLER_PRODUCTS =
             "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products";
 
+    // Register defaults (73). saleStartedAt = now; saleEndedAt = far future (sale period not user-input).
+    private static final DateTimeFormatter SALE_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+    private static final String SALE_ENDED_AT = "2099-12-31T23:59:59";
+    // Stock is not tracked → fixed per-item max buy count (Coupang max 99999).
+    private static final int DEFAULT_MAX_BUY_COUNT = 9999;
+    // Non-exposed draft: save only, no approval request (test vendor account unavailable → deletable draft).
+    private static final boolean DEFAULT_REQUESTED = false;
+
     private final CoupangApiClient client;
     private final ObjectMapper objectMapper;
     private final ProductListingOptionRepository productListingOptionRepository;
@@ -63,6 +75,7 @@ public class CoupangListingAdapter implements ListingChannel {
     private final RegistrationNameGenerator registrationNameGenerator;
     private final OptionCheckSuffixResolver optionCheckSuffixResolver;
     private final MasterProductService masterProductService;
+    private final MarketplaceShippingConfigRepository marketplaceShippingConfigRepository;
 
     @Override
     public String platform() {
@@ -167,14 +180,22 @@ public class CoupangListingAdapter implements ListingChannel {
         String categoryCode = masterChannelConfigService.resolvePlatformCategoryCode(cell);
         payload.put("displayCategoryCode", categoryCode);
         payload.put("vendorId", acct.getVendorId());
-        payload.put("contents", gen != null ? gen.getDetailHtml() : null);
+        // 73: WING login id — Coupang-required, distinct from vendorId (vendor code). Push must not proceed unset.
+        if (acct.getVendorUserId() == null || acct.getVendorUserId().isBlank()) {
+            throw new IllegalArgumentException("vendorUserId 미설정 — 계정 설정을 먼저 완료하세요");
+        }
+        payload.put("vendorUserId", acct.getVendorUserId());
 
-        // Representation image = S3 public thumbnail URL (Coupang ingests it into its CDN).
-        Map<String, Object> image = new LinkedHashMap<>();
-        image.put("imageOrder", 0);
-        image.put("imageType", "REPRESENTATION");
-        image.put("vendorPath", gen != null ? gen.getThumbnailUrl() : null);
-        payload.put("images", List.of(image));
+        // 73: sale period is not user-input → default now .. far future (Coupang format yyyy-MM-dd'T'HH:mm:ss).
+        payload.put("saleStartedAt", LocalDateTime.now().format(SALE_DATE_FORMAT));
+        payload.put("saleEndedAt", SALE_ENDED_AT);
+
+        // 73: per-account delivery / return-center / outbound-place block (72). Missing config or any required
+        // value → 400 before the HTTP push.
+        putShippingBlock(payload, requireShippingConfig(acct));
+
+        // 73: non-exposed draft — save only, no approval request.
+        payload.put("requested", DEFAULT_REQUESTED);
 
         // Category required-attributes + product-info disclosure (47/59) are per-vendorItem in Coupang's model.
         // Master carries the shared default values; each option overrides only the keys it provides (59). Fetch
@@ -218,6 +239,13 @@ public class CoupangListingAdapter implements ListingChannel {
         // items[] (max 200): one per ACTIVE listing option (42 — per-channel subset; inactive options are
         // excluded from the payload but keep their row). New options carry no vendorItemId yet. attributes/
         // notices are assembled per item = merge(master, option) → Coupang shape (empty maps skipped, harmless).
+        // 73: images / searchTags / contents live at the ITEM level (Coupang: searchTags is item-only, images/
+        // contents are used per item). Every active option shares the same representation image, merged tag set
+        // (33) and detail HTML — computed once and reused across items.
+        List<Map<String, Object>> itemImages = List.of(representationImage(gen));
+        List<String> searchTags = tagMergeService.resolveTags(cell);
+        String detailHtml = gen != null ? gen.getDetailHtml() : null;
+
         List<Map<String, Object>> items = new ArrayList<>();
         for (ProductListingOption option : listingOptions) {
             if (!Boolean.TRUE.equals(option.getActive())) {
@@ -225,8 +253,24 @@ public class CoupangListingAdapter implements ListingChannel {
             }
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("itemName", option.getOptionName());
+            // 73: originalPrice = display strike-through (reverse-calc, 73); null → fall back to salePrice.
+            item.put("originalPrice", option.getOriginalPrice() != null
+                    ? option.getOriginalPrice() : option.getSellingPrice());
             item.put("salePrice", option.getSellingPrice());
             item.put("unitCount", 1);   // 63: unit quantity (SINGLE = 1; AB unitCount is a live-account follow-up)
+            // 73: fixed item defaults (stock not tracked; standard tax/adult/import flags).
+            item.put("maximumBuyCount", DEFAULT_MAX_BUY_COUNT);
+            item.put("maximumBuyForPerson", 0);
+            item.put("maximumBuyForPersonPeriod", 1);
+            item.put("outboundShippingTimeDay", 1);
+            item.put("adultOnly", "EVERYONE");
+            item.put("taxType", "TAX");
+            item.put("parallelImported", "NOT_PARALLEL_IMPORTED");
+            item.put("overseasPurchased", "NOT_OVERSEAS_PURCHASED");
+            item.put("pccNeeded", false);
+            item.put("images", itemImages);
+            item.put("searchTags", searchTags);
+            item.put("contents", detailHtml);
 
             MasterProductOption mo = byName.get(option.getOptionName());
             // 63: AB forbids attributes ("혼합 구성 상품 등록할 때, 속성 입력할 수 없습니다") → skip the whole block for AB.
@@ -250,11 +294,80 @@ public class CoupangListingAdapter implements ListingChannel {
         }
         payload.put("items", items);
 
-        // searchTags (33): channel tags first, then master tags appended (deduped, capped at 20). Coupang field
-        // name = searchTags (String array, max 20) — fixture-based, verified against a live account as follow-up.
-        payload.put("searchTags", tagMergeService.resolveTags(cell));
-
         return payload;
+    }
+
+    /** Representation image (imageOrder 0) = the S3 public thumbnail URL Coupang ingests into its CDN. */
+    private static Map<String, Object> representationImage(GeneratedProductData gen) {
+        Map<String, Object> image = new LinkedHashMap<>();
+        image.put("imageOrder", 0);
+        image.put("imageType", "REPRESENTATION");
+        image.put("vendorPath", gen != null ? gen.getThumbnailUrl() : null);
+        return image;
+    }
+
+    /**
+     * Load the account's shipping config (72) and assert every register-required field is present. Missing
+     * config or any required value → 400 (push must not proceed). {@code remoteAreaDeliverable} is transmitted
+     * as the stored "Y"/"N" String. {@code freeShipOverAmount} is optional (only relevant for CONDITIONAL_FREE).
+     */
+    private MarketplaceShippingConfig requireShippingConfig(MarketplaceAccount acct) {
+        MarketplaceShippingConfig cfg = marketplaceShippingConfigRepository
+                .findByMarketplaceAccountId(acct.getId())
+                .orElseThrow(() -> new IllegalArgumentException("배송설정 미완료 — 계정 배송설정을 먼저 저장하세요"));
+
+        List<String> missing = new ArrayList<>();
+        requireText(missing, "outboundShippingPlaceCode", cfg.getOutboundShippingPlaceCode());
+        requireText(missing, "returnCenterCode", cfg.getReturnCenterCode());
+        requireText(missing, "returnChargeName", cfg.getReturnChargeName());
+        requireText(missing, "returnContactNumber", cfg.getReturnContactNumber());
+        requireText(missing, "returnZipCode", cfg.getReturnZipCode());
+        requireText(missing, "returnAddress", cfg.getReturnAddress());
+        requireText(missing, "returnAddressDetail", cfg.getReturnAddressDetail());
+        requireValue(missing, "returnCharge", cfg.getReturnCharge());
+        requireValue(missing, "deliveryChargeOnReturn", cfg.getDeliveryChargeOnReturn());
+        requireText(missing, "deliveryMethod", cfg.getDeliveryMethod());
+        requireText(missing, "deliveryCompanyCode", cfg.getDeliveryCompanyCode());
+        requireText(missing, "deliveryChargeType", cfg.getDeliveryChargeType());
+        requireValue(missing, "deliveryCharge", cfg.getDeliveryCharge());
+        requireText(missing, "remoteAreaDeliverable", cfg.getRemoteAreaDeliverable());
+        requireText(missing, "unionDeliveryType", cfg.getUnionDeliveryType());
+        if (!missing.isEmpty()) {
+            throw new IllegalArgumentException("배송설정 미완료 — 누락 필드: " + String.join(", ", missing));
+        }
+        return cfg;
+    }
+
+    private static void requireText(List<String> missing, String name, String value) {
+        if (value == null || value.isBlank()) {
+            missing.add(name);
+        }
+    }
+
+    private static void requireValue(List<String> missing, String name, Object value) {
+        if (value == null) {
+            missing.add(name);
+        }
+    }
+
+    /** Top-level delivery / return-center / outbound-place block from the account's shipping config (72/73). */
+    private static void putShippingBlock(Map<String, Object> payload, MarketplaceShippingConfig cfg) {
+        payload.put("deliveryMethod", cfg.getDeliveryMethod());
+        payload.put("deliveryCompanyCode", cfg.getDeliveryCompanyCode());
+        payload.put("deliveryChargeType", cfg.getDeliveryChargeType());
+        payload.put("deliveryCharge", cfg.getDeliveryCharge());
+        payload.put("freeShipOverAmount", cfg.getFreeShipOverAmount());   // optional (CONDITIONAL_FREE only)
+        payload.put("deliveryChargeOnReturn", cfg.getDeliveryChargeOnReturn());
+        payload.put("remoteAreaDeliverable", cfg.getRemoteAreaDeliverable());
+        payload.put("unionDeliveryType", cfg.getUnionDeliveryType());
+        payload.put("returnCenterCode", cfg.getReturnCenterCode());
+        payload.put("returnChargeName", cfg.getReturnChargeName());
+        payload.put("companyContactNumber", cfg.getReturnContactNumber());
+        payload.put("returnZipCode", cfg.getReturnZipCode());
+        payload.put("returnAddress", cfg.getReturnAddress());
+        payload.put("returnAddressDetail", cfg.getReturnAddressDetail());
+        payload.put("returnCharge", cfg.getReturnCharge());
+        payload.put("outboundShippingPlaceCode", cfg.getOutboundShippingPlaceCode());
     }
 
     /** Merged category-attribute map → Coupang vendorItem {@code attributes[]} shape (47/59). */

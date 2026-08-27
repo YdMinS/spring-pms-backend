@@ -29,4 +29,7 @@ public class MarginPolicyResponse {
 
     @Schema(description = "Net-profit ratio (0.1500 = 15%)", example = "0.1500")
     private BigDecimal marginRate;
+
+    @Schema(description = "Display discount rate (0.2000 = 20% strike-through)", example = "0.2000")
+    private BigDecimal displayDiscountRate;
 }
