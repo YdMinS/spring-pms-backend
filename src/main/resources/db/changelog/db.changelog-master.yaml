@@ -81,3 +81,7 @@ databaseChangeLog:
       file: db/changelog/changes/040-margin-display-discount-rate.yaml
   - include:
       file: db/changelog/changes/041-listing-option-original-price.yaml
+  - include:
+      file: db/changelog/changes/042-shipping-extra-info-message.yaml
+  - include:
+      file: db/changelog/changes/043-shipping-override.yaml

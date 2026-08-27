@@ -196,4 +196,16 @@ public class ProductListing {
     @Column(columnDefinition = "TEXT")
     @Schema(description = "Per-channel raw tags")
     private List<String> tags;
+
+    /**
+     * Per-channel shipping overrides (FEATURE_2608_06 / 75): key = an override field name (whitelist =
+     * {@code ShippingOverrideKeys.LISTING_KEYS} — the full set, including the outbound place / return center
+     * that are channel-level only), value = a string. Resolution = channel (this) ?? master ?? account
+     * default (field-wise). ⚠️ {@code null} = no override (NOT a {@code @Builder.Default} empty map) — the
+     * legacy CRUD/create path and pre-existing rows leave it unset (nullable, no live backfill). JSON TEXT.
+     */
+    @Convert(converter = MapStringConverter.class)
+    @Column(name = "shipping_override", columnDefinition = "TEXT")
+    @Schema(description = "Per-channel shipping overrides")
+    private Map<String, String> shippingOverride;
 }

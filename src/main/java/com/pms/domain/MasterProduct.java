@@ -128,4 +128,15 @@ public class MasterProduct extends BaseEntity {
 
     @Column(name = "option_check_suffix", length = 50)
     private String optionCheckSuffix;
+
+    /**
+     * Master-level shipping overrides (FEATURE_2608_06 / 75): key = an override field name (whitelist =
+     * {@code ShippingOverrideKeys.MASTER_KEYS}), value = a string (BigDecimal/enum too, parsed at resolve
+     * time). A master change applies to every linked channel; resolution = channel ?? master ?? account
+     * default (field-wise). ⚠️ No {@code @Builder.Default} — {@code null} = no override (inherit). Place keys
+     * (outbound/return center) are channel-level only and are dropped on save. JSON TEXT, H2/MySQL portable.
+     */
+    @Convert(converter = MapStringConverter.class)
+    @Column(name = "shipping_override", columnDefinition = "TEXT")
+    private Map<String, String> shippingOverride;
 }

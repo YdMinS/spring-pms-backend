@@ -4,6 +4,7 @@ import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.DetailHtmlOverrideRequest;
 import com.pms.dto.request.DisplayNameRequest;
 import com.pms.dto.request.FieldValuesRequest;
+import com.pms.dto.request.ShippingOverrideRequest;
 import com.pms.dto.request.TagsRequest;
 import com.pms.dto.response.DetailPreviewResponse;
 import com.pms.dto.response.DetailTemplateResponse;
@@ -113,6 +114,15 @@ public class ListingAssetController {
             @PathVariable Long id, @Valid @RequestBody DisplayNameRequest request) {
         listingAssetService.updateDisplayName(id, request.getName());
         return ResponseEntity.ok(ResponseDTO.success(null));
+    }
+
+    @PatchMapping("/{id}/shipping-override")
+    @Operation(summary = "Replace this cell's channel shipping overrides (75; whitelist-filtered, empty clears; no regenerate)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<GeneratedProductResponse>> updateShippingOverride(
+            @PathVariable Long id, @RequestBody ShippingOverrideRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                listingAssetService.updateShippingOverride(id, request.getOverride())));
     }
 
 }

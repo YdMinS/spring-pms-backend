@@ -10,6 +10,7 @@ import com.pms.dto.request.MasterProductUpdateRequest;
 import com.pms.dto.request.MasterSourceImageRequest;
 import com.pms.dto.request.OptionCheckSuffixRequest;
 import com.pms.dto.request.MasterZoneImagesRequest;
+import com.pms.dto.request.ShippingOverrideRequest;
 import com.pms.dto.request.TagsRequest;
 import com.pms.dto.response.CategoryMetaResponse;
 import com.pms.dto.response.ListingMatrixResponse;
@@ -101,6 +102,15 @@ public class MasterProductController {
             @PathVariable Long id, @Valid @RequestBody OptionCheckSuffixRequest request) {
         masterProductService.updateRegistrationNameSuffix(id, request);
         return ResponseEntity.ok(ResponseDTO.success(null));
+    }
+
+    @PatchMapping("/{id}/shipping-override")
+    @Operation(summary = "Replace the master-level shipping overrides (75; place keys dropped, empty clears)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<MasterProductResponse>> updateShippingOverride(
+            @PathVariable Long id, @RequestBody ShippingOverrideRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                masterProductService.updateShippingOverride(id, request.getOverride())));
     }
 
     @DeleteMapping("/{id}")

@@ -5,12 +5,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.MarketplaceShippingConfig;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.repository.MarketplaceShippingConfigRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.MasterChannelConfigService;
@@ -23,6 +21,8 @@ import com.pms.service.listing.category.CategoryMetaSchema;
 import com.pms.service.listing.category.CategoryNotice;
 import com.pms.service.listing.category.CoupangCategoryMeta;
 import com.pms.service.listing.category.OptionCategoryMeta;
+import com.pms.service.listing.shipping.ResolvedShippingConfig;
+import com.pms.service.listing.shipping.ShippingConfigResolver;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -75,7 +75,9 @@ public class CoupangListingAdapter implements ListingChannel {
     private final RegistrationNameGenerator registrationNameGenerator;
     private final OptionCheckSuffixResolver optionCheckSuffixResolver;
     private final MasterProductService masterProductService;
-    private final MarketplaceShippingConfigRepository marketplaceShippingConfigRepository;
+    // 75: resolves the shipping config field-wise (channel ?? master ?? account default) instead of reading
+    // the raw account config directly. The adapter consumes the resolved record only.
+    private final ShippingConfigResolver shippingConfigResolver;
 
     @Override
     public String platform() {
@@ -190,9 +192,14 @@ public class CoupangListingAdapter implements ListingChannel {
         payload.put("saleStartedAt", LocalDateTime.now().format(SALE_DATE_FORMAT));
         payload.put("saleEndedAt", SALE_ENDED_AT);
 
-        // 73: per-account delivery / return-center / outbound-place block (72). Missing config or any required
-        // value → 400 before the HTTP push.
-        putShippingBlock(payload, requireShippingConfig(acct));
+        // 73/75: delivery / return-center / outbound-place block, field-wise resolved (channel ?? master ??
+        // account default, 75). Missing config or any required value → 400 before the HTTP push.
+        ResolvedShippingConfig shipping = requireShippingConfig(cell);
+        putShippingBlock(payload, shipping);
+        // 75: extra info message (주문제작/설치배송) — optional, attach only when non-blank.
+        if (shipping.extraInfoMessage() != null && !shipping.extraInfoMessage().isBlank()) {
+            payload.put("extraInfoMessage", shipping.extraInfoMessage());
+        }
 
         // 73: non-exposed draft — save only, no approval request.
         payload.put("requested", DEFAULT_REQUESTED);
@@ -307,33 +314,37 @@ public class CoupangListingAdapter implements ListingChannel {
     }
 
     /**
-     * Load the account's shipping config (72) and assert every register-required field is present. Missing
-     * config or any required value → 400 (push must not proceed). {@code remoteAreaDeliverable} is transmitted
-     * as the stored "Y"/"N" String. {@code freeShipOverAmount} is optional (only relevant for CONDITIONAL_FREE).
+     * Resolve the cell's shipping config field-wise (channel ?? master ?? account default, 75) and assert
+     * every register-required field is present. Missing config / all overrides absent → the required fields
+     * come back null → 400 (push must not proceed). {@code remoteAreaDeliverable} is transmitted as the
+     * resolved "Y"/"N" String. {@code freeShipOverAmount} is optional (only relevant for CONDITIONAL_FREE).
      */
-    private MarketplaceShippingConfig requireShippingConfig(MarketplaceAccount acct) {
-        MarketplaceShippingConfig cfg = marketplaceShippingConfigRepository
-                .findByMarketplaceAccountId(acct.getId())
-                .orElseThrow(() -> new IllegalArgumentException("배송설정 미완료 — 계정 배송설정을 먼저 저장하세요"));
+    private ResolvedShippingConfig requireShippingConfig(ProductListing cell) {
+        ResolvedShippingConfig cfg = shippingConfigResolver.resolve(cell);
 
         List<String> missing = new ArrayList<>();
-        requireText(missing, "outboundShippingPlaceCode", cfg.getOutboundShippingPlaceCode());
-        requireText(missing, "returnCenterCode", cfg.getReturnCenterCode());
-        requireText(missing, "returnChargeName", cfg.getReturnChargeName());
-        requireText(missing, "returnContactNumber", cfg.getReturnContactNumber());
-        requireText(missing, "returnZipCode", cfg.getReturnZipCode());
-        requireText(missing, "returnAddress", cfg.getReturnAddress());
-        requireText(missing, "returnAddressDetail", cfg.getReturnAddressDetail());
-        requireValue(missing, "returnCharge", cfg.getReturnCharge());
-        requireValue(missing, "deliveryChargeOnReturn", cfg.getDeliveryChargeOnReturn());
-        requireText(missing, "deliveryMethod", cfg.getDeliveryMethod());
-        requireText(missing, "deliveryCompanyCode", cfg.getDeliveryCompanyCode());
-        requireText(missing, "deliveryChargeType", cfg.getDeliveryChargeType());
-        requireValue(missing, "deliveryCharge", cfg.getDeliveryCharge());
-        requireText(missing, "remoteAreaDeliverable", cfg.getRemoteAreaDeliverable());
-        requireText(missing, "unionDeliveryType", cfg.getUnionDeliveryType());
+        requireText(missing, "outboundShippingPlaceCode", cfg.outboundShippingPlaceCode());
+        requireText(missing, "returnCenterCode", cfg.returnCenterCode());
+        requireText(missing, "returnChargeName", cfg.returnChargeName());
+        requireText(missing, "returnContactNumber", cfg.returnContactNumber());
+        requireText(missing, "returnZipCode", cfg.returnZipCode());
+        requireText(missing, "returnAddress", cfg.returnAddress());
+        requireText(missing, "returnAddressDetail", cfg.returnAddressDetail());
+        requireValue(missing, "returnCharge", cfg.returnCharge());
+        requireValue(missing, "deliveryChargeOnReturn", cfg.deliveryChargeOnReturn());
+        requireText(missing, "deliveryMethod", cfg.deliveryMethod());
+        requireText(missing, "deliveryCompanyCode", cfg.deliveryCompanyCode());
+        requireText(missing, "deliveryChargeType", cfg.deliveryChargeType());
+        requireValue(missing, "deliveryCharge", cfg.deliveryCharge());
+        requireText(missing, "remoteAreaDeliverable", cfg.remoteAreaDeliverable());
+        requireText(missing, "unionDeliveryType", cfg.unionDeliveryType());
         if (!missing.isEmpty()) {
             throw new IllegalArgumentException("배송설정 미완료 — 누락 필드: " + String.join(", ", missing));
+        }
+        // 75: Coupang forbids 묶음배송(UNION_DELIVERY) together with 착불(CHARGE_RECEIVED).
+        if ("UNION_DELIVERY".equals(cfg.unionDeliveryType())
+                && "CHARGE_RECEIVED".equals(cfg.deliveryChargeType())) {
+            throw new IllegalArgumentException("배송설정 오류 — 묶음배송(UNION_DELIVERY)은 착불(CHARGE_RECEIVED)과 함께 설정할 수 없습니다");
         }
         return cfg;
     }
@@ -350,24 +361,24 @@ public class CoupangListingAdapter implements ListingChannel {
         }
     }
 
-    /** Top-level delivery / return-center / outbound-place block from the account's shipping config (72/73). */
-    private static void putShippingBlock(Map<String, Object> payload, MarketplaceShippingConfig cfg) {
-        payload.put("deliveryMethod", cfg.getDeliveryMethod());
-        payload.put("deliveryCompanyCode", cfg.getDeliveryCompanyCode());
-        payload.put("deliveryChargeType", cfg.getDeliveryChargeType());
-        payload.put("deliveryCharge", cfg.getDeliveryCharge());
-        payload.put("freeShipOverAmount", cfg.getFreeShipOverAmount());   // optional (CONDITIONAL_FREE only)
-        payload.put("deliveryChargeOnReturn", cfg.getDeliveryChargeOnReturn());
-        payload.put("remoteAreaDeliverable", cfg.getRemoteAreaDeliverable());
-        payload.put("unionDeliveryType", cfg.getUnionDeliveryType());
-        payload.put("returnCenterCode", cfg.getReturnCenterCode());
-        payload.put("returnChargeName", cfg.getReturnChargeName());
-        payload.put("companyContactNumber", cfg.getReturnContactNumber());
-        payload.put("returnZipCode", cfg.getReturnZipCode());
-        payload.put("returnAddress", cfg.getReturnAddress());
-        payload.put("returnAddressDetail", cfg.getReturnAddressDetail());
-        payload.put("returnCharge", cfg.getReturnCharge());
-        payload.put("outboundShippingPlaceCode", cfg.getOutboundShippingPlaceCode());
+    /** Top-level delivery / return-center / outbound-place block from the resolved shipping config (72/73/75). */
+    private static void putShippingBlock(Map<String, Object> payload, ResolvedShippingConfig cfg) {
+        payload.put("deliveryMethod", cfg.deliveryMethod());
+        payload.put("deliveryCompanyCode", cfg.deliveryCompanyCode());
+        payload.put("deliveryChargeType", cfg.deliveryChargeType());
+        payload.put("deliveryCharge", cfg.deliveryCharge());
+        payload.put("freeShipOverAmount", cfg.freeShipOverAmount());   // optional (CONDITIONAL_FREE only)
+        payload.put("deliveryChargeOnReturn", cfg.deliveryChargeOnReturn());
+        payload.put("remoteAreaDeliverable", cfg.remoteAreaDeliverable());
+        payload.put("unionDeliveryType", cfg.unionDeliveryType());
+        payload.put("returnCenterCode", cfg.returnCenterCode());
+        payload.put("returnChargeName", cfg.returnChargeName());
+        payload.put("companyContactNumber", cfg.returnContactNumber());
+        payload.put("returnZipCode", cfg.returnZipCode());
+        payload.put("returnAddress", cfg.returnAddress());
+        payload.put("returnAddressDetail", cfg.returnAddressDetail());
+        payload.put("returnCharge", cfg.returnCharge());
+        payload.put("outboundShippingPlaceCode", cfg.outboundShippingPlaceCode());
     }
 
     /** Merged category-attribute map → Coupang vendorItem {@code attributes[]} shape (47/59). */

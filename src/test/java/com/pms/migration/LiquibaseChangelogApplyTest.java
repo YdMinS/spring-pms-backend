@@ -220,6 +220,18 @@ class LiquibaseChangelogApplyTest {
                         + "WHERE outbound_shipping_place_code IS NULL AND return_center_code IS NULL "
                         + "AND remote_area_deliverable IS NULL",
                 Integer.class)).isZero();
+
+        // changeset 042: marketplace_shipping_config.extra_info_message materialized (a successful count proves it; 75).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM marketplace_shipping_config WHERE extra_info_message IS NULL",
+                Integer.class)).isZero();
+
+        // changeset 043: shipping_override materialized on master_product + product_listing (75; a successful
+        // count over each proves the column exists).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM master_product WHERE shipping_override IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing WHERE shipping_override IS NULL", Integer.class)).isZero();
     }
 
     @Test

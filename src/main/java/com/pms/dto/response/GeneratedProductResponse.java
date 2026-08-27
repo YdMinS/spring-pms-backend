@@ -27,6 +27,8 @@ public class GeneratedProductResponse {
     private Map<String, String> fieldValues;
     /** This cell's channel raw tags (33); null → empty list. */
     private List<String> tags;
+    /** This cell's channel-level shipping overrides (75); null → empty map. */
+    private Map<String, String> shippingOverride;
     private List<OptionPrice> optionPrices;
 
     @Getter

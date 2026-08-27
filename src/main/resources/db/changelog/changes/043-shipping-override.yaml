@@ -1,0 +1,22 @@
+# Per-product shipping override maps (FEATURE_2608_06 / 75): nullable JSON TEXT on master_product + product_listing.
+# null = inherit (no override). Field-wise 3-level resolution (channel ?? master ?? account default) via
+# ShippingConfigResolver. No boolean columns → no MySQL BIT trap. Nullable → no backfill.
+databaseChangeLog:
+
+  - changeSet:
+      id: 043-shipping-override
+      author: oclyx
+      comment: "75: shipping_override (JSON TEXT nullable) on master_product + product_listing."
+      changes:
+        - addColumn:
+            tableName: master_product
+            columns:
+              - column:
+                  name: shipping_override
+                  type: TEXT
+        - addColumn:
+            tableName: product_listing
+            columns:
+              - column:
+                  name: shipping_override
+                  type: TEXT

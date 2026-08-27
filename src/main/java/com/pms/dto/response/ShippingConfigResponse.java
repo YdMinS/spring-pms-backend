@@ -38,6 +38,9 @@ public class ShippingConfigResponse {
     private String remoteAreaDeliverable;
     private String unionDeliveryType;
 
+    // extra info message (주문제작/설치배송 추가정보), 75
+    private String extraInfoMessage;
+
     public static ShippingConfigResponse from(MarketplaceShippingConfig c) {
         return ShippingConfigResponse.builder()
                 .marketplaceAccountId(c.getMarketplaceAccount().getId())
@@ -57,6 +60,7 @@ public class ShippingConfigResponse {
                 .freeShipOverAmount(c.getFreeShipOverAmount())
                 .remoteAreaDeliverable(c.getRemoteAreaDeliverable())
                 .unionDeliveryType(c.getUnionDeliveryType())
+                .extraInfoMessage(c.getExtraInfoMessage())
                 .build();
     }
 

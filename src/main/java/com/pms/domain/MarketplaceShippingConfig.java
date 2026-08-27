@@ -92,4 +92,12 @@ public class MarketplaceShippingConfig extends BaseEntity {
 
     @Column(name = "union_delivery_type", length = 100)
     private String unionDeliveryType;
+
+    /**
+     * Extra info message for made-to-order / installation delivery (FEATURE_2608_06 / 75). Optional
+     * (default "사용안함" = blank/null); attached to the register payload only when non-blank. This is the
+     * account default — a master/channel {@code shippingOverride} may override it (3-level resolution).
+     */
+    @Column(name = "extra_info_message", length = 500)
+    private String extraInfoMessage;
 }

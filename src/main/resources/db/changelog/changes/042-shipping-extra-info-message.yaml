@@ -1,0 +1,15 @@
+# Extra info message on the account shipping config (FEATURE_2608_06 / 75): additive nullable VARCHAR(500).
+# 주문제작/설치배송 추가정보 메시지, default "사용안함" (null/blank). No boolean → no MySQL BIT trap; nullable → no backfill.
+databaseChangeLog:
+
+  - changeSet:
+      id: 042-shipping-extra-info-message
+      author: oclyx
+      comment: "75: marketplace_shipping_config.extra_info_message (VARCHAR 500 nullable)."
+      changes:
+        - addColumn:
+            tableName: marketplace_shipping_config
+            columns:
+              - column:
+                  name: extra_info_message
+                  type: VARCHAR(500)
