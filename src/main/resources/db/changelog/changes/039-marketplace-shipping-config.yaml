@@ -1,0 +1,46 @@
+# Per-account shipping config (FEATURE_2608_06 / 72): outbound place + return center (full address block) +
+# delivery settings, one row per marketplace_account (UNIQUE marketplace_account_id).
+# No boolean columns → no MySQL BIT trap (remote_area_deliverable is a "Y"/"N" VARCHAR, not BOOLEAN).
+# Structured tags for H2<->MySQL portability (no raw SQL).
+databaseChangeLog:
+
+  - changeSet:
+      id: 039-marketplace-shipping-config
+      author: oclyx
+      comment: "FEATURE_2608_06/72: marketplace_shipping_config (one per account, UNIQUE marketplace_account_id)."
+      changes:
+        - createTable:
+            tableName: marketplace_shipping_config
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column:
+                  name: marketplace_account_id
+                  type: BIGINT
+                  constraints: { nullable: false, unique: true, uniqueConstraintName: uq_mktshipcfg_account }
+              # outbound place
+              - column: { name: outbound_shipping_place_code, type: VARCHAR(100) }
+              # return center (full address block)
+              - column: { name: return_center_code, type: VARCHAR(100) }
+              - column: { name: return_charge_name, type: VARCHAR(255) }
+              - column: { name: return_contact_number, type: VARCHAR(100) }
+              - column: { name: return_zip_code, type: VARCHAR(20) }
+              - column: { name: return_address, type: VARCHAR(500) }
+              - column: { name: return_address_detail, type: VARCHAR(500) }
+              - column: { name: return_charge, type: "DECIMAL(10,2)" }
+              - column: { name: delivery_charge_on_return, type: "DECIMAL(10,2)" }
+              # delivery settings
+              - column: { name: delivery_method, type: VARCHAR(100) }
+              - column: { name: delivery_company_code, type: VARCHAR(100) }
+              - column: { name: delivery_charge_type, type: VARCHAR(100) }
+              - column: { name: delivery_charge, type: "DECIMAL(10,2)" }
+              - column: { name: free_ship_over_amount, type: "DECIMAL(10,2)" }
+              - column: { name: remote_area_deliverable, type: VARCHAR(1) }
+              - column: { name: union_delivery_type, type: VARCHAR(100) }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_mktshipcfg_account
+            baseTableName: marketplace_shipping_config
+            baseColumnNames: marketplace_account_id
+            referencedTableName: marketplace_account
+            referencedColumnNames: id

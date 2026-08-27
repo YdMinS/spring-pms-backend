@@ -75,3 +75,5 @@ databaseChangeLog:
       file: db/changelog/changes/037-option-check-suffix.yaml
   - include:
       file: db/changelog/changes/038-account-vendor-user-id.yaml
+  - include:
+      file: db/changelog/changes/039-marketplace-shipping-config.yaml

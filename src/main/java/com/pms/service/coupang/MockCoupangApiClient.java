@@ -27,6 +27,8 @@ import java.nio.charset.StandardCharsets;
  *   <li>{@code display-categories/} 포함(GET) → 카테고리 트리 자식 fixture (45 browse)</li>
  *   <li>{@code category-related-metas} 포함(GET) → 필수속성/고시 meta fixture (47)</li>
  *   <li>{@code categorization/predict} 포함(POST) → 카테고리 추천 fixture (45 predict)</li>
+ *   <li>{@code outboundShippingCenters} 포함(GET) → 출고지 목록 fixture (72)</li>
+ *   <li>{@code returnShippingCenters} 포함(GET) → 반품지 목록 fixture (72)</li>
  *   <li>그 외 → {@code {"code":200,"data":[]}}</li>
  * </ul>
  * 반환 JSON 은 실제 파서(예: CoupangOrderSyncServiceImpl.upsert, CoupangListingAdapter)가 그대로 소화할 수
@@ -61,6 +63,21 @@ public class MockCoupangApiClient implements CoupangApiClient {
     // Predict = single candidate (data.predictedCategoryId + data.categoryName).
     private static final String PREDICT_FIXTURE =
             "{\"code\":\"SUCCESS\",\"data\":{\"predictedCategoryId\":\"56174\",\"categoryName\":\"여성 반팔티\"}}";
+
+    // 72 shipping-place fixtures (inline). Both return data.content[] (CoupangShippingPlaceProvider parses).
+    private static final String OUTBOUND_CENTERS_FIXTURE =
+            "{\"code\":200,\"data\":{\"content\":["
+                    + "{\"outboundShippingPlaceCode\":\"74010\",\"shippingPlaceName\":\"기본출고지\"},"
+                    + "{\"outboundShippingPlaceCode\":\"74011\",\"shippingPlaceName\":\"제2출고지\"}"
+                    + "]}}";
+    private static final String RETURN_CENTERS_FIXTURE =
+            "{\"code\":200,\"data\":{\"content\":["
+                    + "{\"returnCenterCode\":\"1000274592\",\"shippingPlaceName\":\"기본반품지\","
+                    + "\"returnFee\":\"2500\",\"deliveryFee\":\"2500\",\"placeAddresses\":[{"
+                    + "\"companyContactName\":\"홍길동\",\"companyContactNumber\":\"02-1234-5678\","
+                    + "\"returnZipCode\":\"06000\",\"returnAddress\":\"서울시 강남구 테헤란로 1\","
+                    + "\"returnAddressDetail\":\"3층\"}]}"
+                    + "]}}";
 
     @Override
     public String get(String path, String query, MarketplaceAccount account) {
@@ -101,6 +118,12 @@ public class MockCoupangApiClient implements CoupangApiClient {
         }
         if (path.contains("display-categories/")) {
             return DISPLAY_CATEGORIES_FIXTURE;
+        }
+        if (path.contains("outboundShippingCenters")) {
+            return OUTBOUND_CENTERS_FIXTURE;                        // 72 outbound places
+        }
+        if (path.contains("returnShippingCenters")) {
+            return RETURN_CENTERS_FIXTURE;                          // 72 return centers
         }
         if (path.contains("category-related-metas")) {
             return com.pms.service.listing.category.CoupangCategoryMeta.META_FIXTURE_JSON;   // 47 meta
