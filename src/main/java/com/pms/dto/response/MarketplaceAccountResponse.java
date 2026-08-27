@@ -26,6 +26,7 @@ public class MarketplaceAccountResponse {
     private String platform;
     private String accountAlias;
     private String vendorId;
+    private String vendorUserId;       // WING login ID (identifier, exposable like accessKey)
     private String accessKey;          // accessKey는 식별자라 노출 가능
     private Boolean isActive;
     private Long thumbnailTemplateId;  // 채널 템플릿 지정(id만 노출, 표시명은 프론트가 별도 조회)

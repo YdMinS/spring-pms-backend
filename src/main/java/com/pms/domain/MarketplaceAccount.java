@@ -46,6 +46,12 @@ public class MarketplaceAccount extends BaseEntity {
     @Column(name = "vendor_id", nullable = false, length = 100)
     private String vendorId;
 
+    // WING login ID (FEATURE_2608_06 / 71). Distinct from vendorId (vendor code); required by Coupang
+    // product registration. Nullable — no backfill for existing accounts, may stay unset. An identifier
+    // like accessKey (not secretKey) → safe to expose in responses, no encryption converter.
+    @Column(name = "vendor_user_id", length = 100)
+    private String vendorUserId;
+
     @Column(name = "access_key", nullable = false, length = 255)
     private String accessKey;
 

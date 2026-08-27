@@ -208,6 +208,10 @@ class LiquibaseChangelogApplyTest {
                     .as("069 suffix columns present on %s", table)
                     .isZero();
         }
+
+        // changeset 038: marketplace_account.vendor_user_id materialized (a successful count proves it; 71).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM marketplace_account WHERE vendor_user_id IS NULL", Integer.class)).isZero();
     }
 
     @Test
