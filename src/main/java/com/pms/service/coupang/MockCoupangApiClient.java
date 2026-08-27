@@ -27,7 +27,7 @@ import java.nio.charset.StandardCharsets;
  *   <li>{@code display-categories/} 포함(GET) → 카테고리 트리 자식 fixture (45 browse)</li>
  *   <li>{@code category-related-metas} 포함(GET) → 필수속성/고시 meta fixture (47)</li>
  *   <li>{@code categorization/predict} 포함(POST) → 카테고리 추천 fixture (45 predict)</li>
- *   <li>{@code outboundShippingCenters} 포함(GET) → 출고지 목록 fixture (72)</li>
+ *   <li>{@code shipping-place/outbound} 포함(GET) → 출고지 목록 fixture (72)</li>
  *   <li>{@code returnShippingCenters} 포함(GET) → 반품지 목록 fixture (72)</li>
  *   <li>그 외 → {@code {"code":200,"data":[]}}</li>
  * </ul>
@@ -121,8 +121,8 @@ public class MockCoupangApiClient implements CoupangApiClient {
         if (path.contains("display-categories/")) {
             return DISPLAY_CATEGORIES_FIXTURE;
         }
-        if (path.contains("outboundShippingCenters")) {
-            return OUTBOUND_CENTERS_FIXTURE;                        // 72 outbound places (openapi v4)
+        if (path.contains("shipping-place/outbound")) {
+            return OUTBOUND_CENTERS_FIXTURE;                        // 72 outbound places (marketplace_openapi v2)
         }
         if (path.contains("returnShippingCenters")) {
             return RETURN_CENTERS_FIXTURE;                          // 72 return centers (openapi v4)

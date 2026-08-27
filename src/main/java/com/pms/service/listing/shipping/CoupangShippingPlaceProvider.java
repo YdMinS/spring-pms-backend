@@ -16,15 +16,16 @@ import java.util.List;
  * Coupang {@link ShippingPlaceProvider} implementation (FEATURE_2608_06 / 72, paths corrected 74-fix) —
  * reuses {@link CoupangApiClient} (account HMAC) for both calls; no new client method needed.
  *
- * <p>Both lookups use the same {@code openapi/apis/api/v4/vendors/{vendorId}/…} family (no paging query):
+ * <p>The two lookups use <b>different</b> Coupang gateways (confirmed empirically on a live account):
  * <ul>
- *   <li>반품지: {@code GET .../v4/vendors/{vendorId}/returnShippingCenters} — <b>confirmed working</b> against the
- *       real account (returns the list; picker shows). The docs list a v5 variant, but v5 returned an empty list
- *       on the live account, so v4 is retained until v5 is verified.</li>
- *   <li>출고지: {@code GET .../v4/vendors/{vendorId}/outboundShippingCenters} — the symmetric endpoint. It had
- *       returned empty before; the defensive envelope parse below ({@code data.content ?? content ?? data}) is the
- *       likely fix if the earlier miss was the response shape rather than the path. ⚠️ Still to be confirmed on a
- *       live account via the {@code [COUPANG] GET …outboundShippingCenters} log line (status / byte size).</li>
+ *   <li>반품지: {@code GET /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/returnShippingCenters}
+ *       — <b>confirmed working</b> (returns the list; picker shows). The docs list a v5 variant, but v5 returned
+ *       an empty list on the live account, so v4 is retained until v5 is verified. No paging query.</li>
+ *   <li>출고지: {@code GET /v2/providers/marketplace_openapi/apis/api/v2/vendor/shipping-place/outbound}
+ *       — the WING 출고지(shipping place) endpoint (vendorId <b>not</b> in the path, query paging). The symmetric
+ *       {@code openapi/v4/…/outboundShippingCenters} returned an empty list on the live account (it's a different
+ *       resource), so we use the documented shipping-place endpoint. Response fields
+ *       ({@code outboundShippingPlaceCode}, {@code shippingPlaceName}) match; defensive envelope parse below.</li>
  * </ul>
  *
  * <p>Return-center fees are <b>weight-tiered</b> ({@code returnFee02kg..20kg}); there is no single
@@ -40,9 +41,10 @@ public class CoupangShippingPlaceProvider implements ShippingPlaceProvider {
     private static final Logger log = LoggerFactory.getLogger(CoupangShippingPlaceProvider.class);
 
     private static final String OUTBOUND_CENTERS =
-            "/v2/providers/openapi/apis/api/v4/vendors/%s/outboundShippingCenters";
+            "/v2/providers/marketplace_openapi/apis/api/v2/vendor/shipping-place/outbound";
     private static final String RETURN_CENTERS =
             "/v2/providers/openapi/apis/api/v4/vendors/%s/returnShippingCenters";
+    private static final String OUTBOUND_PAGING = "pageNum=1&pageSize=50";   // pageSize max = 50 per the docs
 
     private final CoupangApiClient client;
     private final ObjectMapper objectMapper;
@@ -54,7 +56,7 @@ public class CoupangShippingPlaceProvider implements ShippingPlaceProvider {
 
     @Override
     public List<OutboundPlace> fetchOutboundPlaces(MarketplaceAccount account) {
-        JsonNode content = fetchContent(String.format(OUTBOUND_CENTERS, account.getVendorId()), "", account, "outbound");
+        JsonNode content = fetchContent(OUTBOUND_CENTERS, OUTBOUND_PAGING, account, "outbound");
         List<OutboundPlace> places = new ArrayList<>();
         for (JsonNode node : content) {
             places.add(new OutboundPlace(
