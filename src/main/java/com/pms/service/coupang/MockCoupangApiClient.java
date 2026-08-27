@@ -64,7 +64,9 @@ public class MockCoupangApiClient implements CoupangApiClient {
     private static final String PREDICT_FIXTURE =
             "{\"code\":\"SUCCESS\",\"data\":{\"predictedCategoryId\":\"56174\",\"categoryName\":\"여성 반팔티\"}}";
 
-    // 72 shipping-place fixtures (inline). Both return data.content[] (CoupangShippingPlaceProvider parses).
+    // 72 shipping-place fixtures (inline), shaped like the real Coupang responses (74-fix).
+    // Outbound: marketplace_openapi v2 (code+name). Return: v5 — address block has no contact NAME,
+    // fees are weight-tiered (returnFeeXXkg), no single returnFee/deliveryFee.
     private static final String OUTBOUND_CENTERS_FIXTURE =
             "{\"code\":200,\"data\":{\"content\":["
                     + "{\"outboundShippingPlaceCode\":\"74010\",\"shippingPlaceName\":\"기본출고지\"},"
@@ -73,8 +75,8 @@ public class MockCoupangApiClient implements CoupangApiClient {
     private static final String RETURN_CENTERS_FIXTURE =
             "{\"code\":200,\"data\":{\"content\":["
                     + "{\"returnCenterCode\":\"1000274592\",\"shippingPlaceName\":\"기본반품지\","
-                    + "\"returnFee\":\"2500\",\"deliveryFee\":\"2500\",\"placeAddresses\":[{"
-                    + "\"companyContactName\":\"홍길동\",\"companyContactNumber\":\"02-1234-5678\","
+                    + "\"returnFee05kg\":\"2500\",\"returnFee10kg\":\"3000\",\"placeAddresses\":[{"
+                    + "\"companyContactNumber\":\"02-1234-5678\","
                     + "\"returnZipCode\":\"06000\",\"returnAddress\":\"서울시 강남구 테헤란로 1\","
                     + "\"returnAddressDetail\":\"3층\"}]}"
                     + "]}}";
@@ -119,11 +121,11 @@ public class MockCoupangApiClient implements CoupangApiClient {
         if (path.contains("display-categories/")) {
             return DISPLAY_CATEGORIES_FIXTURE;
         }
-        if (path.contains("outboundShippingCenters")) {
-            return OUTBOUND_CENTERS_FIXTURE;                        // 72 outbound places
+        if (path.contains("shipping-place/outbound")) {
+            return OUTBOUND_CENTERS_FIXTURE;                        // 72 outbound places (marketplace_openapi v2)
         }
         if (path.contains("returnShippingCenters")) {
-            return RETURN_CENTERS_FIXTURE;                          // 72 return centers
+            return RETURN_CENTERS_FIXTURE;                          // 72 return centers (v5)
         }
         if (path.contains("category-related-metas")) {
             return com.pms.service.listing.category.CoupangCategoryMeta.META_FIXTURE_JSON;   // 47 meta
