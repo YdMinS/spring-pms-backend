@@ -121,11 +121,11 @@ public class MockCoupangApiClient implements CoupangApiClient {
         if (path.contains("display-categories/")) {
             return DISPLAY_CATEGORIES_FIXTURE;
         }
-        if (path.contains("shipping-place/outbound")) {
-            return OUTBOUND_CENTERS_FIXTURE;                        // 72 outbound places (marketplace_openapi v2)
+        if (path.contains("outboundShippingCenters")) {
+            return OUTBOUND_CENTERS_FIXTURE;                        // 72 outbound places (openapi v4)
         }
         if (path.contains("returnShippingCenters")) {
-            return RETURN_CENTERS_FIXTURE;                          // 72 return centers (v5)
+            return RETURN_CENTERS_FIXTURE;                          // 72 return centers (openapi v4)
         }
         if (path.contains("category-related-metas")) {
             return com.pms.service.listing.category.CoupangCategoryMeta.META_FIXTURE_JSON;   // 47 meta
