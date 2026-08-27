@@ -39,7 +39,7 @@ class CoupangShippingPlaceProviderTest {
 
     @Test
     void fetchOutboundPlaces_parsesContentArray() {
-        given(client.get(contains("outboundShippingCenters"), anyString(), any())).willReturn(
+        given(client.get(contains("shipping-place/outbound"), anyString(), any())).willReturn(
                 "{\"code\":200,\"data\":{\"content\":["
                         + "{\"outboundShippingPlaceCode\":\"74010\",\"shippingPlaceName\":\"기본출고지\"},"
                         + "{\"outboundShippingPlaceCode\":\"74011\",\"shippingPlaceName\":\"제2출고지\"}"
@@ -79,7 +79,7 @@ class CoupangShippingPlaceProviderTest {
 
     @Test
     void fetchOutboundPlaces_emptyResponse_returnsEmptyList() {
-        given(client.get(contains("outboundShippingCenters"), anyString(), any()))
+        given(client.get(contains("shipping-place/outbound"), anyString(), any()))
                 .willReturn("{\"code\":200,\"data\":{}}");
 
         assertThat(provider.fetchOutboundPlaces(acct())).isEmpty();
