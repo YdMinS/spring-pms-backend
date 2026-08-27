@@ -36,6 +36,9 @@ public class MarketplaceAccountRequest {
     @Schema(description = "Coupang vendor ID", example = "A00012345", required = true)
     private String vendorId;
 
+    @Schema(description = "WING login ID (optional; distinct from vendorId)", example = "wing_user01")
+    private String vendorUserId;
+
     @NotBlank(message = "accessKey is required")
     @Schema(description = "Coupang access key", required = true)
     private String accessKey;

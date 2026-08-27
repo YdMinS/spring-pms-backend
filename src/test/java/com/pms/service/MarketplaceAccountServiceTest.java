@@ -80,6 +80,26 @@ class MarketplaceAccountServiceTest {
     }
 
     @Test
+    void vendorUserId_savedOnCreate_replacedOnUpdate() {
+        // create: request vendorUserId is persisted.
+        given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(seller()));
+        given(repository.save(org.mockito.ArgumentMatchers.any())).willAnswer(inv -> inv.getArgument(0));
+        service.create(baseRequest().vendorUserId("wing_old").build());
+        ArgumentCaptor<MarketplaceAccount> createCaptor = ArgumentCaptor.forClass(MarketplaceAccount.class);
+        verify(repository).save(createCaptor.capture());
+        assertThat(createCaptor.getValue().getVendorUserId()).isEqualTo("wing_old");
+
+        // update: request value directly replaces (same semantics as vendorId/accessKey, full overwrite).
+        MarketplaceAccount existing = MarketplaceAccount.builder()
+                .id(50L).seller(seller()).platform("COUPANG").vendorId("V1")
+                .vendorUserId("wing_old").accessKey("ak").secretKey("sk").isActive(true).build();
+        given(repository.findById(50L)).willReturn(Optional.of(existing));
+        MarketplaceAccountResponse response = service.update(
+                50L, baseRequest().secretKey(null).vendorUserId("wing_new").build());
+        assertThat(response.getVendorUserId()).isEqualTo("wing_new");
+    }
+
+    @Test
     void update_nullTemplateId_keepsExisting_valueReplaces() {
         ThumbnailTemplate oldThumb = ThumbnailTemplate.builder().id(1L).name("old").build();
         MarketplaceAccount existing = MarketplaceAccount.builder()

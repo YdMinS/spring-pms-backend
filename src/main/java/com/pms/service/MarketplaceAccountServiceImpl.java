@@ -53,6 +53,7 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                 .platform(req.getPlatform())
                 .accountAlias(req.getAccountAlias())
                 .vendorId(req.getVendorId())
+                .vendorUserId(req.getVendorUserId())
                 .accessKey(req.getAccessKey())
                 .secretKey(req.getSecretKey())
                 .isActive(req.getIsActive() != null ? req.getIsActive() : true)
@@ -105,6 +106,9 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                 .platform(req.getPlatform())
                 .accountAlias(req.getAccountAlias())
                 .vendorId(req.getVendorId())
+                // vendorUserId: same semantics as vendorId/accessKey — request value directly replaces
+                // (full overwrite, not the thumbnailTemplate null-keep pattern).
+                .vendorUserId(req.getVendorUserId())
                 .accessKey(req.getAccessKey())
                 .secretKey(secretKey)
                 .isActive(req.getIsActive() != null ? req.getIsActive() : existing.getIsActive())
@@ -168,6 +172,7 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                 .platform(a.getPlatform())
                 .accountAlias(a.getAccountAlias())
                 .vendorId(a.getVendorId())
+                .vendorUserId(a.getVendorUserId())
                 .accessKey(a.getAccessKey())
                 .isActive(a.getIsActive())
                 // id only (LAZY getId reads the FK without a query); template display name resolved on the front.

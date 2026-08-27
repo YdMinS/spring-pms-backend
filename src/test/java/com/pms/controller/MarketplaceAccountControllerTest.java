@@ -51,6 +51,7 @@ class MarketplaceAccountControllerTest extends BaseIntegrationTest {
         map.put("sellerId", sellerId);
         map.put("platform", "COUPANG");
         map.put("vendorId", "A00012345");
+        map.put("vendorUserId", "wing_user01");
         map.put("accessKey", "ak");
         map.put("secretKey", "sk");
         if (thumbnailTemplateId != null) {
@@ -79,6 +80,7 @@ class MarketplaceAccountControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.thumbnailTemplateId").value(templateId))
+                .andExpect(jsonPath("$.data.vendorUserId").value("wing_user01"))
                 .andExpect(jsonPath("$.data.secretKey").doesNotExist());
     }
 
@@ -99,12 +101,13 @@ class MarketplaceAccountControllerTest extends BaseIntegrationTest {
         // secretKey omitted (blank keeps existing); thumbnailTemplateId assigns the template.
         String patchBody = objectMapper.writeValueAsString(Map.of(
                 "sellerId", sellerId, "platform", "COUPANG", "vendorId", "A00012345",
-                "accessKey", "ak", "thumbnailTemplateId", templateId));
+                "vendorUserId", "wing_user01", "accessKey", "ak", "thumbnailTemplateId", templateId));
 
         mockMvc.perform(patch(PATH + "/" + accountId).header("Authorization", "Bearer " + adminToken)
                         .contentType("application/json").content(patchBody))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.thumbnailTemplateId").value(templateId));
+                .andExpect(jsonPath("$.data.thumbnailTemplateId").value(templateId))
+                .andExpect(jsonPath("$.data.vendorUserId").value("wing_user01"));
     }
 
     // 69: channel-level 옵션확인 suffix PUT (replace; blank suffix → null inherit). 401/403 already covered above.
