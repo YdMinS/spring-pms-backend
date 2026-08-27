@@ -91,7 +91,8 @@ class ListingAssetServiceTest {
         given(thumbnailRenderer.render(any(), any(), any())).willReturn(new byte[]{1, 2, 3});
         given(imageStorageService.uploadBytes(any(), anyString(), anyString(), anyString()))
                 .willReturn("thumbnails/generated.jpg");
-        given(priceCalculator.calculatePrice(any(), any(), any())).willReturn(new BigDecimal("10670"));
+        given(priceCalculator.calculatePrices(any(), any(), any()))
+                .willReturn(new PriceCalculator.PriceResult(new BigDecimal("10670"), new BigDecimal("13340")));
         given(detailContentGenerator.generate(any())).willReturn("<p>운동화</p>");
         given(generatedProductDataRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
     }
@@ -129,6 +130,8 @@ class ListingAssetServiceTest {
         ArgumentCaptor<ProductListingOption> optionCaptor = ArgumentCaptor.forClass(ProductListingOption.class);
         verify(productListingOptionRepository).save(optionCaptor.capture());
         assertThat(optionCaptor.getValue().getSellingPrice()).isEqualByComparingTo("10670");
+        // 73: originalPrice (display strike-through) written back alongside sellingPrice.
+        assertThat(optionCaptor.getValue().getOriginalPrice()).isEqualByComparingTo("13340");
 
         // Upsert: new row (no id), detail stub non-blank.
         ArgumentCaptor<GeneratedProductData> dataCaptor = ArgumentCaptor.forClass(GeneratedProductData.class);
@@ -228,7 +231,8 @@ class ListingAssetServiceTest {
         given(thumbnailRenderer.render(any(), any(), any())).willReturn(new byte[]{1, 2, 3});
         given(imageStorageService.uploadBytes(any(), anyString(), anyString(), anyString()))
                 .willReturn("thumbnails/generated.jpg");
-        given(priceCalculator.calculatePrice(any(), any(), any())).willReturn(new BigDecimal("10670"));
+        given(priceCalculator.calculatePrices(any(), any(), any()))
+                .willReturn(new PriceCalculator.PriceResult(new BigDecimal("10670"), new BigDecimal("13340")));
         GeneratedProductData existing = GeneratedProductData.builder()
                 .id(88L).productListing(cell).detailHtml("X")
                 .source(GeneratedContentSource.MANUAL_OVERRIDE).build();
@@ -350,7 +354,8 @@ class ListingAssetServiceTest {
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
         given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
                 .willReturn(List.of(ProductListingProduct.builder().product(product()).quantity(1).build()));
-        given(priceCalculator.calculatePrice(any(), any(), any())).willReturn(new BigDecimal("10670"));
+        given(priceCalculator.calculatePrices(any(), any(), any()))
+                .willReturn(new PriceCalculator.PriceResult(new BigDecimal("10670"), new BigDecimal("13340")));
         given(detailContentGenerator.generate(any())).willReturn("<p>운동화</p>");
         GeneratedProductData existing = GeneratedProductData.builder()
                 .id(88L).productListing(cell).thumbnailUrl("kept.jpg")
@@ -386,7 +391,8 @@ class ListingAssetServiceTest {
         given(thumbnailRenderer.render(any(), any(), any())).willReturn(new byte[]{1, 2, 3});
         given(imageStorageService.uploadBytes(any(), anyString(), anyString(), anyString()))
                 .willReturn("thumbnails/generated.jpg");
-        given(priceCalculator.calculatePrice(any(), any(), any())).willReturn(new BigDecimal("10670"));
+        given(priceCalculator.calculatePrices(any(), any(), any()))
+                .willReturn(new PriceCalculator.PriceResult(new BigDecimal("10670"), new BigDecimal("13340")));
         GeneratedProductData existing = GeneratedProductData.builder()
                 .id(88L).productListing(cell).thumbnailUrl("old.jpg")
                 .thumbnailSource(GeneratedContentSource.AUTO)
@@ -430,7 +436,8 @@ class ListingAssetServiceTest {
         given(thumbnailRenderer.render(any(), any(), any())).willReturn(new byte[]{1, 2, 3});
         given(imageStorageService.uploadBytes(any(), anyString(), anyString(), anyString()))
                 .willReturn("thumbnails/rerendered.jpg");
-        given(priceCalculator.calculatePrice(any(), any(), any())).willReturn(new BigDecimal("10670"));
+        given(priceCalculator.calculatePrices(any(), any(), any()))
+                .willReturn(new PriceCalculator.PriceResult(new BigDecimal("10670"), new BigDecimal("13340")));
         given(detailContentGenerator.generate(any())).willReturn("<p>운동화</p>");
         given(generatedProductDataRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
 

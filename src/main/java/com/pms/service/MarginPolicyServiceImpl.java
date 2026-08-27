@@ -38,6 +38,7 @@ public class MarginPolicyServiceImpl implements MarginPolicyService {
                 .seller(seller)
                 .platform(request.getPlatform())
                 .marginRate(request.getMarginRate())
+                .displayDiscountRate(request.getDisplayDiscountRate())
                 .build();
         return mapToResponse(marginPolicyRepository.save(policy));
     }
@@ -65,6 +66,9 @@ public class MarginPolicyServiceImpl implements MarginPolicyService {
                 .seller(seller)
                 .platform(request.getPlatform())
                 .marginRate(request.getMarginRate())
+                // null = keep existing (optional field convention).
+                .displayDiscountRate(request.getDisplayDiscountRate() != null
+                        ? request.getDisplayDiscountRate() : existing.getDisplayDiscountRate())
                 .build();
         return mapToResponse(marginPolicyRepository.save(updated));
     }
@@ -102,6 +106,7 @@ public class MarginPolicyServiceImpl implements MarginPolicyService {
                 .sellerName(policy.getSeller().getSellerName())
                 .platform(policy.getPlatform())
                 .marginRate(policy.getMarginRate())
+                .displayDiscountRate(policy.getDisplayDiscountRate())
                 .build();
     }
 }

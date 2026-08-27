@@ -212,6 +212,14 @@ class LiquibaseChangelogApplyTest {
         // changeset 038: marketplace_account.vendor_user_id materialized (a successful count proves it; 71).
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM marketplace_account WHERE vendor_user_id IS NULL", Integer.class)).isZero();
+
+        // changeset 039: marketplace_shipping_config table + columns materialized (a successful count over the
+        // key columns proves the table + outbound/return/delivery structure; 72).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM marketplace_shipping_config "
+                        + "WHERE outbound_shipping_place_code IS NULL AND return_center_code IS NULL "
+                        + "AND remote_area_deliverable IS NULL",
+                Integer.class)).isZero();
     }
 
     @Test

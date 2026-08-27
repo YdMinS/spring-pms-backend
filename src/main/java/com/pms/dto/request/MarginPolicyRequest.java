@@ -32,4 +32,11 @@ public class MarginPolicyRequest {
     @DecimalMax(value = "0.9999", message = "marginRate must be <= 0.9999")
     @Schema(description = "Net-profit ratio (0.1500 = 15%)", example = "0.1500")
     private BigDecimal marginRate;
+
+    // Optional display discount rate for originalPrice reverse-calc (73). Upper-bounded at 0.5; null = keep
+    // existing on update / no discount on create.
+    @DecimalMin(value = "0.0", message = "displayDiscountRate must be >= 0")
+    @DecimalMax(value = "0.5", message = "displayDiscountRate must be <= 0.5")
+    @Schema(description = "Display discount rate (0.2000 = 20% strike-through)", example = "0.2000")
+    private BigDecimal displayDiscountRate;
 }

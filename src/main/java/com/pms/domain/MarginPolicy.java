@@ -46,4 +46,9 @@ public class MarginPolicy extends BaseEntity {
     // Net-profit ratio, e.g. 0.1500 = 15%. DECIMAL(5,4) → [0.0000, 0.9999].
     @Column(name = "margin_rate", nullable = false, precision = 5, scale = 4)
     private BigDecimal marginRate;
+
+    // Display discount rate for Coupang originalPrice reverse-calc (73): originalPrice = salePrice / (1 − rate).
+    // Nullable = treat as 0 (no discount shown → originalPrice == salePrice). Clamped to [0, 0.5] at calc time.
+    @Column(name = "display_discount_rate", precision = 5, scale = 4)
+    private BigDecimal displayDiscountRate;
 }

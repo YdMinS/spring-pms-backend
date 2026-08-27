@@ -109,4 +109,52 @@ class PriceCalculatorTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("표준 카테고리 미설정");
     }
+
+    // --- 73: originalPrice reverse-calc (displayDiscountRate) ---
+
+    private void stubMargin(String marginRate, String discountRate) {
+        stubConfig("0.10", "2500", "500");
+        given(marginPolicyRepository.findBySellerIdAndPlatform(7L, "COUPANG"))
+                .willReturn(Optional.of(MarginPolicy.builder()
+                        .marginRate(new BigDecimal(marginRate))
+                        .displayDiscountRate(discountRate == null ? null : new BigDecimal(discountRate))
+                        .build()));
+    }
+
+    @Test
+    void calculatePrices_discountRateZero_originalPriceEqualsSalePrice() {
+        stubMargin("0.15", "0.0");   // salePrice 8000/0.75 = 10670
+
+        PriceCalculator.PriceResult result = priceCalculator.calculatePrices(cell, masterOption, new BigDecimal("5000"));
+
+        assertThat(result.salePrice()).isEqualByComparingTo("10670");
+        assertThat(result.originalPrice()).isEqualTo(result.salePrice());   // scale-equal, no discount shown
+    }
+
+    @Test
+    void calculatePrices_discountRate20Percent_originalPriceRoundedToTenWon() {
+        stubMargin("0.15", "0.2");   // originalPrice = round10(10670 / 0.8) = round10(13337.5) = 13340
+
+        PriceCalculator.PriceResult result = priceCalculator.calculatePrices(cell, masterOption, new BigDecimal("5000"));
+
+        assertThat(result.originalPrice()).isEqualByComparingTo("13340");
+    }
+
+    @Test
+    void calculatePrices_discountRateNull_treatedAsZero() {
+        stubMargin("0.15", null);
+
+        PriceCalculator.PriceResult result = priceCalculator.calculatePrices(cell, masterOption, new BigDecimal("5000"));
+
+        assertThat(result.originalPrice()).isEqualByComparingTo(result.salePrice());
+    }
+
+    @Test
+    void calculatePrices_discountRateAboveCap_clampedToHalf() {
+        stubMargin("0.15", "0.6");   // clamp → 0.5; originalPrice = round10(10670 / 0.5) = 21340
+
+        PriceCalculator.PriceResult result = priceCalculator.calculatePrices(cell, masterOption, new BigDecimal("5000"));
+
+        assertThat(result.originalPrice()).isEqualByComparingTo("21340");
+    }
 }

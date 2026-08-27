@@ -5,10 +5,12 @@ import com.pms.domain.Category;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.MarketplaceShippingConfig;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
+import com.pms.repository.MarketplaceShippingConfigRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.MasterChannelConfigService;
@@ -58,6 +60,7 @@ class CoupangListingAdapterTest {
     @Mock private RegistrationNameGenerator registrationNameGenerator;
     @Mock private com.pms.service.OptionCheckSuffixResolver optionCheckSuffixResolver;
     @Mock private MasterProductService masterProductService;
+    @Mock private MarketplaceShippingConfigRepository marketplaceShippingConfigRepository;
     @org.mockito.Spy private ObjectMapper objectMapper = new ObjectMapper();
     @InjectMocks private CoupangListingAdapter adapter;
 
@@ -67,6 +70,10 @@ class CoupangListingAdapterTest {
         // register tests without notices don't NPE. The notice test overrides this with a "cat-1" group.
         lenient().when(metaAdapter.getMeta(any(), anyString()))
                 .thenReturn(new CategoryMetaSchema(List.of(), List.of()));
+        // 73: buildPayload requires the account shipping config; default = a fully-populated one so register
+        // tests pass. The "배송설정 미완료" test overrides this with empty / a partial config.
+        lenient().when(marketplaceShippingConfigRepository.findByMarketplaceAccountId(any()))
+                .thenReturn(java.util.Optional.of(fullConfig()));
     }
 
     private ProductListing cell() {
@@ -77,7 +84,21 @@ class CoupangListingAdapterTest {
     }
 
     private MarketplaceAccount acct() {
-        return MarketplaceAccount.builder().vendorId("V1").accessKey("ak").secretKey("sk").isActive(true).build();
+        // 73: vendorUserId (WING login id) is register-required.
+        return MarketplaceAccount.builder().vendorId("V1").vendorUserId("wing-user")
+                .accessKey("ak").secretKey("sk").isActive(true).build();
+    }
+
+    private MarketplaceShippingConfig fullConfig() {
+        return MarketplaceShippingConfig.builder()
+                .outboundShippingPlaceCode("OUT-1")
+                .returnCenterCode("RC-1").returnChargeName("반품담당").returnContactNumber("021234567")
+                .returnZipCode("06000").returnAddress("서울시").returnAddressDetail("1층")
+                .returnCharge(new BigDecimal("2500")).deliveryChargeOnReturn(new BigDecimal("2500"))
+                .deliveryMethod("SEQUENCIAL").deliveryCompanyCode("KGB").deliveryChargeType("FREE")
+                .deliveryCharge(new BigDecimal("0")).remoteAreaDeliverable("N")
+                .unionDeliveryType("NOT_UNION_DELIVERY")
+                .build();
     }
 
     @Test
@@ -324,6 +345,107 @@ class CoupangListingAdapterTest {
         assertThatThrownBy(() -> adapter.validateRegistrable(cell, null, acct()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("필수 카테고리 속성 누락");
+    }
+
+    // 73: top-level required fields (sale period, vendorUserId, shipping/return/outbound block, requested=false)
+    // + item defaults (originalPrice, maximumBuyCount, adultOnly …). images/searchTags/contents at item level.
+    @Test
+    void register_payloadCarriesRequiredTopLevelAndItemDefaults() throws Exception {
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("1세트")
+                        .sellingPrice(new BigDecimal("10000")).originalPrice(new BigDecimal("12500"))
+                        .active(true).build()));
+        given(masterProductService.isBundle(null)).willReturn(false);
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        GeneratedProductData gen = GeneratedProductData.builder()
+                .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell(), gen, acct());
+
+        JsonNode json = objectMapper.readTree(payload.getValue());
+        // top-level
+        assertThat(json.path("requested").asBoolean()).isFalse();
+        assertThat(json.path("saleEndedAt").asText()).isEqualTo("2099-12-31T23:59:59");
+        assertThat(json.has("saleStartedAt")).isTrue();
+        assertThat(json.path("vendorUserId").asText()).isEqualTo("wing-user");
+        assertThat(json.path("returnCenterCode").asText()).isEqualTo("RC-1");
+        assertThat(json.path("outboundShippingPlaceCode").asText()).isEqualTo("OUT-1");
+        assertThat(json.path("companyContactNumber").asText()).isEqualTo("021234567");
+        assertThat(json.path("remoteAreaDeliverable").asText()).isEqualTo("N");
+        // images/searchTags/contents moved off top-level → item level
+        assertThat(json.path("images").isMissingNode()).isTrue();
+        assertThat(json.path("searchTags").isMissingNode()).isTrue();
+        // item defaults
+        JsonNode item = json.path("items").get(0);
+        assertThat(item.path("originalPrice").asInt()).isEqualTo(12500);
+        assertThat(item.path("maximumBuyCount").asInt()).isEqualTo(9999);
+        assertThat(item.path("adultOnly").asText()).isEqualTo("EVERYONE");
+        assertThat(item.path("taxType").asText()).isEqualTo("TAX");
+        assertThat(item.path("parallelImported").asText()).isEqualTo("NOT_PARALLEL_IMPORTED");
+        assertThat(item.path("pccNeeded").asBoolean()).isFalse();
+        assertThat(item.path("images").get(0).path("imageType").asText()).isEqualTo("REPRESENTATION");
+        assertThat(item.path("contents").asText()).isEqualTo("<p>셀</p>");
+    }
+
+    // 73: originalPrice null on the option → falls back to salePrice.
+    @Test
+    void register_itemOriginalPriceNull_fallsBackToSalePrice() throws Exception {
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("1세트")
+                        .sellingPrice(new BigDecimal("10000")).active(true).build()));   // no originalPrice
+        given(masterProductService.isBundle(null)).willReturn(false);
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell(), gen, acct());
+
+        JsonNode item = objectMapper.readTree(payload.getValue()).path("items").get(0);
+        assertThat(item.path("originalPrice").asInt()).isEqualTo(10000);
+    }
+
+    // 73: no shipping config for the account → 400 before the HTTP push.
+    @Test
+    void register_missingShippingConfig_throws400() {
+        given(marketplaceShippingConfigRepository.findByMarketplaceAccountId(any()))
+                .willReturn(java.util.Optional.empty());
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
+
+        assertThatThrownBy(() -> adapter.register(cell(), gen, acct()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("배송설정");
+    }
+
+    // 73: a required shipping field left null → 400 naming the missing field.
+    @Test
+    void register_shippingConfigMissingRequiredField_throws400() {
+        MarketplaceShippingConfig partial = fullConfig().toBuilder().returnCenterCode(null).build();
+        given(marketplaceShippingConfigRepository.findByMarketplaceAccountId(any()))
+                .willReturn(java.util.Optional.of(partial));
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
+
+        assertThatThrownBy(() -> adapter.register(cell(), gen, acct()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("배송설정")
+                .hasMessageContaining("returnCenterCode");
+    }
+
+    // 73: vendorUserId unset on the account → 400 before the HTTP push.
+    @Test
+    void register_missingVendorUserId_throws400() {
+        MarketplaceAccount noUser = MarketplaceAccount.builder().vendorId("V1")
+                .accessKey("ak").secretKey("sk").isActive(true).build();   // no vendorUserId
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
+
+        assertThatThrownBy(() -> adapter.register(cell(), gen, noUser))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("vendorUserId");
     }
 
     @Test

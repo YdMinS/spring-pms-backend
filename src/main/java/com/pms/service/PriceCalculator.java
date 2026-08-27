@@ -46,6 +46,17 @@ public class PriceCalculator {
      * @throws IllegalArgumentException (→400) on missing category/delivery/box/margin or denominator ≤ 0
      */
     public BigDecimal calculatePrice(ProductListing cell, MasterProductOption masterOption, BigDecimal costSum) {
+        return calculatePrices(cell, masterOption, costSum).salePrice();
+    }
+
+    /**
+     * Compute both the selling price and the display "original" (strike-through) price for one option (73).
+     *
+     * <p>{@code originalPrice = salePrice / (1 − displayDiscountRate)}, rounded to the nearest 10 won. The rate
+     * is the seller×platform {@link MarginPolicy#getDisplayDiscountRate()} (null → 0, clamped to {@code [0, 0.5]}).
+     * rate=0 → {@code originalPrice.equals(salePrice)} (no discount shown).</p>
+     */
+    public PriceResult calculatePrices(ProductListing cell, MasterProductOption masterOption, BigDecimal costSum) {
         // Commission is owned by the mapped PlatformCategory (52). null = the category was not seeded with a
         // commission — a seeding gap, not a runtime fallback: 400. (Prefilled once at import/mapping time.)
         PlatformCategory platformCategory = masterChannelConfigService.resolvePlatformCategory(cell);
@@ -68,8 +79,33 @@ public class PriceCalculator {
 
         BigDecimal numerator = costSum.add(delivery).add(box);
         // Divide with headroom, then round to the nearest 10 won; normalize scale to 2 for the DECIMAL(10,2) column.
-        return numerator.divide(denominator, 4, RoundingMode.HALF_UP)
+        BigDecimal salePrice = numerator.divide(denominator, 4, RoundingMode.HALF_UP)
                 .setScale(-1, RoundingMode.HALF_UP)
                 .setScale(2, RoundingMode.HALF_UP);
+        return new PriceResult(salePrice, originalPrice(salePrice, margin.getDisplayDiscountRate()));
+    }
+
+    /**
+     * Reverse-calc the display original price from the sale price and the display discount rate. rate is
+     * clamped to {@code [0, 0.5]} (null → 0); the denominator {@code (1 − rate)} is therefore always in
+     * {@code [0.5, 1]} (never ≤ 0). rate=0 returns a value equal to {@code salePrice} (no discount shown).
+     */
+    private static BigDecimal originalPrice(BigDecimal salePrice, BigDecimal displayDiscountRate) {
+        BigDecimal rate = displayDiscountRate == null ? BigDecimal.ZERO : displayDiscountRate;
+        if (rate.compareTo(BigDecimal.ZERO) < 0) {
+            rate = BigDecimal.ZERO;
+        } else if (rate.compareTo(RATE_CAP) > 0) {
+            rate = RATE_CAP;
+        }
+        BigDecimal denom = BigDecimal.ONE.subtract(rate);
+        return salePrice.divide(denom, 4, RoundingMode.HALF_UP)
+                .setScale(-1, RoundingMode.HALF_UP)
+                .setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private static final BigDecimal RATE_CAP = new BigDecimal("0.5");
+
+    /** Selling price + display original (strike-through) price for one option (73). */
+    public record PriceResult(BigDecimal salePrice, BigDecimal originalPrice) {
     }
 }

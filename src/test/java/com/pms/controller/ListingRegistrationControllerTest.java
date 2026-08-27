@@ -8,6 +8,7 @@ import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.MarketplaceShippingConfig;
 import com.pms.domain.CategoryMapping;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.MasterProduct;
@@ -20,6 +21,7 @@ import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.MarketplaceShippingConfigRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
@@ -60,6 +62,7 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
     @Autowired private GeneratedProductDataRepository generatedProductDataRepository;
     @Autowired private ProductListingTagRevisionRepository productListingTagRevisionRepository;
     @Autowired private MarketplaceAccountRepository marketplaceAccountRepository;
+    @Autowired private MarketplaceShippingConfigRepository marketplaceShippingConfigRepository;
 
     @MockBean private CoupangApiClient coupangApiClient;
 
@@ -98,9 +101,20 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
         generatedProductDataRepository.save(GeneratedProductData.builder()
                 .productListing(cell).thumbnailUrl("thumbnails/t.jpg").detailHtml("<p>셀</p>")
                 .source(GeneratedContentSource.AUTO).generatedAt(LocalDateTime.now()).build());
-        marketplaceAccountRepository.save(MarketplaceAccount.builder()
+        MarketplaceAccount account = marketplaceAccountRepository.save(MarketplaceAccount.builder()
                 .seller(seller).platform("COUPANG").accountAlias("메인")
-                .vendorId("V1").accessKey("ak").secretKey("sk").isActive(true).build());
+                .vendorId("V1").vendorUserId("wing-user")   // 73: WING login id (register-required)
+                .accessKey("ak").secretKey("sk").isActive(true).build());
+        // 73: register payload needs a complete per-account shipping config (72) → 400 otherwise.
+        marketplaceShippingConfigRepository.save(MarketplaceShippingConfig.builder()
+                .marketplaceAccount(account)
+                .outboundShippingPlaceCode("OUT-1")
+                .returnCenterCode("RC-1").returnChargeName("반품담당").returnContactNumber("021234567")
+                .returnZipCode("06000").returnAddress("서울시 강남구").returnAddressDetail("1층")
+                .returnCharge(new BigDecimal("2500")).deliveryChargeOnReturn(new BigDecimal("2500"))
+                .deliveryMethod("SEQUENCIAL").deliveryCompanyCode("KGB").deliveryChargeType("FREE")
+                .deliveryCharge(new BigDecimal("0")).remoteAreaDeliverable("N")
+                .unionDeliveryType("NOT_UNION_DELIVERY").build());
 
         // Coupang register response → sellerProductId (no live HTTP).
         given(coupangApiClient.post(anyString(), anyString(), any()))
