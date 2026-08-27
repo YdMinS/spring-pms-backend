@@ -49,7 +49,7 @@ class ShippingConfigControllerTest extends BaseIntegrationTest {
                 .vendorId("V1").accessKey("ak").secretKey("sk").isActive(true).build());
         accountId = account.getId();
 
-        given(coupangApiClient.get(contains("shipping-place/outbound"), anyString(), any())).willReturn(
+        given(coupangApiClient.get(contains("outboundShippingCenters"), anyString(), any())).willReturn(
                 "{\"code\":200,\"data\":{\"content\":["
                         + "{\"outboundShippingPlaceCode\":\"74010\",\"shippingPlaceName\":\"기본출고지\"}]}}");
         given(coupangApiClient.get(contains("returnShippingCenters"), anyString(), any())).willReturn(

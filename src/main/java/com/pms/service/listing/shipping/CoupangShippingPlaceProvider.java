@@ -16,13 +16,16 @@ import java.util.List;
  * Coupang {@link ShippingPlaceProvider} implementation (FEATURE_2608_06 / 72, paths corrected 74-fix) —
  * reuses {@link CoupangApiClient} (account HMAC) for both calls; no new client method needed.
  *
- * <p>⚠️ The two lookups use <b>different</b> Coupang gateways/versions (confirmed against the developer docs):
+ * <p>Both lookups use the same {@code openapi/apis/api/v4/vendors/{vendorId}/…} family (no paging query):
  * <ul>
- *   <li>출고지: {@code GET /v2/providers/marketplace_openapi/apis/api/v2/vendor/shipping-place/outbound}
- *       — vendorId is <b>not</b> in the path (query paging), {@code marketplace_openapi}, {@code vendor} singular.</li>
- *   <li>반품지: {@code GET /v2/providers/openapi/apis/api/v5/vendors/{vendorId}/returnShippingCenters} — v5.</li>
+ *   <li>반품지: {@code GET .../v4/vendors/{vendorId}/returnShippingCenters} — <b>confirmed working</b> against the
+ *       real account (returns the list; picker shows). The docs list a v5 variant, but v5 returned an empty list
+ *       on the live account, so v4 is retained until v5 is verified.</li>
+ *   <li>출고지: {@code GET .../v4/vendors/{vendorId}/outboundShippingCenters} — the symmetric endpoint. It had
+ *       returned empty before; the defensive envelope parse below ({@code data.content ?? content ?? data}) is the
+ *       likely fix if the earlier miss was the response shape rather than the path. ⚠️ Still to be confirmed on a
+ *       live account via the {@code [COUPANG] GET …outboundShippingCenters} log line (status / byte size).</li>
  * </ul>
- * The earlier v4 symmetric paths 404'd on live accounts (empty list → the front fell back to manual entry).
  *
  * <p>Return-center fees are <b>weight-tiered</b> ({@code returnFee02kg..20kg}); there is no single
  * {@code returnFee}/{@code deliveryFee} and no contact-name field — so charge/name are left null here and the
@@ -37,10 +40,9 @@ public class CoupangShippingPlaceProvider implements ShippingPlaceProvider {
     private static final Logger log = LoggerFactory.getLogger(CoupangShippingPlaceProvider.class);
 
     private static final String OUTBOUND_CENTERS =
-            "/v2/providers/marketplace_openapi/apis/api/v2/vendor/shipping-place/outbound";
+            "/v2/providers/openapi/apis/api/v4/vendors/%s/outboundShippingCenters";
     private static final String RETURN_CENTERS =
-            "/v2/providers/openapi/apis/api/v5/vendors/%s/returnShippingCenters";
-    private static final String PAGING = "pageNum=1&pageSize=100";
+            "/v2/providers/openapi/apis/api/v4/vendors/%s/returnShippingCenters";
 
     private final CoupangApiClient client;
     private final ObjectMapper objectMapper;
@@ -52,7 +54,7 @@ public class CoupangShippingPlaceProvider implements ShippingPlaceProvider {
 
     @Override
     public List<OutboundPlace> fetchOutboundPlaces(MarketplaceAccount account) {
-        JsonNode content = fetchContent(OUTBOUND_CENTERS, account, "outbound");
+        JsonNode content = fetchContent(String.format(OUTBOUND_CENTERS, account.getVendorId()), "", account, "outbound");
         List<OutboundPlace> places = new ArrayList<>();
         for (JsonNode node : content) {
             places.add(new OutboundPlace(
@@ -64,7 +66,8 @@ public class CoupangShippingPlaceProvider implements ShippingPlaceProvider {
 
     @Override
     public List<ReturnCenter> fetchReturnCenters(MarketplaceAccount account) {
-        JsonNode content = fetchContent(String.format(RETURN_CENTERS, account.getVendorId()), account, "return");
+        // No paging query on return — the confirmed-working v4 call sends none.
+        JsonNode content = fetchContent(String.format(RETURN_CENTERS, account.getVendorId()), "", account, "return");
         List<ReturnCenter> centers = new ArrayList<>();
         for (JsonNode node : content) {
             JsonNode addr = node.path("placeAddresses").path(0);   // first address block
@@ -82,10 +85,10 @@ public class CoupangShippingPlaceProvider implements ShippingPlaceProvider {
         return centers;
     }
 
-    /** GET the path (with paging), return the list array node (data.content ?? content ?? data). */
-    private JsonNode fetchContent(String path, MarketplaceAccount account, String label) {
+    /** GET the path (query = paging or ""), return the list array node (data.content ?? content ?? data). */
+    private JsonNode fetchContent(String path, String query, MarketplaceAccount account, String label) {
         try {
-            String raw = client.get(path, PAGING, account);
+            String raw = client.get(path, query, account);
             JsonNode root = objectMapper.readTree(raw);
             JsonNode content = root.path("data").path("content");
             if (!content.isArray()) {
