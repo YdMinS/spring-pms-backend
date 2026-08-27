@@ -19,7 +19,7 @@ import static org.mockito.BDDMockito.given;
 
 /**
  * "옵션확인" suffix resolution (69): field-wise chain channel(account) ?? master ?? seller ?? system default.
- * enabled and text resolve independently; all-null reproduces the system default (true / "옵션확인").
+ * enabled and text resolve independently; all-null → system default OFF (enabled=false = no suffix).
  */
 @ExtendWith(MockitoExtension.class)
 class OptionCheckSuffixResolverTest {
@@ -72,11 +72,11 @@ class OptionCheckSuffixResolverTest {
     }
 
     @Test
-    void allNull_fallsBackToSystemDefault() {
+    void allNull_defaultsToDisabled_noSuffix() {
+        // System default OFF (user decision 2026-08-27): nothing configured → no suffix.
         OptionCheckSuffix result = resolver.resolve(null, null, null);
 
-        assertThat(result.enabled()).isTrue();
-        assertThat(result.text()).isEqualTo("옵션확인");
+        assertThat(result.enabled()).isFalse();
     }
 
     @Test
