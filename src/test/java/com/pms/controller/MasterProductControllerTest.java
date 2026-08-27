@@ -371,6 +371,60 @@ class MasterProductControllerTest extends BaseIntegrationTest {
         assertThat(masterProductRepository.findById(masterId).orElseThrow().getOptionCheckSuffix()).isNull();
     }
 
+    // ------------------------------------------------------------- shipping override (75)
+
+    @Test
+    void updateShippingOverride_userToken_returns403() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + masterId + "/shipping-override")
+                        .header("Authorization", "Bearer " + userToken).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"override\":{\"deliveryMethod\":\"MAKE_ORDER\"}}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void updateShippingOverride_noToken_returns401() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + masterId + "/shipping-override")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"override\":{\"deliveryMethod\":\"MAKE_ORDER\"}}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void updateShippingOverride_adminToken_savesAndPrefills() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + masterId + "/shipping-override")
+                        .header("Authorization", "Bearer " + adminToken).contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "override", Map.of("deliveryMethod", "MAKE_ORDER", "deliveryCharge", "3000")))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.shippingOverride.deliveryMethod").value("MAKE_ORDER"))
+                .andExpect(jsonPath("$.data.shippingOverride.deliveryCharge").value("3000"));
+        Map<String, String> saved = masterProductRepository.findById(masterId).orElseThrow().getShippingOverride();
+        assertThat(saved).containsEntry("deliveryMethod", "MAKE_ORDER").containsEntry("deliveryCharge", "3000");
+    }
+
+    // MUST-KEEP (level constraint): a place key on the MASTER override is silently dropped (channel-level only).
+    @Test
+    void updateShippingOverride_placeKeyOnMaster_silentlyDropped() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + masterId + "/shipping-override")
+                        .header("Authorization", "Bearer " + adminToken).contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "override", Map.of("outboundShippingPlaceCode", "OUT-9",
+                                        "deliveryMethod", "MAKE_ORDER")))))
+                .andExpect(status().isOk());
+        Map<String, String> saved = masterProductRepository.findById(masterId).orElseThrow().getShippingOverride();
+        assertThat(saved).containsEntry("deliveryMethod", "MAKE_ORDER")
+                .doesNotContainKey("outboundShippingPlaceCode");   // place key dropped, no 400
+    }
+
+    @Test
+    void updateShippingOverride_missingMaster_returns404() throws Exception {
+        mockMvc.perform(patch(PATH + "/999999/shipping-override")
+                        .header("Authorization", "Bearer " + adminToken).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"override\":{\"deliveryMethod\":\"MAKE_ORDER\"}}"))
+                .andExpect(status().isNotFound());
+    }
+
     @Test
     void updateRegistrationNameSuffix_userToken_returns403() throws Exception {
         mockMvc.perform(put(PATH + "/" + masterId + "/registration-name-suffix")

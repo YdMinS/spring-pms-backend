@@ -41,4 +41,7 @@ public class ShippingConfigRequest {
     /** "Y"/"N" (String, not Boolean — BIT trap). */
     private String remoteAreaDeliverable;
     private String unionDeliveryType;
+
+    /** Extra info message (주문제작/설치배송 추가정보); optional, default "사용안함" (blank). (75) */
+    private String extraInfoMessage;
 }

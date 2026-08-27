@@ -93,6 +93,7 @@ public class ShippingConfigServiceImpl implements ShippingConfigService {
                 .freeShipOverAmount(req.getFreeShipOverAmount())
                 .remoteAreaDeliverable(req.getRemoteAreaDeliverable())
                 .unionDeliveryType(req.getUnionDeliveryType())
+                .extraInfoMessage(req.getExtraInfoMessage())
                 .build());
 
         return ShippingConfigResponse.from(saved);

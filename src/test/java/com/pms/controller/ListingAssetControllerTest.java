@@ -371,6 +371,46 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
+    // ---- shipping override (75): channel-level overrides reflected on the cell (no regenerate/push) ----
+
+    @Test
+    void updateShippingOverride_adminToken_returns200AndReflectsOverride() throws Exception {
+        // Listing whitelist includes place keys (channel level) — a place key is kept here (unlike the master).
+        mockMvc.perform(patch(PATH + "/" + listingId + "/shipping-override")
+                        .header("Authorization", "Bearer " + adminToken).contentType("application/json")
+                        .content("{\"override\":{\"outboundShippingPlaceCode\":\"OUT-9\",\"deliveryCharge\":\"3000\"}}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.productListingId").value(listingId))
+                .andExpect(jsonPath("$.data.shippingOverride.outboundShippingPlaceCode").value("OUT-9"))
+                .andExpect(jsonPath("$.data.shippingOverride.deliveryCharge").value("3000"));
+        assertThat(productListingRepository.findById(listingId).orElseThrow().getShippingOverride())
+                .containsEntry("outboundShippingPlaceCode", "OUT-9");
+    }
+
+    @Test
+    void updateShippingOverride_noToken_returns401() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + listingId + "/shipping-override")
+                        .contentType("application/json").content("{\"override\":{\"deliveryCharge\":\"3000\"}}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void updateShippingOverride_userToken_returns403() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + listingId + "/shipping-override")
+                        .header("Authorization", "Bearer " + userToken)
+                        .contentType("application/json").content("{\"override\":{\"deliveryCharge\":\"3000\"}}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void updateShippingOverride_missingCell_returns404() throws Exception {
+        mockMvc.perform(patch(PATH + "/999999/shipping-override")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content("{\"override\":{\"deliveryCharge\":\"3000\"}}"))
+                .andExpect(status().isNotFound());
+    }
+
     // ---- thumbnail override / clear (25): authority + happy path + empty file 400 ----
 
     /** Valid minimal JPEG (magic bytes FF D8 FF...) so the real ImageValidator passes. */

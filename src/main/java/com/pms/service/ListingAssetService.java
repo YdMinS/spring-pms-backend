@@ -65,6 +65,13 @@ public interface ListingAssetService {
     void updateDisplayName(Long listingId, String name);
 
     /**
+     * Replace a tenant-scoped cell's channel-level shipping overrides (75; 404 if absent). Key whitelist only
+     * (register 72/73 is the final value guard); an empty/null map clears the override. No asset regeneration
+     * (shipping is not a thumbnail/detail/price binding). Returns the cell's current generated view.
+     */
+    GeneratedProductResponse updateShippingOverride(Long listingId, Map<String, String> override);
+
+    /**
      * Override the cell's thumbnail with an uploaded image (thumbnailSource=MANUAL_OVERRIDE) for a
      * tenant-scoped cell. 404 if the cell or its generated assets are absent (the cell must be generated
      * first via the matrix). Detail HTML and its source are untouched (the two origins are independent).

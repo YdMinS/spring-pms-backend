@@ -5,12 +5,10 @@ import com.pms.domain.Category;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.MarketplaceShippingConfig;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
-import com.pms.repository.MarketplaceShippingConfigRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.MasterChannelConfigService;
@@ -20,6 +18,8 @@ import com.pms.service.listing.category.CategoryAttribute;
 import com.pms.service.listing.category.CategoryMetaSchema;
 import com.pms.service.listing.category.CategoryNotice;
 import com.pms.service.listing.category.CoupangCategoryMeta;
+import com.pms.service.listing.shipping.ResolvedShippingConfig;
+import com.pms.service.listing.shipping.ShippingConfigResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -60,7 +60,7 @@ class CoupangListingAdapterTest {
     @Mock private RegistrationNameGenerator registrationNameGenerator;
     @Mock private com.pms.service.OptionCheckSuffixResolver optionCheckSuffixResolver;
     @Mock private MasterProductService masterProductService;
-    @Mock private MarketplaceShippingConfigRepository marketplaceShippingConfigRepository;
+    @Mock private ShippingConfigResolver shippingConfigResolver;
     @org.mockito.Spy private ObjectMapper objectMapper = new ObjectMapper();
     @InjectMocks private CoupangListingAdapter adapter;
 
@@ -70,10 +70,9 @@ class CoupangListingAdapterTest {
         // register tests without notices don't NPE. The notice test overrides this with a "cat-1" group.
         lenient().when(metaAdapter.getMeta(any(), anyString()))
                 .thenReturn(new CategoryMetaSchema(List.of(), List.of()));
-        // 73: buildPayload requires the account shipping config; default = a fully-populated one so register
-        // tests pass. The "배송설정 미완료" test overrides this with empty / a partial config.
-        lenient().when(marketplaceShippingConfigRepository.findByMarketplaceAccountId(any()))
-                .thenReturn(java.util.Optional.of(fullConfig()));
+        // 73/75: buildPayload requires the resolved shipping config; default = a fully-populated one so register
+        // tests pass. The "배송설정 미완료" tests override this with an all-null / partial resolved config.
+        lenient().when(shippingConfigResolver.resolve(any())).thenReturn(fullResolved());
     }
 
     private ProductListing cell() {
@@ -89,16 +88,14 @@ class CoupangListingAdapterTest {
                 .accessKey("ak").secretKey("sk").isActive(true).build();
     }
 
-    private MarketplaceShippingConfig fullConfig() {
-        return MarketplaceShippingConfig.builder()
-                .outboundShippingPlaceCode("OUT-1")
-                .returnCenterCode("RC-1").returnChargeName("반품담당").returnContactNumber("021234567")
-                .returnZipCode("06000").returnAddress("서울시").returnAddressDetail("1층")
-                .returnCharge(new BigDecimal("2500")).deliveryChargeOnReturn(new BigDecimal("2500"))
-                .deliveryMethod("SEQUENCIAL").deliveryCompanyCode("KGB").deliveryChargeType("FREE")
-                .deliveryCharge(new BigDecimal("0")).remoteAreaDeliverable("N")
-                .unionDeliveryType("NOT_UNION_DELIVERY")
-                .build();
+    /** A fully-populated resolved shipping config (75) — no missing required field. extraInfoMessage null. */
+    private ResolvedShippingConfig fullResolved() {
+        return new ResolvedShippingConfig(
+                "OUT-1",
+                "RC-1", "반품담당", "021234567", "06000", "서울시", "1층",
+                new BigDecimal("2500"), new BigDecimal("2500"),
+                "SEQUENCIAL", "KGB", "FREE", new BigDecimal("0"), null, "N", "NOT_UNION_DELIVERY",
+                null);
     }
 
     @Test
@@ -407,11 +404,12 @@ class CoupangListingAdapterTest {
         assertThat(item.path("originalPrice").asInt()).isEqualTo(10000);
     }
 
-    // 73: no shipping config for the account → 400 before the HTTP push.
+    // 73/75: nothing resolved (no account config, no overrides) → required fields null → 400 before the push.
     @Test
     void register_missingShippingConfig_throws400() {
-        given(marketplaceShippingConfigRepository.findByMarketplaceAccountId(any()))
-                .willReturn(java.util.Optional.empty());
+        given(shippingConfigResolver.resolve(any())).willReturn(
+                new ResolvedShippingConfig(null, null, null, null, null, null, null, null, null,
+                        null, null, null, null, null, null, null, null));
         given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
         GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
 
@@ -420,12 +418,13 @@ class CoupangListingAdapterTest {
                 .hasMessageContaining("배송설정");
     }
 
-    // 73: a required shipping field left null → 400 naming the missing field.
+    // 73: a required shipping field left null (after resolution) → 400 naming the missing field.
     @Test
     void register_shippingConfigMissingRequiredField_throws400() {
-        MarketplaceShippingConfig partial = fullConfig().toBuilder().returnCenterCode(null).build();
-        given(marketplaceShippingConfigRepository.findByMarketplaceAccountId(any()))
-                .willReturn(java.util.Optional.of(partial));
+        given(shippingConfigResolver.resolve(any())).willReturn(new ResolvedShippingConfig(
+                "OUT-1", null, "반품담당", "021234567", "06000", "서울시", "1층",
+                new BigDecimal("2500"), new BigDecimal("2500"),
+                "SEQUENCIAL", "KGB", "FREE", new BigDecimal("0"), null, "N", "NOT_UNION_DELIVERY", null));
         given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
         GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
 
@@ -433,6 +432,61 @@ class CoupangListingAdapterTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("배송설정")
                 .hasMessageContaining("returnCenterCode");
+    }
+
+    // 75: extraInfoMessage attached to the top-level payload only when the resolved value is non-blank.
+    @Test
+    void register_extraInfoMessage_attachedWhenPresent() throws Exception {
+        given(shippingConfigResolver.resolve(any())).willReturn(new ResolvedShippingConfig(
+                "OUT-1", "RC-1", "반품담당", "021234567", "06000", "서울시", "1층",
+                new BigDecimal("2500"), new BigDecimal("2500"),
+                "SEQUENCIAL", "KGB", "FREE", new BigDecimal("0"), null, "N", "NOT_UNION_DELIVERY",
+                "설치배송입니다"));
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("1세트")
+                        .sellingPrice(new BigDecimal("6000")).active(true).build()));
+        given(masterProductService.isBundle(null)).willReturn(false);
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell(), gen, acct());
+
+        assertThat(objectMapper.readTree(payload.getValue()).path("extraInfoMessage").asText())
+                .isEqualTo("설치배송입니다");
+    }
+
+    // 75: extraInfoMessage null/blank → key absent from the payload (optional).
+    @Test
+    void register_extraInfoMessage_absentWhenBlank() throws Exception {
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("1세트")
+                        .sellingPrice(new BigDecimal("6000")).active(true).build()));
+        given(masterProductService.isBundle(null)).willReturn(false);
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell(), gen, acct());   // fullResolved() has extraInfoMessage null
+
+        assertThat(objectMapper.readTree(payload.getValue()).path("extraInfoMessage").isMissingNode()).isTrue();
+    }
+
+    // 75: 묶음배송(UNION_DELIVERY) + 착불(CHARGE_RECEIVED) at once → Coupang forbids → 400 before the push.
+    @Test
+    void register_unionDeliveryWithChargeReceived_throws400() {
+        given(shippingConfigResolver.resolve(any())).willReturn(new ResolvedShippingConfig(
+                "OUT-1", "RC-1", "반품담당", "021234567", "06000", "서울시", "1층",
+                new BigDecimal("2500"), new BigDecimal("2500"),
+                "SEQUENCIAL", "KGB", "CHARGE_RECEIVED", new BigDecimal("0"), null, "N", "UNION_DELIVERY", null));
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
+
+        assertThatThrownBy(() -> adapter.register(cell(), gen, acct()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("묶음배송");
     }
 
     // 73: vendorUserId unset on the account → 400 before the HTTP push.

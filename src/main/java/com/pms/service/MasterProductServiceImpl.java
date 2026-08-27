@@ -43,6 +43,7 @@ import com.pms.repository.SellerRepository;
 import com.pms.service.listing.MasterPropagationService;
 import com.pms.service.listing.OptionCheckSuffix;
 import com.pms.service.listing.TagMergeService;
+import com.pms.service.listing.shipping.ShippingOverrideKeys;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -347,6 +348,18 @@ public class MasterProductServiceImpl implements MasterProductService {
 
     @Override
     @Transactional
+    public MasterProductResponse updateShippingOverride(Long id, Map<String, String> override) {
+        MasterProduct master = requireScopedMaster(id);
+        // Key whitelist only (no value validation — register 72/73 is the final guard). Master whitelist ⊂
+        // listing whitelist: place keys (outbound/return center) are silently dropped (account-specific, 75).
+        // null/empty (after filtering) = no override.
+        MasterProduct updated = masterProductRepository.save(
+                master.toBuilder().shippingOverride(ShippingOverrideKeys.filterMaster(override)).build());
+        return mapToResponse(updated);
+    }
+
+    @Override
+    @Transactional
     public void deleteMasterProduct(Long id) {
         MasterProduct existing = requireScopedMaster(id);
         // Block delete while any channel cell is live on the market (platformProductId != null) — deleting
@@ -630,6 +643,7 @@ public class MasterProductServiceImpl implements MasterProductService {
                 // 69: pure fields (no N+1) → filled on both the list and single-fetch paths for prefill.
                 .optionCheckSuffixEnabled(master.getOptionCheckSuffixEnabled())
                 .optionCheckSuffix(master.getOptionCheckSuffix())
+                .shippingOverride(master.getShippingOverride())
                 .components(componentResponses)
                 .options(optionResponses)
                 .build();

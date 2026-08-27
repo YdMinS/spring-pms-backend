@@ -22,6 +22,7 @@ import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
+import com.pms.service.listing.shipping.ShippingOverrideKeys;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -160,6 +161,18 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         ProductListing cell = requireScopedCell(listingId);
         // Internal-only rename: name is not a thumbnail/detail binding key, so no regenerateAssets here.
         productListingRepository.save(cell.toBuilder().name(name.trim()).build());
+    }
+
+    @Override
+    @Transactional
+    public GeneratedProductResponse updateShippingOverride(Long listingId, Map<String, String> override) {
+        ProductListing cell = requireScopedCell(listingId);
+        // Key whitelist only (register 72/73 is the final value guard); null/empty (after filter) clears it.
+        // No regenerateAssets — shipping is not a thumbnail/detail/price binding, so nothing to re-render.
+        ProductListing updated = productListingRepository.save(
+                cell.toBuilder().shippingOverride(ShippingOverrideKeys.filterListing(override)).build());
+        GeneratedProductData data = generatedProductDataRepository.findByProductListingId(listingId).orElse(null);
+        return toResponse(updated, data);
     }
 
     @Override
@@ -428,6 +441,7 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                 .thumbnailSource(data != null ? data.getThumbnailSource() : null)
                 .fieldValues(cell.getFieldValues() != null ? cell.getFieldValues() : Map.of())
                 .tags(cell.getTags() != null ? cell.getTags() : List.of())
+                .shippingOverride(cell.getShippingOverride() != null ? cell.getShippingOverride() : Map.of())
                 .optionPrices(optionPrices)
                 .build();
     }

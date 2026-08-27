@@ -50,6 +50,9 @@ public class MasterProductResponse {
     @Schema(description = "옵션확인 suffix custom text master-level override (69); null = inherit", nullable = true)
     private String optionCheckSuffix;
 
+    @Schema(description = "Master-level shipping overrides (75; key -> string). Place keys are channel-level only.")
+    private Map<String, String> shippingOverride;
+
     @Schema(description = "Component products (the master's product set)")
     private List<Component> components;
 

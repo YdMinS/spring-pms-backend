@@ -58,6 +58,12 @@ public interface MasterProductService {
      */
     MasterProductResponse updateRegistrationNameSuffix(Long id, OptionCheckSuffixRequest req);
 
+    /**
+     * Replace the master-level shipping overrides (75). Key whitelist only (place keys silently dropped —
+     * they are channel-level); null/empty map clears the override. 404 if the master is absent.
+     */
+    MasterProductResponse updateShippingOverride(Long id, java.util.Map<String, String> override);
+
     /** Soft delete: sets {@code active=false} (restore via PATCH {@code active=true}). */
     void deleteMasterProduct(Long id);
 
