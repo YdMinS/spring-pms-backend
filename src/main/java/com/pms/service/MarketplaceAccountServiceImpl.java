@@ -5,6 +5,7 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Seller;
 import com.pms.domain.ThumbnailTemplate;
 import com.pms.dto.request.MarketplaceAccountRequest;
+import com.pms.dto.request.OptionCheckSuffixRequest;
 import com.pms.dto.response.MarketplaceAccountResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.DetailTemplateRepository;
@@ -116,8 +117,24 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
 
     @Override
     @Transactional
+    public MarketplaceAccountResponse updateRegistrationNameSuffix(Long id, OptionCheckSuffixRequest req) {
+        MarketplaceAccount existing = findOrThrow(id);
+        MarketplaceAccount updated = existing.toBuilder()
+                .optionCheckSuffixEnabled(req.getEnabled())
+                .optionCheckSuffix(normalizeSuffix(req.getSuffix()))
+                .build();
+        return mapToResponse(repository.save(updated));
+    }
+
+    @Override
+    @Transactional
     public void delete(Long id) {
         repository.delete(findOrThrow(id));
+    }
+
+    /** blank → null (inherit); else trimmed. Shared normalization for the 69 suffix text. */
+    private static String normalizeSuffix(String suffix) {
+        return StringUtils.hasText(suffix) ? suffix.trim() : null;
     }
 
     private MarketplaceAccount findOrThrow(Long id) {
@@ -156,6 +173,8 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                 // id only (LAZY getId reads the FK without a query); template display name resolved on the front.
                 .thumbnailTemplateId(a.getThumbnailTemplate() != null ? a.getThumbnailTemplate().getId() : null)
                 .detailTemplateId(a.getDetailTemplate() != null ? a.getDetailTemplate().getId() : null)
+                .optionCheckSuffixEnabled(a.getOptionCheckSuffixEnabled())
+                .optionCheckSuffix(a.getOptionCheckSuffix())
                 .createdAt(a.getCreatedAt())
                 .updatedAt(a.getUpdatedAt())
                 .build();

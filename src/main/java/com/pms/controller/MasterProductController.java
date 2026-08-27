@@ -8,6 +8,7 @@ import com.pms.dto.request.MasterOptionRequest;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
 import com.pms.dto.request.MasterSourceImageRequest;
+import com.pms.dto.request.OptionCheckSuffixRequest;
 import com.pms.dto.request.MasterZoneImagesRequest;
 import com.pms.dto.request.TagsRequest;
 import com.pms.dto.response.CategoryMetaResponse;
@@ -91,6 +92,15 @@ public class MasterProductController {
     public ResponseEntity<ResponseDTO<MasterProductResponse>> updateTags(
             @PathVariable Long id, @Valid @RequestBody TagsRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(masterProductService.updateTags(id, request.getTags())));
+    }
+
+    @PutMapping("/{id}/registration-name-suffix")
+    @Operation(summary = "Set the master-level 옵션확인 suffix override (69; replace, null = inherit)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<Void>> updateRegistrationNameSuffix(
+            @PathVariable Long id, @Valid @RequestBody OptionCheckSuffixRequest request) {
+        masterProductService.updateRegistrationNameSuffix(id, request);
+        return ResponseEntity.ok(ResponseDTO.success(null));
     }
 
     @DeleteMapping("/{id}")

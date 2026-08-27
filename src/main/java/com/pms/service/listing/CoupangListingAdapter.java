@@ -13,6 +13,7 @@ import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.MasterChannelConfigService;
 import com.pms.service.MasterProductService;
+import com.pms.service.OptionCheckSuffixResolver;
 import com.pms.service.RegistrationNameGenerator;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.listing.category.CategoryAttribute;
@@ -60,6 +61,7 @@ public class CoupangListingAdapter implements ListingChannel {
     private final MasterChannelConfigService masterChannelConfigService;
     private final TagMergeService tagMergeService;
     private final RegistrationNameGenerator registrationNameGenerator;
+    private final OptionCheckSuffixResolver optionCheckSuffixResolver;
     private final MasterProductService masterProductService;
 
     @Override
@@ -192,9 +194,11 @@ public class CoupangListingAdapter implements ListingChannel {
                 .map(ProductListingOption::getOptionName)
                 .toList();
         // Registration name (67): always auto-generated per channel from this cell's active options (32 rule).
-        // master null fallback = cell.getName() (backfill transition window).
+        // master null fallback = cell.getName() (backfill transition window). 69: the "옵션확인" suffix is resolved
+        // per cell (channel ?? master ?? seller ?? system) — single cell = one account query allowed.
         payload.put("sellerProductName", master != null
-                ? registrationNameGenerator.generate(master, activeOptionNames, masterOptions)
+                ? registrationNameGenerator.generate(master, activeOptionNames, masterOptions,
+                        optionCheckSuffixResolver.resolve(cell))
                 : cell.getName());
 
         Map<String, String> masterAttributes = master != null ? master.getCategoryAttributes() : null;

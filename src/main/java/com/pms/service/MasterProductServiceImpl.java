@@ -17,6 +17,7 @@ import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterOptionRequest;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
+import com.pms.dto.request.OptionCheckSuffixRequest;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.ListingMatrixResponse.MatrixCell;
 import com.pms.dto.response.ListingMatrixResponse.MatrixRow;
@@ -40,6 +41,7 @@ import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.service.listing.MasterPropagationService;
+import com.pms.service.listing.OptionCheckSuffix;
 import com.pms.service.listing.TagMergeService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -90,6 +92,7 @@ public class MasterProductServiceImpl implements MasterProductService {
     private final MasterPropagationService masterPropagationService;
     private final TagMergeService tagMergeService;
     private final RegistrationNameGenerator registrationNameGenerator;
+    private final OptionCheckSuffixResolver optionCheckSuffixResolver;
 
     private static final String IMAGE_STORAGE_CATEGORY = "master";
 
@@ -122,8 +125,10 @@ public class MasterProductServiceImpl implements MasterProductService {
         // Single-fetch path only computes the registration name (2~3 extra queries per master). The list
         // path (mapToResponse) leaves it null to avoid an N×3 query amplification (32).
         MasterProduct master = requireScopedMaster(id);
+        // 69: master-level suffix = master override ?? system (no channel/seller context — see resolveForMaster).
         return mapToResponse(master).toBuilder()
-                .registrationName(registrationNameGenerator.generate(master))
+                .registrationName(registrationNameGenerator.generate(
+                        master, optionCheckSuffixResolver.resolveForMaster(master)))
                 .build();
     }
 
@@ -188,12 +193,16 @@ public class MasterProductServiceImpl implements MasterProductService {
             if (pl != null) {
                 // 67: registration name is always auto-generated per channel from this listing's active options.
                 Set<String> activeNames = activeNamesByListing.getOrDefault(pl.getId(), Set.of());
+                // 69: suffix = channel(this row's account) ?? master ?? seller ?? system. Pure overload reuses the
+                // already-loaded account (row) + seller (from the sellerNames findAllById, same session) + master
+                // — NO per-cell account re-query (resolve(cell) would be N DB calls).
+                OptionCheckSuffix suffix = optionCheckSuffixResolver.resolve(acc, master, acc.getSeller());
                 cell = MatrixCell.builder()
                         .productListingId(pl.getId())
                         .name(pl.getName())
                         .platformProductId(pl.getPlatformProductId())
                         .sellingPrice(priceByListing.get(pl.getId()))
-                        .registrationName(registrationNameGenerator.generate(master, activeNames, masterOptions))
+                        .registrationName(registrationNameGenerator.generate(master, activeNames, masterOptions, suffix))
                         .build();
             }
             return MatrixRow.builder()
@@ -318,6 +327,22 @@ public class MasterProductServiceImpl implements MasterProductService {
         MasterProduct updated = masterProductRepository.save(
                 master.toBuilder().tags(tagMergeService.dedup(tags)).build());
         return mapToResponse(updated);
+    }
+
+    @Override
+    @Transactional
+    public MasterProductResponse updateRegistrationNameSuffix(Long id, OptionCheckSuffixRequest request) {
+        MasterProduct master = requireScopedMaster(id);
+        MasterProduct updated = masterProductRepository.save(master.toBuilder()
+                .optionCheckSuffixEnabled(request.getEnabled())
+                .optionCheckSuffix(normalizeSuffix(request.getSuffix()))
+                .build());
+        return mapToResponse(updated);
+    }
+
+    /** blank → null (inherit); else trimmed. Shared normalization for the 69 suffix text. */
+    private static String normalizeSuffix(String suffix) {
+        return (suffix == null || suffix.isBlank()) ? null : suffix.trim();
     }
 
     @Override
@@ -602,6 +627,9 @@ public class MasterProductServiceImpl implements MasterProductService {
                 .tags(master.getTags())
                 .defaultDeliveryId(master.getDefaultDelivery() != null ? master.getDefaultDelivery().getId() : null)
                 .defaultPackageId(master.getDefaultPackage() != null ? master.getDefaultPackage().getId() : null)
+                // 69: pure fields (no N+1) → filled on both the list and single-fetch paths for prefill.
+                .optionCheckSuffixEnabled(master.getOptionCheckSuffixEnabled())
+                .optionCheckSuffix(master.getOptionCheckSuffix())
                 .components(componentResponses)
                 .options(optionResponses)
                 .build();

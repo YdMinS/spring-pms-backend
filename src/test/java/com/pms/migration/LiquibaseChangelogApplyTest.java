@@ -197,6 +197,17 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM master_product_option "
                         + "WHERE category_attributes IS NULL AND category_notices IS NULL",
                 Integer.class)).isZero();
+
+        // changeset 037: option_check_suffix_enabled + option_check_suffix materialized on all 3 tables (a
+        // successful count over both columns proves they exist; nullable = inherit, 69).
+        for (String table : new String[]{"seller", "marketplace_account", "master_product"}) {
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM " + table
+                            + " WHERE option_check_suffix_enabled IS NULL AND option_check_suffix IS NULL",
+                    Integer.class))
+                    .as("069 suffix columns present on %s", table)
+                    .isZero();
+        }
     }
 
     @Test

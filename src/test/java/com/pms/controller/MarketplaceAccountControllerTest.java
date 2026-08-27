@@ -12,11 +12,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -102,5 +105,37 @@ class MarketplaceAccountControllerTest extends BaseIntegrationTest {
                         .contentType("application/json").content(patchBody))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.thumbnailTemplateId").value(templateId));
+    }
+
+    // 69: channel-level 옵션확인 suffix PUT (replace; blank suffix → null inherit). 401/403 already covered above.
+    @Test
+    void updateRegistrationNameSuffix_adminToken_savesReplaceValues_blankToNull() throws Exception {
+        Long accountId = accountRepository.saveAndFlush(MarketplaceAccount.builder()
+                .seller(sellerRepository.findById(sellerId).orElseThrow())
+                .platform("COUPANG").vendorId("A00012345").accessKey("ak").secretKey("sk")
+                .isActive(true).build()).getId();
+
+        mockMvc.perform(put(PATH + "/" + accountId + "/registration-name-suffix")
+                        .header("Authorization", "Bearer " + adminToken).contentType("application/json")
+                        .content(objectMapper.writeValueAsString(Map.of("enabled", false, "suffix", "옵션참고"))))
+                .andExpect(status().isOk());
+        MarketplaceAccount saved = accountRepository.findById(accountId).orElseThrow();
+        assertThat(saved.getOptionCheckSuffixEnabled()).isFalse();
+        assertThat(saved.getOptionCheckSuffix()).isEqualTo("옵션참고");
+
+        // Replace with a blank suffix (enabled omitted) → suffix normalized to null (inherit).
+        mockMvc.perform(put(PATH + "/" + accountId + "/registration-name-suffix")
+                        .header("Authorization", "Bearer " + adminToken).contentType("application/json")
+                        .content(objectMapper.writeValueAsString(Collections.singletonMap("suffix", "   "))))
+                .andExpect(status().isOk());
+        assertThat(accountRepository.findById(accountId).orElseThrow().getOptionCheckSuffix()).isNull();
+    }
+
+    @Test
+    void updateRegistrationNameSuffix_missingAccount_returns404() throws Exception {
+        mockMvc.perform(put(PATH + "/999999/registration-name-suffix")
+                        .header("Authorization", "Bearer " + adminToken).contentType("application/json")
+                        .content(objectMapper.writeValueAsString(Map.of("enabled", true, "suffix", "옵션확인"))))
+                .andExpect(status().isNotFound());
     }
 }

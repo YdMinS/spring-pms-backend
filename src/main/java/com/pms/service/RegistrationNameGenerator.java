@@ -9,6 +9,7 @@ import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductRepository;
+import com.pms.service.listing.OptionCheckSuffix;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -49,11 +50,13 @@ public class RegistrationNameGenerator {
     /**
      * Build the master-level registration name (34 {@code MasterProductResponse.registrationName}) — branches
      * on the master's <b>full</b> option count (see class doc for the rule).
+     *
+     * @param suffix the resolved "옵션확인" suffix config (69), applied only on the options ≥ 2 path
      */
-    public String generate(MasterProduct master) {
+    public String generate(MasterProduct master, OptionCheckSuffix suffix) {
         List<MasterProductOption> options = optionRepository.findByMasterProductId(master.getId());
         if (options.size() >= 2) {
-            return multiOptionName(master);
+            return multiOptionName(master, suffix);
         }
         if (options.size() == 1) {
             return singleOptionName(options.get(0));
@@ -72,12 +75,13 @@ public class RegistrationNameGenerator {
      * @param master            the listing's master (non-null; callers guard master==null before calling)
      * @param activeOptionNames the active {@code ProductListingOption.optionName}s of this listing
      * @param masterOptions     the master's options, pre-loaded by the caller (matching key = option name)
+     * @param suffix            the resolved "옵션확인" suffix config (69), applied only on the ≥ 2 branch
      */
     public String generate(MasterProduct master, Collection<String> activeOptionNames,
-                           List<MasterProductOption> masterOptions) {
+                           List<MasterProductOption> masterOptions, OptionCheckSuffix suffix) {
         int n = activeOptionNames.size();
         if (n >= 2) {
-            return multiOptionName(master);          // each option covers all components → master listing is exact
+            return multiOptionName(master, suffix);  // each option covers all components → master listing is exact
         }
         if (n == 1) {
             String only = activeOptionNames.iterator().next();
@@ -88,8 +92,12 @@ public class RegistrationNameGenerator {
         return master.getName();   // defensive: 0 active options
     }
 
-    /** options ≥ 2 → all master components as "{brand?} {name}" joined by ", " + " - 옵션확인". */
-    private String multiOptionName(MasterProduct master) {
+    /**
+     * options ≥ 2 → all master components as "{brand?} {name}" joined by ", ", then the "옵션확인" suffix per the
+     * resolved config (69): {@code enabled} appends {@code " - {text}"}, disabled omits it (per-option quantities
+     * differ, so they are never listed here regardless).
+     */
+    private String multiOptionName(MasterProduct master, OptionCheckSuffix suffix) {
         List<MasterProductComponent> components = componentRepository.findByMasterProductId(master.getId());
         List<Long> productIds = components.stream()
                 .map(c -> c.getProduct().getId())
@@ -102,7 +110,7 @@ public class RegistrationNameGenerator {
                 .map(products::get)
                 .map(p -> label(p.getBrand(), p.getProductName()))
                 .collect(Collectors.joining(", "));
-        return joined + " - 옵션확인";
+        return suffix.enabled() ? joined + " - " + suffix.text() : joined;
     }
 
     /** options == 1 → each item "{brand?} {name} x {quantity}" joined by " + " (single item = no join). */

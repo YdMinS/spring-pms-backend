@@ -30,6 +30,9 @@ public class MarketplaceAccountResponse {
     private Boolean isActive;
     private Long thumbnailTemplateId;  // 채널 템플릿 지정(id만 노출, 표시명은 프론트가 별도 조회)
     private Long detailTemplateId;
+    // "옵션확인" suffix channel-level override (69): null = inherit. Prefill source for the front's replace PUT.
+    private Boolean optionCheckSuffixEnabled;
+    private String optionCheckSuffix;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     // secretKey: 응답에 절대 포함하지 않음

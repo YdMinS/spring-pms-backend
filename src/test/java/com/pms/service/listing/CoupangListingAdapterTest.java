@@ -56,6 +56,7 @@ class CoupangListingAdapterTest {
     @Mock private MasterChannelConfigService masterChannelConfigService;
     @Mock private TagMergeService tagMergeService;
     @Mock private RegistrationNameGenerator registrationNameGenerator;
+    @Mock private com.pms.service.OptionCheckSuffixResolver optionCheckSuffixResolver;
     @Mock private MasterProductService masterProductService;
     @org.mockito.Spy private ObjectMapper objectMapper = new ObjectMapper();
     @InjectMocks private CoupangListingAdapter adapter;
@@ -113,7 +114,7 @@ class CoupangListingAdapterTest {
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
         given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
         // Generator receives the cell's active option names ("1세트") + the master options.
-        given(registrationNameGenerator.generate(eq(master), eq(List.of("1세트")), any()))
+        given(registrationNameGenerator.generate(eq(master), eq(List.of("1세트")), any(), any()))
                 .willReturn("노브랜드 생수 x 6");
 
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);

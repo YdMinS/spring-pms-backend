@@ -29,7 +29,10 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 
 import java.math.BigDecimal;
+import java.util.Collections;
+import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -346,6 +349,42 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.tags.length()").value(2))
                 .andExpect(jsonPath("$.data.tags[0]").value("신상"))
                 .andExpect(jsonPath("$.data.tags[1]").value("봄"));
+    }
+
+    // ------------------------------------------------------------- 옵션확인 suffix (69)
+
+    @Test
+    void updateRegistrationNameSuffix_adminToken_savesReplaceValues_blankToNull() throws Exception {
+        mockMvc.perform(put(PATH + "/" + masterId + "/registration-name-suffix")
+                        .header("Authorization", "Bearer " + adminToken).contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("enabled", false, "suffix", "옵션참고"))))
+                .andExpect(status().isOk());
+        MasterProduct saved = masterProductRepository.findById(masterId).orElseThrow();
+        assertThat(saved.getOptionCheckSuffixEnabled()).isFalse();
+        assertThat(saved.getOptionCheckSuffix()).isEqualTo("옵션참고");
+
+        // Replace with a blank suffix (enabled omitted) → suffix normalized to null (inherit).
+        mockMvc.perform(put(PATH + "/" + masterId + "/registration-name-suffix")
+                        .header("Authorization", "Bearer " + adminToken).contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Collections.singletonMap("suffix", "  "))))
+                .andExpect(status().isOk());
+        assertThat(masterProductRepository.findById(masterId).orElseThrow().getOptionCheckSuffix()).isNull();
+    }
+
+    @Test
+    void updateRegistrationNameSuffix_userToken_returns403() throws Exception {
+        mockMvc.perform(put(PATH + "/" + masterId + "/registration-name-suffix")
+                        .header("Authorization", "Bearer " + userToken).contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("enabled", true, "suffix", "옵션확인"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void updateRegistrationNameSuffix_missingMaster_returns404() throws Exception {
+        mockMvc.perform(put(PATH + "/999999/registration-name-suffix")
+                        .header("Authorization", "Bearer " + adminToken).contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("enabled", true, "suffix", "옵션확인"))))
+                .andExpect(status().isNotFound());
     }
 
     // ------------------------------------------------------------- category meta (47)

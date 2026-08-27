@@ -1,0 +1,64 @@
+# "옵션확인" registration-name suffix config (FEATURE_2608_06 / 69): additive nullable 2 columns on each of
+#   seller / marketplace_account / master_product. enabled (Boolean) + suffix (VARCHAR 50), null = inherit.
+#   Resolution chain (per field): channel(account) ?? master ?? seller ?? system default (enabled=true,
+#   suffix="옵션확인"). Nothing set anywhere = current behavior unchanged.
+#
+# ⚠️ boolean = 006/014 BIT trap: on MySQL Liquibase's abstract BOOLEAN materializes as TINYINT, but Hibernate 6
+# expects BIT(1) for boolean fields → ddl-auto: validate fails on startup. So mirror 006/014: a portable BOOLEAN
+# addColumn for all DBs + a dbms:mysql changeset re-typing to BIT(1). Because these are NULLABLE (null = inherit),
+# there is NO addNotNull / addDefault / backfill. H2 (tests) maps BOOLEAN Hibernate-compatibly and is untouched.
+databaseChangeLog:
+
+  - changeSet:
+      id: 037-option-check-suffix
+      author: oclyx
+      comment: "69: option_check_suffix_enabled (BOOLEAN nullable) + option_check_suffix (VARCHAR 50 nullable) on seller/marketplace_account/master_product."
+      changes:
+        - addColumn:
+            tableName: seller
+            columns:
+              - column:
+                  name: option_check_suffix_enabled
+                  type: BOOLEAN
+              - column:
+                  name: option_check_suffix
+                  type: VARCHAR(50)
+        - addColumn:
+            tableName: marketplace_account
+            columns:
+              - column:
+                  name: option_check_suffix_enabled
+                  type: BOOLEAN
+              - column:
+                  name: option_check_suffix
+                  type: VARCHAR(50)
+        - addColumn:
+            tableName: master_product
+            columns:
+              - column:
+                  name: option_check_suffix_enabled
+                  type: BOOLEAN
+              - column:
+                  name: option_check_suffix
+                  type: VARCHAR(50)
+
+  # MySQL only: abstract BOOLEAN -> TINYINT, but Hibernate expects BIT(1). Re-type only (nullable → no NOT NULL /
+  # default to re-declare). Mirrors 006/014. H2 untouched.
+  - changeSet:
+      id: 037-option-check-suffix-mysql-bit
+      author: oclyx
+      dbms: mysql
+      comment: "69: option_check_suffix_enabled TINYINT -> BIT(1) on the 3 tables to satisfy Hibernate schema validation (nullable)."
+      changes:
+        - modifyDataType:
+            tableName: seller
+            columnName: option_check_suffix_enabled
+            newDataType: BIT(1)
+        - modifyDataType:
+            tableName: marketplace_account
+            columnName: option_check_suffix_enabled
+            newDataType: BIT(1)
+        - modifyDataType:
+            tableName: master_product
+            columnName: option_check_suffix_enabled
+            newDataType: BIT(1)

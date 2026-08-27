@@ -37,6 +37,7 @@ import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
+import com.pms.service.listing.OptionCheckSuffix;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -79,6 +80,7 @@ class MasterProductServiceTest {
     @Mock private MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     @Mock private SellerRepository sellerRepository;
     @Mock private RegistrationNameGenerator registrationNameGenerator;
+    @Mock private OptionCheckSuffixResolver optionCheckSuffixResolver;
     @InjectMocks private MasterProductServiceImpl service;
 
     private Seller seller(Long id, String name) {
@@ -180,9 +182,9 @@ class MasterProductServiceTest {
         given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of(a1, b1, b2));
         given(sellerRepository.findAllById(any())).willReturn(List.of(seller1, seller2));
         // Generator is driven by each listing's active option-name set (A={1세트}, B={1세트,2세트}).
-        given(registrationNameGenerator.generate(eq(master), eq(java.util.Set.of("1세트")), any()))
+        given(registrationNameGenerator.generate(eq(master), eq(java.util.Set.of("1세트")), any(), any()))
                 .willReturn("노브랜드 생수 x 6");
-        given(registrationNameGenerator.generate(eq(master), eq(java.util.Set.of("1세트", "2세트")), any()))
+        given(registrationNameGenerator.generate(eq(master), eq(java.util.Set.of("1세트", "2세트")), any(), any()))
                 .willReturn("노브랜드 생수, 다우니 섬유유연제 - 옵션확인");
 
         ListingMatrixResponse matrix = service.getMatrix(1L);
@@ -215,7 +217,7 @@ class MasterProductServiceTest {
         assertThat(result).extracting(MasterProductResponse::getId).containsExactly(1L);
         // List path does NOT call the generator (N+1 guard) → registrationName stays null.
         assertThat(result.get(0).getRegistrationName()).isNull();
-        verify(registrationNameGenerator, never()).generate(any());
+        verify(registrationNameGenerator, never()).generate(any(), any());
         verify(masterProductRepository, never()).findAll();
     }
 
@@ -240,11 +242,79 @@ class MasterProductServiceTest {
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
         given(componentRepository.findByMasterProductId(1L)).willReturn(List.of());
         given(optionRepository.findByMasterProductId(1L)).willReturn(List.of());
-        given(registrationNameGenerator.generate(master)).willReturn("노브랜드 생수 x 6");
+        given(registrationNameGenerator.generate(eq(master), any())).willReturn("노브랜드 생수 x 6");
 
         MasterProductResponse response = service.getMasterProduct(1L);
 
         assertThat(response.getRegistrationName()).isEqualTo("노브랜드 생수 x 6");
+        // 69: master-level uses resolveForMaster (master ?? system — no channel/seller context).
+        verify(optionCheckSuffixResolver).resolveForMaster(master);
+    }
+
+    @Test
+    void getMatrix_suffixResolvedPerChannel_usesPureOverloadNoAccountRequery() {
+        // 69: the suffix is resolved per channel via the PURE resolve(account, master, seller) overload (reusing
+        // the already-loaded matrix rows) — never resolve(cell), which would re-query the account per cell.
+        Seller seller1 = seller(1L, "판매자1");
+        Seller seller2 = seller(2L, "판매자2");
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
+
+        MarketplaceAccount acc1 = account(10L, seller1, "COUPANG", "메인");   // channel override: suffix OFF
+        MarketplaceAccount acc2 = account(12L, seller2, "COUPANG", "서브");   // default: suffix ON
+
+        ProductListing listingA = ProductListing.builder()
+                .id(100L).seller(seller1).platform("COUPANG").platformProductId("X").name("리스팅1").build();
+        ProductListing listingB = ProductListing.builder()
+                .id(101L).seller(seller2).platform("COUPANG").platformProductId("Y").name("리스팅2").build();
+        ProductListingOption a1 = ProductListingOption.builder().id(1L).productListing(listingA)
+                .optionName("1세트").sellingPrice(new BigDecimal("6000")).active(true).build();
+        ProductListingOption a2 = ProductListingOption.builder().id(2L).productListing(listingA)
+                .optionName("2세트").sellingPrice(new BigDecimal("6000")).active(true).build();
+        ProductListingOption b1 = ProductListingOption.builder().id(3L).productListing(listingB)
+                .optionName("1세트").sellingPrice(new BigDecimal("6000")).active(true).build();
+        ProductListingOption b2 = ProductListingOption.builder().id(4L).productListing(listingB)
+                .optionName("2세트").sellingPrice(new BigDecimal("6000")).active(true).build();
+
+        OptionCheckSuffix off = new OptionCheckSuffix(false, "옵션확인");
+        OptionCheckSuffix on = new OptionCheckSuffix(true, "옵션확인");
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(
+                MasterProductOption.builder().id(5L).name("1세트").build(),
+                MasterProductOption.builder().id(6L).name("2세트").build()));
+        given(marketplaceAccountRepository.findAll()).willReturn(List.of(acc1, acc2));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(listingA, listingB));
+        given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of(a1, a2, b1, b2));
+        given(sellerRepository.findAllById(any())).willReturn(List.of(seller1, seller2));
+        given(optionCheckSuffixResolver.resolve(eq(acc1), eq(master), any())).willReturn(off);
+        given(optionCheckSuffixResolver.resolve(eq(acc2), eq(master), any())).willReturn(on);
+        given(registrationNameGenerator.generate(eq(master), any(), any(), eq(off))).willReturn("구성A");
+        given(registrationNameGenerator.generate(eq(master), any(), any(), eq(on))).willReturn("구성A - 옵션확인");
+
+        ListingMatrixResponse matrix = service.getMatrix(1L);
+
+        assertThat(matrix.getRows().get(0).getCell().getRegistrationName()).isEqualTo("구성A");
+        assertThat(matrix.getRows().get(1).getCell().getRegistrationName()).isEqualTo("구성A - 옵션확인");
+        // Pure overload only — the per-cell resolve(cell) (account re-query) is never used.
+        verify(optionCheckSuffixResolver, never()).resolve(any(ProductListing.class));
+    }
+
+    @Test
+    void updateRegistrationNameSuffix_savesReplaceValues_blankSuffixToNull() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(masterProductRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+        given(componentRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of());
+
+        // enabled=false + blank suffix → suffix normalized to null (inherit).
+        service.updateRegistrationNameSuffix(1L, com.pms.dto.request.OptionCheckSuffixRequest.builder()
+                .enabled(false).suffix("   ").build());
+
+        ArgumentCaptor<MasterProduct> captor = ArgumentCaptor.forClass(MasterProduct.class);
+        verify(masterProductRepository).save(captor.capture());
+        assertThat(captor.getValue().getOptionCheckSuffixEnabled()).isFalse();
+        assertThat(captor.getValue().getOptionCheckSuffix()).isNull();
     }
 
     @Test
