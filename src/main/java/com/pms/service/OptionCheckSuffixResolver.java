@@ -19,12 +19,16 @@ import org.springframework.stereotype.Service;
  * lower level (and vice versa):</p>
  *
  * <pre>
- *   enabled = channel(account) ?? master ?? seller ?? system default (true)
- *   text    = channel(account) ?? master ?? seller ?? system default ("옵션확인")   (blank suffix = inherit)
+ *   enabled = channel(account) ?? master ?? seller ?? system default (false)
+ *   text    = channel(account) ?? master ?? seller ?? fallback ("옵션확인")   (blank suffix = inherit)
  * </pre>
  *
- * <p>System default = {@code enabled=true}, {@code text="옵션확인"} → nothing configured anywhere reproduces the
- * current behavior exactly. The channel override wins over master when both are set (chain order).</p>
+ * <p>System default = {@code enabled=false} → <b>nothing configured anywhere means no suffix at all</b> (user
+ * decision 2026-08-27: an empty seller/channel/master appends nothing to the multi-option registration name).
+ * There is no ON-by-default "옵션확인". The {@code text} fallback ("옵션확인") is only a defensive value for the
+ * degenerate case where some level turns {@code enabled=true} but leaves the text blank — the front pairs a
+ * non-blank text with every enable, so it is normally unused. The channel override wins over master when both
+ * are set (chain order).</p>
  *
  * <p>⚠️ LazyInit: {@link #resolve(ProductListing)} touches {@code cell.seller}/{@code cell.masterProduct} (LAZY)
  * and the account's fields — callers (adapter/service) must be inside a {@code @Transactional} boundary
@@ -35,7 +39,9 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class OptionCheckSuffixResolver {
 
-    static final boolean DEFAULT_ENABLED = true;
+    // System default OFF: nothing configured at any level → no suffix (user decision 2026-08-27).
+    static final boolean DEFAULT_ENABLED = false;
+    // Defensive text fallback for enabled-but-blank (front always pairs a non-blank text with an enable).
     static final String DEFAULT_TEXT = "옵션확인";
 
     private final MarketplaceAccountRepository marketplaceAccountRepository;

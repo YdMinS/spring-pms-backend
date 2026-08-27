@@ -35,7 +35,7 @@ class RegistrationNameGeneratorTest {
     @Mock private ProductRepository productRepository;
     @InjectMocks private RegistrationNameGenerator generator;
 
-    /** The system-default resolved suffix (enabled=true, "옵션확인") — reproduces the pre-69 behavior. */
+    /** An explicit ON suffix (enabled=true, "옵션확인") — the value some level would set to append it. */
     private static final OptionCheckSuffix DEFAULT_SUFFIX = new OptionCheckSuffix(true, "옵션확인");
 
     private MasterProduct master() {
