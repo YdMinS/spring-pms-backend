@@ -17,8 +17,8 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import java.math.BigDecimal;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -49,10 +49,10 @@ class ShippingConfigControllerTest extends BaseIntegrationTest {
                 .vendorId("V1").accessKey("ak").secretKey("sk").isActive(true).build());
         accountId = account.getId();
 
-        given(coupangApiClient.get(contains("outboundShippingCenters"), eq(""), any())).willReturn(
+        given(coupangApiClient.get(contains("shipping-place/outbound"), anyString(), any())).willReturn(
                 "{\"code\":200,\"data\":{\"content\":["
                         + "{\"outboundShippingPlaceCode\":\"74010\",\"shippingPlaceName\":\"기본출고지\"}]}}");
-        given(coupangApiClient.get(contains("returnShippingCenters"), eq(""), any())).willReturn(
+        given(coupangApiClient.get(contains("returnShippingCenters"), anyString(), any())).willReturn(
                 "{\"code\":200,\"data\":{\"content\":[{"
                         + "\"returnCenterCode\":\"RC-1\",\"shippingPlaceName\":\"기본반품지\","
                         + "\"placeAddresses\":[{\"returnZipCode\":\"06000\",\"returnAddress\":\"서울시\"}]}]}}");
