@@ -43,6 +43,7 @@ class ListingOptionServiceTest {
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private MasterProductOptionRepository masterProductOptionRepository;
     @Mock private RegistrationNameGenerator registrationNameGenerator;
+    @Mock private com.pms.service.OptionCheckSuffixResolver optionCheckSuffixResolver;
     @InjectMocks private ListingOptionServiceImpl service;
 
     private static final Long LISTING_ID = 100L;
@@ -129,11 +130,34 @@ class ListingOptionServiceTest {
                 MasterProductOption.builder().id(6L).name("opt2").build());
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(masterOptions);
         // Only opt1 stays active → generator receives ["opt1"] → single-option name.
-        given(registrationNameGenerator.generate(eq(master), eq(List.of("opt1")), any()))
+        given(registrationNameGenerator.generate(eq(master), eq(List.of("opt1")), any(), any()))
                 .willReturn("노브랜드 생수 x 6");
 
         ListingOptionsResponse response = service.setActiveOptions(LISTING_ID, List.of(1L));
 
         assertThat(response.getRegistrationName()).isEqualTo("노브랜드 생수 x 6");
+    }
+
+    // (f) 69: the channel-resolved suffix (via resolve(cell)) is threaded into the generator for the response name.
+    @Test
+    void setActiveOptions_registrationNameReflectsChannelSuffixOverride() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터").build();
+        ProductListing listing = ProductListing.builder().id(LISTING_ID).platform("COUPANG").name("셀")
+                .status(ListingStatus.DRAFT).masterProduct(master).build();
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(listing));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(option(1L, true), option(2L, true)));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of(
+                MasterProductOption.builder().id(5L).name("opt1").build(),
+                MasterProductOption.builder().id(6L).name("opt2").build()));
+        OptionCheckSuffix off = new OptionCheckSuffix(false, "옵션확인");
+        given(optionCheckSuffixResolver.resolve(listing)).willReturn(off);
+        // Generator is called with the resolved (OFF) suffix → the "옵션확인"-less name for this channel.
+        given(registrationNameGenerator.generate(eq(master), eq(List.of("opt1", "opt2")), any(), eq(off)))
+                .willReturn("노브랜드 생수, 다우니 섬유유연제");
+
+        ListingOptionsResponse response = service.setActiveOptions(LISTING_ID, List.of(1L, 2L));
+
+        assertThat(response.getRegistrationName()).isEqualTo("노브랜드 생수, 다우니 섬유유연제");
     }
 }

@@ -2,6 +2,7 @@ package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.CreateSellerRequest;
+import com.pms.dto.request.OptionCheckSuffixRequest;
 import com.pms.dto.request.UpdateSellerRequest;
 import com.pms.dto.response.SellerResponse;
 import com.pms.service.SellerServiceImpl;
@@ -48,6 +49,18 @@ public class SellerController {
     ) {
         SellerResponse response = sellerService.updateSeller(id, request);
         return ResponseEntity.ok(ResponseDTO.success(response));
+    }
+
+    // "옵션확인" suffix seller default (69). Replace semantics (null = inherit); dedicated PUT so "reset to
+    // inherit" (null) is expressible, which the null-keeps PATCH cannot do.
+    @PutMapping("/{id}/registration-name-suffix")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ResponseDTO<Void>> updateRegistrationNameSuffix(
+        @PathVariable Long id,
+        @Valid @RequestBody OptionCheckSuffixRequest request
+    ) {
+        sellerService.updateRegistrationNameSuffix(id, request);
+        return ResponseEntity.ok(ResponseDTO.success((Void) null));
     }
 
     @DeleteMapping("/{id}")

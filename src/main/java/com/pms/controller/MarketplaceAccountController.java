@@ -2,6 +2,7 @@ package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.MarketplaceAccountRequest;
+import com.pms.dto.request.OptionCheckSuffixRequest;
 import com.pms.dto.response.MarketplaceAccountResponse;
 import com.pms.service.MarketplaceAccountService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -63,6 +64,16 @@ public class MarketplaceAccountController {
             @PathVariable @Parameter(description = "Marketplace account ID") Long id,
             @Valid @RequestBody MarketplaceAccountRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(service.update(id, request)));
+    }
+
+    @PutMapping("/{id}/registration-name-suffix")
+    @Operation(summary = "Set the channel-level 옵션확인 suffix override (69)",
+            description = "Replace semantics: null = inherit (master ?? seller ?? system). ADMIN only")
+    public ResponseEntity<ResponseDTO<Void>> updateRegistrationNameSuffix(
+            @PathVariable @Parameter(description = "Marketplace account ID") Long id,
+            @Valid @RequestBody OptionCheckSuffixRequest request) {
+        service.updateRegistrationNameSuffix(id, request);
+        return ResponseEntity.ok(ResponseDTO.success(null));
     }
 
     @DeleteMapping("/{id}")

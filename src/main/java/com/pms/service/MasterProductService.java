@@ -4,6 +4,7 @@ import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterOptionRequest;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
+import com.pms.dto.request.OptionCheckSuffixRequest;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterOptionResponse;
@@ -50,6 +51,12 @@ public interface MasterProductService {
      * @return the updated master product (with {@code tags} exposed)
      */
     MasterProductResponse updateTags(Long id, java.util.List<String> tags);
+
+    /**
+     * Replace the master-level "옵션확인" suffix override (69). Replace semantics: both fields stored as sent,
+     * null = inherit (blank suffix normalizes to null). 404 if the master is absent.
+     */
+    MasterProductResponse updateRegistrationNameSuffix(Long id, OptionCheckSuffixRequest req);
 
     /** Soft delete: sets {@code active=false} (restore via PATCH {@code active=true}). */
     void deleteMasterProduct(Long id);

@@ -1,6 +1,7 @@
 package com.pms.service;
 
 import com.pms.dto.request.MarketplaceAccountRequest;
+import com.pms.dto.request.OptionCheckSuffixRequest;
 import com.pms.dto.response.MarketplaceAccountResponse;
 
 import java.util.List;
@@ -20,6 +21,12 @@ public interface MarketplaceAccountService {
     List<MarketplaceAccountResponse> list(Long sellerId);
 
     MarketplaceAccountResponse update(Long id, MarketplaceAccountRequest req);
+
+    /**
+     * Replace the channel-level "옵션확인" suffix override (69). Replace semantics: both fields stored as sent,
+     * null = inherit (blank suffix normalizes to null). 404 if the account is absent.
+     */
+    MarketplaceAccountResponse updateRegistrationNameSuffix(Long id, OptionCheckSuffixRequest req);
 
     void delete(Long id);
 }

@@ -10,6 +10,7 @@ import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
+import com.pms.service.OptionCheckSuffixResolver;
 import com.pms.service.RegistrationNameGenerator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -30,6 +31,7 @@ public class ListingOptionServiceImpl implements ListingOptionService {
     private final ProductListingOptionRepository productListingOptionRepository;
     private final MasterProductOptionRepository masterProductOptionRepository;
     private final RegistrationNameGenerator registrationNameGenerator;
+    private final OptionCheckSuffixResolver optionCheckSuffixResolver;
 
     @Override
     public ListingOptionsResponse getOptions(Long listingId) {
@@ -90,6 +92,8 @@ public class ListingOptionServiceImpl implements ListingOptionService {
                 .toList();
         List<MasterProductOption> masterOptions =
                 masterProductOptionRepository.findByMasterProductId(master.getId());
-        return registrationNameGenerator.generate(master, activeNames, masterOptions);
+        // 69: suffix = channel(this cell's account) ?? master ?? seller ?? system (single cell = one account query).
+        OptionCheckSuffix suffix = optionCheckSuffixResolver.resolve(listing);
+        return registrationNameGenerator.generate(master, activeNames, masterOptions, suffix);
     }
 }

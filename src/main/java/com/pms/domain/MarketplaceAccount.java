@@ -66,4 +66,14 @@ public class MarketplaceAccount extends BaseEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "detail_template_id", nullable = true)
     private DetailTemplate detailTemplate;
+
+    // Channel-level override of the "옵션확인" registration-name suffix (FEATURE_2608_06 / 69). Both columns are
+    // nullable — null = inherit (resolution falls through to master ?? seller ?? system). This channel override
+    // wins over the master and seller levels. Resolved per field by OptionCheckSuffixResolver.
+    // ⚠️ Boolean → MySQL BIT trap: changeset 037 re-types to BIT(1) on MySQL (nullable → no NOT NULL/backfill).
+    @Column(name = "option_check_suffix_enabled")
+    private Boolean optionCheckSuffixEnabled;
+
+    @Column(name = "option_check_suffix", length = 50)
+    private String optionCheckSuffix;
 }

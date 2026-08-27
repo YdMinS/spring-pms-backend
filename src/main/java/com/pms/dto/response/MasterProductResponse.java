@@ -44,6 +44,12 @@ public class MasterProductResponse {
     @Schema(description = "Default box (Package) ID for the price engine", nullable = true)
     private Long defaultPackageId;
 
+    @Schema(description = "옵션확인 suffix master-level override (69); null = inherit", nullable = true)
+    private Boolean optionCheckSuffixEnabled;
+
+    @Schema(description = "옵션확인 suffix custom text master-level override (69); null = inherit", nullable = true)
+    private String optionCheckSuffix;
+
     @Schema(description = "Component products (the master's product set)")
     private List<Component> components;
 
