@@ -22,12 +22,15 @@ import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
+import com.pms.service.listing.ListingChannelResolver;
 import com.pms.service.listing.shipping.ShippingConfigResolver;
 import com.pms.service.listing.shipping.ShippingOverrideKeys;
 import com.pms.dto.response.ShippingConfigResponse;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -77,6 +80,18 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     private final DetailContentGenerator detailContentGenerator;
     private final com.pms.service.listing.TagMergeService tagMergeService;
     private final ShippingConfigResolver shippingConfigResolver;
+
+    /**
+     * 77: resolves the channel adapter that owns the {@code shippingReady} judgement.
+     *
+     * <p>⚠️ {@code @Lazy} breaks a constructor cycle: the resolver collects every {@link
+     * com.pms.service.listing.ListingChannel} → CoupangListingAdapter → MasterProductService →
+     * MasterPropagationService → back to this bean. Field injection (the {@code ChannelAddServiceImpl.self}
+     * pattern) keeps the cycle resolvable.</p>
+     */
+    @Autowired
+    @Lazy
+    private ListingChannelResolver listingChannelResolver;
 
     // ---------------------------------------------------------------- endpoints
 
@@ -453,6 +468,10 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                 .fieldValues(cell.getFieldValues() != null ? cell.getFieldValues() : Map.of())
                 .tags(cell.getTags() != null ? cell.getTags() : List.of())
                 .shippingOverride(cell.getShippingOverride() != null ? cell.getShippingOverride() : Map.of())
+                // 77: channel-owned judgement; an unsupported platform yields null (= the UI does not guard).
+                .shippingReady(listingChannelResolver.resolveOptional(cell.getPlatform())
+                        .map(channel -> channel.isShippingReady(cell))
+                        .orElse(null))
                 .optionPrices(optionPrices)
                 .build();
     }

@@ -29,6 +29,12 @@ public class GeneratedProductResponse {
     private List<String> tags;
     /** This cell's channel-level shipping overrides (75); null → empty map. */
     private Map<String, String> shippingOverride;
+    /**
+     * Whether this cell's resolved shipping config (channel ?? master ?? account, 75) satisfies the
+     * channel's register requirements (77) — the UI guards [마켓 등록] with it. {@code null} when the
+     * platform has no adapter yet (no opinion, not a failure) or on a legacy/not-yet-generated response.
+     */
+    private Boolean shippingReady;
     private List<OptionPrice> optionPrices;
 
     @Getter

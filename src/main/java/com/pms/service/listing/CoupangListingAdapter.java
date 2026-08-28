@@ -23,6 +23,7 @@ import com.pms.service.listing.category.CoupangCategoryMeta;
 import com.pms.service.listing.category.OptionCategoryMeta;
 import com.pms.service.listing.shipping.ResolvedShippingConfig;
 import com.pms.service.listing.shipping.ShippingConfigResolver;
+import com.pms.service.listing.shipping.ShippingReadiness;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -319,46 +320,27 @@ public class CoupangListingAdapter implements ListingChannel {
      * come back null → 400 (push must not proceed). {@code remoteAreaDeliverable} is transmitted as the
      * resolved "Y"/"N" String. {@code freeShipOverAmount} is optional (only relevant for CONDITIONAL_FREE).
      */
+    /**
+     * 77: read-only mirror of {@link #requireShippingConfig} — same rules, no throw. Touches LAZY
+     * master/seller through the resolver, so callers must be inside a transaction (open-in-view=false).
+     */
+    @Override
+    public boolean isShippingReady(ProductListing cell) {
+        return ShippingReadiness.check(shippingConfigResolver.resolve(cell)).ready();
+    }
+
     private ResolvedShippingConfig requireShippingConfig(ProductListing cell) {
         ResolvedShippingConfig cfg = shippingConfigResolver.resolve(cell);
-
-        List<String> missing = new ArrayList<>();
-        requireText(missing, "outboundShippingPlaceCode", cfg.outboundShippingPlaceCode());
-        requireText(missing, "returnCenterCode", cfg.returnCenterCode());
-        requireText(missing, "returnChargeName", cfg.returnChargeName());
-        requireText(missing, "returnContactNumber", cfg.returnContactNumber());
-        requireText(missing, "returnZipCode", cfg.returnZipCode());
-        requireText(missing, "returnAddress", cfg.returnAddress());
-        requireText(missing, "returnAddressDetail", cfg.returnAddressDetail());
-        requireValue(missing, "returnCharge", cfg.returnCharge());
-        requireValue(missing, "deliveryChargeOnReturn", cfg.deliveryChargeOnReturn());
-        requireText(missing, "deliveryMethod", cfg.deliveryMethod());
-        requireText(missing, "deliveryCompanyCode", cfg.deliveryCompanyCode());
-        requireText(missing, "deliveryChargeType", cfg.deliveryChargeType());
-        requireValue(missing, "deliveryCharge", cfg.deliveryCharge());
-        requireText(missing, "remoteAreaDeliverable", cfg.remoteAreaDeliverable());
-        requireText(missing, "unionDeliveryType", cfg.unionDeliveryType());
-        if (!missing.isEmpty()) {
-            throw new IllegalArgumentException("배송설정 미완료 — 누락 필드: " + String.join(", ", missing));
+        // 77: the same judgement the read path exposes as shippingReady (no drift between guard and flag).
+        ShippingReadiness.Readiness readiness = ShippingReadiness.check(cfg);
+        if (!readiness.missing().isEmpty()) {
+            throw new IllegalArgumentException("배송설정 미완료 — 누락 필드: " + String.join(", ", readiness.missing()));
         }
         // 75: Coupang forbids 묶음배송(UNION_DELIVERY) together with 착불(CHARGE_RECEIVED).
-        if ("UNION_DELIVERY".equals(cfg.unionDeliveryType())
-                && "CHARGE_RECEIVED".equals(cfg.deliveryChargeType())) {
+        if (readiness.unionChargeConflict()) {
             throw new IllegalArgumentException("배송설정 오류 — 묶음배송(UNION_DELIVERY)은 착불(CHARGE_RECEIVED)과 함께 설정할 수 없습니다");
         }
         return cfg;
-    }
-
-    private static void requireText(List<String> missing, String name, String value) {
-        if (value == null || value.isBlank()) {
-            missing.add(name);
-        }
-    }
-
-    private static void requireValue(List<String> missing, String name, Object value) {
-        if (value == null) {
-            missing.add(name);
-        }
     }
 
     /** Top-level delivery / return-center / outbound-place block from the resolved shipping config (72/73/75). */
