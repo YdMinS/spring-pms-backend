@@ -25,6 +25,7 @@ import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductResponse;
 import com.pms.exception.MasterProductInUseException;
+import com.pms.exception.ValidationException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.CategoryMappingRepository;
@@ -55,6 +56,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -361,31 +363,60 @@ public class MasterProductServiceImpl implements MasterProductService {
 
     @Override
     @Transactional
-    public int applyShippingOverrideToChannels(Long id) {
-        requireScopedMaster(id);
-        // 77: strip only the master-level keys from each cell's own override so those fields inherit again.
-        // Place keys (outbound / return center) are the account's own registered centers — never touched.
+    public int applyShippingOverrideToChannels(Long id, List<Long> listingIds) {
+        MasterProduct master = requireScopedMaster(id);
+        // 79: the master's settings are WRITTEN ONTO each selected cell (overwrite), not just cleared —
+        // afterwards the cell's shipping settings are exactly the master's, and the cell owns them.
+        // Master-level keys the master leaves empty are removed from the cell (so the cell matches the master
+        // and those fields fall through to the account default). Place keys (outbound / return center) are the
+        // account's own registered centers — never touched.
+        Map<String, String> masterOverride = ShippingOverrideKeys.filterMaster(master.getShippingOverride());
+        List<ProductListing> targets = selectChannels(id, listingIds);
+
         List<ProductListing> changed = new ArrayList<>();
-        for (ProductListing cell : productListingRepository.findByMasterProductId(id)) {
+        for (ProductListing cell : targets) {
             Map<String, String> current = cell.getShippingOverride();
-            if (current == null || current.isEmpty()) {
-                continue;
-            }
-            Map<String, String> kept = new LinkedHashMap<>();
-            for (Map.Entry<String, String> entry : current.entrySet()) {
-                if (!ShippingOverrideKeys.MASTER_KEYS.contains(entry.getKey())) {
-                    kept.put(entry.getKey(), entry.getValue());
+            Map<String, String> next = new LinkedHashMap<>();
+            if (current != null) {
+                for (Map.Entry<String, String> entry : current.entrySet()) {
+                    if (ShippingOverrideKeys.PLACE_KEYS.contains(entry.getKey())) {
+                        next.put(entry.getKey(), entry.getValue());
+                    }
                 }
             }
-            if (kept.size() == current.size()) {
-                continue; // nothing master-level to strip → already inheriting (idempotent no-op)
+            if (masterOverride != null) {
+                next.putAll(masterOverride);
             }
-            changed.add(cell.toBuilder().shippingOverride(kept.isEmpty() ? null : kept).build());
+            Map<String, String> resolved = next.isEmpty() ? null : next;
+            if (Objects.equals(resolved, current)) {
+                continue; // already exactly the master's settings → idempotent no-op, not counted
+            }
+            changed.add(cell.toBuilder().shippingOverride(resolved).build());
         }
         if (!changed.isEmpty()) {
             productListingRepository.saveAll(changed);
         }
         return changed.size();
+    }
+
+    /**
+     * The channels to force-apply to: all of this master's cells, or just the requested subset (79). An id
+     * outside this master's channels is a client bug — 400 rather than a silent skip that would read as a
+     * successful apply.
+     */
+    private List<ProductListing> selectChannels(Long masterId, List<Long> listingIds) {
+        List<ProductListing> cells = productListingRepository.findByMasterProductId(masterId);
+        if (listingIds == null || listingIds.isEmpty()) {
+            return cells;
+        }
+        Set<Long> requested = new LinkedHashSet<>(listingIds);
+        Set<Long> owned = cells.stream().map(ProductListing::getId).collect(Collectors.toSet());
+        Set<Long> unknown = new LinkedHashSet<>(requested);
+        unknown.removeAll(owned);
+        if (!unknown.isEmpty()) {
+            throw new ValidationException("이 마스터의 채널이 아닌 항목이 포함되었습니다: " + unknown);
+        }
+        return cells.stream().filter(cell -> requested.contains(cell.getId())).toList();
     }
 
     @Override

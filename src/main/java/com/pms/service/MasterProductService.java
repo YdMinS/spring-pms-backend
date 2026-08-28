@@ -65,19 +65,23 @@ public interface MasterProductService {
     MasterProductResponse updateShippingOverride(Long id, java.util.Map<String, String> override);
 
     /**
-     * Force the master's shipping settings onto every linked channel (FEATURE_2608_06 / 77): each cell's own
-     * shipping override is cleared of the master-level keys, so those fields fall back through the resolution
-     * chain and land on the master (or, when the master has none, on the account default).
+     * Force the master's shipping settings onto the selected channels (FEATURE_2608_06 / 77, semantics revised
+     * in 79): each selected cell's own shipping override is <b>overwritten</b> with the master's — the master's
+     * master-level keys are written onto the cell, and master-level keys the master leaves empty are removed
+     * from the cell. After this a cell's shipping settings are exactly the master's.
      *
-     * <p>This is a <b>one-shot reset, not a lock</b> — the {@code channel ?? master ?? account} priority is
-     * unchanged, so editing a channel afterwards makes that channel win again. Place keys (outbound / return
-     * center) are account-specific and are <b>kept</b>. Idempotent: an already-cleared cell is untouched and
-     * not counted.</p>
+     * <p>⚠️ This <b>writes values into the channel</b>, it does not merely clear it: the cell now owns those
+     * values, so a later master edit no longer reaches it (the {@code channel ?? master ?? account} priority is
+     * unchanged — the channel simply wins with the copied values). Place keys (outbound / return center) are
+     * account-specific and are <b>kept</b> untouched. Idempotent: a cell already equal to the master is not
+     * saved and not counted.</p>
      *
-     * @param id master product id (404 when absent / cross-tenant)
+     * @param id         master product id (404 when absent / cross-tenant)
+     * @param listingIds channels to apply to; {@code null}/empty = every linked channel. An id outside this
+     *                   master's channels is rejected with 400.
      * @return how many channel cells actually changed
      */
-    int applyShippingOverrideToChannels(Long id);
+    int applyShippingOverrideToChannels(Long id, java.util.List<Long> listingIds);
 
     /** Soft delete: sets {@code active=false} (restore via PATCH {@code active=true}). */
     void deleteMasterProduct(Long id);
