@@ -169,4 +169,19 @@ class ShippingConfigResolverTest {
         assertThat(r.deliveryCompanyCode()).isNull();
         assertThat(r.outboundShippingPlaceCode()).isNull();
     }
+
+    // resolveInherited (76): the listing's own override is EXCLUDED (master ?? account only) — the baseline a
+    // channel field would inherit if left blank. Here listing{charge=3000} is dropped, master{method} kept.
+    @Test
+    void resolveInherited_excludesListingOverride() {
+        withBaseConfig(baseConfig());
+
+        ResolvedShippingConfig r = resolver.resolveInherited(cell(
+                Map.of(ShippingOverrideKeys.DELIVERY_CHARGE, "3000"),      // listing → excluded
+                Map.of(ShippingOverrideKeys.DELIVERY_METHOD, "MAKE_ORDER"))); // master → kept
+
+        assertThat(r.deliveryMethod()).isEqualTo("MAKE_ORDER");        // master
+        assertThat(r.deliveryCharge()).isEqualByComparingTo("2500");   // account default (listing 3000 ignored)
+        assertThat(r.deliveryCompanyCode()).isEqualTo("CJGLS");        // account default
+    }
 }

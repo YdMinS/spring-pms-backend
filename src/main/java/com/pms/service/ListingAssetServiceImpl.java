@@ -22,7 +22,9 @@ import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
+import com.pms.service.listing.shipping.ShippingConfigResolver;
 import com.pms.service.listing.shipping.ShippingOverrideKeys;
+import com.pms.dto.response.ShippingConfigResponse;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -74,6 +76,7 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     private final PriceCalculator priceCalculator;
     private final DetailContentGenerator detailContentGenerator;
     private final com.pms.service.listing.TagMergeService tagMergeService;
+    private final ShippingConfigResolver shippingConfigResolver;
 
     // ---------------------------------------------------------------- endpoints
 
@@ -173,6 +176,14 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                 cell.toBuilder().shippingOverride(ShippingOverrideKeys.filterListing(override)).build());
         GeneratedProductData data = generatedProductDataRepository.findByProductListingId(listingId).orElse(null);
         return toResponse(updated, data);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ShippingConfigResponse resolveInheritedShipping(Long listingId) {
+        ProductListing cell = requireScopedCell(listingId);
+        // master ?? account (this cell's own override excluded) — placeholder baseline for the channel modal.
+        return ShippingConfigResponse.from(shippingConfigResolver.resolveInherited(cell));
     }
 
     @Override

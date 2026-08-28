@@ -9,6 +9,7 @@ import com.pms.dto.request.TagsRequest;
 import com.pms.dto.response.DetailPreviewResponse;
 import com.pms.dto.response.DetailTemplateResponse;
 import com.pms.dto.response.GeneratedProductResponse;
+import com.pms.dto.response.ShippingConfigResponse;
 import com.pms.service.ListingAssetService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -123,6 +124,13 @@ public class ListingAssetController {
             @PathVariable Long id, @RequestBody ShippingOverrideRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(
                 listingAssetService.updateShippingOverride(id, request.getOverride())));
+    }
+
+    @GetMapping("/{id}/shipping-inherited")
+    @Operation(summary = "This cell's inherited shipping baseline (76; master ?? account, own channel override excluded)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<ShippingConfigResponse>> resolveInheritedShipping(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(listingAssetService.resolveInheritedShipping(id)));
     }
 
 }

@@ -79,6 +79,7 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
 
     private static final String PATH = "/api/admin/product-listings";
     private Long listingId;
+    private Long masterId;
 
     @BeforeEach
     void seedCell() throws Exception {
@@ -111,6 +112,7 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
         MasterProduct master = masterProductRepository.save(MasterProduct.builder()
                 .name("운동화 마스터").active(true).category(category)
                 .defaultDelivery(delivery).defaultPackage(box).build());
+        masterId = master.getId();
         // 52: the mapped PlatformCategory owns the mall code + commission (0.10 = the old rate → same price).
         PlatformCategory platformCategory = platformCategoryRepository.save(PlatformCategory.builder()
                 .platform("COUPANG").code("cat-1").name("운동화")
@@ -408,6 +410,46 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
         mockMvc.perform(patch(PATH + "/999999/shipping-override")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType("application/json").content("{\"override\":{\"deliveryCharge\":\"3000\"}}"))
+                .andExpect(status().isNotFound());
+    }
+
+    // ---- inherited shipping baseline (76): master ?? account, own channel override excluded ----
+
+    @Test
+    void resolveInheritedShipping_adminToken_inheritsMasterExcludesOwn() throws Exception {
+        // master override (all-channels) + this listing's own override; the inherited baseline drops the latter.
+        MasterProduct master = masterProductRepository.findById(masterId).orElseThrow();
+        masterProductRepository.save(master.toBuilder()
+                .shippingOverride(java.util.Map.of("deliveryMethod", "MAKE_ORDER")).build());
+        ProductListing cell = productListingRepository.findById(listingId).orElseThrow();
+        productListingRepository.save(cell.toBuilder()
+                .shippingOverride(java.util.Map.of("deliveryCharge", "3000")).build());
+
+        mockMvc.perform(get(PATH + "/" + listingId + "/shipping-inherited")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.deliveryMethod").value("MAKE_ORDER")) // from master
+                .andExpect(jsonPath("$.data.deliveryCharge").value(org.hamcrest.Matchers.nullValue())); // own excluded
+    }
+
+    @Test
+    void resolveInheritedShipping_noToken_returns401() throws Exception {
+        mockMvc.perform(get(PATH + "/" + listingId + "/shipping-inherited"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void resolveInheritedShipping_userToken_returns403() throws Exception {
+        mockMvc.perform(get(PATH + "/" + listingId + "/shipping-inherited")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void resolveInheritedShipping_missingCell_returns404() throws Exception {
+        mockMvc.perform(get(PATH + "/999999/shipping-inherited")
+                        .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isNotFound());
     }
 

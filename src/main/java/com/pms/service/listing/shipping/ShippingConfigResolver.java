@@ -38,17 +38,33 @@ public class ShippingConfigResolver {
     private final MarketplaceShippingConfigRepository shippingConfigRepository;
 
     public ResolvedShippingConfig resolve(ProductListing cell) {
-        // Account default (72): the (seller, platform) account's stored config; absent → an all-null base.
+        return build(cell.getShippingOverride(), masterMap(cell), baseConfig(cell));
+    }
+
+    /**
+     * The <b>inherited baseline</b> for a cell = {@code master ?? account default}, with the listing's own
+     * override <b>excluded</b> (FEATURE_2608_06 / 76). Shown as a placeholder so the user sees what applies
+     * when a channel shipping field is left blank. LazyInit note as {@link #resolve(ProductListing)}.
+     */
+    public ResolvedShippingConfig resolveInherited(ProductListing cell) {
+        return build(null, masterMap(cell), baseConfig(cell));
+    }
+
+    /** Account default (72): the (seller, platform) account's stored config; absent → null (all-null base). */
+    private MarketplaceShippingConfig baseConfig(ProductListing cell) {
         MarketplaceAccount account = marketplaceAccountRepository
                 .findBySeller_IdAndPlatform(cell.getSeller().getId(), cell.getPlatform())
                 .orElse(null);
-        MarketplaceShippingConfig base = account == null ? null
+        return account == null ? null
                 : shippingConfigRepository.findByMarketplaceAccountId(account.getId()).orElse(null);
+    }
 
-        Map<String, String> master = cell.getMasterProduct() != null
-                ? cell.getMasterProduct().getShippingOverride() : null;
-        Map<String, String> listing = cell.getShippingOverride();
+    private static Map<String, String> masterMap(ProductListing cell) {
+        return cell.getMasterProduct() != null ? cell.getMasterProduct().getShippingOverride() : null;
+    }
 
+    private static ResolvedShippingConfig build(Map<String, String> listing, Map<String, String> master,
+                                                MarketplaceShippingConfig base) {
         return new ResolvedShippingConfig(
                 // outbound place + return center = channel ?? account (master skipped)
                 pick2(listing, ShippingOverrideKeys.OUTBOUND_SHIPPING_PLACE_CODE,

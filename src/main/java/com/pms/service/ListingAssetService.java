@@ -5,6 +5,7 @@ import com.pms.domain.ProductListing;
 import com.pms.dto.response.DetailPreviewResponse;
 import com.pms.dto.response.DetailTemplateResponse;
 import com.pms.dto.response.GeneratedProductResponse;
+import com.pms.dto.response.ShippingConfigResponse;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
@@ -70,6 +71,13 @@ public interface ListingAssetService {
      * (shipping is not a thumbnail/detail/price binding). Returns the cell's current generated view.
      */
     GeneratedProductResponse updateShippingOverride(Long listingId, Map<String, String> override);
+
+    /**
+     * The inherited shipping baseline for a tenant-scoped cell (404 if absent) = {@code master ?? account
+     * default}, with the cell's own channel override excluded (FEATURE_2608_06 / 76). The frontend shows
+     * these as placeholders so the user sees what applies when a channel field is left blank. Read-only.
+     */
+    ShippingConfigResponse resolveInheritedShipping(Long listingId);
 
     /**
      * Override the cell's thumbnail with an uploaded image (thumbnailSource=MANUAL_OVERRIDE) for a
