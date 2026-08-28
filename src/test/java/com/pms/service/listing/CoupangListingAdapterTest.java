@@ -527,4 +527,22 @@ class CoupangListingAdapterTest {
         assertThat(result.status()).isEqualTo(ListingStatus.SUBMITTED);
         assertThat(result.options()).isEmpty();
     }
+
+    // 77: read-only mirror of requireShippingConfig — same rules, never throws.
+    @Test
+    void isShippingReady_completeConfig_returnsTrue() {
+        given(shippingConfigResolver.resolve(any())).willReturn(fullResolved());
+
+        assertThat(adapter.isShippingReady(cell())).isTrue();
+    }
+
+    @Test
+    void isShippingReady_missingRequiredField_returnsFalseWithoutThrowing() {
+        given(shippingConfigResolver.resolve(any())).willReturn(new ResolvedShippingConfig(
+                "OUT-1", null, "반품담당", "021234567", "06000", "서울시", "1층",
+                new BigDecimal("2500"), new BigDecimal("2500"),
+                "SEQUENCIAL", "KGB", "FREE", new BigDecimal("0"), null, "N", "NOT_UNION_DELIVERY", null));
+
+        assertThat(adapter.isShippingReady(cell())).isFalse();
+    }
 }

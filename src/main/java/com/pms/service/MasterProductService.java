@@ -64,6 +64,21 @@ public interface MasterProductService {
      */
     MasterProductResponse updateShippingOverride(Long id, java.util.Map<String, String> override);
 
+    /**
+     * Force the master's shipping settings onto every linked channel (FEATURE_2608_06 / 77): each cell's own
+     * shipping override is cleared of the master-level keys, so those fields fall back through the resolution
+     * chain and land on the master (or, when the master has none, on the account default).
+     *
+     * <p>This is a <b>one-shot reset, not a lock</b> — the {@code channel ?? master ?? account} priority is
+     * unchanged, so editing a channel afterwards makes that channel win again. Place keys (outbound / return
+     * center) are account-specific and are <b>kept</b>. Idempotent: an already-cleared cell is untouched and
+     * not counted.</p>
+     *
+     * @param id master product id (404 when absent / cross-tenant)
+     * @return how many channel cells actually changed
+     */
+    int applyShippingOverrideToChannels(Long id);
+
     /** Soft delete: sets {@code active=false} (restore via PATCH {@code active=true}). */
     void deleteMasterProduct(Long id);
 

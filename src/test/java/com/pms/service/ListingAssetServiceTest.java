@@ -14,12 +14,14 @@ import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
 import com.pms.domain.TemplateField;
 import com.pms.domain.ThumbnailTemplate;
+import com.pms.dto.response.GeneratedProductResponse;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -28,6 +30,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -65,7 +68,17 @@ class ListingAssetServiceTest {
     @Mock private ImageValidator imageValidator;
     @Mock private PriceCalculator priceCalculator;
     @Mock private DetailContentGenerator detailContentGenerator;
+    @Mock private com.pms.service.listing.ListingChannelResolver listingChannelResolver;
     @InjectMocks private ListingAssetServiceImpl service;
+
+    /**
+     * 77: {@code listingChannelResolver} is @Lazy field-injected (it breaks a bean cycle), and Mockito's
+     * @InjectMocks stops at constructor injection — so wire it by hand, the BatchChannelAddServiceTest way.
+     */
+    @BeforeEach
+    void injectLazyResolver() {
+        ReflectionTestUtils.setField(service, "listingChannelResolver", listingChannelResolver);
+    }
 
     private static final Long CELL_ID = 100L;
     private static final Long OPTION_ID = 50L;
@@ -485,5 +498,21 @@ class ListingAssetServiceTest {
 
         assertThatThrownBy(() -> service.resolveDetailTemplate(CELL_ID))
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    // 77: a cell on a platform with no adapter yet (NAVER until 3d) must not blow up the shared read path —
+    // resolveOptional yields empty → shippingReady=null (no opinion), never a 400.
+    @Test
+    void getGenerated_unsupportedPlatform_yieldsNullShippingReadyWithoutThrowing() {
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("NAVER").name("셀").build();
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID))
+                .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of());
+        given(listingChannelResolver.resolveOptional("NAVER")).willReturn(Optional.empty());
+
+        GeneratedProductResponse response = service.getGenerated(CELL_ID);
+
+        assertThat(response.getShippingReady()).isNull();
     }
 }

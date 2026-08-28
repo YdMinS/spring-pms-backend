@@ -50,6 +50,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -356,6 +357,35 @@ public class MasterProductServiceImpl implements MasterProductService {
         MasterProduct updated = masterProductRepository.save(
                 master.toBuilder().shippingOverride(ShippingOverrideKeys.filterMaster(override)).build());
         return mapToResponse(updated);
+    }
+
+    @Override
+    @Transactional
+    public int applyShippingOverrideToChannels(Long id) {
+        requireScopedMaster(id);
+        // 77: strip only the master-level keys from each cell's own override so those fields inherit again.
+        // Place keys (outbound / return center) are the account's own registered centers — never touched.
+        List<ProductListing> changed = new ArrayList<>();
+        for (ProductListing cell : productListingRepository.findByMasterProductId(id)) {
+            Map<String, String> current = cell.getShippingOverride();
+            if (current == null || current.isEmpty()) {
+                continue;
+            }
+            Map<String, String> kept = new LinkedHashMap<>();
+            for (Map.Entry<String, String> entry : current.entrySet()) {
+                if (!ShippingOverrideKeys.MASTER_KEYS.contains(entry.getKey())) {
+                    kept.put(entry.getKey(), entry.getValue());
+                }
+            }
+            if (kept.size() == current.size()) {
+                continue; // nothing master-level to strip → already inheriting (idempotent no-op)
+            }
+            changed.add(cell.toBuilder().shippingOverride(kept.isEmpty() ? null : kept).build());
+        }
+        if (!changed.isEmpty()) {
+            productListingRepository.saveAll(changed);
+        }
+        return changed.size();
     }
 
     @Override

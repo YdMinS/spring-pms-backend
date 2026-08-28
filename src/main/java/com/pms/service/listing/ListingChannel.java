@@ -31,6 +31,20 @@ public interface ListingChannel {
     void validateRegistrable(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct);
 
     /**
+     * Whether the cell's resolved shipping config (channel ?? master ?? account default, 75) satisfies this
+     * channel's register requirements (FEATURE_2608_06 / 77). Pure read — never throws; the register path
+     * still enforces the same rules and 400s. Exposed as {@code GeneratedProductResponse.shippingReady} so
+     * the UI can disable [마켓 등록] before the user hits that 400.
+     *
+     * <p>The required field set is platform-specific, so each adapter owns the judgement (Coupang delegates
+     * to {@link com.pms.service.listing.shipping.ShippingReadiness}; NAVER brings its own in 3d).</p>
+     *
+     * @param cell the channel cell
+     * @return true when the cell may be registered as far as shipping config goes
+     */
+    boolean isShippingReady(ProductListing cell);
+
+    /**
      * Register the product on the market → returns the market product id (sellerProductId).
      * Does NOT wait for approval.
      *

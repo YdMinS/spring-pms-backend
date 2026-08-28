@@ -413,6 +413,53 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
+    // ---- shippingReady flag (77): the register guard exposed as a read flag for the [마켓 등록] button ----
+
+    @Test
+    void getGenerated_shippingComplete_returnsShippingReadyTrue() throws Exception {
+        // Given every register-required shipping field set at the channel level (no account config needed)
+        java.util.Map<String, String> complete = new java.util.LinkedHashMap<>();
+        complete.put("outboundShippingPlaceCode", "OUT-1");
+        complete.put("returnCenterCode", "RC-1");
+        complete.put("returnChargeName", "반품담당");
+        complete.put("returnContactNumber", "021234567");
+        complete.put("returnZipCode", "06000");
+        complete.put("returnAddress", "서울시");
+        complete.put("returnAddressDetail", "1층");
+        complete.put("returnCharge", "2500");
+        complete.put("deliveryChargeOnReturn", "2500");
+        complete.put("deliveryMethod", "SEQUENCIAL");
+        complete.put("deliveryCompanyCode", "KGB");
+        complete.put("deliveryChargeType", "FREE");
+        complete.put("deliveryCharge", "0");
+        complete.put("remoteAreaDeliverable", "N");
+        complete.put("unionDeliveryType", "NOT_UNION_DELIVERY");
+        ProductListing cell = productListingRepository.findById(listingId).orElseThrow();
+        productListingRepository.save(cell.toBuilder().shippingOverride(complete).build());
+
+        mockMvc.perform(post(PATH + "/" + listingId + "/regenerate")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get(PATH + "/" + listingId + "/generated")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.shippingReady").value(true));
+    }
+
+    @Test
+    void getGenerated_noShippingAnywhere_returnsShippingReadyFalse() throws Exception {
+        // Given no account config, no master override and no channel override (the base fixture state)
+        mockMvc.perform(post(PATH + "/" + listingId + "/regenerate")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get(PATH + "/" + listingId + "/generated")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.shippingReady").value(false));
+    }
+
     // ---- inherited shipping baseline (76): master ?? account, own channel override excluded ----
 
     @Test

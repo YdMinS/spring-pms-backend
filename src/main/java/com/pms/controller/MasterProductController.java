@@ -18,6 +18,7 @@ import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductImageResponse;
 import com.pms.dto.response.MasterProductResponse;
+import com.pms.dto.response.ShippingForceApplyResponse;
 import com.pms.service.CategoryMetaService;
 import com.pms.service.MasterProductImageService;
 import com.pms.service.MasterProductService;
@@ -111,6 +112,16 @@ public class MasterProductController {
             @PathVariable Long id, @RequestBody ShippingOverrideRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(
                 masterProductService.updateShippingOverride(id, request.getOverride())));
+    }
+
+    @PostMapping("/{id}/shipping-override/apply-to-channels")
+    @Operation(summary = "Force the master shipping settings onto every linked channel (77; one-shot reset, place keys kept)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<ShippingForceApplyResponse>> applyShippingOverrideToChannels(
+            @PathVariable Long id) {
+        int affected = masterProductService.applyShippingOverrideToChannels(id);
+        return ResponseEntity.ok(ResponseDTO.success(
+                ShippingForceApplyResponse.builder().affectedChannels(affected).build()));
     }
 
     @DeleteMapping("/{id}")

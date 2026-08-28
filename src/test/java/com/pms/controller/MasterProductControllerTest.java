@@ -425,6 +425,37 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
+    // ------------------------------------------------------------- force apply to channels (77)
+
+    @Test
+    void applyShippingOverrideToChannels_adminToken_returnsAffectedCount() throws Exception {
+        mockMvc.perform(post(PATH + "/" + masterId + "/shipping-override/apply-to-channels")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.affectedChannels").exists());
+    }
+
+    @Test
+    void applyShippingOverrideToChannels_userToken_returns403() throws Exception {
+        mockMvc.perform(post(PATH + "/" + masterId + "/shipping-override/apply-to-channels")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void applyShippingOverrideToChannels_noToken_returns401() throws Exception {
+        mockMvc.perform(post(PATH + "/" + masterId + "/shipping-override/apply-to-channels"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void applyShippingOverrideToChannels_missingMaster_returns404() throws Exception {
+        mockMvc.perform(post(PATH + "/999999/shipping-override/apply-to-channels")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound());
+    }
+
     @Test
     void updateRegistrationNameSuffix_userToken_returns403() throws Exception {
         mockMvc.perform(put(PATH + "/" + masterId + "/registration-name-suffix")
