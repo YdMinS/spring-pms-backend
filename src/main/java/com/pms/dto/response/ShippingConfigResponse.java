@@ -70,4 +70,30 @@ public class ShippingConfigResponse {
                 .marketplaceAccountId(marketplaceAccountId)
                 .build();
     }
+
+    /**
+     * Resolved shipping (FEATURE_2608_06 / 76) — a cell's inherited baseline (master ?? account) or fully
+     * resolved config. Not tied to one account, so {@code marketplaceAccountId} is null.
+     */
+    public static ShippingConfigResponse from(com.pms.service.listing.shipping.ResolvedShippingConfig r) {
+        return ShippingConfigResponse.builder()
+                .outboundShippingPlaceCode(r.outboundShippingPlaceCode())
+                .returnCenterCode(r.returnCenterCode())
+                .returnChargeName(r.returnChargeName())
+                .returnContactNumber(r.returnContactNumber())
+                .returnZipCode(r.returnZipCode())
+                .returnAddress(r.returnAddress())
+                .returnAddressDetail(r.returnAddressDetail())
+                .returnCharge(r.returnCharge())
+                .deliveryChargeOnReturn(r.deliveryChargeOnReturn())
+                .deliveryMethod(r.deliveryMethod())
+                .deliveryCompanyCode(r.deliveryCompanyCode())
+                .deliveryChargeType(r.deliveryChargeType())
+                .deliveryCharge(r.deliveryCharge())
+                .freeShipOverAmount(r.freeShipOverAmount())
+                .remoteAreaDeliverable(r.remoteAreaDeliverable())
+                .unionDeliveryType(r.unionDeliveryType())
+                .extraInfoMessage(r.extraInfoMessage())
+                .build();
+    }
 }
