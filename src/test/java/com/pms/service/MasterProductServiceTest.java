@@ -23,6 +23,7 @@ import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductResponse;
 import com.pms.exception.MasterProductInUseException;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.exception.ValidationException;
 import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.CategoryRepository;
@@ -687,26 +688,29 @@ class MasterProductServiceTest {
         assertThat(resp.getCategoryName()).isNull();
     }
 
-    // ---------------------------------------------------------------- 77: force-apply to channels
+    // ------------------------------------------------- 77/79: force-apply (overwrite) to channels
 
     @Test
-    void applyShippingOverrideToChannels_stripsMasterKeys_keepsPlaceKeys_countsChangedOnly() {
-        // Given a master with two linked cells: A overrides a master-level key + a place key, B has none
+    void applyShippingOverrideToChannels_overwritesCellWithMasterValues_keepsPlaceKeys_countsChangedOnly() {
+        // Given a master that sets a master-level key, cell A overriding it differently (+ a place key),
+        // and cell B already carrying exactly the master's value
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true)
-                .shippingOverride(Map.of(ShippingOverrideKeys.DELIVERY_METHOD, "SEQUENTIAL")).build();
+                .shippingOverride(Map.of(ShippingOverrideKeys.DELIVERY_METHOD, "SEQUENCIAL")).build();
         Map<String, String> cellAOverride = new LinkedHashMap<>();
         cellAOverride.put(ShippingOverrideKeys.DELIVERY_METHOD, "MAKE_ORDER");
         cellAOverride.put(ShippingOverrideKeys.OUTBOUND_SHIPPING_PLACE_CODE, "OUT-1");
         ProductListing cellA = ProductListing.builder().id(100L).name("셀A").shippingOverride(cellAOverride).build();
-        ProductListing cellB = ProductListing.builder().id(101L).name("셀B").shippingOverride(null).build();
+        ProductListing cellB = ProductListing.builder().id(101L).name("셀B")
+                .shippingOverride(Map.of(ShippingOverrideKeys.DELIVERY_METHOD, "SEQUENCIAL")).build();
 
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
         given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cellA, cellB));
 
         // When
-        int affected = service.applyShippingOverrideToChannels(1L);
+        int affected = service.applyShippingOverrideToChannels(1L, null);
 
-        // Then only cell A is saved, with the master-level key stripped and the place key preserved
+        // Then only cell A changed: the master's value is written onto it, the place key survives.
+        // Cell B already equals the master → not saved, not counted (idempotent).
         assertThat(affected).isEqualTo(1);
         ArgumentCaptor<List<ProductListing>> captor = ArgumentCaptor.forClass(List.class);
         verify(productListingRepository).saveAll(captor.capture());
@@ -714,14 +718,35 @@ class MasterProductServiceTest {
         assertThat(saved).hasSize(1);
         assertThat(saved.get(0).getId()).isEqualTo(100L);
         assertThat(saved.get(0).getShippingOverride())
-                .doesNotContainKey(ShippingOverrideKeys.DELIVERY_METHOD)
+                .containsEntry(ShippingOverrideKeys.DELIVERY_METHOD, "SEQUENCIAL")
                 .containsEntry(ShippingOverrideKeys.OUTBOUND_SHIPPING_PLACE_CODE, "OUT-1");
     }
 
     @Test
-    void applyShippingOverrideToChannels_masterOverrideEmpty_stillResets() {
-        // Given a master with NO shipping override at all (design decision: still reset → cells inherit the
-        // account default). No 400 guard.
+    void applyShippingOverrideToChannels_writesMasterValuesOntoCellWithoutOverride() {
+        // Given a cell that has no override of its own — force-apply must still write the master's values in
+        // (that is the difference from the old "clear only" semantics: the cell ends up owning the values)
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true)
+                .shippingOverride(Map.of(ShippingOverrideKeys.DELIVERY_CHARGE_TYPE, "FREE")).build();
+        ProductListing cell = ProductListing.builder().id(100L).name("셀A").shippingOverride(null).build();
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cell));
+
+        int affected = service.applyShippingOverrideToChannels(1L, null);
+
+        assertThat(affected).isEqualTo(1);
+        ArgumentCaptor<List<ProductListing>> captor = ArgumentCaptor.forClass(List.class);
+        verify(productListingRepository).saveAll(captor.capture());
+        assertThat(captor.getValue().get(0).getShippingOverride())
+                .containsEntry(ShippingOverrideKeys.DELIVERY_CHARGE_TYPE, "FREE");
+    }
+
+    @Test
+    void applyShippingOverrideToChannels_masterOverrideEmpty_removesMasterKeysFromCell() {
+        // Given a master with NO shipping override: "apply the master" means the cell ends up matching it,
+        // so the cell's master-level keys are removed (those fields fall through to the account default).
+        // Place keys stay (account-specific, never touched).
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true)
                 .shippingOverride(null).build();
         Map<String, String> cellAOverride = new LinkedHashMap<>();
@@ -732,11 +757,49 @@ class MasterProductServiceTest {
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
         given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cellA));
 
-        // When
-        int affected = service.applyShippingOverrideToChannels(1L);
+        int affected = service.applyShippingOverrideToChannels(1L, null);
 
-        // Then
         assertThat(affected).isEqualTo(1);
-        verify(productListingRepository).saveAll(any());
+        ArgumentCaptor<List<ProductListing>> captor = ArgumentCaptor.forClass(List.class);
+        verify(productListingRepository).saveAll(captor.capture());
+        assertThat(captor.getValue().get(0).getShippingOverride())
+                .doesNotContainKey(ShippingOverrideKeys.DELIVERY_METHOD)
+                .containsEntry(ShippingOverrideKeys.OUTBOUND_SHIPPING_PLACE_CODE, "OUT-1");
+    }
+
+    @Test
+    void applyShippingOverrideToChannels_selectedListingIds_appliesToThoseOnly() {
+        // Given two linked cells but only one selected (79)
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true)
+                .shippingOverride(Map.of(ShippingOverrideKeys.DELIVERY_METHOD, "SEQUENCIAL")).build();
+        ProductListing cellA = ProductListing.builder().id(100L).name("셀A")
+                .shippingOverride(Map.of(ShippingOverrideKeys.DELIVERY_METHOD, "MAKE_ORDER")).build();
+        ProductListing cellB = ProductListing.builder().id(101L).name("셀B")
+                .shippingOverride(Map.of(ShippingOverrideKeys.DELIVERY_METHOD, "MAKE_ORDER")).build();
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cellA, cellB));
+
+        int affected = service.applyShippingOverrideToChannels(1L, List.of(101L));
+
+        // Then only the selected cell is written; the unselected one keeps its own setting
+        assertThat(affected).isEqualTo(1);
+        ArgumentCaptor<List<ProductListing>> captor = ArgumentCaptor.forClass(List.class);
+        verify(productListingRepository).saveAll(captor.capture());
+        assertThat(captor.getValue()).hasSize(1);
+        assertThat(captor.getValue().get(0).getId()).isEqualTo(101L);
+    }
+
+    @Test
+    void applyShippingOverrideToChannels_listingIdOutsideMaster_throws400() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        ProductListing cellA = ProductListing.builder().id(100L).name("셀A").build();
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cellA));
+
+        assertThatThrownBy(() -> service.applyShippingOverrideToChannels(1L, List.of(999L)))
+                .isInstanceOf(ValidationException.class);
+        verify(productListingRepository, never()).saveAll(any());
     }
 }

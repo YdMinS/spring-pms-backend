@@ -457,6 +457,26 @@ class MasterProductControllerTest extends BaseIntegrationTest {
     }
 
     @Test
+    void applyShippingOverrideToChannels_emptyListingIds_appliesToAll() throws Exception {
+        // 79: the body is optional and an empty selection keeps the original "every channel" behaviour
+        mockMvc.perform(post(PATH + "/" + masterId + "/shipping-override/apply-to-channels")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"listingIds\":[]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.affectedChannels").exists());
+    }
+
+    @Test
+    void applyShippingOverrideToChannels_listingIdOutsideMaster_returns400() throws Exception {
+        mockMvc.perform(post(PATH + "/" + masterId + "/shipping-override/apply-to-channels")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"listingIds\":[999999]}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void updateRegistrationNameSuffix_userToken_returns403() throws Exception {
         mockMvc.perform(put(PATH + "/" + masterId + "/registration-name-suffix")
                         .header("Authorization", "Bearer " + userToken).contentType(MediaType.APPLICATION_JSON)

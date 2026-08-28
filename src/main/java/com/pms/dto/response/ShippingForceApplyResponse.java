@@ -4,9 +4,9 @@ import lombok.Builder;
 import lombok.Getter;
 
 /**
- * Result of forcing the master's shipping settings onto every linked channel
- * (FEATURE_2608_06 / 77) — how many channel cells actually had their own override cleared.
- * Cells that were already inheriting are not counted (the operation is idempotent).
+ * Result of forcing the master's shipping settings onto the selected channels (FEATURE_2608_06 / 77,
+ * semantics revised in 79) — how many channel cells actually changed. A cell whose shipping settings already
+ * equalled the master's is not saved and not counted (the operation is idempotent).
  */
 @Getter
 @Builder
