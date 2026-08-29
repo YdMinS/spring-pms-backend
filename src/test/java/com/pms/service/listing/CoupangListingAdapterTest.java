@@ -42,6 +42,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 /**
  * Coupang adapter (FEATURE_2608_06 / 3c): register returns the parsed sellerProductId; fetchStatus maps the
@@ -327,7 +329,10 @@ class CoupangListingAdapterTest {
     // 63: validateRegistrable — SINGLE with a required attribute left blank → 400 (schema enforced).
     @Test
     void validateRegistrable_single_enforcesRequiredAttribute() {
-        MasterProduct master = MasterProduct.builder().id(1L).build();   // no value for the required attr
+        // 93: carries an attribute value unrelated to the schema → the "at least one attribute" guard passes and
+        // only the required-attribute guard can fire (the two guards stay distinguishable by message).
+        MasterProduct master = MasterProduct.builder().id(1L)
+                .categoryAttributes(Map.of("색상", "흰색")).build();   // no value for the required attr
         ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
                 .masterProduct(master).build();
         given(masterProductService.isBundle(1L)).willReturn(false);
@@ -383,7 +388,16 @@ class CoupangListingAdapterTest {
         assertThat(item.path("parallelImported").asText()).isEqualTo("NOT_PARALLEL_IMPORTED");
         assertThat(item.path("pccNeeded").asBoolean()).isFalse();
         assertThat(item.path("images").get(0).path("imageType").asText()).isEqualTo("REPRESENTATION");
-        assertThat(item.path("contents").asText()).isEqualTo("<p>셀</p>");
+        // 93: contents is an array of {contentsType, contentDetails[{content, detailType}]} — not a raw String.
+        assertThat(item.path("contents").isArray()).isTrue();
+        assertThat(item.path("contents").get(0).path("contentsType").asText()).isEqualTo("TEXT");
+        JsonNode contentDetail = item.path("contents").get(0).path("contentDetails").get(0);
+        assertThat(contentDetail.path("content").asText()).isEqualTo("<p>셀</p>");
+        assertThat(contentDetail.path("detailType").asText()).isEqualTo("TEXT");
+        // 93: certifications is required → NOT_REQUIRED sentinel on every item.
+        assertThat(item.path("certifications").get(0).path("certificationType").asText())
+                .isEqualTo("NOT_REQUIRED");
+        assertThat(item.path("certifications").get(0).path("certificationCode").asText()).isEmpty();
     }
 
     // 73: originalPrice null on the option → falls back to salePrice.
@@ -544,5 +558,68 @@ class CoupangListingAdapterTest {
                 "SEQUENCIAL", "KGB", "FREE", new BigDecimal("0"), null, "N", "NOT_UNION_DELIVERY", null));
 
         assertThat(adapter.isShippingReady(cell())).isFalse();
+    }
+
+    // 93: contents is required → a cell whose detail HTML was never generated fails BEFORE any HTTP call.
+    @Test
+    void register_blankDetailHtml_throws() {
+        // the @BeforeEach getMeta stub matches anyString() → the category code must be non-null to reach the guard
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").build();   // no detailHtml
+
+        assertThatThrownBy(() -> adapter.register(cell(), gen, acct()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("상세 HTML");
+        verify(client, never()).post(any(), any(), any());
+    }
+
+    // 93: Coupang requires at least one attribute per item. Schema defines an OPTIONAL attribute (so the
+    // empty-schema early return does not apply) and nothing is filled in → 400, distinct from the required-
+    // attribute message.
+    @Test
+    void validateRegistrable_attributesEmpty_throws() {
+        MasterProduct master = MasterProduct.builder().id(1L).build();   // no attribute values at all
+        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+                .masterProduct(master).build();
+        given(masterProductService.isBundle(1L)).willReturn(false);
+        given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
+                List.of(new CategoryAttribute("사이즈", false, "TEXT", List.of())), List.of()));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("A")
+                        .sellingPrice(new BigDecimal("6000")).active(true).build()));
+
+        assertThatThrownBy(() -> adapter.validateRegistrable(cell, null, acct()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("카테고리 속성 미입력");
+    }
+
+    // 93: sellerProductName over Coupang's 100-char cap is hard-cut in the adapter (the generator keeps the
+    // full name for the UI).
+    @Test
+    void register_longName_truncatedTo100() throws Exception {
+        MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨").build();
+        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+                .platformProductId("123456789").masterProduct(master).build();
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("1세트")
+                        .sellingPrice(new BigDecimal("6000")).active(true).build()));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        GeneratedProductData gen = GeneratedProductData.builder()
+                .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        String longName = "가".repeat(120);
+        given(registrationNameGenerator.generate(eq(master), eq(List.of("1세트")), any(), any()))
+                .willReturn(longName);
+
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell, gen, acct());
+
+        String sent = objectMapper.readTree(payload.getValue()).path("sellerProductName").asText();
+        assertThat(sent).hasSize(100);
+        assertThat(sent).isEqualTo(longName.substring(0, 100));
     }
 }

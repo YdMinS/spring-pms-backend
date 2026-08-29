@@ -62,6 +62,16 @@ public class CoupangListingAdapter implements ListingChannel {
     private static final int DEFAULT_MAX_BUY_COUNT = 9999;
     // Non-exposed draft: save only, no approval request (test vendor account unavailable → deletable draft).
     private static final boolean DEFAULT_REQUESTED = false;
+    // 93: contents[] structure. The docs' only sample is TEXT + an HTML string in `content` (no HTML-type
+    // sample exists) → both fixed to TEXT; a live-account 400 here is fixed by changing these two constants.
+    private static final String CONTENTS_TYPE = "TEXT";
+    private static final String CONTENT_DETAIL_TYPE = "TEXT";
+    // 93: certifications is required even when no certification applies → a single NOT_REQUIRED sentinel on
+    // every item. Parsing the category's real certification types is follow-up (after a live-account error).
+    private static final List<Map<String, Object>> NOT_REQUIRED_CERTIFICATIONS =
+            List.of(Map.of("certificationType", "NOT_REQUIRED", "certificationCode", ""));
+    // 93: Coupang caps sellerProductName at 100 chars.
+    private static final int MAX_SELLER_PRODUCT_NAME_LENGTH = 100;
 
     private final CoupangApiClient client;
     private final ObjectMapper objectMapper;
@@ -160,6 +170,12 @@ public class CoupangListingAdapter implements ListingChannel {
             MasterProductOption mo = byName.get(option.getOptionName());
             Map<String, String> values = OptionCategoryMeta.merge(
                     masterAttributes, mo != null ? mo.getCategoryAttributes() : null);
+            // 93: Coupang requires at least one attribute per item. Categories whose schema defines none are
+            // already returned above (nothing to send) → this only fires when values COULD have been filled.
+            if (values.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "카테고리 속성 미입력: " + option.getOptionName() + " — 속성을 1개 이상 입력하세요");
+            }
             for (CategoryAttribute attribute : schema.attributes()) {
                 if (attribute.required()) {
                     String value = values.get(attribute.name());
@@ -225,10 +241,10 @@ public class CoupangListingAdapter implements ListingChannel {
         // Registration name (67): always auto-generated per channel from this cell's active options (32 rule).
         // master null fallback = cell.getName() (backfill transition window). 69: the "옵션확인" suffix is resolved
         // per cell (channel ?? master ?? seller ?? system) — single cell = one account query allowed.
-        payload.put("sellerProductName", master != null
+        payload.put("sellerProductName", limitName(master != null
                 ? registrationNameGenerator.generate(master, activeOptionNames, masterOptions,
                         optionCheckSuffixResolver.resolve(cell))
-                : cell.getName());
+                : cell.getName()));
 
         Map<String, String> masterAttributes = master != null ? master.getCategoryAttributes() : null;
         Map<String, String> masterNotices = master != null ? master.getCategoryNotices() : null;
@@ -253,6 +269,13 @@ public class CoupangListingAdapter implements ListingChannel {
         List<Map<String, Object>> itemImages = List.of(representationImage(gen));
         List<String> searchTags = tagMergeService.resolveTags(cell);
         String detailHtml = gen != null ? gen.getDetailHtml() : null;
+        // 93: contents is required — an empty one comes back as an opaque Coupang error, so fail here where the
+        // cause (auto-generation not run) is explicit. Lives in buildPayload, not validateRegistrable, because
+        // update(PUT) builds the payload without going through the register-only validation.
+        if (detailHtml == null || detailHtml.isBlank()) {
+            throw new IllegalArgumentException("상세 HTML 미생성 — 재생성 후 등록하세요");
+        }
+        List<Map<String, Object>> itemContents = detailContents(detailHtml);
 
         List<Map<String, Object>> items = new ArrayList<>();
         for (ProductListingOption option : listingOptions) {
@@ -276,9 +299,10 @@ public class CoupangListingAdapter implements ListingChannel {
             item.put("parallelImported", "NOT_PARALLEL_IMPORTED");
             item.put("overseasPurchased", "NOT_OVERSEAS_PURCHASED");
             item.put("pccNeeded", false);
+            item.put("certifications", NOT_REQUIRED_CERTIFICATIONS);
             item.put("images", itemImages);
             item.put("searchTags", searchTags);
-            item.put("contents", detailHtml);
+            item.put("contents", itemContents);
 
             MasterProductOption mo = byName.get(option.getOptionName());
             // 63: AB forbids attributes ("혼합 구성 상품 등록할 때, 속성 입력할 수 없습니다") → skip the whole block for AB.
@@ -312,6 +336,31 @@ public class CoupangListingAdapter implements ListingChannel {
         image.put("imageType", "REPRESENTATION");
         image.put("vendorPath", gen != null ? gen.getThumbnailUrl() : null);
         return image;
+    }
+
+    /**
+     * 93: detail HTML → Coupang {@code contents[]} shape (a single TEXT block carrying the whole HTML string).
+     * Loop-invariant (every option shares the same detail page) → built once per payload.
+     */
+    private static List<Map<String, Object>> detailContents(String html) {
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("content", html);
+        detail.put("detailType", CONTENT_DETAIL_TYPE);
+
+        Map<String, Object> contents = new LinkedHashMap<>();
+        contents.put("contentsType", CONTENTS_TYPE);
+        contents.put("contentDetails", List.of(detail));
+        return List.of(contents);
+    }
+
+    /** 93: Coupang caps sellerProductName at 100 chars — hard cut (no ellipsis; it would only cost a char). */
+    private static String limitName(String name) {
+        if (name == null || name.length() <= MAX_SELLER_PRODUCT_NAME_LENGTH) {
+            return name;
+        }
+        log.warn("[COUPANG-ADAPTER] sellerProductName {}자 → {}자로 절단",
+                name.length(), MAX_SELLER_PRODUCT_NAME_LENGTH);
+        return name.substring(0, MAX_SELLER_PRODUCT_NAME_LENGTH);
     }
 
     /**
