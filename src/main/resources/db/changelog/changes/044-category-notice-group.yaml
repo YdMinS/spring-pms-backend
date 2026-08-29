@@ -1,0 +1,15 @@
+# Selected product-info disclosure item group (FEATURE_2608_06 / 91): the group the stored notice values
+# belong to. 91: 선택 품목군 보관, null=미지정(프론트 폴백). Nullable VARCHAR → no backfill, no MySQL BIT trap.
+databaseChangeLog:
+
+  - changeSet:
+      id: 044-category-notice-group
+      author: oclyx
+      comment: "91: category_notice_group (VARCHAR nullable) on master_product."
+      changes:
+        - addColumn:
+            tableName: master_product
+            columns:
+              - column:
+                  name: category_notice_group
+                  type: VARCHAR(100)

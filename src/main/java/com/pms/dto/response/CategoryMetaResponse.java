@@ -43,5 +43,8 @@ public class CategoryMetaResponse {
 
         @Schema(description = "Notice values (notice key -> value)")
         private Map<String, String> notices;
+
+        @Schema(description = "Stored notice item group (groupName); null = unset")
+        private String noticeGroup;
     }
 }

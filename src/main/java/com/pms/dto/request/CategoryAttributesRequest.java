@@ -24,4 +24,7 @@ public class CategoryAttributesRequest {
 
     @Schema(description = "Product-info disclosure values (notice key -> value)", nullable = true)
     private Map<String, String> notices;
+
+    @Schema(description = "선택된 고시 품목군(groupName). null = 미지정", nullable = true)
+    private String noticeGroup;
 }
