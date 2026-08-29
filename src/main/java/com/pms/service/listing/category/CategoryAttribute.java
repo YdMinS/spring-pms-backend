@@ -10,6 +10,8 @@ import java.util.List;
  * @param required  true when the platform marks it MANDATORY
  * @param inputType {@code TEXT} / {@code SELECT} / {@code NUMBER} (adapter-normalized)
  * @param options   SELECT candidates (empty when not a SELECT input)
+ * @param basicUnit 기본 단위(쿠팡 {@code basicUnit}); 단위 없음({@code "없음"})·공백은 null
  */
-public record CategoryAttribute(String name, boolean required, String inputType, List<String> options) {
+public record CategoryAttribute(String name, boolean required, String inputType, List<String> options,
+                                String basicUnit) {
 }

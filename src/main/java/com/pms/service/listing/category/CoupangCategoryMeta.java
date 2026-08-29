@@ -16,8 +16,9 @@ import java.util.List;
  * Coupang {@link CategoryMetaAdapter} implementation (FEATURE_2608_06 / 47) — reuses {@link CoupangApiClient}
  * (account HMAC); no new client method. Mirrors {@code CoupangCategoryLookup}: {@code readTree(raw).path("data")}.
  *
- * <p>⚠️ Response keys are validated against the shared {@link #META_FIXTURE_JSON} (also served by
- * {@link com.pms.service.coupang.MockCoupangApiClient}) — real-account key hardening is follow-up.</p>
+ * <p>Response keys are validated against the shared {@link #META_FIXTURE_JSON} (also served by
+ * {@link com.pms.service.coupang.MockCoupangApiClient}), whose structure mirrors the real-account response
+ * verified on 2026-08-29 (code=72882, 94).</p>
  *
  * <p><b>Empty-tolerant</b>: a parse failure or empty response yields an empty {@link CategoryMetaSchema}
  * (never an exception) — an empty schema is a first-class case (§5, mirrors predict's {@code List.of()}).</p>
@@ -33,20 +34,32 @@ public class CoupangCategoryMeta implements CategoryMetaAdapter {
                     + "display-category-codes/";
 
     /**
-     * Shared meta fixture (§3): 2 attributes (원산지 = required·TEXT·no options, 사이즈 = optional·SELECT·[S,M,L])
-     * and 2 notices (제품소재 = required, 제조자 = optional). Reused by the Mock client and the adapter test.
+     * Shared meta fixture (§3): 실계정 응답(2026-08-29, code=72882) 구조를 축약 — attributes 3개(각 분기 1개:
+     * 최소 중량 = MANDATORY·NUMBER·단위 g, 식품 프리미엄 = SELECT·후보 2개, 동물종류 = INPUT·STRING)와
+     * noticeCategories 2 그룹. Reused by the Mock client and the adapter test.
+     *
+     * <p>⚠️ <b>키는 실응답 그대로 유지할 것</b> — 파싱하지 않는 {@code usableUnits}/{@code groupNumber}/
+     * {@code exposed} 도 남긴다(응답에 없는 필드와 우리가 안 읽는 필드를 구분하기 위해). 값을 지어내지 말 것:
+     * 가짜 구조의 픽스처가 94 이전 attributes 파싱 결함의 원인이었다.</p>
      */
     public static final String META_FIXTURE_JSON =
             "{\"code\":200,\"data\":{"
                     + "\"attributes\":["
-                    + "{\"attributeTypeName\":\"원산지\",\"required\":\"MANDATORY\",\"dataType\":\"STRING\","
-                    + "\"basicUnits\":[]},"
-                    + "{\"attributeTypeName\":\"사이즈\",\"required\":\"OPTIONAL\",\"dataType\":\"STRING\","
-                    + "\"basicUnits\":[{\"unit\":\"S\"},{\"unit\":\"M\"},{\"unit\":\"L\"}]}],"
+                    + "{\"attributeTypeName\":\"최소 중량\",\"dataType\":\"NUMBER\",\"inputType\":\"INPUT\","
+                    + "\"inputValues\":[],\"basicUnit\":\"g\",\"usableUnits\":[\"g\",\"kg\",\"mg\"],"
+                    + "\"required\":\"MANDATORY\",\"groupNumber\":\"1\",\"exposed\":\"EXPOSED\"},"
+                    + "{\"attributeTypeName\":\"식품 프리미엄\",\"dataType\":\"STRING\",\"inputType\":\"SELECT\","
+                    + "\"inputValues\":[\"Y\",\"해당없음\"],\"basicUnit\":\"없음\",\"usableUnits\":[],"
+                    + "\"required\":\"OPTIONAL\",\"groupNumber\":\"NONE\",\"exposed\":\"NONE\"},"
+                    + "{\"attributeTypeName\":\"동물종류\",\"dataType\":\"STRING\",\"inputType\":\"INPUT\","
+                    + "\"inputValues\":[],\"basicUnit\":\"없음\",\"usableUnits\":[],"
+                    + "\"required\":\"OPTIONAL\",\"groupNumber\":\"NONE\",\"exposed\":\"NONE\"}],"
                     + "\"noticeCategories\":["
-                    + "{\"noticeCategoryName\":\"의류\",\"noticeCategoryDetailNames\":["
-                    + "{\"noticeCategoryDetailName\":\"제품소재\",\"required\":\"MANDATORY\"},"
-                    + "{\"noticeCategoryDetailName\":\"제조자\",\"required\":\"OPTIONAL\"}]}]}}";
+                    + "{\"noticeCategoryName\":\"가공식품\",\"noticeCategoryDetailNames\":["
+                    + "{\"noticeCategoryDetailName\":\"제품명\",\"required\":\"MANDATORY\"},"
+                    + "{\"noticeCategoryDetailName\":\"소비자상담관련 전화번호\",\"required\":\"OPTIONAL\"}]},"
+                    + "{\"noticeCategoryName\":\"농수축산물\",\"noticeCategoryDetailNames\":["
+                    + "{\"noticeCategoryDetailName\":\"생산자\",\"required\":\"MANDATORY\"}]}]}}";
 
     private final CoupangApiClient client;
     private final ObjectMapper objectMapper;
@@ -72,20 +85,31 @@ public class CoupangCategoryMeta implements CategoryMetaAdapter {
     private List<CategoryAttribute> parseAttributes(JsonNode data) {
         List<CategoryAttribute> attributes = new ArrayList<>();
         for (JsonNode attr : data.path("attributes")) {
+            // SELECT candidates live in inputValues[] as plain strings (94 — real-account keys, 2026-08-29).
             List<String> options = new ArrayList<>();
-            for (JsonNode unit : attr.path("basicUnits")) {
-                String value = unit.path("unit").asText(null);
-                if (value != null) {
-                    options.add(value);
+            for (JsonNode value : attr.path("inputValues")) {
+                String option = value.asText(null);
+                if (option != null && !option.isBlank()) {
+                    options.add(option);
                 }
             }
             attributes.add(new CategoryAttribute(
                     attr.path("attributeTypeName").asText(null),
                     "MANDATORY".equals(attr.path("required").asText("")),
-                    inputType(attr.path("dataType").asText(""), options),
-                    options));
+                    inputType(attr.path("inputType").asText(""), attr.path("dataType").asText(""),
+                            !options.isEmpty()),
+                    options,
+                    basicUnit(attr.path("basicUnit").asText(null))));
         }
         return attributes;
+    }
+
+    /** Coupang writes the literal string {@code "없음"} when an attribute has no unit — normalize it to null. */
+    private String basicUnit(String raw) {
+        if (raw == null || raw.isBlank() || "없음".equals(raw)) {
+            return null;
+        }
+        return raw;
     }
 
     private List<CategoryNotice> parseNotices(JsonNode data) {
@@ -103,9 +127,12 @@ public class CoupangCategoryMeta implements CategoryMetaAdapter {
         return notices;
     }
 
-    /** basicUnits present → SELECT; else STRING→TEXT, NUMBER→NUMBER (default TEXT). */
-    private String inputType(String dataType, List<String> options) {
-        if (!options.isEmpty()) {
+    /**
+     * 응답 {@code inputType} 을 신뢰. SELECT 인데 후보가 비면 강등(빈 드롭다운 방지 — 고를 값이 없는
+     * 드롭다운은 필수 속성을 영원히 못 채운다). 그 외에는 STRING→TEXT, NUMBER→NUMBER (default TEXT).
+     */
+    private String inputType(String rawInputType, String dataType, boolean hasOptions) {
+        if ("SELECT".equals(rawInputType) && hasOptions) {
             return "SELECT";
         }
         return "NUMBER".equals(dataType) ? "NUMBER" : "TEXT";

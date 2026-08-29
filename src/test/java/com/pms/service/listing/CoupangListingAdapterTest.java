@@ -338,7 +338,7 @@ class CoupangListingAdapterTest {
         given(masterProductService.isBundle(1L)).willReturn(false);
         given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
-                List.of(new CategoryAttribute("원산지", true, "TEXT", List.of())), List.of()));
+                List.of(new CategoryAttribute("원산지", true, "TEXT", List.of(), null)), List.of()));
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
         given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
                 ProductListingOption.builder().id(1L).optionName("A")
@@ -584,7 +584,7 @@ class CoupangListingAdapterTest {
         given(masterProductService.isBundle(1L)).willReturn(false);
         given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
-                List.of(new CategoryAttribute("사이즈", false, "TEXT", List.of())), List.of()));
+                List.of(new CategoryAttribute("사이즈", false, "TEXT", List.of(), null)), List.of()));
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
         given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
                 ProductListingOption.builder().id(1L).optionName("A")
