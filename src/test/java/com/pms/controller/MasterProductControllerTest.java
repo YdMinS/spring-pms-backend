@@ -247,6 +247,32 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.categoryNotices.용량").value("30포"));
     }
 
+    // 84: an option that is live on the market (the seeded cell has platformProductId + an active option
+    // named "기본") is locked — its quantity vector cannot be changed. Wiring only; the judgement matrix and
+    // the other guards live in MasterProductServiceTest.
+    @Test
+    void updateOption_marketRegistered_quantityChange_returns400() throws Exception {
+        String create = "{\"name\":\"기본\",\"items\":["
+                + "{\"productId\":" + productId1 + ",\"quantity\":2},"
+                + "{\"productId\":" + productId2 + ",\"quantity\":2}]}";
+        String created = mockMvc.perform(post(PATH + "/" + masterId + "/options")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(create))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.marketRegistered").value(true))
+                .andReturn().getResponse().getContentAsString();
+        Long optionId = com.jayway.jsonpath.JsonPath.parse(created).read("$.data.id", Integer.class).longValue();
+
+        String update = "{\"name\":\"기본\",\"items\":["
+                + "{\"productId\":" + productId1 + ",\"quantity\":3},"
+                + "{\"productId\":" + productId2 + ",\"quantity\":2}]}";
+        mockMvc.perform(patch(PATH + "/" + masterId + "/options/" + optionId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(update))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
     @Test
     void createOption_missingComponent_returns400() throws Exception {
         // items omit productId2 → subset of the component set
@@ -577,7 +603,11 @@ class MasterProductControllerTest extends BaseIntegrationTest {
         return "{\"categoryId\":" + categoryId + "}";
     }
 
+    /** 84: a master must be created with at least one option covering the full component set. */
     private String createMasterBody() {
-        return "{\"name\":\"신규마스터\",\"componentProductIds\":[" + productId1 + "," + productId2 + "]}";
+        return "{\"name\":\"신규마스터\",\"componentProductIds\":[" + productId1 + "," + productId2 + "],"
+                + "\"options\":[{\"name\":\"1세트\",\"items\":["
+                + "{\"productId\":" + productId1 + ",\"quantity\":1},"
+                + "{\"productId\":" + productId2 + ",\"quantity\":1}]}]}";
     }
 }

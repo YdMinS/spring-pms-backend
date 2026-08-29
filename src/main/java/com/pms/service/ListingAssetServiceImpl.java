@@ -309,14 +309,24 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         String detailHtml = override ? existing.getDetailHtml() : detailContentGenerator.generate(cell);
         GeneratedContentSource source = override ? GeneratedContentSource.MANUAL_OVERRIDE : GeneratedContentSource.AUTO;
 
-        // 3. Per-option selling price (margin reverse-calc); write back only sellingPrice. Match each listing
-        //    option to its master option by optionName (one query, outside the loop — no N+1); an unmatched
-        //    option means "no override" → the price engine falls back to the master defaults.
+        // 3. Per-option selling price (margin reverse-calc) — the narrow seam shared with the option-edit
+        //    re-sync (84). Same transaction, same result as the inline version it replaces.
+        recalculateOptionPrices(cell);
+
+        // 4. Upsert the assets row.
+        return upsert(cell, existing, thumbnailUrl, thumbSource, detailHtml, templateId, source);
+    }
+
+    @Override
+    @Transactional
+    public void recalculateOptionPrices(ProductListing cell) {
+        // Match each listing option to its master option by optionName (one query, outside the loop — no
+        // N+1); an unmatched option means "no override" → the price engine falls back to the master defaults.
         Map<String, MasterProductOption> masterOptionsByName = cell.getMasterProduct() == null
                 ? Map.of()
                 : masterProductOptionRepository.findByMasterProductId(cell.getMasterProduct().getId()).stream()
                         .collect(Collectors.toMap(MasterProductOption::getName, Function.identity(), (a, b) -> a));
-        for (ProductListingOption option : options) {
+        for (ProductListingOption option : productListingOptionRepository.findByProductListingId(cell.getId())) {
             MasterProductOption mo = masterOptionsByName.get(option.getOptionName());
             PriceCalculator.PriceResult price = priceCalculator.calculatePrices(cell, mo, optionCostSum(option));
             productListingOptionRepository.save(option.toBuilder()
@@ -324,9 +334,6 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                     .originalPrice(price.originalPrice())
                     .build());
         }
-
-        // 4. Upsert the assets row.
-        return upsert(cell, existing, thumbnailUrl, thumbSource, detailHtml, templateId, source);
     }
 
     // ---------------------------------------------------------------- helpers

@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -52,6 +53,16 @@ public interface ProductListingRepository extends JpaRepository<ProductListing, 
      * @return List of ProductListing cells for that master
      */
     List<ProductListing> findByMasterProductId(Long masterProductId);
+
+    /**
+     * Batch variant of {@link #findByMasterProductId(Long)} — the option market-lock judgement (84) resolves
+     * every master's cells in ONE query so the master list endpoint stays free of an N+1. Tenant-filtered by
+     * {@code @TenantId} automatically.
+     *
+     * @param masterProductIds ids of the parent MasterProducts
+     * @return List of ProductListing cells across all given masters
+     */
+    List<ProductListing> findByMasterProductIdIn(Collection<Long> masterProductIds);
 
     /**
      * Tenant-scoped fetch by id (FEATURE_2608_06 / 3b-2). The inherited PK {@code findById} is NOT

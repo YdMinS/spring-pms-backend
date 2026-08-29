@@ -10,13 +10,12 @@ import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
 import com.pms.dto.response.PropagateResponse;
 import com.pms.repository.GeneratedProductDataRepository;
-import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.service.ListingAssetService;
+import com.pms.service.listing.OptionQuantitySync;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -51,11 +50,10 @@ class MasterPropagationServiceTest {
     @Mock private MasterProductRepository masterProductRepository;
     @Mock private ProductListingRepository productListingRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
-    @Mock private ProductListingProductRepository productListingProductRepository;
     @Mock private MasterProductOptionRepository masterProductOptionRepository;
-    @Mock private MasterProductOptionItemRepository masterProductOptionItemRepository;
     @Mock private GeneratedProductDataRepository generatedProductDataRepository;
     @Mock private ListingAssetService listingAssetService;
+    @Mock private OptionQuantitySync optionQuantitySync;
     @InjectMocks private MasterPropagationServiceImpl service;
 
     private static final Long MASTER_ID = 10L;
@@ -146,10 +144,10 @@ class MasterPropagationServiceTest {
         assertThat(captor.getValue().isNeedsMarketSync()).isTrue();
     }
 
-    // matched-option quantity sync: master option qty change → cell BOM line qty updated for the shared product.
+    // matched-option quantity sync: still delegated to the shared OptionQuantitySync (84) with the matched
+    // (cell option, master option) pair. The line rule itself is covered by OptionQuantitySyncTest.
     @Test
-    void propagate_syncsMatchedOptionBomQuantity() {
-        Product product = Product.builder().id(99L).build();
+    void propagate_delegatesMatchedOptionToQuantitySync() {
         MasterProduct master = MasterProduct.builder().id(MASTER_ID).name("마스터").build();
         ProductListing cell = ProductListing.builder().id(1L).platform("COUPANG").name("셀")
                 .platformProductId("SP-1").masterProduct(master).build();
@@ -157,23 +155,18 @@ class MasterPropagationServiceTest {
         hasGenerated(1L);
 
         ProductListingOption cellOption = ProductListingOption.builder().id(5L).optionName("2세트").build();
-        given(productListingOptionRepository.findByProductListingId(1L)).willReturn(List.of(cellOption));
+        ProductListingOption unmatched = ProductListingOption.builder().id(6L).optionName("없는옵션").build();
+        given(productListingOptionRepository.findByProductListingId(1L))
+                .willReturn(List.of(cellOption, unmatched));
 
         MasterProductOption masterOption = MasterProductOption.builder().id(7L).name("2세트")
                 .masterProduct(master).build();
         given(masterProductOptionRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(masterOption));
-        given(masterProductOptionItemRepository.findByOptionId(7L)).willReturn(List.of(
-                MasterProductOptionItem.builder().option(masterOption).product(product).quantity(2).build()));
-
-        ProductListingProduct bomLine = ProductListingProduct.builder().id(3L)
-                .productListingOption(cellOption).product(product).quantity(1).build();   // old qty 1
-        given(productListingProductRepository.findByProductListingOptionId(5L)).willReturn(List.of(bomLine));
 
         service.propagate(MASTER_ID);
 
-        ArgumentCaptor<ProductListingProduct> captor = ArgumentCaptor.forClass(ProductListingProduct.class);
-        verify(productListingProductRepository).save(captor.capture());
-        assertThat(captor.getValue().getQuantity()).isEqualTo(2);   // synced from master (1 → 2)
+        verify(optionQuantitySync).syncLines(cellOption, masterOption);
+        verify(optionQuantitySync, never()).syncLines(eq(unmatched), any());   // unmatched option → skip
     }
 
     // 404: cross-tenant/absent master → ResourceNotFoundException (findScopedById empty).
