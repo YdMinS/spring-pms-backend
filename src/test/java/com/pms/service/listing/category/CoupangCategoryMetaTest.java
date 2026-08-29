@@ -59,8 +59,24 @@ class CoupangCategoryMetaTest {
         assertThat(schema.notices())
                 .extracting(CategoryNotice::key, CategoryNotice::required, CategoryNotice::groupName)
                 .contains(tuple("제품명", true, "가공식품"),
-                        tuple("소비자상담관련 전화번호", false, "가공식품"),
-                        tuple("생산자", true, "농수축산물"));
+                        tuple("소비자상담관련 전화번호", true, "가공식품"),
+                        tuple("생산자(수입자)", true, "농수축산물"));
+    }
+
+    @Test
+    void getMeta_optionalNotice_parsedAsNotRequired() {
+        // The verified category (72882) has no OPTIONAL notice at all, so the required=false branch
+        // lives here rather than in the fixture — the fixture stays faithful to the real response.
+        String json = "{\"code\":200,\"data\":{\"noticeCategories\":["
+                + "{\"noticeCategoryName\":\"기타 재화\",\"noticeCategoryDetailNames\":["
+                + "{\"noticeCategoryDetailName\":\"인증/허가 사항\",\"required\":\"OPTIONAL\"}]}]}}";
+        given(client.get(contains("category-related-metas"), eq(""), any())).willReturn(json);
+
+        CategoryMetaSchema schema = meta.getMeta(acct(), "1001");
+
+        assertThat(schema.notices()).singleElement()
+                .extracting(CategoryNotice::key, CategoryNotice::required, CategoryNotice::groupName)
+                .containsExactly("인증/허가 사항", false, "기타 재화");
     }
 
     @Test
