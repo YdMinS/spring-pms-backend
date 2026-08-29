@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -34,6 +35,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 
 /**
@@ -54,6 +56,7 @@ class MasterPropagationServiceTest {
     @Mock private GeneratedProductDataRepository generatedProductDataRepository;
     @Mock private ListingAssetService listingAssetService;
     @Mock private OptionQuantitySync optionQuantitySync;
+    @Mock private MasterOptionChannelSync masterOptionChannelSync;
     @InjectMocks private MasterPropagationServiceImpl service;
 
     private static final Long MASTER_ID = 10L;
@@ -175,5 +178,32 @@ class MasterPropagationServiceTest {
         given(masterProductRepository.findScopedById(eq(404L))).willReturn(Optional.empty());
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.propagate(404L))
                 .isInstanceOf(com.pms.exception.ResourceNotFoundException.class);
+    }
+
+    // 86: structure reconciliation runs per cell, BEFORE the quantity sync (so newly created options are
+    // already there) — and only the cell-scoped hook is used (a master-scoped call here would walk all N
+    // cells once per cell, inside this cell's own REQUIRES_NEW transaction).
+    @Test
+    void propagateOne_syncsStructureBeforeQuantities() {
+        MasterProduct master = MasterProduct.builder().id(MASTER_ID).name("마스터").build();
+        ProductListing cell = ProductListing.builder().id(1L).platform("COUPANG").name("셀")
+                .platformProductId("SP-1").masterProduct(master).build();
+        given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
+        hasGenerated(1L);
+
+        ProductListingOption cellOption = ProductListingOption.builder().id(5L).optionName("2세트").build();
+        given(productListingOptionRepository.findByProductListingId(1L)).willReturn(List.of(cellOption));
+        MasterProductOption masterOption = MasterProductOption.builder().id(7L).name("2세트")
+                .masterProduct(master).build();
+        given(masterProductOptionRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(masterOption));
+
+        service.propagate(MASTER_ID);
+
+        InOrder order = inOrder(masterOptionChannelSync, optionQuantitySync, listingAssetService);
+        order.verify(masterOptionChannelSync).syncStructure(cell);
+        order.verify(optionQuantitySync).syncLines(cellOption, masterOption);
+        order.verify(listingAssetService).regenerateAssets(cell);
+        verify(masterOptionChannelSync, never()).onOptionCreated(any(), any());
+        verify(masterOptionChannelSync, never()).onOptionRemoved(any(), any());
     }
 }
