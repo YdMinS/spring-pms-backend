@@ -42,6 +42,7 @@ import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
+import com.pms.service.listing.MasterOptionChannelSync;
 import com.pms.service.listing.MasterPropagationService;
 import com.pms.service.listing.OptionCheckSuffix;
 import com.pms.service.listing.OptionQuantitySync;
@@ -97,6 +98,7 @@ public class MasterProductServiceImpl implements MasterProductService {
     private final ImageStorageService imageStorageService;
     private final ImageValidator imageValidator;
     private final MasterPropagationService masterPropagationService;
+    private final MasterOptionChannelSync masterOptionChannelSync;
     private final ListingAssetService listingAssetService;
     private final OptionQuantitySync optionQuantitySync;
     private final TagMergeService tagMergeService;
@@ -253,8 +255,14 @@ public class MasterProductServiceImpl implements MasterProductService {
         if (options == null || options.isEmpty()) {
             throw new ValidationException("옵션을 1개 이상 등록하세요.");
         }
+        // 86: option names are unique within a master (assertNameUnique guards the create/update-one paths;
+        // this closes the same rule for the array posted at master creation). Same message, same trim rule.
+        Set<String> optionNames = new LinkedHashSet<>();
         for (MasterOptionRequest option : options) {
             assertCoversComponents(componentIds, toVector(option), "옵션은 구성상품 전체를 포함해야 합니다");
+            if (!optionNames.add(option.getName() == null ? null : option.getName().trim())) {
+                throw new ValidationException("같은 이름의 옵션이 이미 있습니다.");
+            }
         }
 
         MasterProduct saved = masterProductRepository.save(MasterProduct.builder()
@@ -451,6 +459,10 @@ public class MasterProductServiceImpl implements MasterProductService {
         MasterProduct master = requireScopedMaster(masterId);
         assertNameUnique(masterId, request.getName(), null);
         MasterProductOption option = persistOption(master, request, componentProductIds(masterId));
+        // 86: the master is the option universe — an added option belongs on every channel of this master
+        // (switched off there; see MasterOptionChannelSync). Same transaction, so a failed sync rolls the
+        // option back rather than leaving the channels behind.
+        masterOptionChannelSync.onOptionCreated(masterId, option);
         // A brand-new option can never be on the market, but run the same judgement rather than hard-coding
         // false — one rule, one code path.
         Set<String> lockedNames = marketRegisteredOptionNames(List.of(masterId)).getOrDefault(masterId, Set.of());
@@ -533,6 +545,10 @@ public class MasterProductServiceImpl implements MasterProductService {
         if (optionRepository.findByMasterProductId(masterId).size() <= 1) {
             throw new ValidationException("옵션은 1개 이상 있어야 합니다. 모두 없애려면 마스터를 삭제하세요.");
         }
+
+        // 86: switch the option off on every channel BEFORE the master row (and its name, the only match
+        // key) is gone. Rows are kept — see MasterOptionChannelSync for why deletion is never cascaded.
+        masterOptionChannelSync.onOptionRemoved(masterId, option.getName());
 
         optionItemRepository.deleteByOptionId(optionId);
         optionRepository.delete(option);
@@ -693,7 +709,9 @@ public class MasterProductServiceImpl implements MasterProductService {
             return;     // name/delivery/box-only edits change nothing downstream
         }
         if (renamed) {
-            onOptionRenamed(masterId, oldName, updated.getName());
+            // 86: the cascade moved to the shared structure-sync component (one implementation, also used
+            // by option create/delete and propagation).
+            masterOptionChannelSync.onOptionRenamed(masterId, oldName, updated.getName());
         }
         if (!quantitiesChanged) {
             return;
@@ -712,25 +730,6 @@ public class MasterProductServiceImpl implements MasterProductService {
             matched.forEach(cellOption -> optionQuantitySync.syncLines(cellOption, updated));
             // Same transaction: the lines saved just above are visible to the cost sum via JPA auto-flush.
             listingAssetService.recalculateOptionPrices(cell);
-        }
-    }
-
-    /**
-     * 84 Step 4-① — a rename cascades to every cell option that still carries the old name.
-     *
-     * <p>{@code optionName} is the match key between a master option and its channel copies (propagation,
-     * price matching and the re-sync above all use it). Renaming only the master would strand those channel
-     * options under the old name — permanently unmatched, left with stale prices.</p>
-     */
-    private void onOptionRenamed(Long masterId, String oldName, String newName) {
-        for (ProductListing cell : productListingRepository.findByMasterProductId(masterId)) {
-            for (ProductListingOption cellOption : productListingOptionRepository
-                    .findByProductListingId(cell.getId())) {
-                if (oldName.equals(cellOption.getOptionName())) {
-                    productListingOptionRepository.save(
-                            cellOption.toBuilder().optionName(newName).build());
-                }
-            }
         }
     }
 

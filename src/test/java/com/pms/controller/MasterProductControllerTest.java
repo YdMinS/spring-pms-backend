@@ -5,6 +5,7 @@ import com.pms.domain.Category;
 import com.pms.domain.CategoryMapping;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.MarginPolicy;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductComponent;
 import com.pms.domain.Product;
@@ -13,6 +14,7 @@ import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.CategoryRepository;
+import com.pms.repository.MarginPolicyRepository;
 import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterProductComponentRepository;
@@ -22,6 +24,7 @@ import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.service.coupang.CoupangApiClient;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,6 +64,7 @@ class MasterProductControllerTest extends BaseIntegrationTest {
     @Autowired private CategoryRepository categoryRepository;
     @Autowired private CategoryMappingRepository categoryMappingRepository;
     @Autowired private PlatformCategoryRepository platformCategoryRepository;
+    @Autowired private MarginPolicyRepository marginPolicyRepository;
 
     // Mocked so category-meta's adapter makes no live Coupang call; unstubbed returns null → empty schema (200).
     @MockBean private CoupangApiClient coupangApiClient;
@@ -105,6 +109,18 @@ class MasterProductControllerTest extends BaseIntegrationTest {
         componentRepository.save(MasterProductComponent.builder()
                 .masterProduct(master).product(product2).build());
 
+        // 86: option CRUD now re-prices the linked cells (a propagated option must not keep its 0 placeholder),
+        // so the seeded cell has to be a realistic *complete* one — in production a cell can only be born via
+        // channel-add, which already refuses an unpriceable master. Give the master its standard category and
+        // delivery/box defaults, and the seller a COUPANG margin preset, so the price engine resolves.
+        master = masterProductRepository.save(master.toBuilder()
+                .category(category)
+                .defaultDelivery(carrierRateRepository.findById(seededCarrierRateId).orElseThrow())
+                .defaultPackage(packageRepository.findById(seededPackageId).orElseThrow())
+                .build());
+        marginPolicyRepository.save(MarginPolicy.builder()
+                .seller(seller).platform("COUPANG").marginRate(new BigDecimal("0.1500")).build());
+
         ProductListing listing = productListingRepository.save(ProductListing.builder()
                 .platform("COUPANG").platformProductId("X").name("리스팅").seller(seller)
                 .masterProduct(master).build());
@@ -118,6 +134,16 @@ class MasterProductControllerTest extends BaseIntegrationTest {
         marketplaceAccountRepository.save(MarketplaceAccount.builder()
                 .seller(seller).platform("NAVER").accountAlias("네이버")
                 .vendorId("A002").accessKey("ak").secretKey("sk").isActive(true).build());
+    }
+
+    @AfterEach
+    void unlinkMasterDefaults() {
+        // This class is not @Transactional, so seeded rows survive each test. Since 86 the master carries
+        // delivery/box FKs (needed to make the seeded cell priceable), and the base teardown deletes those
+        // package/carrier_rate rows — unlink first, or the FK blocks the shared cleanup. Runs before
+        // tearDownBase (JUnit: subclass @AfterEach first), while the tenant context is still pinned.
+        masterProductRepository.findAll().forEach(master -> masterProductRepository.save(
+                master.toBuilder().defaultDelivery(null).defaultPackage(null).build()));
     }
 
     @Test

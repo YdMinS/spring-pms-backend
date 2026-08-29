@@ -40,6 +40,7 @@ import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.service.listing.OptionCheckSuffix;
+import com.pms.service.listing.MasterOptionChannelSync;
 import com.pms.service.listing.OptionQuantitySync;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -90,6 +91,7 @@ class MasterProductServiceTest {
     @Mock private OptionCheckSuffixResolver optionCheckSuffixResolver;
     @Mock private ListingAssetService listingAssetService;
     @Mock private OptionQuantitySync optionQuantitySync;
+    @Mock private MasterOptionChannelSync masterOptionChannelSync;
     @InjectMocks private MasterProductServiceImpl service;
 
     private Seller seller(Long id, String name) {
@@ -445,6 +447,27 @@ class MasterProductServiceTest {
         assertThatThrownBy(() -> service.createMasterProduct(request))
                 .isInstanceOf(ValidationException.class)
                 .hasMessage("옵션을 1개 이상 등록하세요.");
+        verify(masterProductRepository, never()).save(any());
+        verify(optionRepository, never()).save(any());
+    }
+
+    @Test
+    void createMasterProduct_duplicateOptionNameInArray_throws400AndDoesNotSaveMaster() {
+        // 86: assertNameUnique guards createOption/updateOption; the array posted at master creation was the
+        // remaining hole — same rule, same message, same trim (" 2세트 " == "2세트").
+        given(productRepository.findAllById(any())).willReturn(List.of(product(1L, "상품1")));
+
+        MasterProductRequest request = MasterProductRequest.builder()
+                .name("마스터A").componentProductIds(List.of(1L))
+                .options(List.of(
+                        MasterOptionRequest.builder().name("2세트").items(List.of(item(1L, 2))).build(),
+                        MasterOptionRequest.builder().name(" 2세트 ").items(List.of(item(1L, 3))).build()))
+                .build();
+
+        assertThatThrownBy(() -> service.createMasterProduct(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessage("같은 이름의 옵션이 이미 있습니다.");
+        // Pre-validation: aborts before any save (no half-written master).
         verify(masterProductRepository, never()).save(any());
         verify(optionRepository, never()).save(any());
     }
@@ -1124,18 +1147,17 @@ class MasterProductServiceTest {
     }
 
     @Test
-    void updateOption_renameOnly_cascadesChannelOptionName() {
-        ProductListingOption channelOption = givenDraftChannel();
+    void updateOption_renameOnly_delegatesCascadeToChannelSync() {
+        givenDraftChannel();
         given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(masterOption(10L, "2세트")));
-        given(productListingOptionRepository.findByProductListingId(200L)).willReturn(List.of(channelOption));
 
         service.updateOption(1L, 10L, MasterOptionRequest.builder()
                 .name("두세트").items(List.of(item(1L, 2))).build());
 
         // optionName is the master↔channel match key — leaving it stale would orphan the channel option.
-        ArgumentCaptor<ProductListingOption> captor = ArgumentCaptor.forClass(ProductListingOption.class);
-        verify(productListingOptionRepository).save(captor.capture());
-        assertThat(captor.getValue().getOptionName()).isEqualTo("두세트");
+        // 86: the cascade itself lives in MasterOptionChannelSync (asserted in its own test); here we only
+        // pin that updateOption hands it the old and new name.
+        verify(masterOptionChannelSync).onOptionRenamed(1L, "2세트", "두세트");
         // quantities unchanged → no quantity re-sync
         verify(optionQuantitySync, never()).syncLines(any(), any());
     }
@@ -1146,17 +1168,73 @@ class MasterProductServiceTest {
         // re-sync must match on it — matching the old name would silently find nothing.
         ProductListingOption channelOption = givenDraftChannel();
         given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(masterOption(10L, "2세트")));
+        // The cascade (now MasterOptionChannelSync, mocked here) has already renamed the channel row, so the
+        // quantity re-sync that follows reads it under the NEW name.
         ProductListingOption renamed = channelOption.toBuilder().optionName("두세트").build();
-        given(productListingOptionRepository.findByProductListingId(200L))
-                .willReturn(List.of(channelOption))       // rename cascade sees the old name...
-                .willReturn(List.of(renamed));            // ...the re-sync sees the new one
+        given(productListingOptionRepository.findByProductListingId(200L)).willReturn(List.of(renamed));
 
         service.updateOption(1L, 10L, MasterOptionRequest.builder()
                 .name("두세트").items(List.of(item(1L, 3))).build());
 
-        verify(productListingOptionRepository).save(any(ProductListingOption.class));
+        verify(masterOptionChannelSync).onOptionRenamed(1L, "2세트", "두세트");
         verify(optionQuantitySync).syncLines(eq(renamed), any(MasterProductOption.class));
         verify(listingAssetService).recalculateOptionPrices(any());
         verify(listingAssetService, never()).regenerateAssets(any());
+    }
+
+    // --- 86: option CRUD → channel structure sync --------------------------
+
+    @Test
+    void createOption_propagatesTheNewOptionToChannels() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(componentRepository.findByMasterProductId(1L))
+                .willReturn(List.of(component(master, product(1L, "상품1"))));
+        given(productRepository.findAllById(any())).willReturn(List.of(product(1L, "상품1")));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(optionRepository.save(any())).willAnswer(inv ->
+                ((MasterProductOption) inv.getArgument(0)).toBuilder().id(10L).build());
+        given(productListingRepository.findByMasterProductIdIn(List.of(1L))).willReturn(List.of());
+
+        service.createOption(1L, MasterOptionRequest.builder()
+                .name("2세트").items(List.of(item(1L, 2))).build());
+
+        ArgumentCaptor<MasterProductOption> captor = ArgumentCaptor.forClass(MasterProductOption.class);
+        verify(masterOptionChannelSync).onOptionCreated(eq(1L), captor.capture());
+        assertThat(captor.getValue().getId()).isEqualTo(10L);      // the persisted option, not the request
+        assertThat(captor.getValue().getName()).isEqualTo("2세트");
+    }
+
+    @Test
+    void deleteOption_switchesTheOptionOffOnChannels() {
+        givenEditableOption(false);
+        given(optionRepository.findByMasterProductId(1L))
+                .willReturn(List.of(masterOption(10L, "2세트"), masterOption(11L, "3세트")));
+
+        service.deleteOption(1L, 10L);
+
+        // Name-keyed, and issued while the master option still exists (its name is the only match key).
+        verify(masterOptionChannelSync).onOptionRemoved(1L, "2세트");
+    }
+
+    @Test
+    void deleteOption_lockedOption_doesNotTouchChannels() {
+        // The 84 lock still runs first: a market-registered option 400s before any channel write happens.
+        givenEditableOption(true);
+
+        assertThatThrownBy(() -> service.deleteOption(1L, 10L))
+                .isInstanceOf(ValidationException.class);
+        verify(masterOptionChannelSync, never()).onOptionRemoved(any(), any());
+    }
+
+    @Test
+    void updateOption_withoutRename_neverCascadesTheName() {
+        givenDraftChannel();
+        given(productListingOptionRepository.findByProductListingId(200L)).willReturn(List.of());
+
+        service.updateOption(1L, 10L, MasterOptionRequest.builder()
+                .name("2세트").items(List.of(item(1L, 3))).build());
+
+        verify(masterOptionChannelSync, never()).onOptionRenamed(any(), any(), any());
     }
 }
