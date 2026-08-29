@@ -637,6 +637,12 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON).content(attributesBody()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUCCESS"));
+
+        // flush: the service saves a toBuilder() copy (a merge), so without this findById just
+        // returns the managed first-level-cache entity and the column round-trip is not proven.
+        masterProductRepository.flush();
+        assertThat(masterProductRepository.findById(masterId).orElseThrow().getCategoryNoticeGroup())
+                .isEqualTo("가공식품");
     }
 
     @Test
@@ -648,7 +654,7 @@ class MasterProductControllerTest extends BaseIntegrationTest {
     }
 
     private String attributesBody() {
-        return "{\"attributes\":{\"원산지\":\"국내산\"},\"notices\":{}}";
+        return "{\"attributes\":{\"원산지\":\"국내산\"},\"notices\":{},\"noticeGroup\":\"가공식품\"}";
     }
 
     private String categoryBody() {

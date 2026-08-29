@@ -57,6 +57,7 @@ public class CategoryMetaServiceImpl implements CategoryMetaService {
                                 ? master.getCategoryAttributes() : Map.of())
                         .notices(master.getCategoryNotices() != null
                                 ? master.getCategoryNotices() : Map.of())
+                        .noticeGroup(master.getCategoryNoticeGroup())   // null = unset (no empty-string wrap)
                         .build())
                 .build();
     }
@@ -64,13 +65,19 @@ public class CategoryMetaServiceImpl implements CategoryMetaService {
     @Override
     @Transactional
     public void updateCategoryAttributes(Long masterId, Map<String, String> attributes,
-                                         Map<String, String> notices) {
+                                         Map<String, String> notices, String noticeGroup) {
         MasterProduct master = requireScopedMaster(masterId);
         // No regeneration: attributes/notices are not thumbnail/detail binding keys.
         masterProductRepository.save(master.toBuilder()
                 .categoryAttributes(attributes)
                 .categoryNotices(notices)
+                .categoryNoticeGroup(normalizeGroup(noticeGroup))
                 .build());
+    }
+
+    /** Blank ({@code ""} / whitespace) is the same as "unset" — null is the signal the screen falls back on. */
+    private static String normalizeGroup(String noticeGroup) {
+        return noticeGroup == null || noticeGroup.isBlank() ? null : noticeGroup.trim();
     }
 
     private MasterProduct requireScopedMaster(Long id) {

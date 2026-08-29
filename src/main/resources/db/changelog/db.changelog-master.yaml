@@ -85,3 +85,5 @@ databaseChangeLog:
       file: db/changelog/changes/042-shipping-extra-info-message.yaml
   - include:
       file: db/changelog/changes/043-shipping-override.yaml
+  - include:
+      file: db/changelog/changes/044-category-notice-group.yaml

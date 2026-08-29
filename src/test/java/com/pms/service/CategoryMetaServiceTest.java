@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /**
@@ -76,6 +77,7 @@ class CategoryMetaServiceTest {
         assertThat(response.getAttributes()).extracting(CategoryAttribute::name).containsExactly("원산지");
         assertThat(response.getNotices()).extracting(CategoryNotice::key).containsExactly("제품소재");
         assertThat(response.getValues().getAttributes()).containsEntry("원산지", "국내산");
+        assertThat(response.getValues().getNoticeGroup()).isNull();   // unset = screen infers
     }
 
     @Test
@@ -170,12 +172,43 @@ class CategoryMetaServiceTest {
         Map<String, String> attributes = Map.of("원산지", "국내산");
         Map<String, String> notices = Map.of("제품소재", "면 100%");
 
-        service.updateCategoryAttributes(MASTER_ID, attributes, notices);
+        service.updateCategoryAttributes(MASTER_ID, attributes, notices, "가공식품");
 
         ArgumentCaptor<MasterProduct> captor = ArgumentCaptor.forClass(MasterProduct.class);
         verify(masterProductRepository).save(captor.capture());
         assertThat(captor.getValue().getCategoryAttributes()).isEqualTo(attributes);
         assertThat(captor.getValue().getCategoryNotices()).isEqualTo(notices);
+        assertThat(captor.getValue().getCategoryNoticeGroup()).isEqualTo("가공식품");
         verify(metaResolver, never()).resolve(any());   // attributes are not a thumbnail/detail binding key
+    }
+
+    @Test
+    void updateCategoryAttributes_blankNoticeGroup_savesNull() {
+        given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master(null)));
+
+        service.updateCategoryAttributes(MASTER_ID, Map.of(), Map.of(), "");
+        service.updateCategoryAttributes(MASTER_ID, Map.of(), Map.of(), "   ");
+
+        ArgumentCaptor<MasterProduct> captor = ArgumentCaptor.forClass(MasterProduct.class);
+        verify(masterProductRepository, times(2)).save(captor.capture());
+        assertThat(captor.getAllValues()).extracting(MasterProduct::getCategoryNoticeGroup)
+                .containsExactly(null, null);
+    }
+
+    @Test
+    void getMeta_returnsStoredNoticeGroup() {
+        given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(
+                master(null).toBuilder().categoryNoticeGroup("가공식품").build()));
+        given(masterChannelConfigService.resolvePlatformCategoryCode(CATEGORY_ID, "COUPANG"))
+                .willReturn("1001");
+        given(marketplaceAccountRepository.findFirstByPlatformAndIsActiveTrue("COUPANG"))
+                .willReturn(Optional.of(account()));
+        given(metaResolver.resolve("COUPANG")).willReturn(metaAdapter);
+        given(metaAdapter.getMeta(any(), eq("1001")))
+                .willReturn(new CategoryMetaSchema(List.of(), List.of()));
+
+        CategoryMetaResponse response = service.getMeta(MASTER_ID, "COUPANG");
+
+        assertThat(response.getValues().getNoticeGroup()).isEqualTo("가공식품");
     }
 }

@@ -119,6 +119,16 @@ public class MasterProduct extends BaseEntity {
     @Column(name = "category_notices", columnDefinition = "TEXT")
     private Map<String, String> categoryNotices;
 
+    /**
+     * The selected product-info disclosure item group ({@code CategoryNotice.groupName}) for the values above
+     * (FEATURE_2608_06 / 91). {@code null} = unset (legacy) → the screen infers the group from the values.
+     * The stored map holds only this group's notices. ⚠️ No {@code @Builder.Default} — same rule as the two
+     * maps above. Stored verbatim (not validated against the live category schema, which is an external
+     * response and shifts over time).
+     */
+    @Column(name = "category_notice_group", length = 100)
+    private String categoryNoticeGroup;
+
     // Master-level override of the "옵션확인" registration-name suffix (FEATURE_2608_06 / 69). Both columns are
     // nullable — null = inherit (resolution falls through to seller ?? system). A channel override wins over
     // this master level. Resolved per field by OptionCheckSuffixResolver.

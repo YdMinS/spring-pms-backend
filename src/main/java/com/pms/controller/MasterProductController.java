@@ -216,7 +216,8 @@ public class MasterProductController {
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<Void>> updateCategoryAttributes(
             @PathVariable Long id, @RequestBody CategoryAttributesRequest request) {
-        categoryMetaService.updateCategoryAttributes(id, request.getAttributes(), request.getNotices());
+        categoryMetaService.updateCategoryAttributes(id, request.getAttributes(), request.getNotices(),
+                request.getNoticeGroup());
         return ResponseEntity.ok(ResponseDTO.success(null));
     }
 

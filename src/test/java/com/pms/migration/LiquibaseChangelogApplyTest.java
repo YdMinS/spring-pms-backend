@@ -232,6 +232,10 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM master_product WHERE shipping_override IS NULL", Integer.class)).isZero();
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM product_listing WHERE shipping_override IS NULL", Integer.class)).isZero();
+
+        // changeset 044: master_product.category_notice_group materialized (91; a successful count proves it).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM master_product WHERE category_notice_group IS NULL", Integer.class)).isZero();
     }
 
     @Test

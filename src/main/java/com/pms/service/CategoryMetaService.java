@@ -38,9 +38,17 @@ public interface CategoryMetaService {
      * Store the master-level attribute + notice values ({@code toBuilder} save). Does NOT trigger
      * regeneration (these are not thumbnail/detail binding keys). Both maps are nullable.
      *
-     * @param masterId   master product id (tenant-scoped; 404 if absent)
-     * @param attributes attribute values (nullable)
-     * @param notices    notice values (nullable)
+     * <p>{@code noticeGroup} is stored verbatim after blank-normalization ({@code ""}/whitespace →
+     * {@code null} = unset, so the screen falls back to inferring). It is <b>not</b> validated against the
+     * live category schema: that schema is an external response and shifts over time, and a 400 there would
+     * block storing the values themselves. Always overwritten (not a partial update) — otherwise a user
+     * <i>changing</i> the group could not be expressed.</p>
+     *
+     * @param masterId    master product id (tenant-scoped; 404 if absent)
+     * @param attributes  attribute values (nullable)
+     * @param notices     notice values (nullable)
+     * @param noticeGroup selected notice item group (nullable/blank = unset)
      */
-    void updateCategoryAttributes(Long masterId, Map<String, String> attributes, Map<String, String> notices);
+    void updateCategoryAttributes(Long masterId, Map<String, String> attributes, Map<String, String> notices,
+                                  String noticeGroup);
 }
