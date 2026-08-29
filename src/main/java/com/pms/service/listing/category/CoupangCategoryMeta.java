@@ -36,7 +36,8 @@ public class CoupangCategoryMeta implements CategoryMetaAdapter {
     /**
      * Shared meta fixture (§3): 실계정 응답(2026-08-29, code=72882) 구조를 축약 — attributes 3개(각 분기 1개:
      * 최소 중량 = MANDATORY·NUMBER·단위 g, 식품 프리미엄 = SELECT·후보 2개, 동물종류 = INPUT·STRING)와
-     * noticeCategories 2 그룹. Reused by the Mock client and the adapter test.
+     * noticeCategories 2 그룹(⚠️ 이 카테고리의 고시는 <b>전부 MANDATORY</b> — OPTIONAL 고시를 지어내지 말 것;
+     * required=false 분기는 테스트 로컬 JSON 이 덮는다). Reused by the Mock client and the adapter test.
      *
      * <p>⚠️ <b>키는 실응답 그대로 유지할 것</b> — 파싱하지 않는 {@code usableUnits}/{@code groupNumber}/
      * {@code exposed} 도 남긴다(응답에 없는 필드와 우리가 안 읽는 필드를 구분하기 위해). 값을 지어내지 말 것:
@@ -57,9 +58,9 @@ public class CoupangCategoryMeta implements CategoryMetaAdapter {
                     + "\"noticeCategories\":["
                     + "{\"noticeCategoryName\":\"가공식품\",\"noticeCategoryDetailNames\":["
                     + "{\"noticeCategoryDetailName\":\"제품명\",\"required\":\"MANDATORY\"},"
-                    + "{\"noticeCategoryDetailName\":\"소비자상담관련 전화번호\",\"required\":\"OPTIONAL\"}]},"
+                    + "{\"noticeCategoryDetailName\":\"소비자상담관련 전화번호\",\"required\":\"MANDATORY\"}]},"
                     + "{\"noticeCategoryName\":\"농수축산물\",\"noticeCategoryDetailNames\":["
-                    + "{\"noticeCategoryDetailName\":\"생산자\",\"required\":\"MANDATORY\"}]}]}}";
+                    + "{\"noticeCategoryDetailName\":\"생산자(수입자)\",\"required\":\"MANDATORY\"}]}]}}";
 
     private final CoupangApiClient client;
     private final ObjectMapper objectMapper;

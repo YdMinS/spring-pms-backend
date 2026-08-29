@@ -178,8 +178,10 @@ register 가 한 번 성공하면 그 셀에 `platformProductId` 가 박히고 *
 {"noticeCategoryName":"가공식품","noticeCategoryDetailNames":[
   {"noticeCategoryDetailName":"제품명","required":"MANDATORY"}, ...]}
 ```
-품목군 4개: `농수축산물` · `가공식품` · `건강기능식품` · `기타 재화`.
-품목군 간 **고시 key 공유**(`제조연월일…`·`소비자안전을 위한 주의사항`·`소비자상담관련 전화번호`) — 91/92 가 다룬 그 구조.
+품목군 4개: `농수축산물`(11) · `가공식품`(11) · `건강기능식품`(13) · `기타 재화`(5).
+- ⚠️ **전 항목 `MANDATORY`** — 이 카테고리엔 OPTIONAL 고시가 하나도 없다(픽스처에 지어내지 말 것).
+- 품목군 간 **고시 key 공유**(`제조연월일, 소비기한 또는 품질유지기한`·`소비자안전을 위한 주의사항`·`소비자상담관련 전화번호`·`포장단위별 내용물의 용량(중량), 수량`) — 91/92 가 다룬 그 구조.
+- ⚠️ 기타 재화만 `소비자상담 **관련** 전화번호`(공백 있음)로 **key 가 다르다** — 정규화해서 합치지 말 것.
 
 **certifications[]** — `NOT_REQUIRED` 가 첫 항목이고 이 카테고리는 **전부 `required: OPTIONAL`**:
 ```json
@@ -187,7 +189,10 @@ register 가 한 번 성공하면 그 셀에 `platformProductId` 가 박히고 *
 ```
 → 93 의 `NOT_REQUIRED` 센티넬 선택이 실데이터와 정합(§6 ②).
 
-**미사용 응답 필드**: `requiredDocumentNames[]`(`MANDATORY_PARALLEL_IMPORTED` 등 조건부) · `allowedOfferConditions:["NEW"]` · `isAllowSingleItem:false` · `isExpirationDateRequiredForRocketGrowth:true`.
+**미사용 응답 필드**: `requiredDocumentNames[]` · `allowedOfferConditions:["NEW"]` · `isAllowSingleItem:false` · `isExpirationDateRequiredForRocketGrowth:true`.
+- ⚠️ `requiredDocumentNames[].required` 는 boolean 이 아니라 **조건 토큰**(`OPTIONAL`·`MANDATORY_PARALLEL_IMPORTED`·`MANDATORY_BATTERY_UN_TEST`·`MANDATORY_BATTERY_MSDS_TEST`·`MANDATORY_INGREDIENTS_PIC`) → 나중에 파싱한다면 `"MANDATORY".equals(...)` 는 전부 false 다.
+
+> **전체 응답 대조 완료(2026-08-29, 94 후속)**: attributes 3종·notices 4그룹·certifications 27종을 실응답 원문과 1:1 대조했다. 파서가 읽는 키(`inputType`/`inputValues`/`basicUnit`/`dataType`)와 `META_FIXTURE_JSON` 이 실응답과 일치한다. 실측 SELECT 속성 예: `보관방식`(냉동/냉장/실온보관)·`구성`(단품/단품세트/혼합세트)·`설탕 함량`·`요거트 종류` 등 **약 30개**. 프론트(95)가 쓸 단위 = `최소 중량` g · `최소 용량` ml · `개당 수량`/`수량` 개, OPTIONAL 페어 `개당 중량`(g)/`개당 용량`(ml) 도 실재.
 
 ## 부록 B — 관련 문서
 
