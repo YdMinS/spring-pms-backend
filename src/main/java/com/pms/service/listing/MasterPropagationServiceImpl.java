@@ -2,18 +2,14 @@ package com.pms.service.listing;
 
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
-import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.dto.response.PropagateResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.GeneratedProductDataRepository;
-import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.service.ListingAssetService;
 import lombok.RequiredArgsConstructor;
@@ -47,11 +43,10 @@ public class MasterPropagationServiceImpl implements MasterPropagationService {
     private final MasterProductRepository masterProductRepository;
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
-    private final ProductListingProductRepository productListingProductRepository;
     private final MasterProductOptionRepository masterProductOptionRepository;
-    private final MasterProductOptionItemRepository masterProductOptionItemRepository;
     private final GeneratedProductDataRepository generatedProductDataRepository;
     private final ListingAssetService listingAssetService;
+    private final OptionQuantitySync optionQuantitySync;
 
     /** Self proxy so {@link #propagateOne} goes through the {@code REQUIRES_NEW} advice (not a direct call). */
     @Autowired
@@ -118,18 +113,8 @@ public class MasterPropagationServiceImpl implements MasterPropagationService {
             if (masterOption == null) {
                 continue;   // unmatched option → skip
             }
-            Map<Long, Integer> masterQtyByProduct = masterProductOptionItemRepository
-                    .findByOptionId(masterOption.getId()).stream()
-                    .collect(Collectors.toMap(
-                            it -> it.getProduct().getId(), MasterProductOptionItem::getQuantity, (first, dup) -> first));
-
-            for (ProductListingProduct line : productListingProductRepository
-                    .findByProductListingOptionId(cellOption.getId())) {
-                Integer newQuantity = masterQtyByProduct.get(line.getProduct().getId());
-                if (newQuantity != null && !newQuantity.equals(line.getQuantity())) {
-                    productListingProductRepository.save(line.toBuilder().quantity(newQuantity).build());
-                }
-            }
+            // Shared line rule (84): quantities only, matched by productId. Never re-implement here.
+            optionQuantitySync.syncLines(cellOption, masterOption);
         }
     }
 }

@@ -43,6 +43,11 @@ public class MasterOptionResponse {
             + "(FEATURE_2608_06 / 59)", nullable = true)
     private Map<String, String> categoryNotices;
 
+    @Schema(description = "쿠팡에 등록돼 판매 중인 옵션 — 수량·이름 수정/삭제 불가 (84). "
+            + "Computed, not stored: true when a market-registered cell (platformProductId != null) holds a "
+            + "same-named option that is active, has a platformOptionId, or is APPROVED.", example = "false")
+    private Boolean marketRegistered;
+
     @Getter
     @NoArgsConstructor
     @AllArgsConstructor

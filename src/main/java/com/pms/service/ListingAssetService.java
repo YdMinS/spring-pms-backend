@@ -98,4 +98,16 @@ public interface ListingAssetService {
      * propagation. One transaction.
      */
     GeneratedProductData regenerateAssets(ProductListing cell);
+
+    /**
+     * Narrow seam: recompute and persist only the per-option {@code sellingPrice} / {@code originalPrice}
+     * of {@code cell} (margin reverse-calc). Step 3 of {@link #regenerateAssets(ProductListing)}, extracted
+     * so a master option quantity edit can re-sync channel prices WITHOUT the thumbnail / detail work
+     * (FEATURE_2608_06 / 84): re-rendering would cost an S3 GET + Java2D render + S3 PUT per cell (plus
+     * every zone image when a processing preset is attached) for a one-line option change.
+     *
+     * <p>⚠️ Runs in the caller's transaction (default {@code REQUIRED} — no new boundary), so a caller that
+     * just saved BOM quantities sees them here via JPA auto-flush.</p>
+     */
+    void recalculateOptionPrices(ProductListing cell);
 }

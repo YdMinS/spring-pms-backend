@@ -8,6 +8,7 @@ import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductComponent;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
+import com.pms.domain.OptionApprovalStatus;
 import com.pms.domain.Package;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
@@ -39,6 +40,7 @@ import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.service.listing.OptionCheckSuffix;
+import com.pms.service.listing.OptionQuantitySync;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import com.pms.service.listing.shipping.ShippingOverrideKeys;
@@ -58,6 +60,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -85,6 +88,8 @@ class MasterProductServiceTest {
     @Mock private SellerRepository sellerRepository;
     @Mock private RegistrationNameGenerator registrationNameGenerator;
     @Mock private OptionCheckSuffixResolver optionCheckSuffixResolver;
+    @Mock private ListingAssetService listingAssetService;
+    @Mock private OptionQuantitySync optionQuantitySync;
     @InjectMocks private MasterProductServiceImpl service;
 
     private Seller seller(Long id, String name) {
@@ -354,11 +359,16 @@ class MasterProductServiceTest {
     @Test
     void createMasterProduct_happy_savesComponents() {
         MasterProductRequest request = MasterProductRequest.builder()
-                .name("마스터A").componentProductIds(List.of(1L, 2L)).build();
+                .name("마스터A").componentProductIds(List.of(1L, 2L))
+                .options(List.of(MasterOptionRequest.builder()
+                        .name("1세트").items(List.of(item(1L, 1), item(2L, 1))).build()))
+                .build();
         given(productRepository.findAllById(any()))
                 .willReturn(List.of(product(1L, "상품1"), product(2L, "상품2")));
         given(masterProductRepository.save(any()))
                 .willReturn(MasterProduct.builder().id(5L).name("마스터A").active(true).build());
+        given(optionRepository.save(any()))
+                .willReturn(MasterProductOption.builder().id(10L).name("1세트").build());
         // mapToResponse re-reads the (empty) component/option sets of the saved master
         given(componentRepository.findByMasterProductId(5L)).willReturn(List.of());
         given(optionRepository.findByMasterProductId(5L)).willReturn(List.of());
@@ -426,19 +436,17 @@ class MasterProductServiceTest {
     }
 
     @Test
-    void createMasterProduct_noOptions_savesMasterOnly() {
+    void createMasterProduct_noOptions_throws400AndDoesNotSaveMaster() {
+        // 84: a master must always carry at least one option — the old "master-only" allowance is closed.
         MasterProductRequest request = MasterProductRequest.builder()
                 .name("마스터A").componentProductIds(List.of(1L)).build();   // options == null
         given(productRepository.findAllById(any())).willReturn(List.of(product(1L, "상품1")));
-        given(masterProductRepository.save(any()))
-                .willReturn(MasterProduct.builder().id(5L).name("마스터A").active(true).build());
-        given(componentRepository.findByMasterProductId(5L)).willReturn(List.of());
-        given(optionRepository.findByMasterProductId(5L)).willReturn(List.of());
 
-        service.createMasterProduct(request);
-
-        verify(componentRepository, times(1)).save(any());
-        verify(optionRepository, never()).save(any());   // backward compat: no options → no option rows
+        assertThatThrownBy(() -> service.createMasterProduct(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessage("옵션을 1개 이상 등록하세요.");
+        verify(masterProductRepository, never()).save(any());
+        verify(optionRepository, never()).save(any());
     }
 
     // ------------------------------------------------------------- option coverage validation
@@ -530,8 +538,13 @@ class MasterProductServiceTest {
     void createMasterProduct_withDefaults_setsDeliveryAndPackage() {
         MasterProductRequest request = MasterProductRequest.builder()
                 .name("마스터A").componentProductIds(List.of(1L))
-                .defaultDeliveryId(4L).defaultPackageId(5L).build();
+                .defaultDeliveryId(4L).defaultPackageId(5L)
+                .options(List.of(MasterOptionRequest.builder()
+                        .name("1세트").items(List.of(item(1L, 1))).build()))
+                .build();
         given(productRepository.findAllById(any())).willReturn(List.of(product(1L, "상품1")));
+        given(optionRepository.save(any()))
+                .willReturn(MasterProductOption.builder().id(10L).name("1세트").build());
         given(carrierRateRepository.findById(4L)).willReturn(Optional.of(CarrierRate.builder().id(4L).build()));
         given(packageRepository.findById(5L)).willReturn(Optional.of(Package.builder().id(5L).build()));
         given(masterProductRepository.save(any()))
@@ -801,5 +814,349 @@ class MasterProductServiceTest {
         assertThatThrownBy(() -> service.applyShippingOverrideToChannels(1L, List.of(999L)))
                 .isInstanceOf(ValidationException.class);
         verify(productListingRepository, never()).saveAll(any());
+    }
+
+    // ------------------------------------------------------------- market lock + narrow re-sync (84)
+
+    private static final MasterProduct LOCK_MASTER =
+            MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+
+    /** A cell that reached the market (platformProductId != null) — the precondition for any lock. */
+    private ProductListing onMarketCell(Long id) {
+        return ProductListing.builder().id(id).platform("COUPANG").name("셀")
+                .platformProductId("SP-" + id).masterProduct(LOCK_MASTER).build();
+    }
+
+    private ProductListing draftCell(Long id) {
+        return ProductListing.builder().id(id).platform("COUPANG").name("셀")
+                .masterProduct(LOCK_MASTER).build();
+    }
+
+    private ProductListingOption cellOption(Long id, ProductListing cell, String name,
+                                            boolean active, String platformOptionId,
+                                            OptionApprovalStatus approval) {
+        return ProductListingOption.builder()
+                .id(id).productListing(cell).optionName(name)
+                .active(active).platformOptionId(platformOptionId).approvalStatus(approval).build();
+    }
+
+    private MasterProductOption masterOption(Long id, String name) {
+        return MasterProductOption.builder().id(id).masterProduct(LOCK_MASTER).name(name).build();
+    }
+
+    /** Wire getMasterProduct(1L) to return one option named "2세트" plus the given channel state. */
+    private void givenSingleOptionMaster(List<ProductListing> cells, List<ProductListingOption> cellOptions) {
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(LOCK_MASTER));
+        given(componentRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(masterOption(10L, "2세트")));
+        given(productListingRepository.findByMasterProductIdIn(List.of(1L))).willReturn(cells);
+        // lenient: skipped entirely when no cell reached the market (the DRAFT-only / no-cell cases)
+        lenient().when(productListingOptionRepository.findByProductListingIdIn(any())).thenReturn(cellOptions);
+    }
+
+    private Boolean readMarketRegistered() {
+        return service.getMasterProduct(1L).getOptions().get(0).getMarketRegistered();
+    }
+
+    @Test
+    void lockJudgement_onMarketCellWithActiveOption_isLocked() {
+        ProductListing cell = onMarketCell(100L);
+        givenSingleOptionMaster(List.of(cell),
+                List.of(cellOption(5L, cell, "2세트", true, null, OptionApprovalStatus.NOT_APPROVED)));
+
+        assertThat(readMarketRegistered()).isTrue();
+    }
+
+    @Test
+    void lockJudgement_inactiveButHasPlatformOptionId_isLocked() {
+        // Switched off locally, but Coupang issued a vendorItemId → the option still exists there.
+        ProductListing cell = onMarketCell(100L);
+        givenSingleOptionMaster(List.of(cell),
+                List.of(cellOption(5L, cell, "2세트", false, "VI-1", OptionApprovalStatus.NOT_APPROVED)));
+
+        assertThat(readMarketRegistered()).isTrue();
+    }
+
+    @Test
+    void lockJudgement_inactiveButApproved_isLocked() {
+        // Approved options cannot be deleted on Coupang, so an approval record locks it too.
+        ProductListing cell = onMarketCell(100L);
+        givenSingleOptionMaster(List.of(cell),
+                List.of(cellOption(5L, cell, "2세트", false, null, OptionApprovalStatus.APPROVED)));
+
+        assertThat(readMarketRegistered()).isTrue();
+    }
+
+    @Test
+    void lockJudgement_inactiveWithoutMarketIdOrApproval_isNotLocked() {
+        ProductListing cell = onMarketCell(100L);
+        givenSingleOptionMaster(List.of(cell),
+                List.of(cellOption(5L, cell, "2세트", false, null, OptionApprovalStatus.NOT_APPROVED)));
+
+        assertThat(readMarketRegistered()).isFalse();
+    }
+
+    @Test
+    void lockJudgement_draftCellOnly_isNotLocked() {
+        // A DRAFT cell never reached the market → editable, the mismatch is fixed by the price re-sync.
+        ProductListing cell = draftCell(100L);
+        givenSingleOptionMaster(List.of(cell),
+                List.of(cellOption(5L, cell, "2세트", true, null, OptionApprovalStatus.APPROVED)));
+
+        assertThat(readMarketRegistered()).isFalse();
+    }
+
+    @Test
+    void lockJudgement_noCells_isNotLocked() {
+        givenSingleOptionMaster(List.of(), List.of());
+
+        assertThat(readMarketRegistered()).isFalse();
+        verify(productListingOptionRepository, never()).findByProductListingIdIn(any());
+    }
+
+    @Test
+    void lockJudgement_listPath_queriesLockRepositoriesOnce() {
+        // N+1 guard: three masters, still exactly one query per lock repository.
+        given(masterProductRepository.findByActiveTrue()).willReturn(List.of(
+                MasterProduct.builder().id(1L).name("A").active(true).build(),
+                MasterProduct.builder().id(2L).name("B").active(true).build(),
+                MasterProduct.builder().id(3L).name("C").active(true).build()));
+        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+                .platformProductId("SP-1")
+                .masterProduct(MasterProduct.builder().id(2L).name("B").build()).build();
+        given(productListingRepository.findByMasterProductIdIn(List.of(1L, 2L, 3L))).willReturn(List.of(cell));
+        given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of(
+                cellOption(5L, cell, "2세트", true, null, OptionApprovalStatus.NOT_APPROVED)));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(optionRepository.findByMasterProductId(3L)).willReturn(List.of());
+        given(optionRepository.findByMasterProductId(2L)).willReturn(List.of(
+                MasterProductOption.builder().id(10L).name("2세트").build()));
+
+        List<MasterProductResponse> result = service.getMasterProducts();
+
+        assertThat(result.get(1).getOptions().get(0).getMarketRegistered()).isTrue();
+        verify(productListingRepository, times(1)).findByMasterProductIdIn(any());
+        verify(productListingOptionRepository, times(1)).findByProductListingIdIn(any());
+    }
+
+    // --- guards -------------------------------------------------------------
+
+    /** Master 1 has one option (id 10, "2세트") whose vector is {1:2}; locked/unlocked per the cell state. */
+    private MasterProductOption givenEditableOption(boolean locked) {
+        MasterProductOption option = masterOption(10L, "2세트");
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(LOCK_MASTER));
+        given(optionRepository.findById(10L)).willReturn(Optional.of(option));
+        // lenient: the delete path never reads the item vector (only updateOption does)
+        lenient().when(optionItemRepository.findByOptionId(10L)).thenReturn(List.of(
+                MasterProductOptionItem.builder().option(option).product(product(1L, "상품1")).quantity(2).build()));
+        ProductListing cell = onMarketCell(100L);
+        given(productListingRepository.findByMasterProductIdIn(List.of(1L))).willReturn(List.of(cell));
+        given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of(
+                cellOption(5L, cell, "2세트", locked, null,
+                        locked ? OptionApprovalStatus.APPROVED : OptionApprovalStatus.NOT_APPROVED)));
+        return option;
+    }
+
+    @Test
+    void updateOption_lockedOption_renameThrows400() {
+        givenEditableOption(true);
+
+        assertThatThrownBy(() -> service.updateOption(1L, 10L, MasterOptionRequest.builder()
+                .name("3세트").items(List.of(item(1L, 2))).build()))
+                .isInstanceOf(ValidationException.class)
+                .hasMessage("쿠팡에 등록된 옵션은 이름을 바꿀 수 없습니다.");
+        verify(optionRepository, never()).save(any());
+    }
+
+    @Test
+    void updateOption_lockedOption_quantityChangeThrows400() {
+        givenEditableOption(true);
+
+        assertThatThrownBy(() -> service.updateOption(1L, 10L, MasterOptionRequest.builder()
+                .name("2세트").items(List.of(item(1L, 3))).build()))
+                .isInstanceOf(ValidationException.class)
+                .hasMessage("쿠팡에 등록된 옵션은 수량을 바꿀 수 없습니다.");
+        verify(optionItemRepository, never()).deleteByOptionId(any());
+    }
+
+    @Test
+    void updateOption_lockedOption_sameItemsWithBoxChange_passes() {
+        // Regression guard for the oldVector capture: the frontend posts the whole form, so an unchanged
+        // item list must go through — otherwise editing only the box would 400.
+        givenEditableOption(true);
+        given(optionRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+        given(packageRepository.findById(5L)).willReturn(Optional.of(Package.builder().id(5L).build()));
+        given(componentRepository.findByMasterProductId(1L))
+                .willReturn(List.of(component(LOCK_MASTER, product(1L, "상품1"))));
+        given(productRepository.findAllById(any())).willReturn(List.of(product(1L, "상품1")));
+
+        MasterOptionResponse response = service.updateOption(1L, 10L, MasterOptionRequest.builder()
+                .name("2세트").items(List.of(item(1L, 2))).packageId(5L).build());
+
+        assertThat(response.getPackageId()).isEqualTo(5L);
+        assertThat(response.getMarketRegistered()).isTrue();
+        // quantities did not move → no channel re-sync
+        verify(optionQuantitySync, never()).syncLines(any(), any());
+        verify(listingAssetService, never()).recalculateOptionPrices(any());
+    }
+
+    @Test
+    void deleteOption_lockedOption_throws400() {
+        givenEditableOption(true);
+
+        assertThatThrownBy(() -> service.deleteOption(1L, 10L))
+                .isInstanceOf(ValidationException.class)
+                .hasMessage("쿠팡에 등록된 옵션은 삭제할 수 없습니다. 판매 중지 후 마켓에서 정리하세요.");
+        verify(optionRepository, never()).delete(any());
+    }
+
+    @Test
+    void deleteOption_lastOption_throws400() {
+        givenEditableOption(false);
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(masterOption(10L, "2세트")));
+
+        assertThatThrownBy(() -> service.deleteOption(1L, 10L))
+                .isInstanceOf(ValidationException.class)
+                .hasMessage("옵션은 1개 이상 있어야 합니다. 모두 없애려면 마스터를 삭제하세요.");
+        verify(optionRepository, never()).delete(any());
+    }
+
+    @Test
+    void deleteOption_lockedAndLast_reportsTheLockFirst() {
+        givenEditableOption(true);
+
+        assertThatThrownBy(() -> service.deleteOption(1L, 10L))
+                .hasMessage("쿠팡에 등록된 옵션은 삭제할 수 없습니다. 판매 중지 후 마켓에서 정리하세요.");
+    }
+
+    @Test
+    void deleteOption_oneOfTwoUnlocked_deletes() {
+        givenEditableOption(false);
+        given(optionRepository.findByMasterProductId(1L))
+                .willReturn(List.of(masterOption(10L, "2세트"), masterOption(11L, "3세트")));
+
+        service.deleteOption(1L, 10L);
+
+        verify(optionItemRepository).deleteByOptionId(10L);
+        verify(optionRepository).delete(any());
+    }
+
+    // --- name uniqueness ----------------------------------------------------
+
+    @Test
+    void createOption_duplicateNameWithinMaster_throws400() {
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(LOCK_MASTER));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(masterOption(10L, "2세트")));
+
+        assertThatThrownBy(() -> service.createOption(1L, MasterOptionRequest.builder()
+                .name(" 2세트 ").items(List.of(item(1L, 2))).build()))
+                .isInstanceOf(ValidationException.class)
+                .hasMessage("같은 이름의 옵션이 이미 있습니다.");
+        verify(optionRepository, never()).save(any());
+    }
+
+    @Test
+    void updateOption_keepingItsOwnName_passes() {
+        // Self-exclusion: re-sending the option's current name must not trip the uniqueness check.
+        givenEditableOption(false);
+        given(optionRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+        given(componentRepository.findByMasterProductId(1L))
+                .willReturn(List.of(component(LOCK_MASTER, product(1L, "상품1"))));
+        given(productRepository.findAllById(any())).willReturn(List.of(product(1L, "상품1")));
+
+        MasterOptionResponse response = service.updateOption(1L, 10L, MasterOptionRequest.builder()
+                .name("2세트").items(List.of(item(1L, 2))).build());
+
+        assertThat(response.getName()).isEqualTo("2세트");
+        assertThat(response.getMarketRegistered()).isFalse();
+    }
+
+    // --- narrow channel re-sync --------------------------------------------
+
+    /** Master 1, unlocked option "2세트", one DRAFT cell (200) carrying a same-named channel option. */
+    private ProductListingOption givenDraftChannel() {
+        MasterProductOption option = masterOption(10L, "2세트");
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(LOCK_MASTER));
+        given(optionRepository.findById(10L)).willReturn(Optional.of(option));
+        given(optionItemRepository.findByOptionId(10L)).willReturn(List.of(
+                MasterProductOptionItem.builder().option(option).product(product(1L, "상품1")).quantity(2).build()));
+        given(productListingRepository.findByMasterProductIdIn(List.of(1L))).willReturn(List.of());
+        given(optionRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+        given(componentRepository.findByMasterProductId(1L))
+                .willReturn(List.of(component(LOCK_MASTER, product(1L, "상품1"))));
+        given(productRepository.findAllById(any())).willReturn(List.of(product(1L, "상품1")));
+
+        ProductListing cell = draftCell(200L);
+        ProductListingOption channelOption =
+                cellOption(50L, cell, "2세트", true, null, OptionApprovalStatus.NOT_APPROVED);
+        // lenient: only read when something downstream actually changed (rename / quantity)
+        lenient().when(productListingRepository.findByMasterProductId(1L)).thenReturn(List.of(cell));
+        return channelOption;
+    }
+
+    @Test
+    void updateOption_quantityChange_syncsLinesAndRecalculatesPricesOnly() {
+        ProductListingOption channelOption = givenDraftChannel();
+        given(productListingOptionRepository.findByProductListingId(200L)).willReturn(List.of(channelOption));
+
+        service.updateOption(1L, 10L, MasterOptionRequest.builder()
+                .name("2세트").items(List.of(item(1L, 3))).build());
+
+        verify(optionQuantitySync).syncLines(eq(channelOption), any(MasterProductOption.class));
+        ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(listingAssetService).recalculateOptionPrices(captor.capture());
+        assertThat(captor.getValue().getId()).isEqualTo(200L);
+        // ⚠️ Cost guard (the core of the narrow re-sync): no thumbnail / detail regeneration.
+        verify(listingAssetService, never()).regenerateAssets(any());
+    }
+
+    @Test
+    void updateOption_boxOnlyChange_doesNotResync() {
+        givenDraftChannel();
+        given(packageRepository.findById(5L)).willReturn(Optional.of(Package.builder().id(5L).build()));
+
+        service.updateOption(1L, 10L, MasterOptionRequest.builder()
+                .name("2세트").items(List.of(item(1L, 2))).packageId(5L).build());
+
+        verify(optionQuantitySync, never()).syncLines(any(), any());
+        verify(listingAssetService, never()).recalculateOptionPrices(any());
+        verify(listingAssetService, never()).regenerateAssets(any());
+    }
+
+    @Test
+    void updateOption_renameOnly_cascadesChannelOptionName() {
+        ProductListingOption channelOption = givenDraftChannel();
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(masterOption(10L, "2세트")));
+        given(productListingOptionRepository.findByProductListingId(200L)).willReturn(List.of(channelOption));
+
+        service.updateOption(1L, 10L, MasterOptionRequest.builder()
+                .name("두세트").items(List.of(item(1L, 2))).build());
+
+        // optionName is the master↔channel match key — leaving it stale would orphan the channel option.
+        ArgumentCaptor<ProductListingOption> captor = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository).save(captor.capture());
+        assertThat(captor.getValue().getOptionName()).isEqualTo("두세트");
+        // quantities unchanged → no quantity re-sync
+        verify(optionQuantitySync, never()).syncLines(any(), any());
+    }
+
+    @Test
+    void updateOption_renameAndQuantityChange_cascadesThenResyncs() {
+        // Regression guard: after the cascade the channel option carries the NEW name, so the quantity
+        // re-sync must match on it — matching the old name would silently find nothing.
+        ProductListingOption channelOption = givenDraftChannel();
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(masterOption(10L, "2세트")));
+        ProductListingOption renamed = channelOption.toBuilder().optionName("두세트").build();
+        given(productListingOptionRepository.findByProductListingId(200L))
+                .willReturn(List.of(channelOption))       // rename cascade sees the old name...
+                .willReturn(List.of(renamed));            // ...the re-sync sees the new one
+
+        service.updateOption(1L, 10L, MasterOptionRequest.builder()
+                .name("두세트").items(List.of(item(1L, 3))).build());
+
+        verify(productListingOptionRepository).save(any(ProductListingOption.class));
+        verify(optionQuantitySync).syncLines(eq(renamed), any(MasterProductOption.class));
+        verify(listingAssetService).recalculateOptionPrices(any());
+        verify(listingAssetService, never()).regenerateAssets(any());
     }
 }
