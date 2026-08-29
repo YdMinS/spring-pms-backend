@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -24,6 +25,17 @@ public interface ProductListingProductRepository extends JpaRepository<ProductLi
      * @return List of ProductListingProduct entities
      */
     List<ProductListingProduct> findByProductListingOptionId(Long productListingOptionId);
+
+    /**
+     * Batch-fetch BOM lines for several listing options at once (N+1 guard).
+     *
+     * <p>Used by the read-only channel-sync preview (89), which compares every cell option's quantities
+     * against the master in a fixed number of queries regardless of cell/option count.</p>
+     *
+     * @param productListingOptionIds IDs of the parent ProductListingOptions
+     * @return List of ProductListingProduct entities across all given options
+     */
+    List<ProductListingProduct> findByProductListingOptionIdIn(Collection<Long> productListingOptionIds);
 
     /**
      * Delete all product compositions for a specific listing option.

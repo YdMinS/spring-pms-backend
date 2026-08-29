@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.CarrierRate;
 import com.pms.domain.Category;
+import com.pms.domain.GeneratedProductData;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
@@ -13,11 +14,13 @@ import com.pms.domain.Package;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterOptionRequest;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
+import com.pms.dto.response.ChannelSyncPreviewResponse;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterOptionResponse;
@@ -28,6 +31,7 @@ import com.pms.exception.ValidationException;
 import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.CategoryRepository;
+import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.MasterProductComponentRepository;
@@ -36,6 +40,7 @@ import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductListingOptionRepository;
+import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
@@ -85,6 +90,8 @@ class MasterProductServiceTest {
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock private ProductListingRepository productListingRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
+    @Mock private ProductListingProductRepository productListingProductRepository;
+    @Mock private GeneratedProductDataRepository generatedProductDataRepository;
     @Mock private MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     @Mock private SellerRepository sellerRepository;
     @Mock private RegistrationNameGenerator registrationNameGenerator;
@@ -1236,5 +1243,332 @@ class MasterProductServiceTest {
                 .name("2세트").items(List.of(item(1L, 3))).build());
 
         verify(masterOptionChannelSync, never()).onOptionRenamed(any(), any(), any());
+    }
+
+    // ------------------------------------------------------------ 89: channel sync preview (read-only)
+    //
+    // The preview must count ONLY what a propagation run actually removes. Every "not counted" case below is
+    // a regression guard: counting it would leave inSync=false for ever (banner never clears, button always lit).
+
+    private ProductListing previewCell(Long id, Seller seller, String platform, String platformProductId) {
+        return ProductListing.builder().id(id).seller(seller).platform(platform)
+                .platformProductId(platformProductId).name("리스팅" + id).build();
+    }
+
+    private ProductListingOption cellOption(Long id, ProductListing cell, String name, boolean active) {
+        return ProductListingOption.builder().id(id).productListing(cell).optionName(name)
+                .active(active).sellingPrice(new BigDecimal("1000")).build();
+    }
+
+    private GeneratedProductData generated(ProductListing cell) {
+        return GeneratedProductData.builder().productListing(cell).build();
+    }
+
+    private MasterProductOptionItem masterItem(MasterProductOption option, Product product, int quantity) {
+        return MasterProductOptionItem.builder().option(option).product(product).quantity(quantity).build();
+    }
+
+    private ProductListingProduct cellLine(ProductListingOption option, Product product, int quantity) {
+        return ProductListingProduct.builder()
+                .productListingOption(option).product(product).quantity(quantity).build();
+    }
+
+    @Test
+    void previewChannelSync_masterOptionAbsentOnCell_isMissing() {
+        Seller seller = seller(1L, "행복상회");
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
+        Product p1 = product(11L, "상품1");
+        MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
+        MasterProductOption m2 = MasterProductOption.builder().id(6L).name("2세트").build();
+
+        ProductListing cell = previewCell(100L, seller, "COUPANG", null);
+        ProductListingOption o1 = cellOption(1L, cell, "1세트", true);
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1, m2));
+        given(optionItemRepository.findByOptionIdIn(any()))
+                .willReturn(List.of(masterItem(m1, p1, 1), masterItem(m2, p1, 2)));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cell));
+        given(generatedProductDataRepository.findByProductListingIdIn(any()))
+                .willReturn(List.of(generated(cell)));
+        given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of(o1));
+        given(productListingProductRepository.findByProductListingOptionIdIn(any()))
+                .willReturn(List.of(cellLine(o1, p1, 1)));
+        given(sellerRepository.findAllById(any())).willReturn(List.of(seller));
+
+        ChannelSyncPreviewResponse preview = service.previewChannelSync(1L);
+
+        assertThat(preview.isInSync()).isFalse();
+        assertThat(preview.getChannels()).hasSize(1);
+        ChannelSyncPreviewResponse.Channel channel = preview.getChannels().get(0);
+        assertThat(channel.getListingId()).isEqualTo(100L);
+        assertThat(channel.getSellerName()).isEqualTo("행복상회");
+        assertThat(channel.getPlatform()).isEqualTo("COUPANG");
+        assertThat(channel.isOnMarket()).isFalse();
+        assertThat(channel.getMissingOptions()).containsExactly("2세트");
+        assertThat(channel.getOrphanOptions()).isEmpty();
+        assertThat(channel.getQuantityMismatchOptions()).isEmpty();
+        assertThat(preview.getTotals().getMissingOptions()).isEqualTo(1);
+        assertThat(preview.getTotals().getAffectedChannels()).isEqualTo(1);
+    }
+
+    @Test
+    void previewChannelSync_activeOrphanOnDraftCell_isOrphan() {
+        // DRAFT cell (no platformProductId) → syncStructure (2) switches this option off, so it counts.
+        Seller seller = seller(1L, "행복상회");
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
+        Product p1 = product(11L, "상품1");
+        MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
+
+        ProductListing cell = previewCell(100L, seller, "COUPANG", null);
+        ProductListingOption kept = cellOption(1L, cell, "1세트", true);
+        ProductListingOption orphan = cellOption(2L, cell, "삭제된옵션", true);
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1));
+        given(optionItemRepository.findByOptionIdIn(any())).willReturn(List.of(masterItem(m1, p1, 1)));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cell));
+        given(generatedProductDataRepository.findByProductListingIdIn(any()))
+                .willReturn(List.of(generated(cell)));
+        given(productListingOptionRepository.findByProductListingIdIn(any()))
+                .willReturn(List.of(kept, orphan));
+        given(productListingProductRepository.findByProductListingOptionIdIn(any()))
+                .willReturn(List.of(cellLine(kept, p1, 1)));
+        given(sellerRepository.findAllById(any())).willReturn(List.of(seller));
+
+        ChannelSyncPreviewResponse preview = service.previewChannelSync(1L);
+
+        assertThat(preview.isInSync()).isFalse();
+        assertThat(preview.getChannels().get(0).getOrphanOptions()).containsExactly("삭제된옵션");
+        assertThat(preview.getChannels().get(0).getMarketOrphanOptions()).isEmpty();
+        assertThat(preview.getTotals().getOrphanOptions()).isEqualTo(1);
+        assertThat(preview.getTotals().getAffectedChannels()).isEqualTo(1);
+    }
+
+    @Test
+    void previewChannelSync_quantityDiffers_sharedProductsOnly_activeAgnostic() {
+        // "1세트": the only differing line is cell-only (p3) → syncLines never touches it → NOT a mismatch.
+        // "2세트": inactive, but syncOptionQuantities does not read active → the p1 diff DOES count.
+        Seller seller = seller(1L, "행복상회");
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
+        Product p1 = product(11L, "상품1");
+        Product p2 = product(12L, "상품2");
+        Product p3 = product(13L, "상품3");
+        MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
+        MasterProductOption m2 = MasterProductOption.builder().id(6L).name("2세트").build();
+
+        ProductListing cell = previewCell(100L, seller, "COUPANG", null);
+        ProductListingOption o1 = cellOption(1L, cell, "1세트", true);
+        ProductListingOption o2 = cellOption(2L, cell, "2세트", false);
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1, m2));
+        given(optionItemRepository.findByOptionIdIn(any())).willReturn(List.of(
+                masterItem(m1, p1, 1), masterItem(m1, p2, 2),   // p2 is master-only on the cell → skipped
+                masterItem(m2, p1, 5)));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cell));
+        given(generatedProductDataRepository.findByProductListingIdIn(any()))
+                .willReturn(List.of(generated(cell)));
+        given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of(o1, o2));
+        given(productListingProductRepository.findByProductListingOptionIdIn(any())).willReturn(List.of(
+                cellLine(o1, p1, 1), cellLine(o1, p3, 9),       // p3 is cell-only → left as-is → no mismatch
+                cellLine(o2, p1, 3)));                          // 3 != master 5 → mismatch (option is inactive)
+        given(sellerRepository.findAllById(any())).willReturn(List.of(seller));
+
+        ChannelSyncPreviewResponse preview = service.previewChannelSync(1L);
+
+        assertThat(preview.isInSync()).isFalse();
+        assertThat(preview.getChannels().get(0).getQuantityMismatchOptions()).containsExactly("2세트");
+        assertThat(preview.getChannels().get(0).getMissingOptions()).isEmpty();
+        assertThat(preview.getChannels().get(0).getOrphanOptions()).isEmpty();
+        assertThat(preview.getTotals().getQuantityMismatch()).isEqualTo(1);
+    }
+
+    @Test
+    void previewChannelSync_inactiveOrphan_isNotCounted() {
+        // Rows are never deleted (decision 42) — an already-off orphan stays off, so propagation writes nothing.
+        Seller seller = seller(1L, "행복상회");
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
+        Product p1 = product(11L, "상품1");
+        MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
+
+        ProductListing cell = previewCell(100L, seller, "COUPANG", null);
+        ProductListingOption kept = cellOption(1L, cell, "1세트", true);
+        ProductListingOption offOrphan = cellOption(2L, cell, "이미꺼진옵션", false);
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1));
+        given(optionItemRepository.findByOptionIdIn(any())).willReturn(List.of(masterItem(m1, p1, 1)));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cell));
+        given(generatedProductDataRepository.findByProductListingIdIn(any()))
+                .willReturn(List.of(generated(cell)));
+        given(productListingOptionRepository.findByProductListingIdIn(any()))
+                .willReturn(List.of(kept, offOrphan));
+        given(productListingProductRepository.findByProductListingOptionIdIn(any()))
+                .willReturn(List.of(cellLine(kept, p1, 1)));
+        given(sellerRepository.findAllById(any())).willReturn(List.of(seller));
+
+        ChannelSyncPreviewResponse preview = service.previewChannelSync(1L);
+
+        assertThat(preview.isInSync()).isTrue();
+        assertThat(preview.getChannels()).isEmpty();
+        assertThat(preview.getTotals().getOrphanOptions()).isZero();
+    }
+
+    @Test
+    void previewChannelSync_activeOrphanOnMarketCell_isInformationalOnly() {
+        // syncStructure leaves an on-market orphan alone (WARN) → reported, but never counted or it would
+        // keep inSync=false for ever. The operator stops it in WING.
+        Seller seller = seller(1L, "행복상회");
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
+        Product p1 = product(11L, "상품1");
+        MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
+
+        ProductListing cell = previewCell(100L, seller, "COUPANG", "X");   // on market
+        ProductListingOption kept = cellOption(1L, cell, "1세트", true);
+        ProductListingOption orphan = cellOption(2L, cell, "삭제된옵션", true);
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1));
+        given(optionItemRepository.findByOptionIdIn(any())).willReturn(List.of(masterItem(m1, p1, 1)));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cell));
+        given(generatedProductDataRepository.findByProductListingIdIn(any()))
+                .willReturn(List.of(generated(cell)));
+        given(productListingOptionRepository.findByProductListingIdIn(any()))
+                .willReturn(List.of(kept, orphan));
+        given(productListingProductRepository.findByProductListingOptionIdIn(any()))
+                .willReturn(List.of(cellLine(kept, p1, 1)));
+        given(sellerRepository.findAllById(any())).willReturn(List.of(seller));
+
+        ChannelSyncPreviewResponse preview = service.previewChannelSync(1L);
+
+        assertThat(preview.isInSync()).isTrue();
+        assertThat(preview.getChannels()).hasSize(1);
+        assertThat(preview.getChannels().get(0).isOnMarket()).isTrue();
+        assertThat(preview.getChannels().get(0).getMarketOrphanOptions()).containsExactly("삭제된옵션");
+        assertThat(preview.getChannels().get(0).getOrphanOptions()).isEmpty();
+        assertThat(preview.getTotals().getOrphanOptions()).isZero();
+        assertThat(preview.getTotals().getAffectedChannels()).isZero();
+    }
+
+    @Test
+    void previewChannelSync_cellWithoutGeneratedAssets_isExcludedEntirely() {
+        // propagate() counts such a cell as skipped and never touches it → its difference would never clear.
+        Seller seller = seller(1L, "행복상회");
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
+        Product p1 = product(11L, "상품1");
+        MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
+
+        ProductListing cell = previewCell(100L, seller, "COUPANG", null);   // has NO GeneratedProductData
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1));
+        given(optionItemRepository.findByOptionIdIn(any())).willReturn(List.of(masterItem(m1, p1, 1)));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cell));
+        given(generatedProductDataRepository.findByProductListingIdIn(any())).willReturn(List.of());
+
+        ChannelSyncPreviewResponse preview = service.previewChannelSync(1L);
+
+        assertThat(preview.isInSync()).isTrue();
+        assertThat(preview.getChannels()).isEmpty();
+        // The cell's options are never even loaded (the skip filter runs first).
+        verify(productListingOptionRepository, never()).findByProductListingIdIn(any());
+    }
+
+    @Test
+    void previewChannelSync_everythingMatches_isInSync() {
+        Seller seller = seller(1L, "행복상회");
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
+        Product p1 = product(11L, "상품1");
+        MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
+
+        ProductListing cell = previewCell(100L, seller, "COUPANG", "X");
+        ProductListingOption o1 = cellOption(1L, cell, "1세트", true);
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1));
+        given(optionItemRepository.findByOptionIdIn(any())).willReturn(List.of(masterItem(m1, p1, 3)));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cell));
+        given(generatedProductDataRepository.findByProductListingIdIn(any()))
+                .willReturn(List.of(generated(cell)));
+        given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of(o1));
+        given(productListingProductRepository.findByProductListingOptionIdIn(any()))
+                .willReturn(List.of(cellLine(o1, p1, 3)));
+        given(sellerRepository.findAllById(any())).willReturn(List.of(seller));
+
+        ChannelSyncPreviewResponse preview = service.previewChannelSync(1L);
+
+        assertThat(preview.isInSync()).isTrue();
+        assertThat(preview.getChannels()).isEmpty();
+        assertThat(preview.getTotals().getAffectedChannels()).isZero();
+    }
+
+    @Test
+    void previewChannelSync_noCells_isInSync() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of());
+
+        ChannelSyncPreviewResponse preview = service.previewChannelSync(1L);
+
+        assertThat(preview.isInSync()).isTrue();
+        assertThat(preview.getChannels()).isEmpty();
+    }
+
+    @Test
+    void previewChannelSync_missingMaster_throws404() {
+        given(masterProductRepository.findScopedById(99L)).willReturn(Optional.empty());
+        assertThatThrownBy(() -> service.previewChannelSync(99L))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void previewChannelSync_threeCellsSixOptions_queriesEachRepositoryOnce() {
+        // Query budget: one call per repository regardless of cell/option count. Also pins the channel order
+        // (sellerName → platform) that the front end's "first N rows" rendering depends on.
+        Seller sellerA = seller(1L, "가판매자");
+        Seller sellerB = seller(2L, "나판매자");
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
+        Product p1 = product(11L, "상품1");
+        MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
+
+        ProductListing cell1 = previewCell(100L, sellerB, "COUPANG", null);
+        ProductListing cell2 = previewCell(101L, sellerA, "NAVER", null);
+        ProductListing cell3 = previewCell(102L, sellerA, "COUPANG", null);
+        // Two options per cell: the matched "1세트" + one orphan → every cell has a difference.
+        ProductListingOption o11 = cellOption(1L, cell1, "1세트", true);
+        ProductListingOption o12 = cellOption(2L, cell1, "고아1", true);
+        ProductListingOption o21 = cellOption(3L, cell2, "1세트", true);
+        ProductListingOption o22 = cellOption(4L, cell2, "고아2", true);
+        ProductListingOption o31 = cellOption(5L, cell3, "1세트", true);
+        ProductListingOption o32 = cellOption(6L, cell3, "고아3", true);
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1));
+        given(optionItemRepository.findByOptionIdIn(any())).willReturn(List.of(masterItem(m1, p1, 1)));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cell1, cell2, cell3));
+        given(generatedProductDataRepository.findByProductListingIdIn(any()))
+                .willReturn(List.of(generated(cell1), generated(cell2), generated(cell3)));
+        given(productListingOptionRepository.findByProductListingIdIn(any()))
+                .willReturn(List.of(o11, o12, o21, o22, o31, o32));
+        given(productListingProductRepository.findByProductListingOptionIdIn(any())).willReturn(List.of(
+                cellLine(o11, p1, 1), cellLine(o21, p1, 1), cellLine(o31, p1, 1)));
+        given(sellerRepository.findAllById(any())).willReturn(List.of(sellerA, sellerB));
+
+        ChannelSyncPreviewResponse preview = service.previewChannelSync(1L);
+
+        assertThat(preview.getTotals().getAffectedChannels()).isEqualTo(3);
+        assertThat(preview.getTotals().getOrphanOptions()).isEqualTo(3);
+        // 가판매자/COUPANG → 가판매자/NAVER → 나판매자/COUPANG
+        assertThat(preview.getChannels()).extracting(ChannelSyncPreviewResponse.Channel::getListingId)
+                .containsExactly(102L, 101L, 100L);
+
+        verify(productListingRepository, times(1)).findByMasterProductId(1L);
+        verify(generatedProductDataRepository, times(1)).findByProductListingIdIn(any());
+        verify(productListingOptionRepository, times(1)).findByProductListingIdIn(any());
+        verify(productListingProductRepository, times(1)).findByProductListingOptionIdIn(any());
+        verify(optionItemRepository, times(1)).findByOptionIdIn(any());
+        verify(sellerRepository, times(1)).findAllById(any());
     }
 }

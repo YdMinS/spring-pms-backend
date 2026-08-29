@@ -5,6 +5,7 @@ import com.pms.dto.request.MasterOptionRequest;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
 import com.pms.dto.request.OptionCheckSuffixRequest;
+import com.pms.dto.response.ChannelSyncPreviewResponse;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterOptionResponse;
@@ -38,6 +39,18 @@ public interface MasterProductService {
     boolean isBundle(Long masterId);
 
     ListingMatrixResponse getMatrix(Long id);
+
+    /**
+     * What [채널에 반영하기] would change, without changing anything (FEATURE_2608_06 / 89).
+     *
+     * <p>Mirrors the propagation rules exactly: only differences a propagation run removes are counted
+     * ({@code inSync}/{@code totals}). Market-registered orphans are reported but not counted, and cells
+     * propagation skips (no generated assets) are left out of the response entirely.</p>
+     *
+     * @param masterId master product id (tenant-scoped; 404 if absent)
+     * @return the difference list, {@code inSync=true} + empty channels when nothing is propagatable
+     */
+    ChannelSyncPreviewResponse previewChannelSync(Long masterId);
 
     MasterProductResponse createMasterProduct(MasterProductRequest request);
 
