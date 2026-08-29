@@ -3,6 +3,7 @@ package com.pms.service.listing.category;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.service.coupang.CoupangApiClient;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -40,17 +41,41 @@ class CoupangCategoryMetaTest {
 
         CategoryMetaSchema schema = meta.getMeta(acct(), "1001");
 
+        // 94: inputType comes from the response field, not from the (nonexistent) basicUnits[].
         assertThat(schema.attributes())
                 .extracting(CategoryAttribute::name, CategoryAttribute::required, CategoryAttribute::inputType)
-                .contains(tuple("원산지", true, "TEXT"), tuple("사이즈", false, "SELECT"));
-        assertThat(schema.attributes()).filteredOn(a -> a.name().equals("사이즈"))
+                .contains(tuple("최소 중량", true, "NUMBER"),
+                        tuple("식품 프리미엄", false, "SELECT"),
+                        tuple("동물종류", false, "TEXT"));
+        assertThat(schema.attributes()).filteredOn(a -> a.name().equals("식품 프리미엄"))
                 .singleElement()
                 .extracting(CategoryAttribute::options).asList()
-                .containsExactly("S", "M", "L");
-        // 61: both details keep their parent noticeCategoryName ("의류") as groupName.
+                .containsExactly("Y", "해당없음");
+        assertThat(schema.attributes())
+                .extracting(CategoryAttribute::name, CategoryAttribute::basicUnit)
+                // "없음" is a literal string in the response — it must normalize to null.
+                .contains(tuple("최소 중량", "g"), tuple("식품 프리미엄", null), tuple("동물종류", null));
+        // 61: every detail keeps its parent noticeCategoryName as groupName.
         assertThat(schema.notices())
                 .extracting(CategoryNotice::key, CategoryNotice::required, CategoryNotice::groupName)
-                .contains(tuple("제품소재", true, "의류"), tuple("제조자", false, "의류"));
+                .contains(tuple("제품명", true, "가공식품"),
+                        tuple("소비자상담관련 전화번호", false, "가공식품"),
+                        tuple("생산자", true, "농수축산물"));
+    }
+
+    @Test
+    void getMeta_selectWithoutOptions_downgradesToText() {
+        String json = "{\"code\":200,\"data\":{\"attributes\":["
+                + "{\"attributeTypeName\":\"빈 셀렉트\",\"dataType\":\"STRING\",\"inputType\":\"SELECT\","
+                + "\"inputValues\":[],\"basicUnit\":\"없음\",\"usableUnits\":[],"
+                + "\"required\":\"OPTIONAL\",\"groupNumber\":\"NONE\",\"exposed\":\"NONE\"}]}}";
+        given(client.get(contains("category-related-metas"), eq(""), any())).willReturn(json);
+
+        CategoryMetaSchema schema = meta.getMeta(acct(), "1001");
+
+        assertThat(schema.attributes()).singleElement()
+                .extracting(CategoryAttribute::inputType, CategoryAttribute::options)
+                .containsExactly("TEXT", List.of());
     }
 
     @Test
