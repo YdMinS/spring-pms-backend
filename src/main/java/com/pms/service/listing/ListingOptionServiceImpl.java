@@ -42,6 +42,15 @@ public class ListingOptionServiceImpl implements ListingOptionService {
         return ListingOptionsResponse.of(listing, options, false, registrationName(listing, options));
     }
 
+    /**
+     * ⚠️ On a cell that reached the market, an option that is registered there may not be unchecked: Coupang
+     * cannot physically delete an approved option, so switching it off locally would only hide it from the next
+     * payload while it keeps selling. Turning options <em>on</em> is always allowed, and so is undoing that
+     * before the cell is re-pushed (the option is not on the market yet).
+     *
+     * <p>The lock reads {@link ProductListingOption#isMarketRegistered()}; 84's master-option lock is the
+     * superset that adds {@code active} on top of it.</p>
+     */
     @Override
     @Transactional
     public ListingOptionsResponse setActiveOptions(Long listingId, List<Long> activeOptionIds) {
@@ -59,6 +68,22 @@ public class ListingOptionServiceImpl implements ListingOptionService {
         // Every requested id must belong to this listing (reject other-listing / master option ids mixed in).
         if (!ownIds.containsAll(requested)) {
             throw new IllegalArgumentException("리스팅 옵션 아님");
+        }
+
+        // A cell that reached the market: an option that physically exists there cannot be taken back off by
+        // unchecking it (Coupang cannot delete an approved option), so refuse instead of pretending it worked.
+        // ⚠️ Thrown before saveAll — no partially applied state, same place/exception type as the guards above.
+        if (listing.getPlatformProductId() != null) {
+            List<String> turningOff = options.stream()
+                    .filter(o -> Boolean.TRUE.equals(o.getActive()) && !requested.contains(o.getId()))
+                    .filter(ProductListingOption::isMarketRegistered)
+                    .map(ProductListingOption::getOptionName)
+                    .toList();
+            if (!turningOff.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "마켓에 등록된 옵션은 뺄 수 없습니다: " + String.join(", ", turningOff)
+                        + " — 판매를 멈추려면 쿠팡 WING 에서 처리하세요.");
+            }
         }
 
         // Immutable entity → toBuilder each option, then saveAll explicitly (no dirty-checking reliance so the

@@ -22,6 +22,12 @@ public interface ListingOptionService {
      * Set the whole active-option set for a channel listing (bulk). {@code active = activeOptionIds.contains(id)}
      * for every option. Empty set → 400; ids not belonging to the listing → 400. Returns the full option set and
      * {@code needsResync=true} if any cell of the listing is already pushed (status != DRAFT).
+     *
+     * <p>⚠️ On a pushed cell, unchecking an option that is registered on the market → 400: Coupang cannot delete
+     * an approved option, so it would keep selling while the screen said otherwise (stop it in WING instead).
+     * Turning options on is always allowed, as is undoing that before the cell is re-pushed. The judgement is
+     * {@link com.pms.domain.ProductListingOption#isMarketRegistered()} — 84's master-option lock is the superset
+     * that adds {@code active} on top.</p>
      */
     ListingOptionsResponse setActiveOptions(Long listingId, List<Long> activeOptionIds);
 }

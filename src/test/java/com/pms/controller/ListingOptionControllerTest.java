@@ -4,6 +4,7 @@ import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.Category;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MasterProduct;
+import com.pms.domain.OptionApprovalStatus;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
@@ -46,6 +47,10 @@ class ListingOptionControllerTest extends BaseIntegrationTest {
     private Long opt1Id;
     private Long opt2Id;
     private Long opt3Id;
+    /** 87: a second cell that reached the market, whose opt-a carries a vendorItemId (= cannot be unchecked). */
+    private Long marketListingId;
+    private Long marketOptAId;
+    private Long marketOptBId;
 
     @BeforeEach
     void seed() {
@@ -62,19 +67,32 @@ class ListingOptionControllerTest extends BaseIntegrationTest {
         opt1Id = saveOption(cell, "opt1");
         opt2Id = saveOption(cell, "opt2");
         opt3Id = saveOption(cell, "opt3");
+
+        ProductListing marketCell = productListingRepository.save(ProductListing.builder()
+                .platform("COUPANG").platformProductId("P-1").name("마켓 셀").status(ListingStatus.SELLING)
+                .seller(seller).masterProduct(master).build());
+        marketListingId = marketCell.getId();
+        marketOptAId = saveOption(marketCell, "market-a", "V-1");
+        marketOptBId = saveOption(marketCell, "market-b", null);
     }
 
     private Long saveOption(ProductListing cell, String name) {
+        return saveOption(cell, name, null);
+    }
+
+    private Long saveOption(ProductListing cell, String name, String platformOptionId) {
         return productListingOptionRepository.save(ProductListingOption.builder()
-                .productListing(cell).optionName(name).sellingPrice(new BigDecimal("6000")).build()).getId();
+                .productListing(cell).optionName(name).sellingPrice(new BigDecimal("6000"))
+                .platformOptionId(platformOptionId).approvalStatus(OptionApprovalStatus.NOT_APPROVED)
+                .build()).getId();
     }
 
     private String optionsPath() {
         return "/api/admin/product-listings/" + listingId + "/options";
     }
 
-    private String activePath() {
-        return "/api/admin/product-listings/" + listingId + "/options/active";
+    private String activePath(Long id) {
+        return "/api/admin/product-listings/" + id + "/options/active";
     }
 
     // ---- authority (MUST-KEEP) ----
@@ -100,14 +118,14 @@ class ListingOptionControllerTest extends BaseIntegrationTest {
 
     @Test
     void setActive_noToken_returns401() throws Exception {
-        mockMvc.perform(put(activePath()).contentType(MediaType.APPLICATION_JSON)
+        mockMvc.perform(put(activePath(listingId)).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"activeOptionIds\":[" + opt1Id + "]}"))
                 .andExpect(status().isUnauthorized());
     }
 
     @Test
     void setActive_userToken_returns403() throws Exception {
-        mockMvc.perform(put(activePath()).header("Authorization", "Bearer " + userToken)
+        mockMvc.perform(put(activePath(listingId)).header("Authorization", "Bearer " + userToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"activeOptionIds\":[" + opt1Id + "]}"))
                 .andExpect(status().isForbidden());
@@ -117,7 +135,7 @@ class ListingOptionControllerTest extends BaseIntegrationTest {
 
     @Test
     void setActive_adminToken_deactivatesUnlistedOption() throws Exception {
-        mockMvc.perform(put(activePath()).header("Authorization", "Bearer " + adminToken)
+        mockMvc.perform(put(activePath(listingId)).header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"activeOptionIds\":[" + opt1Id + "," + opt3Id + "]}"))
                 .andExpect(status().isOk())
@@ -128,11 +146,23 @@ class ListingOptionControllerTest extends BaseIntegrationTest {
         assertThat(productListingOptionRepository.findById(opt3Id).orElseThrow().getActive()).isTrue();
     }
 
+    // ---- 87: an option registered on the market cannot be unchecked ----
+
+    @Test
+    void setActive_uncheckingMarketRegisteredOption_returns400() throws Exception {
+        mockMvc.perform(put(activePath(marketListingId)).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"activeOptionIds\":[" + marketOptBId + "]}"))
+                .andExpect(status().isBadRequest());
+
+        assertThat(productListingOptionRepository.findById(marketOptAId).orElseThrow().getActive()).isTrue();
+    }
+
     // ---- PUT empty set → 400 ----
 
     @Test
     void setActive_emptySet_returns400() throws Exception {
-        mockMvc.perform(put(activePath()).header("Authorization", "Bearer " + adminToken)
+        mockMvc.perform(put(activePath(listingId)).header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"activeOptionIds\":[]}"))
                 .andExpect(status().isBadRequest());

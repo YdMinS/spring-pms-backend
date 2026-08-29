@@ -205,7 +205,9 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                 // (1500 + 2500 + 500) / 0.75 = 6000, rounded to nearest 10 won
                 .andExpect(jsonPath("$.data.optionPrices[0].sellingPrice").value(6000.00))
                 // per-channel active flag (42) surfaced so the matrix can render inline (43)
-                .andExpect(jsonPath("$.data.optionPrices[0].active").value(true));
+                .andExpect(jsonPath("$.data.optionPrices[0].active").value(true))
+                // 87: option-axis market flag so the front can lock the checkbox (DRAFT cell → not on the market)
+                .andExpect(jsonPath("$.data.optionPrices[0].onMarket").value(false));
     }
 
     @Test

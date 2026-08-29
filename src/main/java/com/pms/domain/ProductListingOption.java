@@ -129,4 +129,17 @@ public class ProductListingOption {
     @Builder.Default
     @Schema(description = "Per-channel active flag (excluded from market payload when false)", example = "true")
     private Boolean active = true;
+
+    /**
+     * True = this option physically exists on the marketplace: Coupang issued a vendorItemId, or it was
+     * approved at some point. Such an option cannot be removed there (approved options are not deletable),
+     * so 87 forbids unchecking it and 88 locks the checkbox.
+     *
+     * <p>⚠️ Deliberately does NOT include {@code active}. 84's lock adds that third term on top of this one
+     * (see {@code MasterProductServiceImpl#isOnMarket}); 87 must not, or every active option of a pushed cell
+     * would be locked and "turn on, then undo before re-registering" would be impossible.</p>
+     */
+    public boolean isMarketRegistered() {
+        return platformOptionId != null || approvalStatus == OptionApprovalStatus.APPROVED;
+    }
 }

@@ -631,6 +631,8 @@ public class MasterProductServiceImpl implements MasterProductService {
      *   <li>{@code platformOptionId != null} — Coupang issued a vendorItemId, so it exists there;</li>
      *   <li>{@code approvalStatus == APPROVED} — it was approved at some point.</li>
      * </ol>
+     * <p>The last two terms are shared with 87's uncheck guard via {@link ProductListingOption#isMarketRegistered()}
+     * — 84 is the superset that adds {@code active} on top.</p>
      * ⚠️ All three are needed. An option switched off locally still lives on Coupang (approved options
      * cannot be deleted there), so {@code active} alone would let it slip out of the lock; and
      * {@code platformOptionId} / {@code approvalStatus} are filled by {@code fetchStatus}, so they are still
@@ -667,9 +669,8 @@ public class MasterProductServiceImpl implements MasterProductService {
 
     /** The three-way OR above, for one channel option of an already market-registered cell. */
     private static boolean isOnMarket(ProductListingOption option) {
-        return Boolean.TRUE.equals(option.getActive())
-                || option.getPlatformOptionId() != null
-                || option.getApprovalStatus() == OptionApprovalStatus.APPROVED;
+        // 84 = 87's two terms + active; the shared pair lives in ProductListingOption#isMarketRegistered.
+        return Boolean.TRUE.equals(option.getActive()) || option.isMarketRegistered();
     }
 
     /**
