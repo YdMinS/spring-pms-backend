@@ -47,5 +47,7 @@ public class GeneratedProductResponse {
         private BigDecimal sellingPrice;
         /** Per-channel active flag (42): only active options are pushed to the market. */
         private Boolean active;
+        /** 87: the option exists on the marketplace, so the front locks its checkbox (it cannot be unchecked). */
+        private Boolean onMarket;
     }
 }

@@ -464,6 +464,9 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                         .optionName(o.getOptionName())
                         .sellingPrice(o.getSellingPrice())
                         .active(o.getActive())
+                        // 87: option axis only — the guard is cell AND option, but the flag drops the cell axis
+                        // (platformOptionId/approvalStatus are only filled by fetchStatus after a push anyway).
+                        .onMarket(o.isMarketRegistered())
                         .build())
                 .toList();
         return GeneratedProductResponse.builder()
