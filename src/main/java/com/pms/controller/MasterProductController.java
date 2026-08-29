@@ -14,6 +14,7 @@ import com.pms.dto.request.ShippingForceApplyRequest;
 import com.pms.dto.request.ShippingOverrideRequest;
 import com.pms.dto.request.TagsRequest;
 import com.pms.dto.response.CategoryMetaResponse;
+import com.pms.dto.response.ChannelSyncPreviewResponse;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterOptionResponse;
@@ -70,6 +71,13 @@ public class MasterProductController {
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<ListingMatrixResponse>> getMatrix(@PathVariable Long id) {
         return ResponseEntity.ok(ResponseDTO.success(masterProductService.getMatrix(id)));
+    }
+
+    @GetMapping("/{id}/channel-sync-preview")
+    @Operation(summary = "채널에 반영할 항목 미리보기(읽기 전용)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<ChannelSyncPreviewResponse>> previewChannelSync(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(masterProductService.previewChannelSync(id)));
     }
 
     @PostMapping

@@ -13,12 +13,14 @@ import com.pms.domain.Package;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterOptionRequest;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
 import com.pms.dto.request.OptionCheckSuffixRequest;
+import com.pms.dto.response.ChannelSyncPreviewResponse;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.ListingMatrixResponse.MatrixCell;
 import com.pms.dto.response.ListingMatrixResponse.MatrixRow;
@@ -31,6 +33,7 @@ import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.CategoryRepository;
+import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.MasterProductComponentRepository;
@@ -39,6 +42,7 @@ import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductListingOptionRepository;
+import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
@@ -56,6 +60,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -93,6 +98,8 @@ public class MasterProductServiceImpl implements MasterProductService {
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
+    private final ProductListingProductRepository productListingProductRepository;
+    private final GeneratedProductDataRepository generatedProductDataRepository;
     private final MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     private final SellerRepository sellerRepository;
     private final ImageStorageService imageStorageService;
@@ -234,6 +241,180 @@ public class MasterProductServiceImpl implements MasterProductService {
                 .masterId(master.getId())
                 .masterName(master.getName())
                 .rows(rows)
+                .build();
+    }
+
+    /**
+     * 89: read-only diff of every linked cell against the master — "what would [채널에 반영하기] change?".
+     *
+     * <p>⚠️ The judgement MUST mirror what propagation actually does, or the caller's banner never clears:</p>
+     * <ul>
+     *   <li>Cells with no {@code GeneratedProductData} are dropped entirely — {@code propagate} counts them
+     *       {@code skipped} and never touches them, so a difference there is permanent.</li>
+     *   <li>{@code missing}/{@code orphan} mirror {@code MasterOptionChannelSync.syncStructure} (1)/(2):
+     *       matched by {@code optionName}; an orphan counts only while {@code active=true} (rows are never
+     *       deleted, decision 42) and the cell is off-market — an on-market orphan is left alone by
+     *       propagation (WARN only), so it is reported separately and never counted.</li>
+     *   <li>Quantities mirror {@code OptionQuantitySync.syncLines}: matched by {@code productId}, shared
+     *       products only, and <b>{@code active}-agnostic</b> (the quantity sync does not read {@code active}).</li>
+     * </ul>
+     *
+     * <p>Query budget = one call per repository regardless of cell/option count (batched finders).</p>
+     */
+    @Override
+    public ChannelSyncPreviewResponse previewChannelSync(Long masterId) {
+        requireScopedMaster(masterId);
+
+        // Master side: option name → (productId → quantity). Duplicate names / duplicate products: first wins
+        // (same rule as syncLines' toMap merge), so the preview can never disagree with the propagation.
+        List<MasterProductOption> masterOptions = optionRepository.findByMasterProductId(masterId);
+        List<Long> masterOptionIds = masterOptions.stream().map(MasterProductOption::getId).toList();
+        Map<Long, Map<Long, Integer>> masterItemsByOption = new LinkedHashMap<>();
+        if (!masterOptionIds.isEmpty()) {
+            for (MasterProductOptionItem item : optionItemRepository.findByOptionIdIn(masterOptionIds)) {
+                masterItemsByOption
+                        .computeIfAbsent(item.getOption().getId(), k -> new LinkedHashMap<>())
+                        .putIfAbsent(item.getProduct().getId(), item.getQuantity());
+            }
+        }
+        Map<String, Map<Long, Integer>> masterByName = new LinkedHashMap<>();
+        for (MasterProductOption option : masterOptions) {
+            masterByName.putIfAbsent(
+                    option.getName(), masterItemsByOption.getOrDefault(option.getId(), Map.of()));
+        }
+
+        // Cell side: only cells propagation would actually process (generated assets present).
+        List<ProductListing> allCells = productListingRepository.findByMasterProductId(masterId);
+        List<Long> allCellIds = allCells.stream().map(ProductListing::getId).toList();
+        Set<Long> generatedCellIds = allCellIds.isEmpty()
+                ? Set.of()
+                : generatedProductDataRepository.findByProductListingIdIn(allCellIds).stream()
+                        .map(data -> data.getProductListing().getId())
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+        List<ProductListing> cells = allCells.stream()
+                .filter(cell -> generatedCellIds.contains(cell.getId()))
+                .toList();
+        if (cells.isEmpty()) {
+            return emptyPreview();
+        }
+
+        List<Long> cellIds = cells.stream().map(ProductListing::getId).toList();
+        List<ProductListingOption> cellOptions = productListingOptionRepository.findByProductListingIdIn(cellIds);
+        List<Long> cellOptionIds = cellOptions.stream().map(ProductListingOption::getId).toList();
+        // optionId → (productId → quantity); duplicate product lines: first wins (syncLines' merge rule).
+        Map<Long, Map<Long, Integer>> cellQuantitiesByOption = new LinkedHashMap<>();
+        if (!cellOptionIds.isEmpty()) {
+            for (ProductListingProduct line
+                    : productListingProductRepository.findByProductListingOptionIdIn(cellOptionIds)) {
+                cellQuantitiesByOption
+                        .computeIfAbsent(line.getProductListingOption().getId(), k -> new LinkedHashMap<>())
+                        .putIfAbsent(line.getProduct().getId(), line.getQuantity());
+            }
+        }
+        Map<Long, Map<String, ProductListingOption>> optionsByCell = new LinkedHashMap<>();
+        for (ProductListingOption option : cellOptions) {
+            optionsByCell
+                    .computeIfAbsent(option.getProductListing().getId(), k -> new LinkedHashMap<>())
+                    .putIfAbsent(option.getOptionName(), option);   // same-named cell options: first wins
+        }
+
+        // Seller names in ONE query (seller is LAZY + open-in-view=false: cell.getSeller().getSellerName()
+        // would be a per-cell query, and a LazyInitializationException outside the transaction).
+        List<Long> sellerIds = cells.stream().map(cell -> cell.getSeller().getId()).distinct().toList();
+        Map<Long, String> sellerNames = sellerRepository.findAllById(sellerIds).stream()
+                .collect(Collectors.toMap(Seller::getId, Seller::getSellerName, (first, dup) -> first));
+
+        List<ChannelSyncPreviewResponse.Channel> channels = new ArrayList<>();
+        int affectedChannels = 0, missingTotal = 0, orphanTotal = 0, quantityTotal = 0;
+        for (ProductListing cell : cells) {
+            Map<String, ProductListingOption> cellByName =
+                    optionsByCell.getOrDefault(cell.getId(), Map.of());
+            boolean onMarket = cell.getPlatformProductId() != null;
+
+            // (1) missing: master option with no row on this cell at all (active is irrelevant — the row's
+            //     absence is what syncStructure fixes by creating it switched off).
+            List<String> missing = masterByName.keySet().stream()
+                    .filter(name -> !cellByName.containsKey(name))
+                    .toList();
+
+            // (2) orphan: still active on the cell, gone from the master. An on-market cell is informational
+            //     only — propagation refuses to switch those off (screen would desync from the marketplace).
+            List<String> orphans = new ArrayList<>();
+            List<String> marketOrphans = new ArrayList<>();
+            for (ProductListingOption option : cellByName.values()) {
+                if (masterByName.containsKey(option.getOptionName())
+                        || !Boolean.TRUE.equals(option.getActive())) {
+                    continue;   // still owned by the master, or already off → propagation writes nothing
+                }
+                (onMarket ? marketOrphans : orphans).add(option.getOptionName());
+            }
+
+            // (3) quantities: matched options only, shared productIds only, active-agnostic.
+            List<String> quantityMismatches = new ArrayList<>();
+            for (Map.Entry<String, ProductListingOption> entry : cellByName.entrySet()) {
+                Map<Long, Integer> masterQuantities = masterByName.get(entry.getKey());
+                if (masterQuantities == null) {
+                    continue;   // unmatched option → syncOptionQuantities skips it
+                }
+                Map<Long, Integer> cellQuantities =
+                        cellQuantitiesByOption.getOrDefault(entry.getValue().getId(), Map.of());
+                boolean differs = cellQuantities.entrySet().stream().anyMatch(line -> {
+                    Integer masterQuantity = masterQuantities.get(line.getKey());
+                    return masterQuantity != null && !masterQuantity.equals(line.getValue());
+                });
+                if (differs) {
+                    quantityMismatches.add(entry.getKey());
+                }
+            }
+
+            boolean fixable = !missing.isEmpty() || !orphans.isEmpty() || !quantityMismatches.isEmpty();
+            if (!fixable && marketOrphans.isEmpty()) {
+                continue;   // nothing to show for this channel
+            }
+            channels.add(ChannelSyncPreviewResponse.Channel.builder()
+                    .listingId(cell.getId())
+                    .sellerName(sellerNames.get(cell.getSeller().getId()))
+                    .platform(cell.getPlatform())
+                    .onMarket(onMarket)
+                    .missingOptions(missing)
+                    .orphanOptions(orphans)
+                    .marketOrphanOptions(marketOrphans)
+                    .quantityMismatchOptions(quantityMismatches)
+                    .build());
+            if (fixable) {
+                // Market-only orphan channels are listed but never counted — counting them would leave
+                // inSync=false (and the button lit) for ever, since propagation cannot clear them.
+                affectedChannels++;
+                missingTotal += missing.size();
+                orphanTotal += orphans.size();
+                quantityTotal += quantityMismatches.size();
+            }
+        }
+
+        channels.sort(Comparator
+                .comparing(ChannelSyncPreviewResponse.Channel::getSellerName,
+                        Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(ChannelSyncPreviewResponse.Channel::getPlatform,
+                        Comparator.nullsLast(Comparator.naturalOrder())));
+
+        return ChannelSyncPreviewResponse.builder()
+                .inSync(affectedChannels == 0)
+                .totals(ChannelSyncPreviewResponse.Totals.builder()
+                        .affectedChannels(affectedChannels)
+                        .missingOptions(missingTotal)
+                        .orphanOptions(orphanTotal)
+                        .quantityMismatch(quantityTotal)
+                        .build())
+                .channels(channels)
+                .build();
+    }
+
+    /** No propagatable cell → nothing [일괄 반영] could change. */
+    private ChannelSyncPreviewResponse emptyPreview() {
+        return ChannelSyncPreviewResponse.builder()
+                .inSync(true)
+                .totals(ChannelSyncPreviewResponse.Totals.builder().build())
+                .channels(List.of())
                 .build();
     }
 

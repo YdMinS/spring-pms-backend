@@ -182,6 +182,32 @@ class MasterProductControllerTest extends BaseIntegrationTest {
     }
 
     @Test
+    void channelSyncPreview_noToken_returns401() throws Exception {
+        mockMvc.perform(get(PATH + "/" + masterId + "/channel-sync-preview"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void channelSyncPreview_userToken_returns403() throws Exception {
+        mockMvc.perform(get(PATH + "/" + masterId + "/channel-sync-preview")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void channelSyncPreview_adminToken_returns200() throws Exception {
+        // The seeded cell has no GeneratedProductData, so propagation would skip it — the preview must
+        // therefore report inSync (a skipped cell's difference can never be cleared by [일괄 반영]).
+        mockMvc.perform(get(PATH + "/" + masterId + "/channel-sync-preview")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.inSync").value(true))
+                .andExpect(jsonPath("$.data.channels.length()").value(0))
+                .andExpect(jsonPath("$.data.totals.affectedChannels").value(0));
+    }
+
+    @Test
     void list_adminToken_returns200() throws Exception {
         mockMvc.perform(get(PATH).header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
