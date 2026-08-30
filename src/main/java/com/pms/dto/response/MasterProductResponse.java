@@ -71,5 +71,13 @@ public class MasterProductResponse {
 
         @Schema(description = "Product name", example = "Galaxy S21")
         private String productName;
+
+        // 100: raw stored value — the client (101) formats it. Never normalise null to "".
+        @Schema(description = "Net content of the product (98) — raw stored string, unformatted",
+                example = "320", nullable = true)
+        private String netContent;
+
+        @Schema(description = "Net content unit as stored: G/KG/L/ML", example = "G", nullable = true)
+        private String netContentUnit;
     }
 }
