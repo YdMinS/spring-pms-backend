@@ -354,6 +354,53 @@ class CoupangListingAdapterTest {
                 .hasMessageContaining("필수 카테고리 속성 누락");
     }
 
+    // ⑤: 같은 groupNumber 의 MANDATORY 속성은 **그룹 중 하나만** 채우면 통과한다.
+    // 실측 차단(2026-08-30): `최소 중량`·`최소 용량` 이 둘 다 MANDATORY + groupNumber "1" 인데 프론트는
+    // 중량/용량을 택1 로 받으므로, 개별 검사하면 어떤 상품도 등록할 수 없었다.
+    @Test
+    void validateRegistrable_requiredAttributeGroup_satisfiedByOneMember() {
+        MasterProduct master = MasterProduct.builder().id(1L)
+                .categoryAttributes(Map.of("최소 중량", "100g")).build();   // 용량은 비어 있음
+        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+                .masterProduct(master).build();
+        given(masterProductService.isBundle(1L)).willReturn(false);
+        given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
+                List.of(new CategoryAttribute("최소 중량", true, "NUMBER", List.of(), "g", "1"),
+                        new CategoryAttribute("최소 용량", true, "NUMBER", List.of(), "ml", "1")),
+                List.of()));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("A")
+                        .sellingPrice(new BigDecimal("6000")).active(true).build()));
+
+        assertThatCode(() -> adapter.validateRegistrable(cell, null, acct()))
+                .doesNotThrowAnyException();
+    }
+
+    // ⑤: 그룹 전체가 비면 여전히 막는다(완화가 "검사 삭제"가 아님). 메시지는 그룹 구성원을 모두 알려준다.
+    @Test
+    void validateRegistrable_requiredAttributeGroup_blocksWhenWholeGroupBlank() {
+        MasterProduct master = MasterProduct.builder().id(1L)
+                .categoryAttributes(Map.of("색상", "흰색")).build();   // 그룹 두 칸 모두 비어 있음
+        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+                .masterProduct(master).build();
+        given(masterProductService.isBundle(1L)).willReturn(false);
+        given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
+                List.of(new CategoryAttribute("최소 중량", true, "NUMBER", List.of(), "g", "1"),
+                        new CategoryAttribute("최소 용량", true, "NUMBER", List.of(), "ml", "1")),
+                List.of()));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("A")
+                        .sellingPrice(new BigDecimal("6000")).active(true).build()));
+
+        assertThatThrownBy(() -> adapter.validateRegistrable(cell, null, acct()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("최소 중량 또는 최소 용량 중 하나");
+    }
+
     // 73: top-level required fields (sale period, vendorUserId, shipping/return/outbound block, requested=false)
     // + item defaults (originalPrice, maximumBuyCount, adultOnly …). images/searchTags/contents at item level.
     @Test

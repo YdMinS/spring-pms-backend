@@ -55,6 +55,13 @@ class CoupangCategoryMetaTest {
                 .extracting(CategoryAttribute::name, CategoryAttribute::basicUnit)
                 // "없음" is a literal string in the response — it must normalize to null.
                 .contains(tuple("최소 중량", "g"), tuple("식품 프리미엄", null), tuple("동물종류", null));
+        // ⑤: groupNumber 파싱 — 실응답의 "1" 은 그대로, 그룹 없음 리터럴 "NONE" 은 null 로 정규화.
+        assertThat(schema.attributes())
+                .extracting(CategoryAttribute::name, CategoryAttribute::groupNumber)
+                .contains(tuple("최소 중량", "1"), tuple("식품 프리미엄", null), tuple("동물종류", null));
+        assertThat(schema.attributes()).filteredOn(a -> a.name().equals("최소 중량"))
+                .singleElement()
+                .matches(CategoryAttribute::grouped, "택1 그룹에 속함");
         // 61: every detail keeps its parent noticeCategoryName as groupName.
         assertThat(schema.notices())
                 .extracting(CategoryNotice::key, CategoryNotice::required, CategoryNotice::groupName)
