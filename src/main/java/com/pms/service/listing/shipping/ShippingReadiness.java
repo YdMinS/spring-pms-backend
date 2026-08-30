@@ -1,5 +1,6 @@
 package com.pms.service.listing.shipping;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -21,6 +22,9 @@ import java.util.List;
  * the choice, this class only holds the Coupang rules.</p>
  */
 public final class ShippingReadiness {
+
+    /** 무료배송 — Coupang {@code deliveryChargeType}. */
+    private static final String FREE = "FREE";
 
     private ShippingReadiness() {
     }
@@ -54,14 +58,35 @@ public final class ShippingReadiness {
         requireText(missing, "deliveryMethod", cfg.deliveryMethod());
         requireText(missing, "deliveryCompanyCode", cfg.deliveryCompanyCode());
         requireText(missing, "deliveryChargeType", cfg.deliveryChargeType());
-        requireValue(missing, "deliveryCharge", cfg.deliveryCharge());
+        requireValue(missing, "deliveryCharge", effectiveDeliveryCharge(cfg));
         requireText(missing, "remoteAreaDeliverable", cfg.remoteAreaDeliverable());
         requireText(missing, "unionDeliveryType", cfg.unionDeliveryType());
         // freeShipOverAmount stays optional (only relevant for CONDITIONAL_FREE).
+        // 🔴 96/⑧: do NOT requireValue it here — making it mandatory would newly fail every CONDITIONAL_FREE
+        // config that left the threshold empty (regression). Only deliveryCharge changed judgement.
 
         boolean unionChargeConflict = "UNION_DELIVERY".equals(cfg.unionDeliveryType())
                 && "CHARGE_RECEIVED".equals(cfg.deliveryChargeType());
         return new Readiness(List.copyOf(missing), unionChargeConflict);
+    }
+
+    /**
+     * 96/⑧: the {@code deliveryCharge} actually sent (and judged). 무료배송(FREE) carries no charge, so the
+     * stored column is legitimately null — before this, {@code FREE} meant {@code deliveryCharge} was reported
+     * missing forever and the [마켓 등록] button stayed disabled. Judgement and payload must read the SAME rule
+     * (77), so both go through this helper.
+     */
+    public static BigDecimal effectiveDeliveryCharge(ResolvedShippingConfig cfg) {
+        return FREE.equals(cfg.deliveryChargeType()) ? BigDecimal.ZERO : cfg.deliveryCharge();
+    }
+
+    /**
+     * 96/⑧: the {@code freeShipOverAmount} actually sent. Coupang rejects a FREE product whose
+     * '무료배송을 위한 조건 금액' is absent ("값을 확인해 주세요", live account 2026-08-30) → FREE sends 0.
+     * ⚠️ Payload-only: this value is <b>not</b> part of {@link #check} (see the comment there).
+     */
+    public static BigDecimal effectiveFreeShipOverAmount(ResolvedShippingConfig cfg) {
+        return FREE.equals(cfg.deliveryChargeType()) ? BigDecimal.ZERO : cfg.freeShipOverAmount();
     }
 
     private static void requireText(List<String> missing, String name, String value) {

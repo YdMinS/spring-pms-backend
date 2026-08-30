@@ -1,0 +1,24 @@
+# 무료배송(FREE) 행 백필 (FEATURE_2608_06 / 96 ⑧): deliveryChargeType=FREE 인데 delivery_charge /
+# free_ship_over_amount 가 null 인 기존 설정을 0 으로 교정한다. 무료배송에는 배송비가 없어 사용자가 값을 남길
+# 방법이 없었고, 그 null 때문에 (a) ShippingReadiness 가 영구 "누락" 판정 → [마켓 등록] 비활성, (b) 쿠팡이
+# '무료배송을 위한 조건 금액' 을 요구하며 거부했다. 코드는 FREE 를 0 으로 읽지만(ShippingReadiness), 저장된
+# 값도 함께 맞춰 두 경로가 같은 것을 본다.
+# ⚠️ 조건부 UPDATE 라 환경 무관하게 참인 교정이고 멱등이다(이미 값이 있으면 no-op — dev 는 수동 UPDATE 로
+# 이미 채워져 있어 0행). boolean 컬럼 없음 → MySQL BIT 함정 무관.
+databaseChangeLog:
+
+  - changeSet:
+      id: 045-free-shipping-charge-backfill
+      author: oclyx
+      comment: "96 ⑧: FREE 배송설정의 delivery_charge / free_ship_over_amount null → 0 백필."
+      changes:
+        - update:
+            tableName: marketplace_shipping_config
+            columns:
+              - column: { name: delivery_charge, valueNumeric: 0 }
+            where: "delivery_charge_type = 'FREE' AND delivery_charge IS NULL"
+        - update:
+            tableName: marketplace_shipping_config
+            columns:
+              - column: { name: free_ship_over_amount, valueNumeric: 0 }
+            where: "delivery_charge_type = 'FREE' AND free_ship_over_amount IS NULL"

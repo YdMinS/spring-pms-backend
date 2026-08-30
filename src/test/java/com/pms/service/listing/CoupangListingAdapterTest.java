@@ -321,6 +321,11 @@ class CoupangListingAdapterTest {
         ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
                 .masterProduct(master).build();
         given(masterProductService.isBundle(1L)).willReturn(true);
+        // 96 ⑨: AB no longer returns before the meta lookup (it still has to validate notices) → the category
+        // code and the schema must be reachable.
+        given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
+                List.of(new CategoryAttribute("원산지", true, "TEXT", List.of(), null)), List.of()));
 
         assertThatCode(() -> adapter.validateRegistrable(cell, null, acct()))
                 .doesNotThrowAnyException();
@@ -621,5 +626,214 @@ class CoupangListingAdapterTest {
         String sent = objectMapper.readTree(payload.getValue()).path("sellerProductName").asText();
         assertThat(sent).hasSize(100);
         assertThat(sent).isEqualTo(longName.substring(0, 100));
+    }
+
+    // ── 96 ④: attribute values carry the category's 기본 단위 ────────────────────────────────────────────
+
+    @Test
+    void register_bareNumericAttribute_getsBasicUnitAppended() throws Exception {
+        MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨")
+                .categoryAttributes(new java.util.LinkedHashMap<>(Map.of(
+                        "개당 중량", "100",        // bare number + unit in the schema  → "100g"
+                        "개당 용량", "500ml",      // already carries a unit             → untouched
+                        "원산지", "국내산")))       // no basicUnit in the schema         → untouched
+                .build();
+        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+                .platformProductId("123456789").masterProduct(master).build();
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("A")
+                        .sellingPrice(new BigDecimal("6000")).active(true).build()));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
+                List.of(new CategoryAttribute("개당 중량", true, "NUMBER", List.of(), "g"),
+                        new CategoryAttribute("개당 용량", true, "NUMBER", List.of(), "ml"),
+                        new CategoryAttribute("원산지", false, "TEXT", List.of(), null)),
+                List.of()));
+        GeneratedProductData gen = GeneratedProductData.builder()
+                .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell, gen, acct());
+
+        Map<String, String> sent = sentAttributes(payload.getValue());
+        assertThat(sent).containsEntry("개당 중량", "100g")      // unit appended at send time
+                .containsEntry("개당 용량", "500ml")             // user's own unit not overwritten
+                .containsEntry("원산지", "국내산");               // no basicUnit → verbatim
+    }
+
+    /** items[0].attributes[] → {attributeTypeName: attributeValueName}. */
+    private Map<String, String> sentAttributes(String payload) throws Exception {
+        Map<String, String> sent = new java.util.LinkedHashMap<>();
+        for (JsonNode attribute : objectMapper.readTree(payload).path("items").get(0).path("attributes")) {
+            sent.put(attribute.path("attributeTypeName").asText(),
+                    attribute.path("attributeValueName").asText());
+        }
+        return sent;
+    }
+
+    // ── 96 ⑩: the notice group map is narrowed to the 품목군 the user picked ──────────────────────────────
+
+    /** Two 품목군 sharing a notice key — 농수축산물 comes first in the schema. */
+    private CategoryMetaSchema sharedNoticeKeySchema() {
+        return new CategoryMetaSchema(List.of(), List.of(
+                new CategoryNotice("소비기한", "소비기한", true, "농수축산물"),
+                new CategoryNotice("소비기한", "소비기한", true, "가공식품"),
+                new CategoryNotice("포장단위별 용량", "포장단위별 용량", true, "가공식품")));
+    }
+
+    private ProductListing cellWithNoticeGroup(String group) {
+        MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨")
+                .categoryNotices(Map.of("소비기한", "2026-12-31"))
+                .categoryNoticeGroup(group).build();
+        return ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+                .platformProductId("123456789").masterProduct(master).build();
+    }
+
+    @Test
+    void register_sharedNoticeKey_usesSelectedGroupNotTheFirstOne() throws Exception {
+        ProductListing cell = cellWithNoticeGroup("가공식품");   // NOT the first group in the schema
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("A")
+                        .sellingPrice(new BigDecimal("6000")).active(true).build()));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(sharedNoticeKeySchema());
+        GeneratedProductData gen = GeneratedProductData.builder()
+                .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell, gen, acct());
+
+        JsonNode notice = objectMapper.readTree(payload.getValue())
+                .path("items").get(0).path("notices").get(0);
+        assertThat(notice.path("noticeCategoryDetailName").asText()).isEqualTo("소비기한");
+        assertThat(notice.path("noticeCategoryName").asText()).isEqualTo("가공식품");
+    }
+
+    @Test
+    void register_noticeGroupUnset_keepsFirstWins() throws Exception {
+        ProductListing cell = cellWithNoticeGroup(null);   // legacy master, no group stored
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("A")
+                        .sellingPrice(new BigDecimal("6000")).active(true).build()));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(sharedNoticeKeySchema());
+        GeneratedProductData gen = GeneratedProductData.builder()
+                .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell, gen, acct());
+
+        assertThat(objectMapper.readTree(payload.getValue())
+                .path("items").get(0).path("notices").get(0).path("noticeCategoryName").asText())
+                .isEqualTo("농수축산물");
+    }
+
+    // ── 96 ⑧: 무료배송(FREE) sends 0 for both charge fields instead of null ──────────────────────────────
+
+    @Test
+    void register_freeShipping_sendsZeroForBothChargeFields() throws Exception {
+        given(shippingConfigResolver.resolve(any())).willReturn(new ResolvedShippingConfig(
+                "OUT-1", "RC-1", "반품담당", "021234567", "06000", "서울시", "1층",
+                new BigDecimal("2500"), new BigDecimal("2500"),
+                "SEQUENCIAL", "KGB", "FREE", null, null,   // deliveryCharge + freeShipOverAmount both null
+                "N", "NOT_UNION_DELIVERY", null));
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("1세트")
+                        .sellingPrice(new BigDecimal("6000")).active(true).build()));
+        given(masterProductService.isBundle(null)).willReturn(false);
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell(), gen, acct());
+
+        JsonNode json = objectMapper.readTree(payload.getValue());
+        assertThat(json.path("deliveryCharge").asInt()).isZero();
+        assertThat(json.path("freeShipOverAmount").asInt()).isZero();
+    }
+
+    // ── 96 ⑨: required 고시 are validated for every active option, whatever the attribute situation ──────
+
+    /** An active option on a cell whose master picked 가공식품 but left a required notice empty. */
+    private ProductListing cellMissingRequiredNotice() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨")
+                .categoryAttributes(Map.of("원산지", "국내산"))
+                .categoryNotices(Map.of("소비기한", "2026-12-31"))   // 포장단위별 용량 left blank
+                .categoryNoticeGroup("가공식품").build();
+        return ProductListing.builder().id(100L).platform("COUPANG").name("셀").masterProduct(master).build();
+    }
+
+    private void givenOneActiveOption() {
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("A")
+                        .sellingPrice(new BigDecimal("6000")).active(true).build()));
+    }
+
+    @Test
+    void validateRegistrable_requiredNoticeBlank_throws() {
+        ProductListing cell = cellMissingRequiredNotice();
+        given(masterProductService.isBundle(1L)).willReturn(false);
+        given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
+                List.of(new CategoryAttribute("원산지", true, "TEXT", List.of(), null)),
+                sharedNoticeKeySchema().notices()));
+        givenOneActiveOption();
+
+        assertThatThrownBy(() -> adapter.validateRegistrable(cell, null, acct()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("필수 고시 누락")
+                .hasMessageContaining("포장단위별 용량");
+    }
+
+    // 47: a schema with no notices at all (NAVER placeholder) has nothing to enforce.
+    @Test
+    void validateRegistrable_emptyNoticeSchema_skips() {
+        ProductListing cell = cellMissingRequiredNotice();
+        given(masterProductService.isBundle(1L)).willReturn(false);
+        given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
+                List.of(new CategoryAttribute("원산지", true, "TEXT", List.of(), null)), List.of()));
+        givenOneActiveOption();
+
+        assertThatCode(() -> adapter.validateRegistrable(cell, null, acct()))
+                .doesNotThrowAnyException();
+    }
+
+    // 96 ⑨ regression: the two early returns (AB / empty attribute schema) used to skip the notice check too.
+    @Test
+    void validateRegistrable_abMaster_stillValidatesNotices() {
+        ProductListing cell = cellMissingRequiredNotice();
+        given(masterProductService.isBundle(1L)).willReturn(true);   // AB → attributes skipped, notices are not
+        given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
+                List.of(new CategoryAttribute("원산지", true, "TEXT", List.of(), null)),
+                sharedNoticeKeySchema().notices()));
+        givenOneActiveOption();
+
+        assertThatThrownBy(() -> adapter.validateRegistrable(cell, null, acct()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("필수 고시 누락");
+    }
+
+    @Test
+    void validateRegistrable_emptyAttributeSchema_stillValidatesNotices() {
+        ProductListing cell = cellMissingRequiredNotice();
+        given(masterProductService.isBundle(1L)).willReturn(false);
+        given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
+                List.of(), sharedNoticeKeySchema().notices()));   // notices-only category
+        givenOneActiveOption();
+
+        assertThatThrownBy(() -> adapter.validateRegistrable(cell, null, acct()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("필수 고시 누락");
     }
 }

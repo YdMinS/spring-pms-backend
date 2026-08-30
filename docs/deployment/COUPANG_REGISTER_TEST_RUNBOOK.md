@@ -127,12 +127,13 @@ register 가 한 번 성공하면 그 셀에 `platformProductId` 가 박히고 *
 | 1 | dev 배포에 93 포함 | ✅ | 2026-08-29 | 머지 09:40:50 UTC → 기동 09:43:32 UTC |
 | 2 | 계정 HMAC 인증 동작 | ✅ | 2026-08-29 | 카테고리 메타 GET 200 (16695 bytes) |
 | 3 | 카테고리 메타 조회(47) | ✅ | 2026-08-29 | code=72882. ⚠️ 파싱 결함 발견 → §부록 A / 프롬프트 94 |
-| 4 | 전용 테스트 마스터 생성 | ⬜ | | |
-| 5 | 등록 전제 5가지 충족 | ⬜ | | |
-| 6 | **register 실행 (SINGLE)** | ⬜ | | ← **다음 할 일** |
-| 7 | register 실행 (AB) | ⬜ | | §6 ③ 판정용 |
-| 8 | WING 임시저장함 확인 | ⬜ | | |
-| 9 | 정리 완료 | ⬜ | | |
+| 4 | 전용 테스트 마스터 생성 | ✅ | 2026-08-30 | master 12 `ZZ 메타확인 테스트`(기타스낵→쿠팡 leaf 72900·구성1·옵션2[1개 활성]) |
+| 5 | 등록 전제 5가지 충족 | ✅ | 2026-08-30 | ⚠️ 3개 blocker 우회 필요했음(§6 ⑦⑧ + `vendor_user_id` NULL) |
+| 6 | **register 실행 (SINGLE)** | ✅ | 2026-08-30 | **쿠팡 도달·거부**(§7). 상품 미생성 |
+| 7 | register 실행 (AB) | ⬜ | | §6 ③ 판정용 — **SINGLE 통과 후** |
+| 8 | WING 임시저장함 확인 | — | 2026-08-30 | 상품 미생성이라 해당 없음 |
+| 9 | 정리 완료 | — | 2026-08-30 | 상품 미생성이라 해당 없음. 셀 17 은 DRAFT 로 재시도 가능 |
+| 10 | **재시도 (고시·배송·단위 3건 수정 후)** | 🟡 코드 완료·미실행 | 2026-08-30 | 96 구현 완료(§6 ④⑦⑧⑨⑩ 전부 수정, `feature/register-real-account-fixes`). **dev 배포 후 master 12 / cell 17 로 재시도** → 품목군을 **가공식품**(기타스낵의 올바른 품목군)으로 바꾸고 11개 고시 값 입력 → [마켓 등록] → 결과를 §7 에 append. ⚠️ 통과 보장 아님 — §6 ①② 는 여전히 미판정이라 이번엔 그 에러가 날 수 있다(실패가 아니라 다음 판정) |
 
 ## 6. 실계정으로만 판정되는 미해결 항목
 
@@ -141,9 +142,13 @@ register 가 한 번 성공하면 그 셀에 `platformProductId` 가 박히고 *
 | ① | `contents` 의 `contentsType`/`detailType` | `TEXT` 고정 (93) | 문서 샘플이 TEXT+HTML 조합뿐, HTML 타입 예시 없음 | `contents` 관련 에러 → `CONTENTS_TYPE`·`CONTENT_DETAIL_TYPE` 두 상수만 `HTML` 로 교체 후 재시도 |
 | ② | `certifications` | `NOT_REQUIRED` 센티넬 1개 (93) | 실측상 이 카테고리 certifications 는 전부 `required: OPTIONAL` 이고 `NOT_REQUIRED` 가 유효값 | `certification` 에러 → 카테고리 메타 파싱 + 인증코드 입력 UI 후속 프롬프트 |
 | ③ | **AB × attributes 충돌** | AB 는 attributes 전면 스킵 (63) | 63 근거("혼합 구성 상품 등록할 때, 속성 입력할 수 없습니다") vs 문서("한개 이상 필수")가 **정면 충돌**. 어느 쪽도 임의로 택하지 않음 | AB 셀 등록 결과로 확정 → 63 또는 93 중 한쪽 수정 |
-| ④ | **속성 단위(unit)** | 미전송 (`attributeTypeName` + `attributeValueName` 만) | 필수 속성이 `최소 중량(g)`·`최소 용량(ml)` 등 단위 기반. **값에 단위를 붙이지 말고 숫자만**(`500`) 넣어 시도 | 단위 요구 에러 → `usableUnits` 파싱 + 단위 저장 + payload 동반(94 가 유보한 부분) |
+| ④ | **속성 단위(unit)** | ✅ **수정됨(96)** — 어댑터가 전송 시점에 `basicUnit` 부착 | ✅ **2026-08-30 확정 — 공식 문서로 판정 종료** | 🔴 **런북 초기 가설("단위 붙이지 말고 숫자만")이 정반대였다.** [product-creation 문서](https://developers.coupang.com/ko/api/products/product-creation) 원문: `attributeValueName` = "옵션타입명에 해당하는 Value를 **단위와 함께 입력** (예시 `"200ml"`)". **API 에 단위 필드는 없다**(`attributeTypeName`·`attributeValueName`·`exposed` 뿐, 값 30자). WING UI 가 숫자+단위 드롭다운으로 나눠 받고 **합쳐서** 보내는 것. → 어댑터가 `basicUnit` 을 값에 부착(또는 사용자가 단위 포함 입력). 실계정 재시도로 최종 확인 |
 | ⑤ | `groupNumber` 의미 | 파싱 안 함 | `최소 중량`·`최소 용량` 이 둘 다 `groupNumber:"1"` + MANDATORY → "그룹 중 하나만 필수"로 **추정**되나 문서 근거 없음. 일단 둘 다 채워서 통과시킬 것 | 확정되면 필수검증 완화 프롬프트 |
 | ⑥ | `delete` = `sales/stop` 엔드포인트 | 문서 불명확, TODO 상태 | 별도 확인 필요 (`CoupangListingAdapter.delete`) | — |
+| ⑦ | ✅ **수정됨(96)** — 옵션 수정 500 (실계정 발견 2026-08-30) | `deleteByOptionId` = 벌크 JPQL `@Modifying(flushAutomatically=true)`. ⚠️ `clearAutomatically` 는 **붙이지 않는다**(option 이 detached 되어 LAZY `delivery`/`package_` 접근이 터진다) | `PATCH /api/admin/master-products/{id}/options/{oid}` → `Duplicate entry '16-6' for key 'uq_mpoi_option_product'` | **원인 = Hibernate flush 순서**(파생 삭제는 `em.remove` 뿐 → ActionQueue 가 insert 를 delete 보다 **먼저** 실행). 구성상품이 그대로인 옵션 수정은 **항상** 실패. 수정 = `deleteByOptionId` 를 `@Modifying(flushAutomatically=true, clearAutomatically=true)` 벌크 JPQL 로. 회귀 테스트 = "같은 구성상품으로 옵션 수정 → 성공" |
+| ⑧ | ✅ **수정됨(96)** — 무료배송 등록 불가 (실계정 발견 2026-08-30) | `ShippingReadiness.effectiveDeliveryCharge`/`effectiveFreeShipOverAmount`(FREE→0)를 판정·payload 가 공유 + changeset **045** 백필. `freeShipOverAmount` 는 필수 목록에 넣지 않음(CONDITIONAL_FREE 회귀 방지) | 프론트 `ShippingOverrideFields.tsx:436` 이 기본배송비 입력칸을 `NOT_FREE`/`CONDITIONAL_FREE` 일 때만 렌더 → `FREE` 면 `delivery_charge` 가 영원히 null → `shippingReady=false` → [마켓 등록] 영구 비활성 | ① 백엔드에서 `FREE` 면 `deliveryCharge` 를 0 으로 취급(가드 + payload 한 곳에서). ② 기존 행 백필 = **Liquibase 데이터 changeset** `UPDATE ... SET delivery_charge=0 WHERE delivery_charge_type='FREE' AND delivery_charge IS NULL`. ⚠️ **추가로 쿠팡이 `'무료배송을 위한 조건 금액' 값을 확인해 주세요` 를 반환** → `FREE` 에도 `freeShipOverAmount` 가 필요할 수 있음(현재는 `CONDITIONAL_FREE` 전용 optional 취급) |
+| ⑨ | 🟡 **백엔드 수정됨(96)·화면 몫은 97** — 필수 고시 누락 (실계정 발견 2026-08-30) | `validateRegistrable` 이 선택 품목군의 `required` 고시를 활성 옵션마다 검사(400, push 미도달). 조기 return 2개(AB / 속성 빈 스키마)를 속성 검증 앞으로 좁혀 고시는 **항상** 검사 | 쿠팡 `'1 번 옵션 의 고시정보' 다시 확인해 주세요` → 저장된 고시 **10개**인데 농수축산물 필수는 **11개**. 누락 = `포장단위별 내용물의 용량(중량),수량,크기` — 이 key 는 `용량/중량/수량` 어절이라 `isOptionNotice` 가 옵션 소유로 넘기고, 옵션 편집기에서도 **"상세입력" 체크를 켜야만** 보인다 | ① 옵션 게이트(`computeMissingOptionRequired`)가 **고시의 `required` 도** 검사하도록. ② 또는 옵션-소유 필수 고시를 기본 노출(상세입력 토글 뒤에 숨기지 않기). ③ 백엔드 `validateRegistrable` 에 고시 필수 검증 추가(현재 속성만 검증 → 쿠팡까지 가서야 알게 됨) |
+| ⑩ | ✅ **수정됨(96)** — 고시 품목군 뭉갬 (실측 메타로 발견, 실계정 거부 응답 아님) | detail→group 맵이 `toMap(..., (a,b)->a)` 라 **먼저 온 그룹**이 이김 | 품목군끼리 고시 key 를 공유한다(농수축산물 ↔ 가공식품이 `제조연월일, 소비기한 또는 품질유지기한`·`소비자안전을 위한 주의사항`·`소비자상담관련 전화번호` **3개 공유**) → 선택 그룹이 첫 그룹이 아니면 11개 중 3개가 다른 그룹명으로 전송된다 | 어댑터가 `MasterProduct.categoryNoticeGroup`(91)을 읽어 그 그룹의 고시로만 맵 구성. 저장값 없는 레거시 마스터는 현행 first-wins 유지. ⚠️ 91 의 "이 필드를 어댑터에 배선 금지" 결정을 뒤집은 것 — 그 도출이 공유 key 앞에서 성립하지 않음 |
 
 ## 7. 실행 기록
 
@@ -152,6 +157,7 @@ register 가 한 번 성공하면 그 셀에 `platformProductId` 가 박히고 *
 | 일자 | 마스터/셀 | bundleType | 결과 | 응답 원문 / 비고 |
 |---|---|---|---|---|
 | 2026-08-29 | — | — | 미실행 | 93 배포 완료, 메타 조회까지 확인 |
+| 2026-08-30 | master 12 `ZZ 메타확인 테스트` / cell 17 (FeniksKrylo·COUPANG) | SINGLE | **쿠팡 거부 (400 상당)** | `[COUPANG] POST .../seller-products 786ms bytes=158` → `{"code":"ERROR","message":"'1 번 옵션 의 고시정보' 다시 확인해 주세요\|'무료배송을 위한 조건 금액' 값을 확인해 주세요\|유효하지 않은 구매 옵션 값 혹은 단위가 존재합니다.","data":null,"details":null,"errorItems":null}` — `data:null` = **상품 미생성**(WING 정리 불필요). 셀 DRAFT 유지. 우리 앱은 500(`IllegalStateException: 쿠팡 상품등록 응답에 data(sellerProductId) 없음`). 카테고리 = 기타스낵 → 쿠팡 leaf **72900**. 도달 전 3개 blocker 해소: ①옵션 PATCH 500(아래 신규 ⑦) 우회 = DB 직접 수정 ②`shippingReady=false`(아래 신규 ⑧) = `delivery_charge=0` 수동 UPDATE ③`vendor_user_id` NULL = `fenikskrylo` 입력 |
 
 ---
 
