@@ -87,3 +87,5 @@ databaseChangeLog:
       file: db/changelog/changes/043-shipping-override.yaml
   - include:
       file: db/changelog/changes/044-category-notice-group.yaml
+  - include:
+      file: db/changelog/changes/045-free-shipping-charge-backfill.yaml

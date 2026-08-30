@@ -36,6 +36,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -72,6 +73,10 @@ public class CoupangListingAdapter implements ListingChannel {
             List.of(Map.of("certificationType", "NOT_REQUIRED", "certificationCode", ""));
     // 93: Coupang caps sellerProductName at 100 chars.
     private static final int MAX_SELLER_PRODUCT_NAME_LENGTH = 100;
+    // 96 ④: a value made of digits only (optionally signed / decimal) is the one that still needs its unit.
+    private static final Pattern NUMERIC_VALUE = Pattern.compile("^-?\\d+(\\.\\d+)?$");
+    // 96 ④: Coupang's documented cap for attributeValueName (warn only — see withUnit).
+    private static final int MAX_ATTRIBUTE_VALUE_LENGTH = 30;
 
     private final CoupangApiClient client;
     private final ObjectMapper objectMapper;
@@ -142,46 +147,71 @@ public class CoupangListingAdapter implements ListingChannel {
 
     @Override
     public void validateRegistrable(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct) {
-        // 63: AB (mixed-composition) forbids attributes entirely → a required-attribute check would make it
-        // un-registrable (contradiction). Skip the whole check for AB; SINGLE keeps it. Same isBundle call as
-        // buildPayload (§attributes skip) → the payload and the validation can't structurally diverge.
         // gen is unused here (kept for the ListingChannel contract symmetry — see interface Javadoc).
         MasterProduct master = cell.getMasterProduct();
-        if (masterProductService.isBundle(master == null ? null : master.getId())) {
-            return;
-        }
-        // 47/59: every required category attribute must have a non-blank value on each ACTIVE option (master
-        // shared default ++ per-option override). Register targets a single (master × channel) cell → one
-        // category → one getMeta call (reusing the Coupang concrete metaAdapter, 61). Empty schema (NAVER) skips.
+        // 63: AB (mixed-composition) forbids attributes entirely → a required-attribute check would make it
+        // un-registrable (contradiction). Same isBundle call as buildPayload (§attributes skip) → the payload
+        // and the validation can't structurally diverge.
+        // ⚠️ 96 ⑨: AB only skips the ATTRIBUTE half. AB still sends notices, so returning here (as this method
+        // used to) meant a missing required 고시 reached Coupang untouched.
+        boolean bundle = masterProductService.isBundle(master == null ? null : master.getId());
+        // 47/59: register targets a single (master × channel) cell → one category → one getMeta call (reusing
+        // the Coupang concrete metaAdapter, 61). Empty schema (NAVER) leaves both loops with nothing to check.
         String code = masterChannelConfigService.resolvePlatformCategoryCode(cell);
         CategoryMetaSchema schema = metaAdapter.getMeta(acct, code);
-        if (schema.attributes().isEmpty()) {
-            return;
-        }
+
         Map<String, String> masterAttributes = master != null ? master.getCategoryAttributes() : null;
+        Map<String, String> masterNotices = master != null ? master.getCategoryNotices() : null;
         Map<String, MasterProductOption> byName = master == null ? Map.of()
                 : masterProductOptionRepository.findByMasterProductId(master.getId()).stream()
                         .collect(Collectors.toMap(MasterProductOption::getName, o -> o, (a, b) -> a));
+        // 96 ⑨: the required 고시 of the picked 품목군 (same group rule as the payload, ⑩). A legacy master with
+        // no stored group is left alone — we cannot tell which group's required set applies, and demanding
+        // every group's would make those masters un-registrable.
+        List<CategoryNotice> requiredNotices = master != null && master.getCategoryNoticeGroup() != null
+                ? noticesOfSelectedGroup(schema, master).stream().filter(CategoryNotice::required).toList()
+                : List.of();
 
         for (ProductListingOption option : productListingOptionRepository.findByProductListingId(cell.getId())) {
             if (!Boolean.TRUE.equals(option.getActive())) {
                 continue;   // only active options are pushed → only they need required values
             }
             MasterProductOption mo = byName.get(option.getOptionName());
-            Map<String, String> values = OptionCategoryMeta.merge(
-                    masterAttributes, mo != null ? mo.getCategoryAttributes() : null);
-            // 93: Coupang requires at least one attribute per item. Categories whose schema defines none are
-            // already returned above (nothing to send) → this only fires when values COULD have been filled.
-            if (values.isEmpty()) {
-                throw new IllegalArgumentException(
-                        "카테고리 속성 미입력: " + option.getOptionName() + " — 속성을 1개 이상 입력하세요");
+            // 47/59: every required category attribute must have a non-blank value on each ACTIVE option
+            // (master shared default ++ per-option override). Categories whose schema defines no attribute have
+            // nothing to send → skipped here rather than at the top of the method, so the notice check below
+            // still runs for a notices-only category (96 ⑨).
+            if (!bundle && !schema.attributes().isEmpty()) {
+                Map<String, String> values = OptionCategoryMeta.merge(
+                        masterAttributes, mo != null ? mo.getCategoryAttributes() : null);
+                // 93: Coupang requires at least one attribute per item. This only fires when values COULD have
+                // been filled (a schema with attributes).
+                if (values.isEmpty()) {
+                    throw new IllegalArgumentException(
+                            "카테고리 속성 미입력: " + option.getOptionName() + " — 속성을 1개 이상 입력하세요");
+                }
+                for (CategoryAttribute attribute : schema.attributes()) {
+                    if (attribute.required()) {
+                        String value = values.get(attribute.name());
+                        if (value == null || value.isBlank()) {
+                            throw new IllegalArgumentException(
+                                    "필수 카테고리 속성 누락: " + option.getOptionName() + " / " + attribute.name());
+                        }
+                    }
+                }
             }
-            for (CategoryAttribute attribute : schema.attributes()) {
-                if (attribute.required()) {
-                    String value = values.get(attribute.name());
+            // 96 ⑨: a required 고시 owned by the option level (용량/중량/수량 …) sat behind the option editor's
+            // "상세입력" toggle and was checked by neither gate — the master gate excludes option-owned notices
+            // and the option gate only looked at attributes. Coupang answered with an opaque
+            // "'1 번 옵션 의 고시정보' 다시 확인해 주세요". Checked for SINGLE and AB alike.
+            if (!requiredNotices.isEmpty()) {
+                Map<String, String> notices = OptionCategoryMeta.merge(
+                        masterNotices, mo != null ? mo.getCategoryNotices() : null);
+                for (CategoryNotice notice : requiredNotices) {
+                    String value = notices.get(notice.key());
                     if (value == null || value.isBlank()) {
                         throw new IllegalArgumentException(
-                                "필수 카테고리 속성 누락: " + option.getOptionName() + " / " + attribute.name());
+                                "필수 고시 누락: " + option.getOptionName() + " / " + notice.key());
                     }
                 }
             }
@@ -248,12 +278,21 @@ public class CoupangListingAdapter implements ListingChannel {
 
         Map<String, String> masterAttributes = master != null ? master.getCategoryAttributes() : null;
         Map<String, String> masterNotices = master != null ? master.getCategoryNotices() : null;
-        // Notice detail(noticeCategoryDetailName) → group(noticeCategoryName) for this category (61). Coupang
-        // requires noticeCategoryName on every notice item; the stored values map is pure detail→value, so the
-        // group is derived here from the category meta (one extra getMeta per register — accepted, §60).
-        Map<String, String> groupByDetail = metaAdapter.getMeta(acct, categoryCode).notices().stream()
+        // The category meta for this code, fetched ONCE and reused for both the notice groups (61/96 ⑩) and the
+        // attribute units (96 ④). ⚠️ Do not call getMeta again inside this method — register already pays two
+        // calls in total (validateRegistrable + here, accepted per §60); adding a third is pure waste.
+        CategoryMetaSchema schema = metaAdapter.getMeta(acct, categoryCode);
+        // Notice detail(noticeCategoryDetailName) → group(noticeCategoryName) for this category (61), narrowed
+        // to the group the user actually picked (96 ⑩ — 품목군 share notice keys, so a first-wins map tagged the
+        // shared ones with whichever group happened to come first).
+        Map<String, String> groupByDetail = noticesOfSelectedGroup(schema, master).stream()
                 .filter(n -> n.groupName() != null)
                 .collect(Collectors.toMap(CategoryNotice::key, CategoryNotice::groupName, (a, b) -> a));
+        // 96 ④: attribute name → 기본 단위. Coupang has no unit field — the value itself must carry it
+        // ("200ml"). Built once, outside the items loop.
+        Map<String, String> unitByAttr = schema.attributes().stream()
+                .filter(a -> a.basicUnit() != null)
+                .collect(Collectors.toMap(CategoryAttribute::name, CategoryAttribute::basicUnit, (a, b) -> a));
 
         // 63: bundleType = product-level SINGLE (single composition) / AB (mixed composition). Determined once
         // (loop-invariant local boolean, no N+1) by the master's component count. AB forbids attributes entirely.
@@ -311,7 +350,7 @@ public class CoupangListingAdapter implements ListingChannel {
                 Map<String, String> attrs = OptionCategoryMeta.merge(
                         masterAttributes, mo != null ? mo.getCategoryAttributes() : null);
                 if (!attrs.isEmpty()) {
-                    item.put("attributes", toAttributes(attrs));
+                    item.put("attributes", toAttributes(attrs, unitByAttr));
                 }
             }
             Map<String, String> notices = OptionCategoryMeta.merge(
@@ -397,8 +436,11 @@ public class CoupangListingAdapter implements ListingChannel {
         payload.put("deliveryMethod", cfg.deliveryMethod());
         payload.put("deliveryCompanyCode", cfg.deliveryCompanyCode());
         payload.put("deliveryChargeType", cfg.deliveryChargeType());
-        payload.put("deliveryCharge", cfg.deliveryCharge());
-        payload.put("freeShipOverAmount", cfg.freeShipOverAmount());   // optional (CONDITIONAL_FREE only)
+        // 96 ⑧: 무료배송(FREE) leaves both columns null, and Coupang rejects the product for the missing
+        // '무료배송을 위한 조건 금액'. The FREE→0 rule lives in ShippingReadiness so the register guard and this
+        // payload can never drift (77).
+        payload.put("deliveryCharge", ShippingReadiness.effectiveDeliveryCharge(cfg));
+        payload.put("freeShipOverAmount", ShippingReadiness.effectiveFreeShipOverAmount(cfg));
         payload.put("deliveryChargeOnReturn", cfg.deliveryChargeOnReturn());
         payload.put("remoteAreaDeliverable", cfg.remoteAreaDeliverable());
         payload.put("unionDeliveryType", cfg.unionDeliveryType());
@@ -412,16 +454,64 @@ public class CoupangListingAdapter implements ListingChannel {
         payload.put("outboundShippingPlaceCode", cfg.outboundShippingPlaceCode());
     }
 
-    /** Merged category-attribute map → Coupang vendorItem {@code attributes[]} shape (47/59). */
-    private static List<Map<String, Object>> toAttributes(Map<String, String> values) {
+    /**
+     * Merged category-attribute map → Coupang vendorItem {@code attributes[]} shape (47/59), with the category's
+     * 기본 단위 appended to bare numbers (96 ④).
+     *
+     * <p>The API has no unit field — the docs spell out that {@code attributeValueName} is "옵션타입명에 해당하는
+     * Value를 단위와 함께 입력 (예시 "200ml")"; WING's number+dropdown UI simply concatenates before sending.
+     * A live account rejected our numbers-only payload with "유효하지 않은 구매 옵션 값 혹은 단위가 존재합니다".</p>
+     */
+    private static List<Map<String, Object>> toAttributes(Map<String, String> values,
+                                                          Map<String, String> unitByAttr) {
         List<Map<String, Object>> attributes = new ArrayList<>();
         for (Map.Entry<String, String> entry : values.entrySet()) {
             Map<String, Object> attribute = new LinkedHashMap<>();
             attribute.put("attributeTypeName", entry.getKey());
-            attribute.put("attributeValueName", entry.getValue());
+            attribute.put("attributeValueName", withUnit(entry.getKey(), entry.getValue(), unitByAttr));
             attributes.add(attribute);
         }
         return attributes;
+    }
+
+    /**
+     * 96 ④: append the attribute's 기본 단위 when the stored value is a bare number. A value that already
+     * carries a unit is sent verbatim — the user may have typed a different one (kg vs g) and overwriting it
+     * would change the meaning. ⚠️ The stored value is never mutated; the unit is attached at send time only.
+     */
+    private static String withUnit(String name, String value, Map<String, String> unitByAttr) {
+        if (value == null) {
+            return null;
+        }
+        String unit = unitByAttr.get(name);
+        String trimmed = value.trim();
+        if (unit == null || !NUMERIC_VALUE.matcher(trimmed).matches()) {
+            return value;
+        }
+        String withUnit = trimmed + unit;
+        if (withUnit.length() > MAX_ATTRIBUTE_VALUE_LENGTH) {
+            // Sent as-is on purpose: truncating "1000그램" mid-unit would change what the value means, and the
+            // 30-char cap has never been hit on a live account. Coupang's own error is the better signal.
+            log.warn("[COUPANG-ADAPTER] attributeValueName '{}' {}자 — 쿠팡 상한 {}자 초과",
+                    withUnit, withUnit.length(), MAX_ATTRIBUTE_VALUE_LENGTH);
+        }
+        return withUnit;
+    }
+
+    /**
+     * 96 ⑩: the notices of the 품목군 the user picked on the master ({@code categoryNoticeGroup}, 91).
+     * 품목군 share notice keys (농수축산물 ↔ 가공식품 share three), so the detail→group map must be built from
+     * one group only — otherwise the shared keys go out labelled with whichever group came first in the schema.
+     * A legacy master with no stored group keeps the old first-wins behaviour (no regression).
+     */
+    private static List<CategoryNotice> noticesOfSelectedGroup(CategoryMetaSchema schema, MasterProduct master) {
+        String selected = master != null ? master.getCategoryNoticeGroup() : null;
+        if (selected == null || selected.isBlank()) {
+            return schema.notices();
+        }
+        return schema.notices().stream()
+                .filter(n -> selected.equals(n.groupName()))
+                .toList();
     }
 
     /**

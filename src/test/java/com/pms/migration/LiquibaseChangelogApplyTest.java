@@ -236,6 +236,14 @@ class LiquibaseChangelogApplyTest {
         // changeset 044: master_product.category_notice_group materialized (91; a successful count proves it).
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM master_product WHERE category_notice_group IS NULL", Integer.class)).isZero();
+
+        // changeset 045: the FREE-shipping backfill applied (96 ⑧). No seeded rows here, so what this asserts
+        // is that the two conditional UPDATEs ran without error and left no FREE row with a null charge.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM marketplace_shipping_config "
+                        + "WHERE delivery_charge_type = 'FREE' "
+                        + "AND (delivery_charge IS NULL OR free_ship_over_amount IS NULL)",
+                Integer.class)).isZero();
     }
 
     @Test
