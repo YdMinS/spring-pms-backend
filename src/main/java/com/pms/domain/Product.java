@@ -50,20 +50,23 @@ public class Product extends BaseEntity {
     @Column(name = "store", nullable = true, length = 255)
     private String store;
 
-    @Column(name = "unit", nullable = true, length = 255)
-    private String unit;
+    // Unit of netContent. Mass (KG/G) or volume (L/ML) -- see netContent below.
+    @Column(name = "net_content_unit", nullable = true, length = 255)
+    private String netContentUnit;
 
-    @Column(name = "volume_height", nullable = true, length = 255)
-    private String volumeHeight;
+    @Column(name = "package_height", nullable = true, length = 255)
+    private String packageHeight;
 
-    @Column(name = "volume_long", nullable = true, length = 255)
-    private String volumeLong;
+    @Column(name = "package_length", nullable = true, length = 255)
+    private String packageLength;
 
-    @Column(name = "volume_short", nullable = true, length = 255)
-    private String volumeShort;
+    @Column(name = "package_width", nullable = true, length = 255)
+    private String packageWidth;
 
-    @Column(name = "weight", nullable = true, length = 255)
-    private String weight;
+    // Amount of product inside the package (GS1 netContent). Covers BOTH mass and volume, which is why
+    // this is not "weight"/"netWeight" -- those are mass-only and cannot hold an ML value (changeset 046).
+    @Column(name = "net_content", nullable = true, length = 255)
+    private String netContent;
 
     @Column(name = "description", columnDefinition = "TEXT")
     private String description;

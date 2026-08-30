@@ -3,11 +3,13 @@ package com.pms.migration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Regression guard (§7) for the Liquibase master changelog — APPLICABILITY check.
@@ -244,6 +246,18 @@ class LiquibaseChangelogApplyTest {
                         + "WHERE delivery_charge_type = 'FREE' "
                         + "AND (delivery_charge IS NULL OR free_ship_over_amount IS NULL)",
                 Integer.class)).isZero();
+
+        // changeset 046: the products columns were renamed (98). A successful count over all five new
+        // names proves they exist...
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM products "
+                        + "WHERE net_content IS NULL AND net_content_unit IS NULL "
+                        + "AND package_height IS NULL AND package_length IS NULL AND package_width IS NULL",
+                Integer.class)).isZero();
+        // ...and the old names are gone (a rename, not an additive copy).
+        assertThatThrownBy(() -> jdbcTemplate.queryForObject("SELECT weight FROM products", String.class))
+                .as("old products.weight column dropped by the rename")
+                .isInstanceOf(DataAccessException.class);
     }
 
     @Test

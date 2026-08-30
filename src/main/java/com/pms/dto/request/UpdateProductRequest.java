@@ -38,25 +38,25 @@ public class UpdateProductRequest {
     @Builder.Default
     private Optional<String> store = Optional.empty();
 
-    @Schema(description = "Unit of measurement", example = "KG")
+    @Schema(description = "Unit of net content (KG, G, L, ML)", example = "KG")
     @Builder.Default
-    private Optional<String> unit = Optional.empty();
+    private Optional<String> netContentUnit = Optional.empty();
 
-    @Schema(description = "Volume height", example = "160mm")
+    @Schema(description = "Package height", example = "160mm")
     @Builder.Default
-    private Optional<String> volumeHeight = Optional.empty();
+    private Optional<String> packageHeight = Optional.empty();
 
-    @Schema(description = "Volume long", example = "75mm")
+    @Schema(description = "Package length", example = "75mm")
     @Builder.Default
-    private Optional<String> volumeLong = Optional.empty();
+    private Optional<String> packageLength = Optional.empty();
 
-    @Schema(description = "Volume short", example = "8.9mm")
+    @Schema(description = "Package width", example = "8.9mm")
     @Builder.Default
-    private Optional<String> volumeShort = Optional.empty();
+    private Optional<String> packageWidth = Optional.empty();
 
-    @Schema(description = "Weight", example = "170g")
+    @Schema(description = "Amount of product inside the package (mass or volume)", example = "170g")
     @Builder.Default
-    private Optional<String> weight = Optional.empty();
+    private Optional<String> netContent = Optional.empty();
 
     @Schema(description = "Product description")
     @Builder.Default

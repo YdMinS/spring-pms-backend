@@ -1,0 +1,21 @@
+databaseChangeLog:
+  # 98: the products columns lied about what they hold.
+  #  - weight/unit accepted L/ML as units -> the value is the *net content* (mass OR volume), not a weight.
+  #    netWeight would be wrong for the same reason (mass-only).
+  #  - volume_* were 3 dimensions, not a volume.
+  # Pure rename. Column types stay VARCHAR(255) (VARCHAR->DECIMAL is separate, later debt).
+  - changeSet:
+      id: 046-product-net-content-rename
+      author: oclyx
+      changes:
+        - renameColumn: { tableName: products, oldColumnName: weight,        newColumnName: net_content,      columnDataType: VARCHAR(255) }
+        - renameColumn: { tableName: products, oldColumnName: unit,          newColumnName: net_content_unit, columnDataType: VARCHAR(255) }
+        - renameColumn: { tableName: products, oldColumnName: volume_height, newColumnName: package_height,   columnDataType: VARCHAR(255) }
+        - renameColumn: { tableName: products, oldColumnName: volume_long,   newColumnName: package_length,   columnDataType: VARCHAR(255) }
+        - renameColumn: { tableName: products, oldColumnName: volume_short,  newColumnName: package_width,    columnDataType: VARCHAR(255) }
+      rollback:
+        - renameColumn: { tableName: products, oldColumnName: net_content,      newColumnName: weight,        columnDataType: VARCHAR(255) }
+        - renameColumn: { tableName: products, oldColumnName: net_content_unit, newColumnName: unit,          columnDataType: VARCHAR(255) }
+        - renameColumn: { tableName: products, oldColumnName: package_height,   newColumnName: volume_height, columnDataType: VARCHAR(255) }
+        - renameColumn: { tableName: products, oldColumnName: package_length,   newColumnName: volume_long,   columnDataType: VARCHAR(255) }
+        - renameColumn: { tableName: products, oldColumnName: package_width,    newColumnName: volume_short,  columnDataType: VARCHAR(255) }

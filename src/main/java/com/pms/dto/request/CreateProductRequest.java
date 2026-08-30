@@ -36,25 +36,25 @@ public class CreateProductRequest {
     @Schema(description = "Store name", example = "Best Buy")
     private String store;
 
-    @Size(max = 255, message = "Unit must not exceed 255 characters")
-    @Schema(description = "Unit of measurement", example = "KG")
-    private String unit;
+    @Size(max = 255, message = "Net content unit must not exceed 255 characters")
+    @Schema(description = "Unit of net content (KG, G, L, ML)", example = "KG")
+    private String netContentUnit;
 
-    @Size(max = 255, message = "Volume height must not exceed 255 characters")
-    @Schema(description = "Volume height", example = "160mm")
-    private String volumeHeight;
+    @Size(max = 255, message = "Package height must not exceed 255 characters")
+    @Schema(description = "Package height", example = "160mm")
+    private String packageHeight;
 
-    @Size(max = 255, message = "Volume long must not exceed 255 characters")
-    @Schema(description = "Volume long", example = "75mm")
-    private String volumeLong;
+    @Size(max = 255, message = "Package length must not exceed 255 characters")
+    @Schema(description = "Package length", example = "75mm")
+    private String packageLength;
 
-    @Size(max = 255, message = "Volume short must not exceed 255 characters")
-    @Schema(description = "Volume short", example = "8.9mm")
-    private String volumeShort;
+    @Size(max = 255, message = "Package width must not exceed 255 characters")
+    @Schema(description = "Package width", example = "8.9mm")
+    private String packageWidth;
 
-    @Size(max = 255, message = "Weight must not exceed 255 characters")
-    @Schema(description = "Weight", example = "170g")
-    private String weight;
+    @Size(max = 255, message = "Net content must not exceed 255 characters")
+    @Schema(description = "Amount of product inside the package (mass or volume)", example = "170g")
+    private String netContent;
 
     @Schema(description = "Product description")
     private String description;
