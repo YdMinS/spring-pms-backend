@@ -1036,20 +1036,28 @@ public class MasterProductServiceImpl implements MasterProductService {
         List<MasterProductOptionItem> items = optionIds.isEmpty()
                 ? List.of() : optionItemRepository.findByOptionIdIn(optionIds);
 
-        // Batch every referenced product name in one query (N+1 guard).
+        // Batch every referenced product in one query (N+1 guard). Read product fields from THIS map,
+        // never from c.getProduct().getX() — that initialises the lazy proxy (open-in-view: false).
         Set<Long> productIds = new LinkedHashSet<>();
         components.forEach(c -> productIds.add(c.getProduct().getId()));
         items.forEach(it -> productIds.add(it.getProduct().getId()));
-        Map<Long, String> names = productIds.isEmpty()
+        Map<Long, Product> productsById = productIds.isEmpty()
                 ? Map.of()
                 : productRepository.findAllById(productIds).stream()
-                        .collect(Collectors.toMap(Product::getId, Product::getProductName));
+                        .collect(Collectors.toMap(Product::getId, p -> p));
 
         List<MasterProductResponse.Component> componentResponses = components.stream()
-                .map(c -> MasterProductResponse.Component.builder()
-                        .productId(c.getProduct().getId())
-                        .productName(names.get(c.getProduct().getId()))
-                        .build())
+                .map(c -> {
+                    Product p = productsById.get(c.getProduct().getId());
+                    return MasterProductResponse.Component.builder()
+                            .productId(c.getProduct().getId())
+                            // p == null: the product row is gone (orphan component) — keep the pre-100
+                            // behaviour of reporting nulls instead of blowing the whole response up.
+                            .productName(p == null ? null : p.getProductName())
+                            .netContent(p == null ? null : p.getNetContent())
+                            .netContentUnit(p == null ? null : p.getNetContentUnit())
+                            .build();
+                })
                 .toList();
 
         Map<Long, List<MasterProductOptionItem>> itemsByOption = items.stream()
@@ -1064,11 +1072,14 @@ public class MasterProductServiceImpl implements MasterProductService {
                         .categoryNotices(o.getCategoryNotices())
                         .marketRegistered(lockedNames.contains(o.getName()))
                         .items(itemsByOption.getOrDefault(o.getId(), List.of()).stream()
-                                .map(it -> MasterOptionResponse.Item.builder()
-                                        .productId(it.getProduct().getId())
-                                        .productName(names.get(it.getProduct().getId()))
-                                        .quantity(it.getQuantity())
-                                        .build())
+                                .map(it -> {
+                                    Product p = productsById.get(it.getProduct().getId());
+                                    return MasterOptionResponse.Item.builder()
+                                            .productId(it.getProduct().getId())
+                                            .productName(p == null ? null : p.getProductName())
+                                            .quantity(it.getQuantity())
+                                            .build();
+                                })
                                 .toList())
                         .build())
                 .toList();

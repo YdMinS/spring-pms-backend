@@ -114,6 +114,12 @@ class MasterProductServiceTest {
         return Product.builder().id(id).productName(name).build();
     }
 
+    /** 100: a product carrying the measured amount (98 netContent/netContentUnit). */
+    private Product product(Long id, String name, String netContent, String netContentUnit) {
+        return Product.builder().id(id).productName(name)
+                .netContent(netContent).netContentUnit(netContentUnit).build();
+    }
+
     private MasterProductComponent component(MasterProduct master, Product product) {
         return MasterProductComponent.builder().masterProduct(master).product(product).build();
     }
@@ -267,6 +273,65 @@ class MasterProductServiceTest {
         assertThat(response.getRegistrationName()).isEqualTo("노브랜드 생수 x 6");
         // 69: master-level uses resolveForMaster (master ?? system — no channel/seller context).
         verify(optionCheckSuffixResolver).resolveForMaster(master);
+    }
+
+    // 100: the component the master holds (`bare`) is deliberately EMPTY while the batch map returns the
+    // populated product (`full`). Reading the amount off c.getProduct() (the lazy proxy) therefore yields
+    // null and fails — the whole point of keeping the batched Map<Long, Product> as the single source.
+    @Test
+    void getMasterProduct_exposesComponentNetContent() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        Product bare = product(1L, "NST 녹차라떼");
+        Product full = product(1L, "NST 녹차라떼", "320", "G");
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(componentRepository.findByMasterProductId(1L)).willReturn(List.of(component(master, bare)));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(productRepository.findAllById(any())).willReturn(List.of(full));
+
+        MasterProductResponse response = service.getMasterProduct(1L);
+
+        MasterProductResponse.Component c = response.getComponents().get(0);
+        assertThat(c.getProductName()).isEqualTo("NST 녹차라떼");
+        // Raw, unformatted — the client (101) decides how to render "320" + "G".
+        assertThat(c.getNetContent()).isEqualTo("320");
+        assertThat(c.getNetContentUnit()).isEqualTo("G");
+    }
+
+    @Test
+    void getMasterProduct_nullNetContentWhenProductHasNone() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        Product bare = product(1L, "NST 녹차라떼");
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(componentRepository.findByMasterProductId(1L)).willReturn(List.of(component(master, bare)));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(productRepository.findAllById(any())).willReturn(List.of(bare));
+
+        MasterProductResponse response = service.getMasterProduct(1L);
+
+        MasterProductResponse.Component c = response.getComponents().get(0);
+        // null, never "" — 101 has to be able to tell "no value" apart from an empty amount.
+        assertThat(c.getNetContent()).isNull();
+        assertThat(c.getNetContentUnit()).isNull();
+    }
+
+    @Test
+    void getMasterProduct_singleQueryForProducts() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        Product p1 = product(1L, "물품1", "320", "G");
+        Product p2 = product(2L, "물품2", "500", "ML");
+        Product p3 = product(3L, "물품3", null, null);
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(componentRepository.findByMasterProductId(1L)).willReturn(List.of(
+                component(master, product(1L, "물품1")),
+                component(master, product(2L, "물품2")),
+                component(master, product(3L, "물품3"))));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(productRepository.findAllById(any())).willReturn(List.of(p1, p2, p3));
+
+        service.getMasterProduct(1L);
+
+        // N+1 guard: three components, still one batched fetch.
+        verify(productRepository, times(1)).findAllById(any());
     }
 
     @Test
