@@ -35,6 +35,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -190,13 +192,33 @@ public class CoupangListingAdapter implements ListingChannel {
                     throw new IllegalArgumentException(
                             "카테고리 속성 미입력: " + option.getOptionName() + " — 속성을 1개 이상 입력하세요");
                 }
+                // ⑤: 같은 groupNumber 를 가진 MANDATORY 속성은 **그룹 중 하나만** 채우면 충족이다.
+                // 실측(72882) `최소 중량`·`최소 용량` 이 둘 다 MANDATORY + groupNumber "1" 인데, 고체/액체
+                // 상품은 둘 중 하나만 기재한다(프론트 60 도 중량/용량을 택1 페어로 렌더한다). 개별로 검사하면
+                // 어느 상품이든 반드시 하나가 비어 **등록이 영구 차단**된다(2026-08-30 실측 차단).
+                Set<String> satisfiedGroups = new HashSet<>();
+                Map<String, List<String>> requiredGroups = new LinkedHashMap<>();
                 for (CategoryAttribute attribute : schema.attributes()) {
-                    if (attribute.required()) {
-                        String value = values.get(attribute.name());
-                        if (value == null || value.isBlank()) {
-                            throw new IllegalArgumentException(
-                                    "필수 카테고리 속성 누락: " + option.getOptionName() + " / " + attribute.name());
+                    if (!attribute.required()) {
+                        continue;
+                    }
+                    String value = values.get(attribute.name());
+                    boolean filled = value != null && !value.isBlank();
+                    if (attribute.grouped()) {
+                        requiredGroups.computeIfAbsent(attribute.groupNumber(), k -> new ArrayList<>())
+                                .add(attribute.name());
+                        if (filled) {
+                            satisfiedGroups.add(attribute.groupNumber());
                         }
+                    } else if (!filled) {
+                        throw new IllegalArgumentException(
+                                "필수 카테고리 속성 누락: " + option.getOptionName() + " / " + attribute.name());
+                    }
+                }
+                for (Map.Entry<String, List<String>> group : requiredGroups.entrySet()) {
+                    if (!satisfiedGroups.contains(group.getKey())) {
+                        throw new IllegalArgumentException("필수 카테고리 속성 누락: " + option.getOptionName()
+                                + " / " + String.join(" 또는 ", group.getValue()) + " 중 하나");
                     }
                 }
             }

@@ -100,9 +100,21 @@ public class CoupangCategoryMeta implements CategoryMetaAdapter {
                     inputType(attr.path("inputType").asText(""), attr.path("dataType").asText(""),
                             !options.isEmpty()),
                     options,
-                    basicUnit(attr.path("basicUnit").asText(null))));
+                    basicUnit(attr.path("basicUnit").asText(null)),
+                    groupNumber(attr.path("groupNumber").asText(null))));
         }
         return attributes;
+    }
+
+    /**
+     * 택1 그룹 번호. 그룹이 없으면 쿠팡이 리터럴 {@code "NONE"} 을 주므로 null 로 정규화한다
+     * (⑤ — 같은 번호의 MANDATORY 속성은 그룹 중 하나만 채우면 충족).
+     */
+    private String groupNumber(String raw) {
+        if (raw == null || raw.isBlank() || "NONE".equals(raw)) {
+            return null;
+        }
+        return raw;
     }
 
     /** Coupang writes the literal string {@code "없음"} when an attribute has no unit — normalize it to null. */
