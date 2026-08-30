@@ -22,9 +22,17 @@ import java.nio.charset.StandardCharsets;
  * <ul>
  *   <li>{@code ordersheets} 포함 → {@code fixtures/coupang/ordersheets.json}</li>
  *   <li>{@code returnRequests} 포함 → {@code fixtures/coupang/returnRequests.json}</li>
+ *   <li>{@code seller-products} 포함(GET) → 승인완료 상태 + 옵션 id 인라인 fixture (3c fetchStatus)</li>
+ *   <li>{@code seller-products} 포함(POST) → sellerProductId 인라인 fixture (3c register)</li>
+ *   <li>{@code display-categories/} 포함(GET) → 카테고리 트리 자식 fixture (45 browse)</li>
+ *   <li>{@code category-related-metas} 포함(GET) → 필수속성/고시 meta fixture (47)</li>
+ *   <li>{@code categorization/predict} 포함(POST) → 카테고리 추천 fixture (45 predict)</li>
+ *   <li>{@code shipping-place/outbound} 포함(GET) → 출고지 목록 fixture (72)</li>
+ *   <li>{@code returnShippingCenters} 포함(GET) → 반품지 목록 fixture (72)</li>
  *   <li>그 외 → {@code {"code":200,"data":[]}}</li>
  * </ul>
- * 반환 JSON 은 실제 파서(예: CoupangOrderSyncServiceImpl.upsert)가 그대로 소화할 수 있는 키 구조여야 한다.
+ * 반환 JSON 은 실제 파서(예: CoupangOrderSyncServiceImpl.upsert, CoupangListingAdapter)가 그대로 소화할 수
+ * 있는 키 구조여야 한다.
  */
 @Component
 @Profile("local")
@@ -36,6 +44,43 @@ public class MockCoupangApiClient implements CoupangApiClient {
     private static final String RETURN_REQUESTS_FIXTURE = "fixtures/coupang/returnRequests.json";
     private static final String EMPTY = "{\"code\":200,\"data\":[]}";
 
+    // 3c fixtures (inline): register → sellerProductId, fetchStatus → 승인완료 + option ids.
+    private static final String SELLER_PRODUCT_REGISTER =
+            "{\"code\":\"SUCCESS\",\"data\":123456789}";
+    private static final String SELLER_PRODUCT_FETCH =
+            "{\"code\":\"SUCCESS\",\"data\":{\"sellerProductId\":123456789,\"statusName\":\"승인완료\","
+                    + "\"items\":[{\"itemName\":\"1세트\",\"vendorItemId\":987654321,"
+                    + "\"sellerProductItemId\":555666777}]}}";
+
+    // 45 category lookup fixtures (inline). Tree = data.child[] (displayCategoryCode/name/child/last):
+    // 1001 has a nested child + last=false → non-leaf, 1002 has empty child → leaf.
+    private static final String DISPLAY_CATEGORIES_FIXTURE =
+            "{\"code\":200,\"data\":{\"displayCategoryCode\":\"0\",\"name\":\"루트\",\"child\":["
+                    + "{\"displayCategoryCode\":\"1001\",\"name\":\"패션의류잡화\",\"last\":false,"
+                    + "\"child\":[{\"displayCategoryCode\":\"2001\",\"name\":\"여성의류\",\"last\":true}]},"
+                    + "{\"displayCategoryCode\":\"1002\",\"name\":\"여성 반팔티\",\"last\":true,\"child\":[]}"
+                    + "]}}";
+    // Predict = single candidate (data.predictedCategoryId + data.categoryName).
+    private static final String PREDICT_FIXTURE =
+            "{\"code\":\"SUCCESS\",\"data\":{\"predictedCategoryId\":\"56174\",\"categoryName\":\"여성 반팔티\"}}";
+
+    // 72 shipping-place fixtures (inline), shaped like the real Coupang responses (74-fix).
+    // Outbound: marketplace_openapi v2 (code+name). Return: v5 — address block has no contact NAME,
+    // fees are weight-tiered (returnFeeXXkg), no single returnFee/deliveryFee.
+    private static final String OUTBOUND_CENTERS_FIXTURE =
+            "{\"code\":200,\"data\":{\"content\":["
+                    + "{\"outboundShippingPlaceCode\":\"74010\",\"shippingPlaceName\":\"기본출고지\"},"
+                    + "{\"outboundShippingPlaceCode\":\"74011\",\"shippingPlaceName\":\"제2출고지\"}"
+                    + "]}}";
+    private static final String RETURN_CENTERS_FIXTURE =
+            "{\"code\":200,\"data\":{\"content\":["
+                    + "{\"returnCenterCode\":\"1000274592\",\"shippingPlaceName\":\"기본반품지\","
+                    + "\"returnFee05kg\":\"2500\",\"returnFee10kg\":\"3000\",\"placeAddresses\":[{"
+                    + "\"companyContactNumber\":\"02-1234-5678\","
+                    + "\"returnZipCode\":\"06000\",\"returnAddress\":\"서울시 강남구 테헤란로 1\","
+                    + "\"returnAddressDetail\":\"3층\"}]}"
+                    + "]}}";
+
     @Override
     public String get(String path, String query, MarketplaceAccount account) {
         String body = resolve(path);
@@ -45,7 +90,21 @@ public class MockCoupangApiClient implements CoupangApiClient {
 
     @Override
     public String post(String path, String body, MarketplaceAccount account) {
+        if (path.contains("seller-products")) {
+            log.info("[COUPANG-MOCK] POST {} → register fixture", path);
+            return SELLER_PRODUCT_REGISTER;
+        }
+        if (path.contains("categorization/predict")) {
+            log.info("[COUPANG-MOCK] POST {} → predict fixture", path);
+            return PREDICT_FIXTURE;
+        }
         log.info("[COUPANG-MOCK] POST {} → default empty", path);
+        return EMPTY;
+    }
+
+    @Override
+    public String put(String path, String body, MarketplaceAccount account) {
+        log.info("[COUPANG-MOCK] PUT {} → default empty", path);
         return EMPTY;
     }
 
@@ -55,6 +114,21 @@ public class MockCoupangApiClient implements CoupangApiClient {
         }
         if (path.contains("returnRequests")) {
             return load(RETURN_REQUESTS_FIXTURE);
+        }
+        if (path.contains("seller-products")) {
+            return SELLER_PRODUCT_FETCH;
+        }
+        if (path.contains("display-categories/")) {
+            return DISPLAY_CATEGORIES_FIXTURE;
+        }
+        if (path.contains("shipping-place/outbound")) {
+            return OUTBOUND_CENTERS_FIXTURE;                        // 72 outbound places (marketplace_openapi v2)
+        }
+        if (path.contains("returnShippingCenters")) {
+            return RETURN_CENTERS_FIXTURE;                          // 72 return centers (openapi v4)
+        }
+        if (path.contains("category-related-metas")) {
+            return com.pms.service.listing.category.CoupangCategoryMeta.META_FIXTURE_JSON;   // 47 meta
         }
         return EMPTY;
     }

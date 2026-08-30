@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface MarketplaceAccountRepository extends JpaRepository<MarketplaceAccount, Long> {
 
@@ -17,4 +18,12 @@ public interface MarketplaceAccountRepository extends JpaRepository<MarketplaceA
 
     @EntityGraph(attributePaths = "seller")
     List<MarketplaceAccount> findBySeller_IdAndIsActiveTrue(Long sellerId);  // 셀러 단위 동기화(Phase 3)
+
+    // 채널 등록/승인 동기화(FEATURE_2608_06 / 3c): 셀의 (seller, platform) 계정 1건 해석.
+    // (seller+platform 당 단일 계정 전제.)
+    Optional<MarketplaceAccount> findBySeller_IdAndPlatform(Long sellerId, String platform);
+
+    // 카테고리 조회(FEATURE_2608_06 / 45): sellerId 미지정 시 플랫폼의 임의 활성 계정 1건(HMAC 자격증명용).
+    // @TenantId 로 현재 테넌트 자동 스코프.
+    Optional<MarketplaceAccount> findFirstByPlatformAndIsActiveTrue(String platform);
 }

@@ -74,6 +74,15 @@ public class ProductListingOption {
     private BigDecimal sellingPrice;
 
     /**
+     * Display "original" (strike-through) price for Coupang register (73). Reverse-calculated from
+     * {@code sellingPrice} and the seller×platform display discount rate: {@code sellingPrice / (1 − rate)}.
+     * Nullable (rate=0 → equals sellingPrice; register falls back to sellingPrice when null).
+     */
+    @Column(precision = 10, scale = 2, name = "original_price")
+    @Schema(description = "Display original (strike-through) price", example = "16249.99")
+    private BigDecimal originalPrice;
+
+    /**
      * Platform-specific option ID (e.g., Coupang option ID).
      * Max 255 chars. Nullable (not all platforms provide this).
      *
@@ -84,4 +93,53 @@ public class ProductListingOption {
     @Column(length = 255, nullable = true, name = "platform_option_id")
     @Schema(description = "Platform option ID", example = "opt_12345")
     private String platformOptionId;
+
+    /**
+     * Approval state on the market (FEATURE_2608_06 / 3c) — the source of truth for option approval.
+     * New DRAFT options default to {@link OptionApprovalStatus#NOT_APPROVED}; pre-existing live options are
+     * backfilled to {@code APPROVED} (changeset 013 defaultValue). {@code fetchStatus} flips matched options
+     * to {@code APPROVED} after the market approves them.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "approval_status", length = 20, nullable = false)
+    @Builder.Default
+    @Schema(description = "Option approval state", example = "NOT_APPROVED")
+    private OptionApprovalStatus approvalStatus = OptionApprovalStatus.NOT_APPROVED;
+
+    /**
+     * Coupang option-update id (sellerProductItemId), max 255 chars. Nullable — filled by {@code fetchStatus}
+     * after approval (alongside {@link #platformOptionId}=vendorItemId, both approval-result data).
+     * Distinct from {@link #platformOptionId} which is the vendorItemId used for order mapping (unchanged).
+     */
+    @Column(length = 255, nullable = true, name = "seller_product_item_id")
+    @Schema(description = "Coupang seller product item id (for option updates)", example = "555666")
+    private String sellerProductItemId;
+
+    /**
+     * Per-channel active flag (FEATURE_2608_06 / 42). The master is the single option universe, but a channel
+     * (market) may carry a different subset of options: a channel cell copies <em>all</em> master options
+     * (backward-compatible) and then toggles this flag per channel. {@code active=false} only excludes the option
+     * from the market register/update payload — the row is <b>kept</b> (re-activation + order mapping preserved).
+     *
+     * <p>Two default roles (not duplicated): entity {@code @Builder.Default = true} = the create path
+     * (channel-add copy) default; changeset 028 {@code defaultValueBoolean:true} backfills pre-existing live rows.
+     * ⚠️ 006 BIT trap: boolean needs an explicit MySQL physical type (BIT(1)) — see changeset 028.</p>
+     */
+    @Column(name = "active", nullable = false)
+    @Builder.Default
+    @Schema(description = "Per-channel active flag (excluded from market payload when false)", example = "true")
+    private Boolean active = true;
+
+    /**
+     * True = this option physically exists on the marketplace: Coupang issued a vendorItemId, or it was
+     * approved at some point. Such an option cannot be removed there (approved options are not deletable),
+     * so 87 forbids unchecking it and 88 locks the checkbox.
+     *
+     * <p>⚠️ Deliberately does NOT include {@code active}. 84's lock adds that third term on top of this one
+     * (see {@code MasterProductServiceImpl#isOnMarket}); 87 must not, or every active option of a pushed cell
+     * would be locked and "turn on, then undo before re-registering" would be impossible.</p>
+     */
+    public boolean isMarketRegistered() {
+        return platformOptionId != null || approvalStatus == OptionApprovalStatus.APPROVED;
+    }
 }

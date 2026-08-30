@@ -36,6 +36,9 @@ public class MarketplaceAccountRequest {
     @Schema(description = "Coupang vendor ID", example = "A00012345", required = true)
     private String vendorId;
 
+    @Schema(description = "WING login ID (optional; distinct from vendorId)", example = "wing_user01")
+    private String vendorUserId;
+
     @NotBlank(message = "accessKey is required")
     @Schema(description = "Coupang access key", required = true)
     private String accessKey;
@@ -45,4 +48,12 @@ public class MarketplaceAccountRequest {
 
     @Schema(description = "Active flag (null defaults to true on create)", example = "true")
     private Boolean isActive;
+
+    @Schema(description = "Thumbnail template override for this seller×platform (null = tenant default). "
+            + "On update, null keeps the existing assignment.", example = "3")
+    private Long thumbnailTemplateId;
+
+    @Schema(description = "Detail template override for this seller×platform (null = tenant default). "
+            + "On update, null keeps the existing assignment.", example = "5")
+    private Long detailTemplateId;
 }

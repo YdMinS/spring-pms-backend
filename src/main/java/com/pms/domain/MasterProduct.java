@@ -1,0 +1,152 @@
+package com.pms.domain;
+
+import com.pms.domain.converter.MapStringConverter;
+import com.pms.domain.converter.StringListConverter;
+import jakarta.persistence.*;
+import lombok.*;
+import org.hibernate.annotations.TenantId;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Tenant-shared master product (Design 2, FEATURE_2608_06 / 3a).
+ *
+ * <p>The master sits <b>additively</b> on top of {@link ProductListing}: a listing is the per-channel
+ * cell, and the master is the grouping node that many channel cells point back to (via
+ * {@code product_listing.master_product_id}). 3a introduces the master as a <b>backfill-created,
+ * read-only</b> grouping node — one master per existing listing (shared-id 1:1 backfill).</p>
+ *
+ * <p>3b-1 (FEATURE_2608_06 / 3b-1) adds the content columns (source_image_url / field_values /
+ * active) plus the component + option sets ({@link MasterProductComponent},
+ * {@link MasterProductOption}). Thumbnail/detail/price auto-generation stays deferred to 3b-2.</p>
+ *
+ * <p>Tenant isolation: {@code @TenantId} auto-filters query-based SELECTs and auto-stamps INSERTs.
+ * Do NOT add manual tenant conditions to queries. PK {@code find()} is NOT tenant-filtered, so
+ * tenant-scoped reads must use the query-based {@code findScopedById} (see MasterProductRepository).</p>
+ */
+@Entity
+@Table(name = "master_product")
+@Getter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder(toBuilder = true)
+public class MasterProduct extends BaseEntity {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    // Tenant dimension (changeset 009). Hibernate auto-sets this on INSERT and auto-filters
+    // query-based SELECTs from TenantIdentifierResolver — do NOT add manual tenant conditions.
+    @TenantId
+    @Column(name = "tenant_id", nullable = false)
+    private Long tenantId;
+
+    @Column(nullable = false, length = 255)
+    private String name;
+
+    /** Base image override for thumbnail generation; null = derived from BOM (filled by 3b-2 upload). */
+    @Column(name = "source_image_url", length = 1024)
+    private String sourceImageUrl;
+
+    /** UI input field values (JSON TEXT, H2/MySQL portable). Blank-fallback handled in 3b-2. */
+    @Convert(converter = MapStringConverter.class)
+    @Column(name = "field_values", columnDefinition = "TEXT")
+    private Map<String, String> fieldValues;
+
+    /**
+     * Master tag pool (33): the shared tags folded into every channel cell at push time. Ordered, deduped on
+     * save (JSON TEXT, H2/MySQL portable). Merge order = channel tags first, then these master tags appended
+     * (duplicates already on the channel are skipped). {@code null} = no master tags. LLM auto-fill / presets
+     * are follow-up. See {@code TagMergeService}.
+     */
+    @Convert(converter = StringListConverter.class)
+    @Column(columnDefinition = "TEXT")
+    private List<String> tags;
+
+    /**
+     * Soft-delete / activation flag. NOT nullable → create/service must always set it explicitly.
+     * ⚠️ MySQL BIT trap: changeset 010 re-types this to BIT(1) on MySQL (Hibernate maps Boolean to BIT),
+     * mirroring changeset 006.
+     */
+    @Column(name = "active", nullable = false)
+    private Boolean active;
+
+    /**
+     * Default delivery (carrier rate) for the price engine (FEATURE_2608_06 / 13). Nullable; an option may
+     * override it ({@link MasterProductOption#getDelivery()}). Resolution = option override ?? this default.
+     * Not a boolean → no MySQL BIT trap.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "default_delivery_id", nullable = true)
+    private CarrierRate defaultDelivery;
+
+    /**
+     * Default box (package) cost for the price engine (FEATURE_2608_06 / 13). Nullable; an option may
+     * override it ({@link MasterProductOption#getPackage_()}). Resolution = option override ?? this default.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "default_package_id", nullable = true)
+    private Package defaultPackage;
+
+    /**
+     * Single standard category for this master (FEATURE_2608_06 / 44). Nullable (transitional / unset). The
+     * commission lookup uses this category's id; the per-platform marketplace code is resolved from
+     * {@link CategoryMapping} (standard × platform). Replaces the old {@code MasterProductCategory}
+     * (master × platform) — the master now picks one standard category, not one per platform.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "category_id", nullable = true)
+    private Category category;
+
+    /**
+     * Category required-attribute values (FEATURE_2608_06 / 47): key = {@code CategoryAttribute.name},
+     * value = the master-level value (원산지·사이즈 etc.). The wizard fills as many keys as the schema
+     * requires. ⚠️ No {@code @Builder.Default} — {@code null} means "not entered" (JSON TEXT, H2/MySQL
+     * portable). A missing required value blocks registration (orchestration pre-check).
+     */
+    @Convert(converter = MapStringConverter.class)
+    @Column(name = "category_attributes", columnDefinition = "TEXT")
+    private Map<String, String> categoryAttributes;
+
+    /**
+     * Product-info disclosure ("상품정보제공고시") values (FEATURE_2608_06 / 47): key =
+     * {@code CategoryNotice.key}, value = the master-level value. ⚠️ No {@code @Builder.Default} —
+     * {@code null} means "not entered" (JSON TEXT, H2/MySQL portable).
+     */
+    @Convert(converter = MapStringConverter.class)
+    @Column(name = "category_notices", columnDefinition = "TEXT")
+    private Map<String, String> categoryNotices;
+
+    /**
+     * The selected product-info disclosure item group ({@code CategoryNotice.groupName}) for the values above
+     * (FEATURE_2608_06 / 91). {@code null} = unset (legacy) → the screen infers the group from the values.
+     * The stored map holds only this group's notices. ⚠️ No {@code @Builder.Default} — same rule as the two
+     * maps above. Stored verbatim (not validated against the live category schema, which is an external
+     * response and shifts over time).
+     */
+    @Column(name = "category_notice_group", length = 100)
+    private String categoryNoticeGroup;
+
+    // Master-level override of the "옵션확인" registration-name suffix (FEATURE_2608_06 / 69). Both columns are
+    // nullable — null = inherit (resolution falls through to seller ?? system). A channel override wins over
+    // this master level. Resolved per field by OptionCheckSuffixResolver.
+    // ⚠️ Boolean → MySQL BIT trap: changeset 037 re-types to BIT(1) on MySQL (nullable → no NOT NULL/backfill).
+    @Column(name = "option_check_suffix_enabled")
+    private Boolean optionCheckSuffixEnabled;
+
+    @Column(name = "option_check_suffix", length = 50)
+    private String optionCheckSuffix;
+
+    /**
+     * Master-level shipping overrides (FEATURE_2608_06 / 75): key = an override field name (whitelist =
+     * {@code ShippingOverrideKeys.MASTER_KEYS}), value = a string (BigDecimal/enum too, parsed at resolve
+     * time). A master change applies to every linked channel; resolution = channel ?? master ?? account
+     * default (field-wise). ⚠️ No {@code @Builder.Default} — {@code null} = no override (inherit). Place keys
+     * (outbound/return center) are channel-level only and are dropped on save. JSON TEXT, H2/MySQL portable.
+     */
+    @Convert(converter = MapStringConverter.class)
+    @Column(name = "shipping_override", columnDefinition = "TEXT")
+    private Map<String, String> shippingOverride;
+}

@@ -51,7 +51,7 @@ class ProductThumbnailServiceTest {
     private static final Long SELLER_ID = 3L;
 
     private Product product() {
-        return Product.builder().id(PRODUCT_ID).brand("나이키").productName("운동화").name("운동화").build();
+        return Product.builder().id(PRODUCT_ID).brand("나이키").productName("운동화").build();
     }
 
     private Seller seller() {

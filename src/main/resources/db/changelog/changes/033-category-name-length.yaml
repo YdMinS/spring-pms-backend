@@ -1,0 +1,20 @@
+# Widen category.name 100 → 255 (FEATURE_2608_06 / 53).
+# The oclyx Category is the mirror of platform_category (whose name is VARCHAR(255)); real Coupang category
+# names exceed 100 chars (e.g. a 101-char book leaf), so the 100-char limit rejected the mirror insert during
+# the category import. Increasing a VARCHAR length is additive/backward-compatible.
+# ⚠️ MySQL MODIFY COLUMN drops NOT NULL → re-assert it after the type change (006 pattern). No boolean → no BIT trap.
+databaseChangeLog:
+
+  - changeSet:
+      id: 033-category-name-length
+      author: oclyx
+      comment: "Widen category.name 100→255 to hold real Coupang category names (mirror parity with platform_category.name)."
+      changes:
+        - modifyDataType:
+            tableName: category
+            columnName: name
+            newDataType: VARCHAR(255)
+        - addNotNullConstraint:
+            tableName: category
+            columnName: name
+            columnDataType: VARCHAR(255)

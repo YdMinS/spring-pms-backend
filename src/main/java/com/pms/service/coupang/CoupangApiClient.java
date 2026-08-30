@@ -35,4 +35,14 @@ public interface CoupangApiClient {
      * @return 응답 바디 (raw JSON 문자열)
      */
     String post(String path, String body, MarketplaceAccount account);
+
+    /**
+     * 서명된 PUT 요청 (JSON 바디). 상품 수정(전체 재전송)·판매중지 등에 사용 (FEATURE_2608_06 / 3c).
+     *
+     * @param path    쿼리 제외 경로
+     * @param body    JSON 바디 문자열
+     * @param account 호출 주체 계정 (자격증명 제공)
+     * @return 응답 바디 (raw JSON 문자열)
+     */
+    String put(String path, String body, MarketplaceAccount account);
 }

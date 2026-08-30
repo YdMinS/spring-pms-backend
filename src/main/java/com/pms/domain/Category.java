@@ -4,14 +4,18 @@ import jakarta.persistence.*;
 import lombok.*;
 
 /**
- * Category entity representing a product category with optional parent relationship.
+ * Category entity — promoted to a standard (oclyx-independent) category (FEATURE_2608_06 / 44).
  *
  * Business Logic:
- * - name: Category name (required, max 100 chars)
- * - platform: Platform identifier (required, max 50 chars)
- * - platformCategoryId: External platform category ID (required, max 50 chars)
- * - parent: Parent category (optional, for hierarchical organization)
+ * - name: Category name (required, max 100 chars) — the standard tree label
+ * - parent: Parent category (optional, for hierarchical organization) — the standard tree
  * - Timestamps: createdDate (immutable), modifiedDate (auto-updated)
+ *
+ * <p>⚠️ {@code platform} / {@code platformCategoryId} are <b>deprecated</b> (44): columns + getters are kept
+ * for backward compatibility with the live {@code CommissionRate} / {@code CategoryController}, but new logic
+ * never reads them. They are relaxed to nullable — a new standard category has no platform/code; the
+ * per-platform code lives in {@link CategoryMapping} (standard × platform → code). changeset 029 drops their
+ * NOT NULL.</p>
  *
  * Self-reference prevention:
  * - A category cannot be its own parent (checked in service layer)
@@ -40,24 +44,24 @@ public class Category extends BaseEntity {
      * Max 100 characters, required field.
      * Examples: "Electronics", "Clothing", "Books"
      */
-    @Column(nullable = false, length = 100)
+    // 255 to mirror platform_category.name (FEATURE_2608_06 / 53): real Coupang category names exceed 100.
+    @Column(nullable = false, length = 255)
     private String name;
 
     /**
-     * Platform identifier (e.g., marketplace, vendor name).
-     * Max 50 characters, required field.
-     * Examples: "AMAZON", "SHOPEE", "LAZADA"
+     * @deprecated (44) Platform identifier. Nullable now — a standard category has no platform; the code
+     *             lives in {@link CategoryMapping}. Kept only for live CommissionRate/CategoryController.
      */
-    @Column(nullable = false, length = 50)
+    @Deprecated
+    @Column(nullable = true, length = 50)
     private String platform;
 
     /**
-     * External platform's category ID.
-     * Used to map to platform-specific category IDs.
-     * Max 50 characters, required field.
-     * Examples: "cat-12345", "cate_789"
+     * @deprecated (44) External platform's category ID. Nullable now — owned by {@link CategoryMapping}.
+     *             Kept only for backward compatibility.
      */
-    @Column(nullable = false, length = 50, name = "platform_category_id")
+    @Deprecated
+    @Column(nullable = true, length = 50, name = "platform_category_id")
     private String platformCategoryId;
 
     /**

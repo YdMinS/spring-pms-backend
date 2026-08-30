@@ -1,0 +1,69 @@
+# Image-processing preset library + detail_template reference (FEATURE_2608_08).
+#   processing_preset          = tenant-wide op-array library (mirror of detail_template, no default flag).
+#   detail_template.image_processing_preset_id = nullable FK (null = no compositing).
+# Structured tags for H2<->MySQL portability (no raw SQL).
+# ⚠️ boolean = 006 BIT trap: processing_preset.active is BOOLEAN here, re-typed to BIT(1) on MySQL below
+# (Hibernate 6 expects BIT for boolean fields -> ddl-auto: validate). H2 (tests) untouched.
+# ⚠️ H2 constraint names are schema-global unique -> use distinct names (fk_procpreset_tenant, fk_detailtpl_preset).
+databaseChangeLog:
+
+  # ---- 1. processing_preset (tenant-wide op-array library) ----
+  - changeSet:
+      id: 027-processing-preset
+      author: oclyx
+      comment: "FEATURE_2608_08: processing_preset (operations TEXT; active BOOLEAN, MySQL re-types to BIT below)."
+      changes:
+        - createTable:
+            tableName: processing_preset
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: name, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: operations, type: TEXT }
+              - column: { name: active, type: BOOLEAN, defaultValueBoolean: true, constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_procpreset_tenant
+            baseTableName: processing_preset
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+
+  # ---- 1b. active TINYINT -> BIT(1) on MySQL (mirrors changeset 006). H2 untouched. ----
+  - changeSet:
+      id: 027-processing-preset-mysql-bit
+      author: oclyx
+      dbms: mysql
+      comment: "processing_preset.active TINYINT -> BIT(1) to satisfy Hibernate schema validation."
+      changes:
+        - modifyDataType:
+            tableName: processing_preset
+            columnName: active
+            newDataType: BIT(1)
+        - addNotNullConstraint:
+            tableName: processing_preset
+            columnName: active
+            columnDataType: BIT(1)
+            defaultNullValue: true
+        - addDefaultValue:
+            tableName: processing_preset
+            columnName: active
+            defaultValueBoolean: true
+
+  # ---- 2. detail_template.image_processing_preset_id (nullable FK; null = no compositing) ----
+  - changeSet:
+      id: 027-detail-template-preset
+      author: oclyx
+      comment: "Additive: detail_template.image_processing_preset_id (nullable FK -> processing_preset)."
+      changes:
+        - addColumn:
+            tableName: detail_template
+            columns:
+              - column: { name: image_processing_preset_id, type: BIGINT }
+        - addForeignKeyConstraint:
+            constraintName: fk_detailtpl_preset
+            baseTableName: detail_template
+            baseColumnNames: image_processing_preset_id
+            referencedTableName: processing_preset
+            referencedColumnNames: id

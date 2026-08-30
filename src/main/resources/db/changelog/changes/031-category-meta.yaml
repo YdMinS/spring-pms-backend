@@ -1,0 +1,20 @@
+# Category meta values on the master (FEATURE_2608_06 / 47): master_product.category_attributes +
+# category_notices, both JSON TEXT nullable (key -> master-level value). TEXT columns → the MySQL BIT trap
+# does not apply; nullable so no backfill is needed (null = not entered). Structured JSON for H2<->MySQL
+# portability (MapStringConverter).
+databaseChangeLog:
+
+  - changeSet:
+      id: 031-category-meta
+      author: oclyx
+      comment: "47: master_product.category_attributes + category_notices (JSON TEXT, nullable)."
+      changes:
+        - addColumn:
+            tableName: master_product
+            columns:
+              - column:
+                  name: category_attributes
+                  type: TEXT
+              - column:
+                  name: category_notices
+                  type: TEXT

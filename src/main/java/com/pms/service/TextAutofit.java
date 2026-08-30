@@ -38,9 +38,15 @@ public final class TextAutofit {
         for (int size = maxFontSize; size >= minFontSize; size--) {
             Font font = baseFont.deriveFont((float) size);
             int effLH = effectiveLineHeight(font, frc, lineSpacing);
-            List<String> wrapped = wrap(safe, font, frc, availW);
-            if (wrapped.size() <= lines && wrapped.size() * effLH <= availH) {
-                return new Result(size, wrapped, ascent(font, frc), effLH);
+            // Require every word to fit its line at this size: a size that would only fit by
+            // splitting a word across lines is rejected so the fitter keeps shrinking. This keeps
+            // words intact (e.g. "더모먼트그린 녹차라떼" wraps between words, never mid-word).
+            // Only the min-size fallback below may split a word that never fits (very long token).
+            if (allWordsFit(safe, font, frc, availW)) {
+                List<String> wrapped = wrap(safe, font, frc, availW);
+                if (wrapped.size() <= lines && wrapped.size() * effLH <= availH) {
+                    return new Result(size, wrapped, ascent(font, frc), effLH);
+                }
             }
         }
 
@@ -105,6 +111,19 @@ public final class TextAutofit {
             out.add("");
         }
         return out;
+    }
+
+    /**
+     * True if every whitespace-separated word fits {@code availW} at this font, so {@link #wrap} will
+     * never split a word by characters. An empty/blank string trivially satisfies this.
+     */
+    private static boolean allWordsFit(String text, Font font, FontRenderContext frc, int availW) {
+        for (String word : text.split("\\s+")) {
+            if (!word.isEmpty() && width(word, font, frc) > availW) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Largest prefix length of {@code s} whose width fits {@code availW} (at least 1 char). */

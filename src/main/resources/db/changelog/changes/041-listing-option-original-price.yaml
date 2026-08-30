@@ -1,0 +1,14 @@
+# Display original (strike-through) price per listing option (FEATURE_2608_06 / 73):
+# product_listing_option.original_price. Nullable (falls back to selling_price at register), no backfill.
+# No boolean → no MySQL BIT trap.
+databaseChangeLog:
+
+  - changeSet:
+      id: 041-listing-option-original-price
+      author: oclyx
+      comment: "Additive: product_listing_option.original_price (display strike-through price, nullable DECIMAL(10,2))."
+      changes:
+        - addColumn:
+            tableName: product_listing_option
+            columns:
+              - column: { name: original_price, type: "DECIMAL(10,2)" }

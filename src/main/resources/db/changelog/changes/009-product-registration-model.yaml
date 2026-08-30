@@ -1,0 +1,96 @@
+# Product registration model (FEATURE_2608_06 / 3a, Design 2): master_product + margin_policy (both
+# @TenantId) + product_listing.master_product_id FK (additive) + shared-id backfill (MySQL only).
+# Structured tags for portability; only the backfill is raw SQL guarded by dbms:mysql.
+# ⚠️ In YAML flow-mappings { } a value with a comma (DECIMAL(5,4)) MUST be quoted, or the comma is
+# parsed as a flow separator. Comma-free VARCHAR(n) needs no quoting.
+databaseChangeLog:
+
+  # ---- 1. master_product (tenant-shared grouping node) ----
+  - changeSet:
+      id: 009-master-product
+      author: oclyx
+      comment: "Design 2: master_product (id/tenant/name only; content columns deferred to 3b)."
+      changes:
+        - createTable:
+            tableName: master_product
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: name, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_master_product_tenant
+            baseTableName: master_product
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+
+  # ---- 2. margin_policy (per (seller, platform) net-margin preset) ----
+  - changeSet:
+      id: 009-margin-policy
+      author: oclyx
+      comment: "Margin preset: unique (tenant_id, seller_id, platform)."
+      changes:
+        - createTable:
+            tableName: margin_policy
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: seller_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: platform, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: margin_rate, type: "DECIMAL(5,4)", constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_margin_policy_seller
+            baseTableName: margin_policy
+            baseColumnNames: seller_id
+            referencedTableName: seller
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_margin_policy_tenant
+            baseTableName: margin_policy
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            tableName: margin_policy
+            columnNames: "tenant_id, seller_id, platform"
+            constraintName: uq_margin_policy_seller_platform
+
+  # ---- 3. product_listing.master_product_id (additive FK, nullable transitional) ----
+  - changeSet:
+      id: 009-product-listing-master-fk
+      author: oclyx
+      comment: "Additive: product_listing.master_product_id -> master_product (nullable, backfilled)."
+      changes:
+        - addColumn:
+            tableName: product_listing
+            columns:
+              - column: { name: master_product_id, type: BIGINT }
+        - addForeignKeyConstraint:
+            constraintName: fk_product_listing_master
+            baseTableName: product_listing
+            baseColumnNames: master_product_id
+            referencedTableName: master_product
+            referencedColumnNames: id
+
+  # ---- 4. shared-id backfill: one master per existing listing, master.id = listing.id (MySQL only) ----
+  # H2 apply-check skips this (dbms:mysql); the empty test DB has no listings to backfill anyway.
+  # Idempotent: MARK_RAN if master_product already has rows (re-run safe).
+  - changeSet:
+      id: 009-backfill-master-product
+      author: oclyx
+      dbms: mysql
+      comment: "Shared-id 1:1 backfill: master_product.id = product_listing.id, then link the FK."
+      preConditions:
+        - onFail: MARK_RAN
+        - sqlCheck:
+            expectedResult: 0
+            sql: "SELECT count(*) FROM master_product"
+      changes:
+        - sql: >-
+            INSERT INTO master_product (id, tenant_id, name, created_date, modified_date)
+            SELECT pl.id, pl.tenant_id, pl.name, NOW(), NOW() FROM product_listing pl
+        - sql: "UPDATE product_listing pl SET pl.master_product_id = pl.id"

@@ -40,6 +40,21 @@ class TextAutofitTest {
     }
 
     @Test
+    void fit_longWord_notSplitAcrossLines_shrinksInstead() {
+        // A wide word that overflows at max size must NOT be broken by characters; the fitter
+        // shrinks the font until the whole word fits its line (mirrors "더모먼트그린 녹차라떼").
+        TextAutofit.Result result = TextAutofit.fit(
+                "Supercalifragilistic Tea", baseFont,
+                120, 400, 60, 6, 3, 1.0, frc);
+
+        assertThat(result.fontSize()).isLessThan(60);   // shrank to keep the word intact
+        // No word is split by characters → rejoining the lines yields the original tokens.
+        String rejoined = String.join(" ", result.lines());
+        assertThat(rejoined.split("\\s+")).containsExactly("Supercalifragilistic", "Tea");
+        assertThat(result.lines().get(result.lines().size() - 1)).doesNotEndWith("…");
+    }
+
+    @Test
     void fit_tooLongEvenAtMin_ellipsizes() {
         // Tiny box, 1 line, long text → cannot fit even at min size → last line ellipsized.
         TextAutofit.Result result = TextAutofit.fit(

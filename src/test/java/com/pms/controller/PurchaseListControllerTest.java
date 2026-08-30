@@ -57,7 +57,7 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
                 .vendorId("A001").accessKey("ak").secretKey("sk").isActive(true).build());
 
         Product product = productRepository.save(Product.builder()
-                .productName("양말A").name("양말A").build());
+                .productName("양말A").build());
         ProductListing listing = productListingRepository.save(ProductListing.builder()
                 .platform("COUPANG").platformProductId("P001").name("양말세트").seller(seller).build());
         ProductListingOption option = productListingOptionRepository.save(ProductListingOption.builder()

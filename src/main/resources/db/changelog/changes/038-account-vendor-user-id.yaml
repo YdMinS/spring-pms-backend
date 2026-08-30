@@ -1,0 +1,13 @@
+# WING login ID (FEATURE_2608_06 / 71): marketplace_account.vendor_user_id.
+# Nullable, no backfill (unset allowed). No boolean column → no MySQL BIT trap.
+databaseChangeLog:
+
+  - changeSet:
+      id: 038-account-vendor-user-id
+      author: oclyx
+      comment: "Additive: marketplace_account.vendor_user_id (WING login ID, nullable VARCHAR(100))."
+      changes:
+        - addColumn:
+            tableName: marketplace_account
+            columns:
+              - column: { name: vendor_user_id, type: VARCHAR(100) }

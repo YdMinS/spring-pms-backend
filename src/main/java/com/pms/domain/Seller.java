@@ -30,4 +30,15 @@ public class Seller extends BaseEntity {
     // business_registration unique is now tenant-scoped (uq_seller_tenant_biz).
     @Column(nullable = false, length = 50)
     private String businessRegistration;
+
+    // Seller-level default for the "옵션확인" registration-name suffix (FEATURE_2608_06 / 69). Both columns are
+    // nullable — null = inherit (the resolution chain falls through to the system default). Resolved per field by
+    // OptionCheckSuffixResolver: channel (MarketplaceAccount) ?? master ?? seller ?? system.
+    // ⚠️ Boolean → MySQL BIT trap: changeset 037 re-types this to BIT(1) on MySQL (mirrors 006/014), but nullable
+    // so no NOT NULL / default / backfill.
+    @Column(name = "option_check_suffix_enabled")
+    private Boolean optionCheckSuffixEnabled;
+
+    @Column(name = "option_check_suffix", length = 50)
+    private String optionCheckSuffix;
 }

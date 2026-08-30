@@ -35,26 +35,23 @@ public class ProductResponse {
     @Schema(description = "Store name", example = "Best Buy")
     private String store;
 
-    @Schema(description = "Unit of measurement", example = "KG")
-    private String unit;
+    @Schema(description = "Unit of net content (KG, G, L, ML)", example = "KG")
+    private String netContentUnit;
 
-    @Schema(description = "Volume height", example = "160mm")
-    private String volumeHeight;
+    @Schema(description = "Package height", example = "160mm")
+    private String packageHeight;
 
-    @Schema(description = "Volume long", example = "75mm")
-    private String volumeLong;
+    @Schema(description = "Package length", example = "75mm")
+    private String packageLength;
 
-    @Schema(description = "Volume short", example = "8.9mm")
-    private String volumeShort;
+    @Schema(description = "Package width", example = "8.9mm")
+    private String packageWidth;
 
-    @Schema(description = "Weight", example = "170g")
-    private String weight;
+    @Schema(description = "Amount of product inside the package (mass or volume)", example = "170g")
+    private String netContent;
 
     @Schema(description = "Product description")
     private String description;
-
-    @Schema(description = "Product name short", example = "Samsung Galaxy S21")
-    private String name;
 
     @Schema(description = "Product image URL (filename)", example = "product_1_1234567890_abc123.jpg")
     private String imageUrl;
@@ -76,13 +73,12 @@ public class ProductResponse {
                 .price(product.getPrice())
                 .productName(product.getProductName())
                 .store(product.getStore())
-                .unit(product.getUnit())
-                .volumeHeight(product.getVolumeHeight())
-                .volumeLong(product.getVolumeLong())
-                .volumeShort(product.getVolumeShort())
-                .weight(product.getWeight())
+                .netContentUnit(product.getNetContentUnit())
+                .packageHeight(product.getPackageHeight())
+                .packageLength(product.getPackageLength())
+                .packageWidth(product.getPackageWidth())
+                .netContent(product.getNetContent())
                 .description(product.getDescription())
-                .name(product.getName())
                 .imageUrl(product.getImageUrl())
                 .active(product.getActive())
                 .createdDate(product.getCreatedAt())
