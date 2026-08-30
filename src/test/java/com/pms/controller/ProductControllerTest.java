@@ -522,7 +522,7 @@ public class ProductControllerTest extends BaseIntegrationTest {
         // Given
         Product savedProduct = productRepository.save(ProductTestFixture.createProduct(null));
         UpdateProductRequest invalidUnitRequest = UpdateProductRequest.builder()
-                .unit(java.util.Optional.of("INVALID"))
+                .netContentUnit(java.util.Optional.of("INVALID"))
                 .build();
         String requestBody = objectMapper.writeValueAsString(invalidUnitRequest);
 

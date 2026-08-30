@@ -22,7 +22,7 @@ import java.math.BigDecimal;
  * Phase 2-1 TDD CREATE: Implements only create() and supporting helper methods
  * - create(CreateProductRequest request): Creates new product
  * - validatePrice(BigDecimal price): Validates price > 0
- * - validateUnit(String unit): Validates unit in [KG, G, L, ML]
+ * - validateNetContentUnit(String, String): Validates netContentUnit in [KG, G, L, ML]
  * - mapToResponse(Product product): Maps Product entity to ProductResponse
  *
  * Other CRUD methods (getProduct, getAllProducts, updateProduct, deleteProduct)
@@ -33,7 +33,7 @@ import java.math.BigDecimal;
 @Transactional(readOnly = true)
 public class ProductServiceImpl implements ProductService {
     private final ProductRepository productRepository;
-    private static final String[] VALID_UNITS = {"KG", "G", "L", "ML"};
+    private static final String[] VALID_NET_CONTENT_UNITS = {"KG", "G", "L", "ML"};
     private static final int DEFAULT_PAGE_SIZE = 20;
 
     @Override
@@ -43,7 +43,7 @@ public class ProductServiceImpl implements ProductService {
         if (request.getPrice() != null) {
             validatePrice(request.getPrice());
         }
-        validateUnitWithWeight(request.getUnit(), request.getWeight());
+        validateNetContentUnit(request.getNetContentUnit(), request.getNetContent());
 
         // Build product using immutable pattern
         Product product = Product.builder()
@@ -52,11 +52,11 @@ public class ProductServiceImpl implements ProductService {
                 .price(request.getPrice())
                 .productName(request.getProductName())
                 .store(request.getStore())
-                .unit(request.getUnit())
-                .volumeHeight(request.getVolumeHeight())
-                .volumeLong(request.getVolumeLong())
-                .volumeShort(request.getVolumeShort())
-                .weight(request.getWeight())
+                .netContentUnit(request.getNetContentUnit())
+                .packageHeight(request.getPackageHeight())
+                .packageLength(request.getPackageLength())
+                .packageWidth(request.getPackageWidth())
+                .netContent(request.getNetContent())
                 .description(request.getDescription())
                 .active(true)
                 .build();
@@ -114,10 +114,10 @@ public class ProductServiceImpl implements ProductService {
         // Validate updates
         request.getPrice().ifPresent(this::validatePrice);
 
-        // Get final unit and weight after merging with existing product
-        String finalUnit = request.getUnit().orElse(product.getUnit());
-        String finalWeight = request.getWeight().orElse(product.getWeight());
-        validateUnitWithWeight(finalUnit, finalWeight);
+        // Get final unit and net content after merging with existing product
+        String finalUnit = request.getNetContentUnit().orElse(product.getNetContentUnit());
+        String finalNetContent = request.getNetContent().orElse(product.getNetContent());
+        validateNetContentUnit(finalUnit, finalNetContent);
 
         // Build updated product using immutable pattern - use toBuilder to preserve audit fields
         Product updated = product.toBuilder()
@@ -126,11 +126,11 @@ public class ProductServiceImpl implements ProductService {
                 .price(request.getPrice().orElse(product.getPrice()))
                 .productName(request.getProductName().orElse(product.getProductName()))
                 .store(request.getStore().orElse(product.getStore()))
-                .unit(request.getUnit().orElse(product.getUnit()))
-                .volumeHeight(request.getVolumeHeight().orElse(product.getVolumeHeight()))
-                .volumeLong(request.getVolumeLong().orElse(product.getVolumeLong()))
-                .volumeShort(request.getVolumeShort().orElse(product.getVolumeShort()))
-                .weight(request.getWeight().orElse(product.getWeight()))
+                .netContentUnit(request.getNetContentUnit().orElse(product.getNetContentUnit()))
+                .packageHeight(request.getPackageHeight().orElse(product.getPackageHeight()))
+                .packageLength(request.getPackageLength().orElse(product.getPackageLength()))
+                .packageWidth(request.getPackageWidth().orElse(product.getPackageWidth()))
+                .netContent(request.getNetContent().orElse(product.getNetContent()))
                 .description(request.getDescription().orElse(product.getDescription()))
                 .build();
 
@@ -152,32 +152,32 @@ public class ProductServiceImpl implements ProductService {
     }
 
     /**
-     * Validate unit with weight dependency
-     * If weight is provided, unit becomes required
+     * Validate netContentUnit with its netContent dependency
+     * If netContent is provided, netContentUnit becomes required
      *
-     * @param unit the unit to validate
-     * @param weight the weight value
+     * @param netContentUnit the unit to validate (mass KG/G or volume L/ML)
+     * @param netContent the net content value
      * @throws IllegalArgumentException if validation fails
      */
-    private void validateUnitWithWeight(String unit, String weight) {
-        // If weight is provided, unit is required
-        if (weight != null && !weight.trim().isEmpty()) {
-            if (unit == null || unit.trim().isEmpty()) {
-                throw new IllegalArgumentException("Unit is required when Weight is provided");
+    private void validateNetContentUnit(String netContentUnit, String netContent) {
+        // If netContent is provided, netContentUnit is required
+        if (netContent != null && !netContent.trim().isEmpty()) {
+            if (netContentUnit == null || netContentUnit.trim().isEmpty()) {
+                throw new IllegalArgumentException("netContentUnit is required when netContent is provided");
             }
         }
 
-        // If unit is provided, validate it
-        if (unit != null && !unit.trim().isEmpty()) {
+        // If netContentUnit is provided, validate it
+        if (netContentUnit != null && !netContentUnit.trim().isEmpty()) {
             boolean isValid = false;
-            for (String validUnit : VALID_UNITS) {
-                if (validUnit.equals(unit)) {
+            for (String validUnit : VALID_NET_CONTENT_UNITS) {
+                if (validUnit.equals(netContentUnit)) {
                     isValid = true;
                     break;
                 }
             }
             if (!isValid) {
-                throw new IllegalArgumentException("Unit must be one of: KG, G, L, ML");
+                throw new IllegalArgumentException("netContentUnit must be one of: KG, G, L, ML");
             }
         }
     }
@@ -196,11 +196,11 @@ public class ProductServiceImpl implements ProductService {
                 .price(product.getPrice())
                 .productName(product.getProductName())
                 .store(product.getStore())
-                .unit(product.getUnit())
-                .volumeHeight(product.getVolumeHeight())
-                .volumeLong(product.getVolumeLong())
-                .volumeShort(product.getVolumeShort())
-                .weight(product.getWeight())
+                .netContentUnit(product.getNetContentUnit())
+                .packageHeight(product.getPackageHeight())
+                .packageLength(product.getPackageLength())
+                .packageWidth(product.getPackageWidth())
+                .netContent(product.getNetContent())
                 .description(product.getDescription())
                 .imageUrl(product.getImageUrl())
                 .active(product.getActive())

@@ -70,7 +70,7 @@ public class ProductServiceTest {
         assertThat(response.getActive()).isTrue();
         assertThat(response.getProductName()).isEqualTo("Galaxy S21");
         assertThat(response.getStore()).isEqualTo("Best Buy");
-        assertThat(response.getUnit()).isEqualTo("KG");
+        assertThat(response.getNetContentUnit()).isEqualTo("KG");
 
         // Verify repository.save() was called exactly once
         verify(productRepository, times(1)).save(any(Product.class));
@@ -195,7 +195,7 @@ public class ProductServiceTest {
      * Scenario: CreateProductRequest with unit = "INVALID"
      * Expected:
      *   - IllegalArgumentException thrown
-     *   - Exception message = "Unit must be one of: KG, G, L, ML"
+     *   - Exception message = "netContentUnit must be one of: KG, G, L, ML"
      *   - repository.save() NOT called
      */
     @Test
@@ -207,7 +207,7 @@ public class ProductServiceTest {
         // When & Then - Verify exception is thrown with correct message
         assertThatThrownBy(() -> productService.create(request))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Unit must be one of: KG, G, L, ML");
+                .hasMessage("netContentUnit must be one of: KG, G, L, ML");
 
         // Verify repository.save() was never called
         verify(productRepository, never()).save(any(Product.class));
@@ -269,11 +269,11 @@ public class ProductServiceTest {
         assertThat(response.getPrice()).isEqualTo(request.getPrice());
         assertThat(response.getProductName()).isEqualTo(request.getProductName());
         assertThat(response.getStore()).isEqualTo(request.getStore());
-        assertThat(response.getUnit()).isEqualTo(request.getUnit());
-        assertThat(response.getVolumeHeight()).isEqualTo(request.getVolumeHeight());
-        assertThat(response.getVolumeLong()).isEqualTo(request.getVolumeLong());
-        assertThat(response.getVolumeShort()).isEqualTo(request.getVolumeShort());
-        assertThat(response.getWeight()).isEqualTo(request.getWeight());
+        assertThat(response.getNetContentUnit()).isEqualTo(request.getNetContentUnit());
+        assertThat(response.getPackageHeight()).isEqualTo(request.getPackageHeight());
+        assertThat(response.getPackageLength()).isEqualTo(request.getPackageLength());
+        assertThat(response.getPackageWidth()).isEqualTo(request.getPackageWidth());
+        assertThat(response.getNetContent()).isEqualTo(request.getNetContent());
         assertThat(response.getDescription()).isEqualTo(request.getDescription());
         assertThat(response.getActive()).isTrue();
         assertThat(response.getCreatedDate()).isNotNull();
@@ -290,8 +290,8 @@ public class ProductServiceTest {
      *   - All throw IllegalArgumentException
      */
     @ParameterizedTest
-    // Empty/blank units are NOT tested here: with a weight present they hit the
-    // "Unit is required when Weight is provided" branch, a different validation path.
+    // Empty/blank units are NOT tested here: with a netContent present they hit the
+    // "netContentUnit is required when netContent is provided" branch, a different validation path.
     @ValueSource(strings = {"INVALID", "KGS", "GRAM", "LITER", "ML2"})
     @DisplayName("Should throw exception for all invalid units")
     public void testCreateProduct_InvalidUnits_Fail(String invalidUnit) {
@@ -301,7 +301,7 @@ public class ProductServiceTest {
         // When & Then - Verify exception is thrown
         assertThatThrownBy(() -> productService.create(request))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Unit must be one of: KG, G, L, ML");
+                .hasMessage("netContentUnit must be one of: KG, G, L, ML");
 
         verify(productRepository, never()).save(any(Product.class));
     }
@@ -705,7 +705,7 @@ public class ProductServiceTest {
         Long productId = 1L;
         Product existingProduct = ProductTestFixture.createProduct(productId);
         UpdateProductRequest invalidUnitRequest = UpdateProductRequest.builder()
-                .unit(java.util.Optional.of("INVALID"))
+                .netContentUnit(java.util.Optional.of("INVALID"))
                 .build();
 
         when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(existingProduct));
@@ -713,7 +713,7 @@ public class ProductServiceTest {
         // When & Then
         assertThatThrownBy(() -> productService.updateProduct(productId, invalidUnitRequest))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Unit must be one of");
+                .hasMessageContaining("netContentUnit must be one of");
 
         verify(productRepository, never()).save(any(Product.class));
     }
