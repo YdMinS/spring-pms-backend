@@ -5,6 +5,7 @@ import com.pms.domain.Category;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterImageZoneAssignment;
+import com.pms.domain.ListingStatus;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductComponent;
 import com.pms.domain.MasterProductOption;
@@ -126,6 +127,30 @@ class MasterProductServiceTest {
 
     private MasterOptionRequest.OptionItem item(Long productId, Integer quantity) {
         return MasterOptionRequest.OptionItem.builder().productId(productId).quantity(quantity).build();
+    }
+
+    // 화면이 승인완료/반려 셀을 계속 "승인 대기중"으로 보이던 원인: Cell 에 status 가 없어 프론트가
+    // platformProductId 유무로 추정했다. fetchStatus 는 이미 상태를 저장하므로 노출만 하면 된다.
+    @Test
+    void getMatrix_exposesCellStatus() {
+        Seller seller1 = seller(1L, "판매자1");
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
+        MarketplaceAccount acc1 = account(10L, seller1, "COUPANG", "메인");
+
+        ProductListing listing = ProductListing.builder()
+                .id(100L).seller(seller1).platform("COUPANG").platformProductId("X").name("리스팅")
+                .status(ListingStatus.SELLING).build();
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(marketplaceAccountRepository.findAll()).willReturn(List.of(acc1));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(listing));
+        given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of());
+        given(sellerRepository.findAllById(any())).willReturn(List.of(seller1));
+
+        ListingMatrixResponse matrix = service.getMatrix(1L);
+
+        // enum 이름 그대로 — 한글 라벨은 화면 몫.
+        assertThat(matrix.getRows().get(0).getCell().getStatus()).isEqualTo("SELLING");
     }
 
     @Test
