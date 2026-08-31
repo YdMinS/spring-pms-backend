@@ -81,5 +81,16 @@ public class ListingMatrixResponse {
 
         @Schema(description = "Auto-generated registration name from this channel's active options (67)", example = "노브랜드 생수 x 6")
         private String registrationName;
+
+        /**
+         * 이 셀의 실제 등록 상태({@link com.pms.domain.ListingStatus} 이름). 종전에는 필드가 없어서
+         * 프론트가 {@code platformProductId} 유무로 DRAFT/SUBMITTED 를 <b>추정</b>했고, 그 결과
+         * 승인완료(SELLING)·반려(REJECTED)된 셀이 계속 "승인 대기중"으로 보였다.
+         * {@code fetchStatus} 는 이미 상태를 DB 에 저장하고 있었으므로 노출만 하면 된다.
+         *
+         * <p>⚠️ enum 이름을 그대로 준다 — 한글 라벨은 화면 몫이다(백엔드가 문구를 정하면 두 곳이 갈라진다).
+         */
+        @Schema(description = "Listing status (DRAFT/SUBMITTED/SELLING/REJECTED/SUSPENDED)", example = "SELLING")
+        private String status;
     }
 }

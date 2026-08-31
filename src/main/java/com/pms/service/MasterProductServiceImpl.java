@@ -224,6 +224,7 @@ public class MasterProductServiceImpl implements MasterProductService {
                         .platformProductId(pl.getPlatformProductId())
                         .sellingPrice(priceByListing.get(pl.getId()))
                         .registrationName(registrationNameGenerator.generate(master, activeNames, masterOptions, suffix))
+                        .status(pl.getStatus() != null ? pl.getStatus().name() : null)
                         .build();
             }
             return MatrixRow.builder()
