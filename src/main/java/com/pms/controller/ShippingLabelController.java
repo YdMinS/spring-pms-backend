@@ -80,6 +80,23 @@ public class ShippingLabelController {
         return ResponseEntity.ok(ResponseDTO.success(shippingLabelService.previewRows(sellerId)));
     }
 
+    @GetMapping("/v2/preview/by-order")
+    @Operation(summary = "Preview shipping label rows for a single order",
+            description = "Coupang single-order lookup (any status) → editable rows JSON (ADMIN only)")
+    @SecurityRequirement(name = "bearerAuth")
+    @ApiResponse(responseCode = "200", description = "Editable rows")
+    @ApiResponse(responseCode = "400", description = "Not a Coupang order")
+    @ApiResponse(responseCode = "401", description = "Authentication required")
+    @ApiResponse(responseCode = "403", description = "Permission denied (ADMIN role required)")
+    @ApiResponse(responseCode = "404", description = "Order not found")
+    @ApiResponse(responseCode = "500", description = "Coupang ordersheet fetch/parse failed")
+    public ResponseEntity<ResponseDTO<List<ShippingLabelPreviewRow>>> previewByOrder(
+            @RequestParam
+            @Parameter(description = "order_item PK (not the Coupang orderId)")
+            Long orderItemId) {
+        return ResponseEntity.ok(ResponseDTO.success(shippingLabelService.previewRowsByOrder(orderItemId)));
+    }
+
     @PostMapping("/v2/spreadsheet")
     @Operation(summary = "Export edited shipping label spreadsheet",
             description = "Edited rows → carrier receipt xlsx (ADMIN role required)")

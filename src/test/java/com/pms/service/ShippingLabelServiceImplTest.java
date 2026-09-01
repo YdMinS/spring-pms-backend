@@ -3,9 +3,12 @@ package com.pms.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.OrderItem;
 import com.pms.domain.Seller;
 import com.pms.dto.response.ShippingLabelPreviewRow;
+import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.OrderItemRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -13,17 +16,21 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.io.ByteArrayInputStream;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -39,6 +46,8 @@ class ShippingLabelServiceImplTest {
     private CoupangApiClient coupangApiClient;
     @Mock
     private MarketplaceAccountRepository marketplaceAccountRepository;
+    @Mock
+    private OrderItemRepository orderItemRepository;
 
     private ShippingLabelServiceImpl service;
     private MarketplaceAccount coupangAccount;
@@ -54,7 +63,8 @@ class ShippingLabelServiceImplTest {
         props.setInstructDays(14);
 
         service = new ShippingLabelServiceImpl(
-                coupangApiClient, props, marketplaceAccountRepository, new ObjectMapper());
+                coupangApiClient, props, marketplaceAccountRepository, new ObjectMapper(),
+                orderItemRepository);
     }
 
     @Test
@@ -186,6 +196,74 @@ class ShippingLabelServiceImplTest {
             assertThat(row1.getCell(5).getNumericCellValue()).isEqualTo(3.0);      // 편집 택배수량 반영
             assertThat(row1.getCell(6).getNumericCellValue()).isEqualTo(2.0);      // 내품수량 유지
         }
+    }
+
+    // --- 주문 단건 preview (V2 by-order) ---
+
+    @Test
+    void previewRowsByOrder_flattensAllLinesOfOrder() {
+        givenCoupangOrder();
+        given(coupangApiClient.get(anyString(), eq(""), any())).willReturn(oneBoxThreeLines());
+
+        List<ShippingLabelPreviewRow> rows = service.previewRowsByOrder(1L);
+
+        assertThat(rows).hasSize(2);                                        // 전량취소 라인 제외
+        assertThat(rows.get(0).rowKey()).isEqualTo("302012345678:3823839899");
+        assertThat(rows.get(0).parcelQuantity()).isEqualTo(1);
+        assertThat(rows.get(0).sellerName()).isEqualTo("셀러A");
+    }
+
+    @Test
+    void previewRowsByOrder_buildsPathWithVendorAndOrderId() {
+        givenCoupangOrder();
+        given(coupangApiClient.get(anyString(), eq(""), any())).willReturn(oneBoxThreeLines());
+
+        service.previewRowsByOrder(1L);
+
+        ArgumentCaptor<String> path = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient, times(1)).get(path.capture(), eq(""), any());
+        assertThat(path.getValue()).contains("A00012345").contains("4000019469460");
+    }
+
+    @Test
+    void previewRowsByOrder_throwsWhenOrderMissing() {
+        given(orderItemRepository.findWithAccountAndSellerById(9L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.previewRowsByOrder(9L))
+                .isInstanceOf(ResourceNotFoundException.class);
+        verify(coupangApiClient, never()).get(anyString(), anyString(), any());
+    }
+
+    @Test
+    void previewRowsByOrder_rejectsNonCoupangOrder() {
+        Seller seller = Seller.builder().id(2L).sellerName("셀러B").businessRegistration("999-88-77777").build();
+        MarketplaceAccount naver = MarketplaceAccount.builder()
+                .id(2L).seller(seller).platform("NAVER").vendorId("N001")
+                .accessKey("ak").secretKey("sk").isActive(true).build();
+        OrderItem order = OrderItem.builder().id(1L).externalOrderId("4000019469460")
+                .marketplaceAccount(naver).platform("NAVER").build();
+        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(order));
+
+        assertThatThrownBy(() -> service.previewRowsByOrder(1L))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(coupangApiClient, never()).get(anyString(), anyString(), any());
+    }
+
+    @Test
+    void previewRowsByOrder_throwsWhenCoupangFails() {
+        givenCoupangOrder();
+        given(coupangApiClient.get(anyString(), eq(""), any()))
+                .willThrow(new RuntimeException("boom"));
+
+        assertThatThrownBy(() -> service.previewRowsByOrder(1L))
+                .isInstanceOf(IllegalStateException.class);       // 빈 리스트로 감추지 않는다
+    }
+
+    /** 쿠팡 계정에 묶인 주문 라인 1건 스텁 (by-order 테스트 공통 given). */
+    private void givenCoupangOrder() {
+        OrderItem order = OrderItem.builder().id(1L).externalOrderId("4000019469460")
+                .marketplaceAccount(coupangAccount).platform("COUPANG").build();
+        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(order));
     }
 
     // --- canned JSON ---
