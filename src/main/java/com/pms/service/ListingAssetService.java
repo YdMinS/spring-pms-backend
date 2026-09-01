@@ -60,8 +60,9 @@ public interface ListingAssetService {
 
     /**
      * Update the display name (노출상품명 = {@code ProductListing.name}) of a tenant-scoped cell (404 if
-     * absent). Internal only — no asset regeneration and no marketplace push (the name is not a thumbnail/
-     * detail binding key). The name is trimmed before saving (35).
+     * absent). No asset regeneration and no marketplace push here (the name is not a thumbnail/detail binding
+     * key) — but the value <b>is</b> sent to the market as {@code displayProductName} on the next register /
+     * [수정 요청] (108/D2 reverses 35's "internal only"). The name is trimmed before saving (35).
      */
     void updateDisplayName(Long listingId, String name);
 
