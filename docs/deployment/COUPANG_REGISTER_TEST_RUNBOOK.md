@@ -151,6 +151,26 @@ register 가 한 번 성공하면 그 셀에 `platformProductId` 가 박히고 *
 | ⑨ | 🟡 **백엔드 수정됨(96)·화면 몫은 97** — 필수 고시 누락 (실계정 발견 2026-08-30) | `validateRegistrable` 이 선택 품목군의 `required` 고시를 활성 옵션마다 검사(400, push 미도달). 조기 return 2개(AB / 속성 빈 스키마)를 속성 검증 앞으로 좁혀 고시는 **항상** 검사 | 쿠팡 `'1 번 옵션 의 고시정보' 다시 확인해 주세요` → 저장된 고시 **10개**인데 농수축산물 필수는 **11개**. 누락 = `포장단위별 내용물의 용량(중량),수량,크기` — 이 key 는 `용량/중량/수량` 어절이라 `isOptionNotice` 가 옵션 소유로 넘기고, 옵션 편집기에서도 **"상세입력" 체크를 켜야만** 보인다 | ① 옵션 게이트(`computeMissingOptionRequired`)가 **고시의 `required` 도** 검사하도록. ② 또는 옵션-소유 필수 고시를 기본 노출(상세입력 토글 뒤에 숨기지 않기). ③ 백엔드 `validateRegistrable` 에 고시 필수 검증 추가(현재 속성만 검증 → 쿠팡까지 가서야 알게 됨) |
 | ⑩ | ✅ **수정됨(96)** — 고시 품목군 뭉갬 (실측 메타로 발견, 실계정 거부 응답 아님) | detail→group 맵이 `toMap(..., (a,b)->a)` 라 **먼저 온 그룹**이 이김 | 품목군끼리 고시 key 를 공유한다(농수축산물 ↔ 가공식품이 `제조연월일, 소비기한 또는 품질유지기한`·`소비자안전을 위한 주의사항`·`소비자상담관련 전화번호` **3개 공유**) → 선택 그룹이 첫 그룹이 아니면 11개 중 3개가 다른 그룹명으로 전송된다 | 어댑터가 `MasterProduct.categoryNoticeGroup`(91)을 읽어 그 그룹의 고시로만 맵 구성. 저장값 없는 레거시 마스터는 현행 first-wins 유지. ⚠️ 91 의 "이 필드를 어댑터에 배선 금지" 결정을 뒤집은 것 — 그 도출이 공유 key 앞에서 성립하지 않음 |
 | ⑪ | ✅ **판정 완료(2026-08-30 등록 성공)** — 계량 고시 값 형식 (`320g 1개`) | 프론트 101 이 `${계량값} ${수량}개` 로 조합(`composeMeasureNotice` 한 곳). 계량값은 물품 `netContent`+단위(`320g`), 수량은 구성상품 수량 합 | 96 ⑨/97 이 **빈 값**을, 101 이 **틀린 값**(수량만 넣던 `1`)을 막았으나 **쿠팡이 이 형식(특히 `개`)을 받는지는 미판정**. `포장단위별 내용물의 용량(중량), 수량` 같은 계량 고시가 대상 | 등록 성공으로 확정 — 쿠팡이 `개` 를 포함한 이 형식을 받는다. 형식 거부 시 **`composeMeasureNotice` 한 함수만** 고친다(리터럴이 그 밖으로 새지 않게 설계됨). ⚠️ 크기까지 요구하는 농수축산물 키(`…용량(중량),수량,크기`)는 조합이 한 조각 비므로 사용자가 덧붙인다 |
+| ⑫ | **상세 폰트 `@font-face`(105)** | 상세 HTML 선두에 `<style>@font-face{...}</style>` 1블록 + 블록별 인라인 `font-family`(폴백 스택 동반) | 쿠팡이 상세에서 `<style>` 을 **보존하는지**, 나아가 `<style>` 때문에 **등록을 거부하는지** 미판정. 폰트를 지정한 셀을 등록 → ① 등록 자체가 400 인지 ② WING 상세 미리보기에서 지정 폰트로 보이는지 | ① 등록 거부 → **재배포 없이** `detail.font-face.enabled=false`(env) 로 `@font-face` 방출 중단(스택 폴백만) 후 재시도. ② 보존 안 됨(기본 폰트로 보임) → 리스크 수용 결정대로 폴백 스택만 남기거나, 텍스트 블록 이미지 굽기를 후속 검토. ⚠️ **선행 = S3 버킷 CORS**(아래) — 미설정이면 이 판정 자체가 무의미하다(브라우저가 폰트를 못 받아 항상 폴백) |
+
+### ⑫ 선행조건 — S3 버킷 CORS (2026-09-01 기준 **미설정**)
+
+브라우저는 폰트만은 크로스오리진 요청에 CORS 헤더를 요구한다(이미지와 달리 예외 없음). 확인 결과 `oclyx-product-images-dev`·`oclyx-product-images-prod` **둘 다 미설정**:
+
+```bash
+curl -s -X OPTIONS -H "Origin: https://example.com" -H "Access-Control-Request-Method: GET" \
+  "https://oclyx-product-images-dev.s3.ap-northeast-2.amazonaws.com/tenants/_system/fonts/system-sans.ttf"
+# → <Message>CORSResponse: CORS is not enabled for this bucket.</Message>
+```
+
+적용할 규칙(두 버킷 모두, 콘솔 또는 CLI — **사용자 수행**):
+
+```json
+[{ "AllowedOrigins": ["*"], "AllowedMethods": ["GET"], "AllowedHeaders": ["*"], "MaxAgeSeconds": 3000 }]
+```
+
+검증: `curl -I -H "Origin: https://example.com" {폰트 공개 URL}` 응답에 `access-control-allow-origin` 헤더 존재.
+
 
 ## 7. 실행 기록
 

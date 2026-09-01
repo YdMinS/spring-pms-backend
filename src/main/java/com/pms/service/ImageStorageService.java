@@ -74,6 +74,21 @@ public interface ImageStorageService {
     String uploadBytes(byte[] data, String category, String filename, String contentType);
 
     /**
+     * Upload a tenant-independent shared asset (e.g. the bundled system font) and return its stored value.
+     *
+     * <p>⚠️ Unlike {@link #uploadBytes} this must work with NO {@code TenantContext} — it runs from startup
+     * seeders. S3 stores it under {@code {keyPrefix}/_system/{category}/{filename}} and returns a public URL;
+     * the local backend returns a disk path (NOT a public URL), so callers must check for {@code http}.</p>
+     *
+     * @param data        raw bytes to store
+     * @param category    logical bucket, e.g. {@code fonts}
+     * @param filename    target filename
+     * @param contentType MIME type (e.g. {@code font/ttf})
+     * @return value to persist (disk path on Local, public URL on S3)
+     */
+    String uploadShared(byte[] data, String category, String filename, String contentType);
+
+    /**
      * Read back bytes previously stored via {@link #uploadBytes} (or {@link #uploadImage}), given the
      * exact value that method returned. Needed for server-side rendering of UPLOADED fonts, which must
      * load the actual font bytes regardless of backend.

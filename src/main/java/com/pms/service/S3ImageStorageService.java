@@ -140,6 +140,22 @@ public class S3ImageStorageService implements ImageStorageService {
     }
 
     @Override
+    public String uploadShared(byte[] data, String category, String filename, String contentType) {
+        // Tenant-independent key: {keyPrefix}/_system/{category}/{filename}. No TenantContext lookup —
+        // this runs from startup seeders where no request (and therefore no tenant) exists.
+        String key = properties.getS3().getKeyPrefix() + "/_system/" + category + "/" + filename;
+        s3Client.putObject(
+                PutObjectRequest.builder()
+                        .bucket(properties.getS3().getBucket())
+                        .key(key)
+                        .contentType(contentType)
+                        .build(),
+                RequestBody.fromBytes(data));
+        log.info("Shared bytes uploaded to S3: {}", key);
+        return publicUrl(key);
+    }
+
+    @Override
     public byte[] getBytes(String storedValue) {
         // storedValue is a public URL → extract key → getObject.
         String key = extractKey(storedValue);

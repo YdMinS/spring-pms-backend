@@ -75,3 +75,9 @@ server:
   tomcat:
     max-http-post-size: 20971520
     max-swallow-size: 20971520
+
+detail:
+  font-face:
+    # Emit @font-face in generated detail HTML. Turn off to stop font downloads (CSS fallback stack only)
+    # without a redeploy, e.g. if a marketplace rejects the <style> block.
+    enabled: true

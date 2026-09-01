@@ -269,6 +269,12 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM product_listing_option "
                         + "WHERE created_date IS NULL AND modified_date IS NULL",
                 Integer.class)).isZero();
+
+        // changeset 048: the web-font columns exist on font_asset (105). Both are nullable, so a successful
+        // count over the two new names is what proves they were added.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM font_asset WHERE web_stack IS NULL AND web_url IS NULL",
+                Integer.class)).isNotNull();
     }
 
     @Test
