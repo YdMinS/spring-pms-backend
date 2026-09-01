@@ -25,7 +25,7 @@ class DetailHtmlRendererTest {
     void text_boundValue_rendersWithWidthAndAlign() {
         DetailBlock block = DetailBlock.builder()
                 .type("text").bind("brandName").widthPercent(80).align("center").build();
-        String html = renderer.render(template(block), Map.of("brandName", "행복상회"), Map.of());
+        String html = renderer.render(template(block), Map.of("brandName", "행복상회"), Map.of(), Map.of());
 
         assertThat(html).contains("행복상회");
         assertThat(html).contains("text-align:center;");
@@ -36,7 +36,7 @@ class DetailHtmlRendererTest {
     void text_blankBinding_withDefaultValue_rendersFallback() {
         DetailBlock block = DetailBlock.builder()
                 .type("text").bind("freeShipping").defaultValue("무료배송").build();
-        String html = renderer.render(template(block), Map.of(), Map.of());
+        String html = renderer.render(template(block), Map.of(), Map.of(), Map.of());
 
         assertThat(html).contains("무료배송");
     }
@@ -44,7 +44,7 @@ class DetailHtmlRendererTest {
     @Test
     void text_blankBindingAndDefault_isSkipped() {
         DetailBlock block = DetailBlock.builder().type("text").bind("brandName").build();
-        String html = renderer.render(template(block), Map.of("brandName", "  "), Map.of());
+        String html = renderer.render(template(block), Map.of("brandName", "  "), Map.of(), Map.of());
 
         assertThat(html).isEmpty();
     }
@@ -53,7 +53,7 @@ class DetailHtmlRendererTest {
     void imageZone_rendersImgsInOrder() {
         DetailBlock block = DetailBlock.builder().type("imageZone").bind("product_photos").build();
         String html = renderer.render(template(block), Map.of(),
-                Map.of("product_photos", List.of("https://s3/a.jpg", "https://s3/b.jpg", "https://s3/c.jpg")));
+                Map.of("product_photos", List.of("https://s3/a.jpg", "https://s3/b.jpg", "https://s3/c.jpg")), Map.of());
 
         assertThat(html.indexOf("a.jpg")).isLessThan(html.indexOf("b.jpg"));
         assertThat(html.indexOf("b.jpg")).isLessThan(html.indexOf("c.jpg"));
@@ -63,7 +63,7 @@ class DetailHtmlRendererTest {
     @Test
     void imageZone_empty_isSkipped() {
         DetailBlock block = DetailBlock.builder().type("imageZone").bind("detail_photos").build();
-        String html = renderer.render(template(block), Map.of(), Map.of());
+        String html = renderer.render(template(block), Map.of(), Map.of(), Map.of());
 
         assertThat(html).isEmpty();
     }
@@ -71,7 +71,7 @@ class DetailHtmlRendererTest {
     @Test
     void asset_rendersSingleImg() {
         DetailBlock block = DetailBlock.builder().type("asset").src("tenants/1/thumbnail-assets/notice.png").build();
-        String html = renderer.render(template(block), Map.of(), Map.of());
+        String html = renderer.render(template(block), Map.of(), Map.of(), Map.of());
 
         assertThat(html).contains("<img src=\"tenants/1/thumbnail-assets/notice.png\"");
         assertThat(html.split("<img", -1).length - 1).isEqualTo(1);
@@ -80,7 +80,7 @@ class DetailHtmlRendererTest {
     @Test
     void spacer_rendersGapDiv() {
         DetailBlock block = DetailBlock.builder().type("spacer").heightPx(24).build();
-        String html = renderer.render(template(block), Map.of(), Map.of());
+        String html = renderer.render(template(block), Map.of(), Map.of(), Map.of());
 
         assertThat(html).isEqualTo("<div style=\"height:24px;\"></div>");
     }
@@ -88,7 +88,7 @@ class DetailHtmlRendererTest {
     @Test
     void spacer_nullHeight_usesDefault24() {
         DetailBlock block = DetailBlock.builder().type("spacer").build();
-        String html = renderer.render(template(block), Map.of(), Map.of());
+        String html = renderer.render(template(block), Map.of(), Map.of(), Map.of());
 
         assertThat(html).isEqualTo("<div style=\"height:24px;\"></div>");
     }
@@ -96,7 +96,7 @@ class DetailHtmlRendererTest {
     @Test
     void spacer_oversizeHeight_clampedTo600() {
         DetailBlock block = DetailBlock.builder().type("spacer").heightPx(1000).build();
-        String html = renderer.render(template(block), Map.of(), Map.of());
+        String html = renderer.render(template(block), Map.of(), Map.of(), Map.of());
 
         assertThat(html).isEqualTo("<div style=\"height:600px;\"></div>");
     }
@@ -104,7 +104,7 @@ class DetailHtmlRendererTest {
     @Test
     void text_value_isHtmlEscaped() {
         DetailBlock block = DetailBlock.builder().type("text").bind("brandName").build();
-        String html = renderer.render(template(block), Map.of("brandName", "<b>x</b>"), Map.of());
+        String html = renderer.render(template(block), Map.of("brandName", "<b>x</b>"), Map.of(), Map.of());
 
         assertThat(html).contains("&lt;b&gt;x&lt;/b&gt;");
         assertThat(html).doesNotContain("<b>x</b>");
@@ -115,21 +115,21 @@ class DetailHtmlRendererTest {
     @Test
     void text_fontSize_rendersPx() {
         String html = renderer.render(template(styledText(Map.of("fontSize", "18"))),
-                Map.of("brandName", "x"), Map.of());
+                Map.of("brandName", "x"), Map.of(), Map.of());
         assertThat(html).contains("font-size:18px;");
     }
 
     @Test
     void text_color_rendersHex() {
         String html = renderer.render(template(styledText(Map.of("color", "#ff0000"))),
-                Map.of("brandName", "x"), Map.of());
+                Map.of("brandName", "x"), Map.of(), Map.of());
         assertThat(html).contains("color:#ff0000;");
     }
 
     @Test
     void text_boldAndItalic_rendersWeightAndStyle() {
         String html = renderer.render(template(styledText(Map.of("bold", "true", "italic", "true"))),
-                Map.of("brandName", "x"), Map.of());
+                Map.of("brandName", "x"), Map.of(), Map.of());
         assertThat(html).contains("font-weight:700;");
         assertThat(html).contains("font-style:italic;");
     }
@@ -137,7 +137,7 @@ class DetailHtmlRendererTest {
     @Test
     void text_colorInjection_isDropped() { // MUST-KEEP security regression
         String html = renderer.render(template(styledText(Map.of("color", "red;font-size:99px"))),
-                Map.of("brandName", "x"), Map.of());
+                Map.of("brandName", "x"), Map.of(), Map.of());
         assertThat(html).doesNotContain("color:red");
         assertThat(html).doesNotContain("font-size:99px");
     }
@@ -145,7 +145,7 @@ class DetailHtmlRendererTest {
     @Test
     void text_fontSizeSuffixInjection_isDropped() { // MUST-KEEP: "18px;color:red" → parseInt fail → drop
         String html = renderer.render(template(styledText(Map.of("fontSize", "18px;color:red"))),
-                Map.of("brandName", "x"), Map.of());
+                Map.of("brandName", "x"), Map.of(), Map.of());
         assertThat(html).doesNotContain("font-size:");
         assertThat(html).doesNotContain("color:red");
     }
@@ -153,7 +153,7 @@ class DetailHtmlRendererTest {
     @Test
     void text_unknownKey_isIgnored() {
         String html = renderer.render(template(styledText(Map.of("foo", "bar"))),
-                Map.of("brandName", "x"), Map.of());
+                Map.of("brandName", "x"), Map.of(), Map.of());
         assertThat(html).doesNotContain("foo");
         assertThat(html).doesNotContain("bar");
     }
@@ -162,18 +162,66 @@ class DetailHtmlRendererTest {
     void text_nullStyleValue_isSkippedWithoutNpe() {
         Map<String, String> style = new java.util.HashMap<>();
         style.put("color", null);
-        String html = renderer.render(template(styledText(style)), Map.of("brandName", "x"), Map.of());
+        String html = renderer.render(template(styledText(style)), Map.of("brandName", "x"), Map.of(), Map.of());
         assertThat(html).doesNotContain("color:");
     }
 
     @Test
     void text_nullStyle_rendersSameAsBefore() {
         DetailBlock block = DetailBlock.builder().type("text").bind("brandName").build();
-        String html = renderer.render(template(block), Map.of("brandName", "x"), Map.of());
+        String html = renderer.render(template(block), Map.of("brandName", "x"), Map.of(), Map.of());
         assertThat(html).contains("<p style=\"width:100%;\">");
     }
 
     private DetailBlock styledText(Map<String, String> style) {
         return DetailBlock.builder().type("text").bind("brandName").textStyle(style).build();
+    }
+
+    // --- font (105) -------------------------------------------------------------------------------
+
+    private DetailBlock textWithFont(String bind, String fontStyleValue) {
+        return DetailBlock.builder()
+                .type("text").bind(bind).textStyle(Map.of("fontFamily", fontStyleValue)).build();
+    }
+
+    @Test
+    void text_withDownloadableFont_emitsFontFaceAndInlineFamily() {
+        DetailFont font = new DetailFont(12L, "'oclyx-font-12',sans-serif", "https://cdn/f.ttf", "truetype");
+        String html = renderer.render(template(textWithFont("brandName", "12")),
+                Map.of("brandName", "행복상회"), Map.of(), Map.of("12", font));
+
+        assertThat(html).contains("@font-face{font-family:'oclyx-font-12';src:url('https://cdn/f.ttf')");
+        assertThat(html).contains("format('truetype')");
+        assertThat(html).contains("font-family:'oclyx-font-12',sans-serif;");
+    }
+
+    @Test
+    void sameFontOnTwoBlocks_emitsFontFaceOnce() {
+        DetailFont font = new DetailFont(12L, "'oclyx-font-12',sans-serif", "https://cdn/f.ttf", "truetype");
+        String html = renderer.render(
+                template(textWithFont("brandName", "12"), textWithFont("productName", "12")),
+                Map.of("brandName", "행복상회", "productName", "녹차라떼"), Map.of(), Map.of("12", font));
+
+        assertThat(html.split("@font-face", -1).length - 1).isEqualTo(1);
+    }
+
+    @Test
+    void stackOnlyFont_emitsNoStyleBlockButKeepsFamily() {
+        DetailFont font = new DetailFont(1L, "'Nanum Gothic',sans-serif", null, null);
+        String html = renderer.render(template(textWithFont("brandName", "1")),
+                Map.of("brandName", "행복상회"), Map.of(), Map.of("1", font));
+
+        assertThat(html).doesNotContain("<style>");
+        assertThat(html).contains("font-family:'Nanum Gothic',sans-serif;");
+    }
+
+    @Test
+    void noFontReferenced_producesTheSameHtmlAsBefore() {
+        DetailBlock block = DetailBlock.builder()
+                .type("text").bind("brandName").widthPercent(80).align("center").build();
+        String html = renderer.render(template(block), Map.of("brandName", "행복상회"), Map.of(), Map.of());
+
+        assertThat(html).doesNotContain("<style>").doesNotContain("font-family");
+        assertThat(html).isEqualTo("<div style=\"text-align:center;\"><p style=\"width:80%;\">행복상회</p></div>");
     }
 }

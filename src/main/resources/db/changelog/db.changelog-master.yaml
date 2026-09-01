@@ -91,3 +91,7 @@ databaseChangeLog:
       file: db/changelog/changes/045-free-shipping-charge-backfill.yaml
   - include:
       file: db/changelog/changes/046-product-net-content-rename.yaml
+  - include:
+      file: db/changelog/changes/047-listing-audit-columns.yaml
+  - include:
+      file: db/changelog/changes/048-font-asset-web-font.yaml

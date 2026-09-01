@@ -29,4 +29,13 @@ public class FontAssetResponse {
     @Schema(description = "True if system-shared (tenantId null); cannot be deleted by tenants",
             example = "true")
     private Boolean system;
+
+    @Schema(description = "CSS font-family fallback stack for detail-page HTML; null = none",
+            example = "'Nanum Gothic','Malgun Gothic',sans-serif")
+    private String webStack;
+
+    @Schema(description = "Public URL of the font binary (@font-face source); null = stack only. "
+            + "⚠️ Never the raw storageKey disk path — see FontAsset.publicWebUrl().",
+            example = "https://bucket.s3.ap-northeast-2.amazonaws.com/tenants/_system/fonts/system-sans.ttf")
+    private String webUrl;
 }

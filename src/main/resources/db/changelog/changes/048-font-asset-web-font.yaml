@@ -1,0 +1,19 @@
+# Web-font columns on font_asset (FEATURE_2608_06 / 105): additive, both nullable.
+# web_stack = CSS font-family fallback stack, web_url = public URL of the binary for detail-page @font-face.
+# No boolean → no MySQL BIT trap; nullable → no backfill (FontAsset.publicWebUrl() absorbs legacy rows).
+databaseChangeLog:
+
+  - changeSet:
+      id: 048-font-asset-web-font
+      author: oclyx
+      comment: "105: font_asset.web_stack + web_url (nullable) — detail-page @font-face support."
+      changes:
+        - addColumn:
+            tableName: font_asset
+            columns:
+              - column:
+                  name: web_stack
+                  type: VARCHAR(255)
+              - column:
+                  name: web_url
+                  type: VARCHAR(500)

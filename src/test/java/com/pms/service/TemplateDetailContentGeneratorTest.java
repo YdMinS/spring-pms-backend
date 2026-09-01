@@ -17,6 +17,7 @@ import com.pms.repository.ProductListingProductRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.junit.jupiter.api.BeforeEach;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -31,6 +32,7 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.lenient;
 
 /**
  * Real detail generator (FEATURE_2608_06 / Step 2-2): composes textBindings (fieldValues ?? first-BOM
@@ -46,10 +48,17 @@ class TemplateDetailContentGeneratorTest {
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private ProductListingProductRepository productListingProductRepository;
     @Mock private DetailHtmlRenderer detailHtmlRenderer;
+    @Mock private DetailFontResolver detailFontResolver;
     @Mock private ImageProcessor imageProcessor;
     @Mock private ImageStorageService imageStorageService;
     @Mock private ProductImageLoader productImageLoader;
     @InjectMocks private TemplateDetailContentGenerator generator;
+
+    @BeforeEach
+    void stubFonts() {
+        // Font resolution is covered by DetailFontResolverTest; here it must simply not be null.
+        lenient().when(detailFontResolver.resolve(any())).thenReturn(Map.of());
+    }
 
     private static final Long MASTER_ID = 1L;
     private static final Long CELL_ID = 100L;
@@ -79,7 +88,7 @@ class TemplateDetailContentGeneratorTest {
         // Effective URL resolution: edited entries here simply return their own imageUrl.
         given(productImageUrlResolver.resolve(any()))
                 .willAnswer(inv -> ((MasterProductImage) inv.getArgument(0)).getImageUrl());
-        given(detailHtmlRenderer.render(any(), any(), any())).willReturn("<html/>");
+        given(detailHtmlRenderer.render(any(), any(), any(), any())).willReturn("<html/>");
 
         String result = generator.generate(cell);
 
@@ -89,7 +98,7 @@ class TemplateDetailContentGeneratorTest {
         ArgumentCaptor<Map<String, String>> textCaptor = ArgumentCaptor.forClass(Map.class);
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, List<String>>> zoneCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(detailHtmlRenderer, times(1)).render(any(), textCaptor.capture(), zoneCaptor.capture());
+        verify(detailHtmlRenderer, times(1)).render(any(), textCaptor.capture(), zoneCaptor.capture(), any());
         assertThat(textCaptor.getValue()).containsEntry("productName", "P");
         assertThat(zoneCaptor.getValue().get("product_photos")).containsExactly("u0.jpg", "u1.jpg");
         // __source__ (cover photo) is not a detail zone.
@@ -117,13 +126,13 @@ class TemplateDetailContentGeneratorTest {
         given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
                 .willReturn(List.of(ProductListingProduct.builder()
                         .product(Product.builder().productName("Q").brand("B").build()).quantity(1).build()));
-        given(detailHtmlRenderer.render(any(), any(), any())).willReturn("<html/>");
+        given(detailHtmlRenderer.render(any(), any(), any(), any())).willReturn("<html/>");
 
         generator.generate(cell);
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, String>> textCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(detailHtmlRenderer).render(any(), textCaptor.capture(), any());
+        verify(detailHtmlRenderer).render(any(), textCaptor.capture(), any(), any());
         assertThat(textCaptor.getValue()).containsEntry("productName", "Q");
     }
 
@@ -132,7 +141,7 @@ class TemplateDetailContentGeneratorTest {
         ProductListing cell = ProductListing.builder().id(CELL_ID).build(); // no master
 
         assertThat(generator.generate(cell)).isEmpty();
-        verify(detailHtmlRenderer, never()).render(any(), any(), any());
+        verify(detailHtmlRenderer, never()).render(any(), any(), any(), any());
     }
 
     // ---- image processing preset (FEATURE_2608_08) ----
@@ -164,14 +173,14 @@ class TemplateDetailContentGeneratorTest {
         // Return a distinct URL keyed on the (unique) filename so the swap is observable.
         given(imageStorageService.uploadBytes(any(), eq("master-detail"), any(), eq("image/jpeg")))
                 .willAnswer(inv -> "out/" + inv.getArgument(2));
-        given(detailHtmlRenderer.render(any(), any(), any())).willReturn("<html/>");
+        given(detailHtmlRenderer.render(any(), any(), any(), any())).willReturn("<html/>");
 
         generator.generate(cell);
 
         verify(imageProcessor, times(2)).process(any(), any());
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, List<String>>> zoneCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(detailHtmlRenderer).render(any(), any(), zoneCaptor.capture());
+        verify(detailHtmlRenderer).render(any(), any(), zoneCaptor.capture(), any());
         // URLs swapped to the freshly uploaded composites (filename = {master}_{preset}_{zone}_{index}.jpg).
         assertThat(zoneCaptor.getValue().get("product_photos"))
                 .containsExactly("out/1_5_product_photos_0.jpg", "out/1_5_product_photos_1.jpg");
@@ -193,14 +202,14 @@ class TemplateDetailContentGeneratorTest {
                 .willReturn(List.of(assignment("product_photos", 0, "u0.jpg")));
         given(productImageUrlResolver.resolve(any()))
                 .willAnswer(inv -> ((MasterProductImage) inv.getArgument(0)).getImageUrl());
-        given(detailHtmlRenderer.render(any(), any(), any())).willReturn("<html/>");
+        given(detailHtmlRenderer.render(any(), any(), any(), any())).willReturn("<html/>");
 
         generator.generate(cell);
 
         verify(imageProcessor, never()).process(any(), any());
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, List<String>>> zoneCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(detailHtmlRenderer).render(any(), any(), zoneCaptor.capture());
+        verify(detailHtmlRenderer).render(any(), any(), zoneCaptor.capture(), any());
         assertThat(zoneCaptor.getValue().get("product_photos")).containsExactly("u0.jpg"); // verbatim
     }
     // Note: "no default template" now throws in ChannelTemplateResolver (covered by ChannelTemplateResolverTest),
