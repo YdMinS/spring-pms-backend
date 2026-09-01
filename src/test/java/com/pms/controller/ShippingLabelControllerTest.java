@@ -87,6 +87,46 @@ public class ShippingLabelControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
+    // --- V2 preview by order ---
+
+    @Test
+    public void testPreviewByOrderReturnsRowsWithAdminToken() throws Exception {
+        ShippingLabelPreviewRow row = new ShippingLabelPreviewRow(
+                "302012345678:3823839899", "김철수", "01012345678", "06133", "주소",
+                "양말 블랙 L", 2, 1, "3823839899",
+                "4000019469460", "문앞", "302012345678", "셀러A", "COUPANG");
+        given(shippingLabelService.previewRowsByOrder(any())).willReturn(List.of(row));
+
+        mockMvc.perform(get("/api/admin/shipping-labels/v2/preview/by-order")
+                .param("orderItemId", "1")
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].rowKey").value(notNullValue()))
+                .andExpect(jsonPath("$.data[0].parcelQuantity").value(1));
+    }
+
+    @Test
+    public void testPreviewByOrderRequiresOrderItemId() throws Exception {
+        mockMvc.perform(get("/api/admin/shipping-labels/v2/preview/by-order")
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    public void testPreviewByOrderWithoutToken() throws Exception {
+        mockMvc.perform(get("/api/admin/shipping-labels/v2/preview/by-order")
+                .param("orderItemId", "1"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    public void testPreviewByOrderWithUserToken() throws Exception {
+        mockMvc.perform(get("/api/admin/shipping-labels/v2/preview/by-order")
+                .param("orderItemId", "1")
+                .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
     // --- V2 export ---
 
     @Test
