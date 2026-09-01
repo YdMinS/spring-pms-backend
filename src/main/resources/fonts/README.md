@@ -1,23 +1,38 @@
-# Bundled system fonts (thumbnail engine — FEATURE_2608_05)
+# Bundled system fonts (thumbnail engine + detail @font-face)
 
-`SystemFontSeeder` seeds a shared system `FontAsset` (`tenantId=null`, `source=BUNDLED`,
-`storageKey=fonts/system-sans.ttf`, `familyKey=SansSerif`) on startup.
+`SystemFontSeeder` seeds one shared system `FontAsset` per entry in its `SYSTEM_FONTS` list
+(`tenantId=null`, `source=BUNDLED`, `storageKey=fonts/<file>.ttf`) on startup, then uploads each
+binary once to shared storage so detail pages can emit an `@font-face` (`webUrl`).
 
-Ships **Nanum Gothic Regular (OFL)** as `system-sans.ttf` — full modern-Hangul coverage
-(all 11,172 syllables) plus Latin/digits/symbols, so thumbnails render Korean product and
-brand names without tofu (□). `FontRegistry` loads it via `Font.createFont(TRUETYPE_FONT, ...)`
-automatically; no code change. See `OFL.txt` for the license.
+Bundled fonts (all **SIL OFL 1.1**, licenses in `licenses/`):
 
-> If no binary is present, `FontRegistry` falls back to the JDK logical font named by
-> `familyKey` (`SansSerif`), which on a slim server JRE has **no CJK glyphs** → Hangul tofu.
-> Keeping a real CJK TTF here at `fonts/system-sans.ttf` is what prevents that.
+| familyKey | file | Hangul coverage | note |
+|---|---|---|---|
+| `SansSerif` | `system-sans.ttf` (Nanum Gothic) | 11,172 / 11,172 | default template font — do not replace with a partial face |
+| `Pretendard` | `pretendard.ttf` | 11,172 / 11,172 | body sans |
+| `NanumMyeongjo` | `nanum-myeongjo.ttf` | 11,172 / 11,172 | serif |
+| `BlackHanSans` | `black-han-sans.ttf` | **2,581 / 11,172** | display only |
+| `Jua` | `jua.ttf` | **2,367 / 11,172** | display only |
+| `DoHyeon` | `do-hyeon.ttf` | **2,437 / 11,172** | display only |
 
-## To replace the thumbnail font
-1. Drop an **OFL / redistributable** TTF here as `system-sans.ttf`. It must cover the full modern
-   Hangul syllable block (product names are arbitrary Korean — a subset renders partial tofu).
-   Alternatives: Pretendard, Noto Sans KR. Use a genuine **TTF** (OTF may fail `TRUETYPE_FONT` load).
-2. Keep the seeded `storageKey`/`familyKey` in sync (or add another `SystemFontSeeder` entry).
-3. Commit the font's own license file alongside it (OFL requires redistribution terms).
+> ⚠️ The three display faces cover roughly a fifth of the modern Hangul syllable block. Product names
+> are arbitrary Korean, so an uncommon syllable renders as tofu (□). They are fine as a deliberate
+> title font but must never become the default template font — that stays `SansSerif`.
 
-⚠️ Only add fonts you have the license to redistribute (OFL permits it). Tenant-uploaded fonts go
-to storage (`source=UPLOADED`), not here.
+## To add a font
+1. Drop an **OFL / redistributable** TTF here, lowercase-hyphen filename. Use a genuine **TTF**
+   (an OTF renamed to `.ttf` may fail `Font.createFont(TRUETYPE_FONT, ...)`; the seeder test catches it).
+2. Commit its license as `licenses/<Font>-OFL.txt` (OFL requires redistribution terms).
+3. Add one `SystemFont` entry to `SystemFontSeeder.SYSTEM_FONTS`.
+4. Redeploy — the row is seeded and the binary promoted to a public URL on the next boot (idempotent).
+
+⚠️ Three traps for the next person:
+- **Do not change an existing `familyKey`.** It is the seed lookup key; a new value creates a second
+  row instead of updating the existing dev/prod one.
+- **`storageKey` stays a classpath path.** `FontRegistry` loads BUNDLED binaries through it; an S3 URL
+  there falls back to a JDK logical font and breaks CJK thumbnail rendering. Public URLs go in `webUrl`.
+- **A declared font with no bundled binary is skipped, not seeded.** Seeding it anyway would put a
+  dropdown entry in front of users that silently renders in a different face.
+
+⚠️ Only add fonts you have the license to redistribute — `@font-face` republishes the binary to every
+buyer. Tenant-uploaded fonts go to storage (`source=UPLOADED`), not here.
