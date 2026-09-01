@@ -1,0 +1,23 @@
+# Option stock quantity (FEATURE_2608_06 / 102). Master option = the all-channel default, listing option =
+# the per-channel override (<= master, D5). Resolution = channel ?? master ?? 9999 (ListingStockPolicy).
+# ⚠️ Nullable with NO default and NO backfill on purpose: NULL means "unset/inherit", and every existing row
+# staying NULL is exactly the current behaviour (the 9999 fallback the adapter used as a constant).
+# No boolean → no MySQL BIT trap (see 006); INT maps identically on H2/MySQL under Hibernate.
+databaseChangeLog:
+
+  - changeSet:
+      id: 049-option-stock-quantity
+      author: oclyx
+      comment: "102: master_product_option.stock_quantity + product_listing_option.stock_quantity (nullable INT)."
+      changes:
+        - addColumn:
+            tableName: master_product_option
+            columns:
+              - column: { name: stock_quantity, type: INT }
+        - addColumn:
+            tableName: product_listing_option
+            columns:
+              - column: { name: stock_quantity, type: INT }
+      rollback:
+        - dropColumn: { tableName: master_product_option, columnName: stock_quantity }
+        - dropColumn: { tableName: product_listing_option, columnName: stock_quantity }

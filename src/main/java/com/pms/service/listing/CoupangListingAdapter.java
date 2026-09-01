@@ -61,8 +61,6 @@ public class CoupangListingAdapter implements ListingChannel {
     // Register defaults (73). saleStartedAt = now; saleEndedAt = far future (sale period not user-input).
     private static final DateTimeFormatter SALE_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
     private static final String SALE_ENDED_AT = "2099-12-31T23:59:59";
-    // Stock is not tracked → fixed per-item max buy count (Coupang max 99999).
-    private static final int DEFAULT_MAX_BUY_COUNT = 9999;
     // 108/D1: approval request is the operational default (user decision 2026-09-01) — [마켓 등록] and
     // [수정 요청] both submit for review. ⚠️ Trade-off: once approved, the product/options can no longer be
     // physically deleted on Coupang (stop-selling only).
@@ -390,8 +388,10 @@ public class CoupangListingAdapter implements ListingChannel {
                     ? option.getOriginalPrice() : option.getSellingPrice());
             item.put("salePrice", option.getSellingPrice());
             item.put("unitCount", 1);   // 63: unit quantity (SINGLE = 1; AB unitCount is a live-account follow-up)
-            // 73: fixed item defaults (stock not tracked; standard tax/adult/import flags).
-            item.put("maximumBuyCount", DEFAULT_MAX_BUY_COUNT);
+            // 102: stock = this channel's override ?? the master option's ?? 9999 (unset on both).
+            item.put("maximumBuyCount",
+                    ListingStockPolicy.resolve(option, byName.get(option.getOptionName())));
+            // 73: fixed item defaults (standard tax/adult/import flags).
             item.put("maximumBuyForPerson", 0);
             item.put("maximumBuyForPersonPeriod", 1);
             item.put("outboundShippingTimeDay", 1);

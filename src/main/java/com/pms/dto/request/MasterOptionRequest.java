@@ -3,6 +3,8 @@ package com.pms.dto.request;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -48,6 +50,13 @@ public class MasterOptionRequest {
     @Schema(description = "Per-option product-info disclosure override (key -> value); null = keep on update / "
             + "no override on create (FEATURE_2608_06 / 59)", nullable = true)
     private Map<String, String> categoryNotices;
+
+    @Min(value = 0, message = "stockQuantity must be >= 0")
+    @Max(value = 99999, message = "stockQuantity must be <= 99999")
+    @Schema(description = "All-channel default stock quantity (102). ⚠️ null = CLEAR it (back to unset → 9999 "
+            + "fallback), NOT \"keep existing\" — unlike deliveryId/packageId. The option form always posts "
+            + "every field, and emptying the stock box is a valid intent.", nullable = true, example = "50")
+    private Integer stockQuantity;
 
     @Getter
     @NoArgsConstructor

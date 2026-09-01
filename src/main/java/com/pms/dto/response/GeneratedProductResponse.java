@@ -49,5 +49,9 @@ public class GeneratedProductResponse {
         private Boolean active;
         /** 87: the option exists on the marketplace, so the front locks its checkbox (it cannot be unchecked). */
         private Boolean onMarket;
+        /** 102: per-channel stock override; null = inherit the master option's stock (effective = maxStock). */
+        private Integer stockQuantity;
+        /** 102/D5: upper bound for this option's channel stock = master stock ?? 9999; also the inherited value. */
+        private int maxStock;
     }
 }

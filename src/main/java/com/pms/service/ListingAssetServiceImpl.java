@@ -23,6 +23,7 @@ import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.service.listing.ListingChannelResolver;
+import com.pms.service.listing.ListingStockPolicy;
 import com.pms.service.listing.shipping.ShippingConfigResolver;
 import com.pms.service.listing.shipping.ShippingOverrideKeys;
 import com.pms.dto.response.ShippingConfigResponse;
@@ -457,6 +458,12 @@ public class ListingAssetServiceImpl implements ListingAssetService {
 
     /** Cell view; {@code data} may be null (e.g. the tags endpoint on a not-yet-generated cell → asset fields null). */
     private GeneratedProductResponse toResponse(ProductListing cell, GeneratedProductData data) {
+        // 102: master options keyed by name resolve each option's stock ceiling. One query per cell, built
+        // OUTSIDE the option loop — inside it this would be an N+1 (the matrix calls getGenerated per cell).
+        Map<String, MasterProductOption> masterOptionsByName = cell.getMasterProduct() == null
+                ? Map.of()
+                : masterProductOptionRepository.findByMasterProductId(cell.getMasterProduct().getId()).stream()
+                        .collect(Collectors.toMap(MasterProductOption::getName, Function.identity(), (a, b) -> a));
         List<GeneratedProductResponse.OptionPrice> optionPrices = productListingOptionRepository
                 .findByProductListingId(cell.getId()).stream()
                 .map(o -> GeneratedProductResponse.OptionPrice.builder()
@@ -467,6 +474,8 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                         // 87: option axis only — the guard is cell AND option, but the flag drops the cell axis
                         // (platformOptionId/approvalStatus are only filled by fetchStatus after a push anyway).
                         .onMarket(o.isMarketRegistered())
+                        .stockQuantity(o.getStockQuantity())
+                        .maxStock(ListingStockPolicy.ceiling(masterOptionsByName.get(o.getOptionName())))
                         .build())
                 .toList();
         return GeneratedProductResponse.builder()

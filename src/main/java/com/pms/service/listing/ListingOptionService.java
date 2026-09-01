@@ -1,5 +1,6 @@
 package com.pms.service.listing;
 
+import com.pms.dto.request.SetOptionStocksRequest;
 import com.pms.dto.response.ListingOptionsResponse;
 
 import java.util.List;
@@ -30,4 +31,18 @@ public interface ListingOptionService {
      * that adds {@code active} on top.</p>
      */
     ListingOptionsResponse setActiveOptions(Long listingId, List<Long> activeOptionIds);
+
+    /**
+     * Set the stock quantity of some options of a channel listing (FEATURE_2608_06 / 102). Unlike
+     * {@link #setActiveOptions} this is a <b>partial</b> update: only the listed options are touched, because
+     * stock is an independent per-option value with no "whole set" meaning.
+     *
+     * <p>{@code stockQuantity = null} clears the override so the option inherits the master option's stock
+     * again (and 9999 if the master leaves it unset too). Empty list → 400; ids not belonging to the listing →
+     * 400; a value above the option's ceiling (master stock ?? 9999) → 400, thrown before anything is saved.</p>
+     *
+     * <p>⚠️ Like the active-set write, this never pushes to the market — {@code needsResync} tells the front to
+     * send the change with [수정 요청].</p>
+     */
+    ListingOptionsResponse setOptionStocks(Long listingId, List<SetOptionStocksRequest.OptionStock> stocks);
 }
