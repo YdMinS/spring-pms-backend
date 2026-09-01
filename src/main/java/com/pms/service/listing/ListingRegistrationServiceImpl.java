@@ -95,6 +95,54 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
 
     @Override
     @Transactional
+    public ListingRegisterResponse updateRequest(Long listingId) {
+        ProductListing cell = productListingRepository.findScopedById(listingId)
+                .orElseThrow(() -> new ResourceNotFoundException("ProductListing", listingId));
+        if (cell.getPlatformProductId() == null) {
+            throw new IllegalArgumentException("미등록");               // DRAFT → [마켓 등록] first (400)
+        }
+        MarketplaceAccount acct = resolveAccount(cell);
+        GeneratedProductData gen = generatedProductDataRepository.findByProductListingId(listingId)
+                .orElseThrow(() -> new IllegalArgumentException("자동생성 먼저"));  // 03 regenerate first (400)
+
+        // 42: the payload pushes only active options → an empty active subset would push an empty items[].
+        List<ProductListingOption> options = productListingOptionRepository.findByProductListingId(listingId);
+        if (options.stream().noneMatch(o -> Boolean.TRUE.equals(o.getActive()))) {
+            throw new IllegalArgumentException("활성 옵션 없음");
+        }
+
+        // 108/D4: no validateRegistrable — this mirrors pushSync (which does not call it) and the cell already
+        // passed it at register time. Unlike pushSync the needsMarketSync dirty marker is ignored on purpose.
+        ListingChannel adapter = resolver.resolve(cell.getPlatform());
+        adapter.update(cell, gen, acct);
+
+        // 42 (same rule as pushSync): options deactivated on this channel are dropped from the re-submitted
+        // payload → they are no longer live on the market, so revert a previously-APPROVED one to NOT_APPROVED.
+        for (ProductListingOption option : options) {
+            if (!Boolean.TRUE.equals(option.getActive())
+                    && option.getApprovalStatus() == OptionApprovalStatus.APPROVED) {
+                productListingOptionRepository.save(
+                        option.toBuilder().approvalStatus(OptionApprovalStatus.NOT_APPROVED).build());
+            }
+        }
+        // Push succeeded → append the merged tag snapshot (33) if it changed. Failed cells never reach here.
+        List<String> merged = tagMergeService.resolveTags(cell);
+        tagMergeService.recordRevisionIfChanged(cell, merged);
+        // Whole re-submit = re-review → SUBMITTED from any status (no transition guard) + clear dirty marker.
+        productListingRepository.save(cell.toBuilder()
+                .status(ListingStatus.SUBMITTED)
+                .needsMarketSync(false)
+                .build());
+
+        return ListingRegisterResponse.builder()
+                .productListingId(cell.getId())
+                .status(ListingStatus.SUBMITTED.name())
+                .platformProductId(cell.getPlatformProductId())
+                .build();
+    }
+
+    @Override
+    @Transactional
     public ListingStatusResponse fetchStatus(Long listingId) {
         ProductListing cell = productListingRepository.findScopedById(listingId)
                 .orElseThrow(() -> new ResourceNotFoundException("ProductListing", listingId));

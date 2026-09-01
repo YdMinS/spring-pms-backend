@@ -35,6 +35,13 @@ public class ListingRegistrationController {
         return ResponseEntity.ok(ResponseDTO.success(listingRegistrationService.register(id)));
     }
 
+    @PostMapping("/product-listings/{id}/update-request")
+    @Operation(summary = "[수정 요청] Re-submit an already-registered cell for review → SUBMITTED")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<ListingRegisterResponse>> updateRequest(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(listingRegistrationService.updateRequest(id)));
+    }
+
     @PostMapping("/product-listings/{id}/fetch-status")
     @Operation(summary = "Manual refresh: fetch market status + sync option ids/approval")
     @SecurityRequirement(name = "bearerAuth")
