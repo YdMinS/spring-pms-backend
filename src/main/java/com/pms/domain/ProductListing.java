@@ -27,6 +27,11 @@ import java.util.Map;
  * Note: This is the highest level in the listing hierarchy.
  * Options and products are managed separately.
  *
+ * <p>Audit (104 Step 1): extends {@link BaseEntity} so {@code created_date}/{@code modified_date} record
+ * <b>our</b> write time — needed to tell an oclyx save apart from a platform-side (WING) edit. Pre-existing
+ * rows are NULL (changeset 047 backfills nothing). {@code toBuilder()} does not copy the inherited fields,
+ * but {@code created_date} is {@code updatable=false} so an UPDATE never clears it.</p>
+ *
  * @see com.pms.domain.ProductListingOption for options under this listing
  * @see com.pms.domain.Category for commission rate rules
  * @see com.pms.domain.CarrierRate for default delivery cost
@@ -39,7 +44,7 @@ import java.util.Map;
 @AllArgsConstructor
 @Builder(toBuilder = true)
 @Schema(description = "Product listing on a platform (e.g., Coupang product)")
-public class ProductListing {
+public class ProductListing extends BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

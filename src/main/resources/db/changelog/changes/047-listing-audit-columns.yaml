@@ -1,0 +1,28 @@
+# Audit columns for the listing pair (FEATURE_2608_06 / 104 Step 1).
+# product_listing / product_listing_option never extended BaseEntity, so "when did WE last save this cell?"
+# was unknowable — the value needed to tell our write apart from a WING (platform-side) edit.
+# Additive + nullable: pre-existing rows stay NULL. We do NOT invent a past timestamp for them.
+# Type TIMESTAMP matches every other audit column in this schema (001 baseline, 008..039).
+# No boolean → no MySQL BIT trap (see 006).
+databaseChangeLog:
+
+  - changeSet:
+      id: 047-listing-audit-columns
+      author: oclyx
+      comment: "Additive: created_date/modified_date on product_listing and product_listing_option (BaseEntity)."
+      changes:
+        - addColumn:
+            tableName: product_listing
+            columns:
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addColumn:
+            tableName: product_listing_option
+            columns:
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+      rollback:
+        - dropColumn: { tableName: product_listing, columnName: created_date }
+        - dropColumn: { tableName: product_listing, columnName: modified_date }
+        - dropColumn: { tableName: product_listing_option, columnName: created_date }
+        - dropColumn: { tableName: product_listing_option, columnName: modified_date }

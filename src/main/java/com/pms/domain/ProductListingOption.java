@@ -25,6 +25,9 @@ import java.math.BigDecimal;
  * - sellingPrice is used as the base for margin calculation:
  *   Margin = sellingPrice - (product costs × qty) - commission - delivery - package
  *
+ * <p>Audit (104 Step 1): extends {@link BaseEntity} — same reasoning as {@link ProductListing}; here it also
+ * dates the approval data ({@code approval_status}/{@code platform_option_id}) written by {@code fetchStatus}.</p>
+ *
  * @see com.pms.domain.ProductListing for the parent listing
  * @see com.pms.domain.ProductListingProduct for product composition
  */
@@ -35,7 +38,7 @@ import java.math.BigDecimal;
 @AllArgsConstructor
 @Builder(toBuilder = true)
 @Schema(description = "Product listing option (SKU variant with selling price)")
-public class ProductListingOption {
+public class ProductListingOption extends BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

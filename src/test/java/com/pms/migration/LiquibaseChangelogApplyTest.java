@@ -258,6 +258,17 @@ class LiquibaseChangelogApplyTest {
         assertThatThrownBy(() -> jdbcTemplate.queryForObject("SELECT weight FROM products", String.class))
                 .as("old products.weight column dropped by the rename")
                 .isInstanceOf(DataAccessException.class);
+
+        // changeset 047: the audit columns exist on both listing tables (104 Step 1). A successful count over
+        // all four new names proves it; they are nullable, so no backfilled value is asserted.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing "
+                        + "WHERE created_date IS NULL AND modified_date IS NULL",
+                Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing_option "
+                        + "WHERE created_date IS NULL AND modified_date IS NULL",
+                Integer.class)).isZero();
     }
 
     @Test
