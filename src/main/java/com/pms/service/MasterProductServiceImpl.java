@@ -46,6 +46,7 @@ import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
+import com.pms.service.listing.ListingStockPolicy;
 import com.pms.service.listing.MasterOptionChannelSync;
 import com.pms.service.listing.MasterPropagationService;
 import com.pms.service.listing.OptionCheckSuffix;
@@ -648,7 +649,8 @@ public class MasterProductServiceImpl implements MasterProductService {
         // A brand-new option can never be on the market, but run the same judgement rather than hard-coding
         // false — one rule, one code path.
         Set<String> lockedNames = marketRegisteredOptionNames(List.of(masterId)).getOrDefault(masterId, Set.of());
-        return mapToOptionResponse(option, toVector(request), lockedNames.contains(option.getName()));
+        // clampedChannels = 0: a clamp can only happen when an existing master stock is lowered (update path).
+        return mapToOptionResponse(option, toVector(request), lockedNames.contains(option.getName()), 0);
     }
 
     @Override
@@ -703,11 +705,19 @@ public class MasterProductServiceImpl implements MasterProductService {
                         ? request.getCategoryAttributes() : option.getCategoryAttributes())
                 .categoryNotices(request.getCategoryNotices() != null
                         ? request.getCategoryNotices() : option.getCategoryNotices())
+                // 102: stock follows the request as-is — null CLEARS it (back to unset), unlike the
+                // delivery/box "null = keep" rule above. The option form always posts every field, and
+                // emptying the stock box is a valid intent.
+                .stockQuantity(request.getStockQuantity())
                 .build());
 
         resyncChannels(masterId, updated, oldName, renamed, quantitiesChanged);
+        // 102/D5: channel stock may not exceed the master's — lowering the master pulls the channels above it
+        // down. Runs on every save (a stock-only edit changes neither name nor quantities), so it must sit
+        // outside resyncChannels' early return.
+        int clampedChannels = clampChannelStocks(masterId, updated);
         // Reuse the judgement computed above — re-running the helper would double the lock queries per save.
-        return mapToOptionResponse(updated, vector, locked);
+        return mapToOptionResponse(updated, vector, locked, clampedChannels);
     }
 
     @Override
@@ -916,6 +926,32 @@ public class MasterProductServiceImpl implements MasterProductService {
         }
     }
 
+    /**
+     * 102/D5: a channel's stock may never exceed the master's, so lowering the master pulls every channel
+     * option that sits above the new ceiling down to it. Returns how many channel options were lowered.
+     *
+     * <p>⚠️ The change is deliberately NOT pushed to the market (no auto-push rule): the count travels back in
+     * the response so the front can prompt [수정 요청]. The matching axis is the option name — the same one
+     * {@link #resyncChannels} uses; do not invent a second one.</p>
+     */
+    private int clampChannelStocks(Long masterId, MasterProductOption updated) {
+        int ceiling = ListingStockPolicy.ceiling(updated);
+        String name = updated.getName();
+        List<ProductListingOption> clamped = new ArrayList<>();
+        for (ProductListing cell : productListingRepository.findByMasterProductId(masterId)) {
+            productListingOptionRepository.findByProductListingId(cell.getId()).stream()
+                    .filter(cellOption -> name.equals(cellOption.getOptionName()))
+                    .filter(cellOption -> cellOption.getStockQuantity() != null
+                            && cellOption.getStockQuantity() > ceiling)
+                    .forEach(cellOption -> clamped.add(cellOption.toBuilder().stockQuantity(ceiling).build()));
+        }
+        if (clamped.isEmpty()) {
+            return 0;   // nothing above the ceiling → no save at all
+        }
+        productListingOptionRepository.saveAll(clamped);
+        return clamped.size();
+    }
+
     // ---------------------------------------------------------------- helpers
 
     /** Tenant-scoped fetch; a cross-tenant/absent id yields 404 (findScopedById is @TenantId-filtered). */
@@ -1006,6 +1042,7 @@ public class MasterProductServiceImpl implements MasterProductService {
                 .package_(request.getPackageId() != null ? requirePackage(request.getPackageId()) : null)
                 .categoryAttributes(request.getCategoryAttributes())    // null = no override (59)
                 .categoryNotices(request.getCategoryNotices())
+                .stockQuantity(request.getStockQuantity())              // null = unset → 9999 fallback (102)
                 .build());
         saveItems(option, vector);
         return option;
@@ -1072,6 +1109,9 @@ public class MasterProductServiceImpl implements MasterProductService {
                         .categoryAttributes(o.getCategoryAttributes())
                         .categoryNotices(o.getCategoryNotices())
                         .marketRegistered(lockedNames.contains(o.getName()))
+                        // 102: without this the master detail response carries no stock and the option
+                        // editor cannot prefill the existing value.
+                        .stockQuantity(o.getStockQuantity())
                         .items(itemsByOption.getOrDefault(o.getId(), List.of()).stream()
                                 .map(it -> {
                                     Product p = productsById.get(it.getProduct().getId());
@@ -1105,7 +1145,7 @@ public class MasterProductServiceImpl implements MasterProductService {
 
     /** create/update single-option response (the list/read path builds its options inline instead). */
     private MasterOptionResponse mapToOptionResponse(MasterProductOption option, Map<Long, Integer> vector,
-                                                     boolean marketRegistered) {
+                                                     boolean marketRegistered, int clampedChannels) {
         Map<Long, String> names = vector.isEmpty()
                 ? Map.of()
                 : productRepository.findAllById(vector.keySet()).stream()
@@ -1125,6 +1165,8 @@ public class MasterProductServiceImpl implements MasterProductService {
                 .categoryAttributes(option.getCategoryAttributes())
                 .categoryNotices(option.getCategoryNotices())
                 .marketRegistered(marketRegistered)
+                .stockQuantity(option.getStockQuantity())
+                .clampedChannels(clampedChannels)
                 .items(items)
                 .build();
     }

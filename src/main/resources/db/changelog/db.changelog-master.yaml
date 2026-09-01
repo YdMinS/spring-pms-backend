@@ -95,3 +95,5 @@ databaseChangeLog:
       file: db/changelog/changes/047-listing-audit-columns.yaml
   - include:
       file: db/changelog/changes/048-font-asset-web-font.yaml
+  - include:
+      file: db/changelog/changes/049-option-stock-quantity.yaml

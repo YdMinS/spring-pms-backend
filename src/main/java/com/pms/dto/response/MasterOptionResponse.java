@@ -48,6 +48,15 @@ public class MasterOptionResponse {
             + "same-named option that is active, has a platformOptionId, or is APPROVED.", example = "false")
     private Boolean marketRegistered;
 
+    @Schema(description = "All-channel default stock quantity (102); null = unset (channels fall back to 9999)",
+            nullable = true, example = "50")
+    private Integer stockQuantity;
+
+    @Schema(description = "How many channel options were clamped down to the new master stock by this save "
+            + "(102/D5). 0 = none. Only meaningful on the update response; the change is NOT pushed to the "
+            + "market — the front prompts [수정 요청].", example = "0")
+    private int clampedChannels;
+
     @Getter
     @NoArgsConstructor
     @AllArgsConstructor

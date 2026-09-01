@@ -95,6 +95,10 @@ class ListingOptionControllerTest extends BaseIntegrationTest {
         return "/api/admin/product-listings/" + id + "/options/active";
     }
 
+    private String stockPath(Long id) {
+        return "/api/admin/product-listings/" + id + "/options/stock";
+    }
+
     // ---- authority (MUST-KEEP) ----
 
     @Test
@@ -165,6 +169,44 @@ class ListingOptionControllerTest extends BaseIntegrationTest {
         mockMvc.perform(put(activePath(listingId)).header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"activeOptionIds\":[]}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    // ---- 102: per-channel option stock ----
+
+    @Test
+    void setStock_noToken_returns401() throws Exception {
+        mockMvc.perform(put(stockPath(listingId)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"stocks\":[{\"optionId\":" + opt1Id + ",\"stockQuantity\":30}]}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void setStock_userToken_returns403() throws Exception {
+        mockMvc.perform(put(stockPath(listingId)).header("Authorization", "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"stocks\":[{\"optionId\":" + opt1Id + ",\"stockQuantity\":30}]}"))
+                .andExpect(status().isForbidden());
+    }
+
+    // The master leaves stock unset → the ceiling is the 9999 fallback, so 30 is accepted and persists.
+    @Test
+    void setStock_adminToken_savesOnlyTheListedOption() throws Exception {
+        mockMvc.perform(put(stockPath(listingId)).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"stocks\":[{\"optionId\":" + opt1Id + ",\"stockQuantity\":30}]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.options.length()").value(3));
+
+        assertThat(productListingOptionRepository.findById(opt1Id).orElseThrow().getStockQuantity()).isEqualTo(30);
+        assertThat(productListingOptionRepository.findById(opt2Id).orElseThrow().getStockQuantity()).isNull();
+    }
+
+    @Test
+    void setStock_emptyList_returns400() throws Exception {
+        mockMvc.perform(put(stockPath(listingId)).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"stocks\":[]}"))
                 .andExpect(status().isBadRequest());
     }
 }

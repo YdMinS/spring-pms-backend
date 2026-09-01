@@ -134,6 +134,19 @@ public class ProductListingOption extends BaseEntity {
     private Boolean active = true;
 
     /**
+     * Per-channel stock override (FEATURE_2608_06 / 102). {@code null} = inherit the master option's
+     * {@code stockQuantity}; if that is null too the payload falls back to 9999
+     * ({@code ListingStockPolicy.DEFAULT_STOCK_QUANTITY}). Resolution = channel ?? master ?? 9999.
+     *
+     * <p>⚠️ D5: the override may not exceed the master option's value (ceiling = master ?? 9999) — the write
+     * path rejects a larger value, and lowering the master clamps the channels that are above it. Clamping
+     * never auto-pushes to the market ([수정 요청] does that).</p>
+     */
+    @Column(name = "stock_quantity")
+    @Schema(description = "Per-channel stock override; null = inherit the master option's stock", example = "30")
+    private Integer stockQuantity;
+
+    /**
      * True = this option physically exists on the marketplace: Coupang issued a vendorItemId, or it was
      * approved at some point. Such an option cannot be removed there (approved options are not deletable),
      * so 87 forbids unchecking it and 88 locks the checkbox.

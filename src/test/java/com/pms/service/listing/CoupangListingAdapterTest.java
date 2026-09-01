@@ -951,4 +951,55 @@ class CoupangListingAdapterTest {
         assertThat(item.has("sellerProductItemId")).isFalse();
         assertThat(item.has("vendorItemId")).isFalse();
     }
+
+    // ---------------------------------------------------------------- 102: option stock quantity
+
+    /**
+     * Registers one option with the given channel/master stock and returns the item's maximumBuyCount.
+     * The master option is matched by name ("1세트"), the same axis the adapter's byName map uses.
+     */
+    private int registeredMaxBuyCount(Integer channelStock, Integer masterStock) throws Exception {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터").build();
+        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+                .platformProductId("123456789").masterProduct(master).build();
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("1세트")
+                        .sellingPrice(new BigDecimal("10000")).active(true)
+                        .stockQuantity(channelStock).build()));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of(
+                MasterProductOption.builder().name("1세트").stockQuantity(masterStock).build()));
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        GeneratedProductData gen = GeneratedProductData.builder()
+                .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell, gen, acct());
+
+        return objectMapper.readTree(payload.getValue())
+                .path("items").get(0).path("maximumBuyCount").asInt();
+    }
+
+    // Neither side carries a stock value → the 9999 fallback. Every pre-102 option row is null, so losing this
+    // fallback would push every re-registered product as sold out.
+    @Test
+    void register_stockUnsetOnBothSides_fallsBackTo9999() throws Exception {
+        assertThat(registeredMaxBuyCount(null, null)).isEqualTo(9999);
+    }
+
+    @Test
+    void register_masterStockOnly_isInherited() throws Exception {
+        assertThat(registeredMaxBuyCount(null, 50)).isEqualTo(50);
+    }
+
+    @Test
+    void register_channelStockOverridesMaster() throws Exception {
+        assertThat(registeredMaxBuyCount(10, 50)).isEqualTo(10);
+    }
+
+    // 0 is a deliberate "push as sold out" value, never treated as "unset" (D2).
+    @Test
+    void register_channelStockZero_isSentAsZeroNotInherited() throws Exception {
+        assertThat(registeredMaxBuyCount(0, 50)).isZero();
+    }
 }

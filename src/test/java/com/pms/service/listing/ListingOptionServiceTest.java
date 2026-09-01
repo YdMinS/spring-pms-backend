@@ -6,6 +6,7 @@ import com.pms.domain.MasterProductOption;
 import com.pms.domain.OptionApprovalStatus;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.dto.request.SetOptionStocksRequest.OptionStock;
 import com.pms.dto.response.ListingOptionsResponse;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -240,5 +241,125 @@ class ListingOptionServiceTest {
         ListingOptionsResponse response = service.setActiveOptions(LISTING_ID, List.of(1L, 2L));
 
         assertThat(response.getRegistrationName()).isEqualTo("노브랜드 생수, 다우니 섬유유연제");
+    }
+
+    // ---------------------------------------------------------------- 102: per-channel option stock
+
+    /**
+     * A cell with a master + that master's per-option stock ceilings ({@code null} = master leaves it unset).
+     * ⚠️ Stubs two mocks, so call it before {@code given(...)} — Mockito rejects a stub built inside another.
+     */
+    private ProductListing listingWithMasterStocks(String name1, Integer stock1, String name2, Integer stock2) {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터").build();
+        List<MasterProductOption> masterOptions = new java.util.ArrayList<>();
+        masterOptions.add(MasterProductOption.builder().name(name1).stockQuantity(stock1).build());
+        if (name2 != null) {
+            masterOptions.add(MasterProductOption.builder().name(name2).stockQuantity(stock2).build());
+        }
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(masterOptions);
+        ProductListing listing = ProductListing.builder().id(LISTING_ID).platform("COUPANG").name("셀")
+                .status(ListingStatus.DRAFT).masterProduct(master).build();
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(listing));
+        return listing;
+    }
+
+    private ProductListingOption optionWithStock(Long id, Integer stockQuantity) {
+        return ProductListingOption.builder().id(id).optionName("opt" + id)
+                .sellingPrice(new BigDecimal("6000")).active(true)
+                .approvalStatus(OptionApprovalStatus.NOT_APPROVED)
+                .stockQuantity(stockQuantity).build();
+    }
+
+    // (g) Partial update: sending one of two options leaves the other's value untouched.
+    @Test
+    void setOptionStocks_updatesOnlyTheListedOptions() {
+        listingWithMasterStocks("opt1", 50, "opt2", 50);
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(optionWithStock(1L, 5), optionWithStock(2L, 7)));
+
+        ListingOptionsResponse response =
+                service.setOptionStocks(LISTING_ID, List.of(new OptionStock(1L, 30)));
+
+        ArgumentCaptor<List<ProductListingOption>> saved = ArgumentCaptor.forClass(List.class);
+        verify(productListingOptionRepository).saveAll(saved.capture());
+        assertThat(saved.getValue()).hasSize(1);
+        assertThat(saved.getValue().get(0).getStockQuantity()).isEqualTo(30);
+        Map<Long, ListingOptionsResponse.OptionItem> byId = response.getOptions().stream()
+                .collect(Collectors.toMap(ListingOptionsResponse.OptionItem::getOptionId, Function.identity()));
+        assertThat(byId.get(1L).getStockQuantity()).isEqualTo(30);
+        assertThat(byId.get(2L).getStockQuantity()).isEqualTo(7);   // untouched
+        assertThat(byId.get(1L).getMaxStock()).isEqualTo(50);       // ceiling = master stock
+    }
+
+    // (h) null clears the override → the option inherits the master value again.
+    @Test
+    void setOptionStocks_nullValue_clearsTheOverride() {
+        listingWithMasterStocks("opt1", 50, null, null);
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(optionWithStock(1L, 30)));
+
+        ListingOptionsResponse response =
+                service.setOptionStocks(LISTING_ID, List.of(new OptionStock(1L, null)));
+
+        ArgumentCaptor<List<ProductListingOption>> saved = ArgumentCaptor.forClass(List.class);
+        verify(productListingOptionRepository).saveAll(saved.capture());
+        assertThat(saved.getValue().get(0).getStockQuantity()).isNull();
+        assertThat(response.getOptions().get(0).getStockQuantity()).isNull();
+        assertThat(response.getOptions().get(0).getMaxStock()).isEqualTo(50);   // effective value while inherited
+    }
+
+    // (i) D5: above the master's stock → 400, and nothing is saved (validation precedes saveAll).
+    @Test
+    void setOptionStocks_aboveMasterStock_throwsAndDoesNotSave() {
+        listingWithMasterStocks("opt1", 50, null, null);
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(optionWithStock(1L, null)));
+
+        assertThatThrownBy(() -> service.setOptionStocks(LISTING_ID, List.of(new OptionStock(1L, 51))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("마스터 재고(50)");
+        verify(productListingOptionRepository, never()).saveAll(any());
+    }
+
+    // (j) Master stock unset → the ceiling is the 9999 fallback: 9999 passes, 10000 does not.
+    @Test
+    void setOptionStocks_masterStockUnset_ceilingIs9999() {
+        listingWithMasterStocks("opt1", null, null, null);
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(optionWithStock(1L, null)));
+
+        ListingOptionsResponse response =
+                service.setOptionStocks(LISTING_ID, List.of(new OptionStock(1L, 9999)));
+        assertThat(response.getOptions().get(0).getStockQuantity()).isEqualTo(9999);
+
+        assertThatThrownBy(() -> service.setOptionStocks(LISTING_ID, List.of(new OptionStock(1L, 10000))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("9999");
+    }
+
+    // (k) An id from another listing → 400, nothing saved (same rule as setActiveOptions).
+    @Test
+    void setOptionStocks_foreignOptionId_throwsAndDoesNotSave() {
+        given(productListingRepository.findScopedById(LISTING_ID))
+                .willReturn(Optional.of(listing(ListingStatus.DRAFT)));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(optionWithStock(1L, null)));
+
+        assertThatThrownBy(() -> service.setOptionStocks(LISTING_ID, List.of(new OptionStock(999L, 10))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("리스팅 옵션 아님");
+        verify(productListingOptionRepository, never()).saveAll(any());
+    }
+
+    // (l) An empty list is a mistake, not a silent no-op.
+    @Test
+    void setOptionStocks_emptyList_throwsAndDoesNotSave() {
+        given(productListingRepository.findScopedById(LISTING_ID))
+                .willReturn(Optional.of(listing(ListingStatus.DRAFT)));
+
+        assertThatThrownBy(() -> service.setOptionStocks(LISTING_ID, List.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("변경할 옵션이 없습니다");
+        verify(productListingOptionRepository, never()).saveAll(any());
     }
 }

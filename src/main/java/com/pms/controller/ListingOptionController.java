@@ -2,6 +2,7 @@ package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.SetActiveOptionsRequest;
+import com.pms.dto.request.SetOptionStocksRequest;
 import com.pms.dto.response.ListingOptionsResponse;
 import com.pms.service.listing.ListingOptionService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -42,5 +43,14 @@ public class ListingOptionController {
             @PathVariable Long id, @Valid @RequestBody SetActiveOptionsRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(
                 listingOptionService.setActiveOptions(id, request.getActiveOptionIds())));
+    }
+
+    @PutMapping("/product-listings/{id}/options/stock")
+    @Operation(summary = "Set the stock quantity of some options (partial; null clears the override)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<ListingOptionsResponse>> setOptionStocks(
+            @PathVariable Long id, @Valid @RequestBody SetOptionStocksRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                listingOptionService.setOptionStocks(id, request.getStocks())));
     }
 }
