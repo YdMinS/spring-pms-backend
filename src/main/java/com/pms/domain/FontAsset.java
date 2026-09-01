@@ -45,4 +45,29 @@ public class FontAsset extends BaseEntity {
 
     @Column(name = "storage_key", nullable = false, length = 500)
     private String storageKey;
+
+    /**
+     * CSS font-family fallback stack for detail-page HTML, e.g.
+     * {@code 'Nanum Gothic','Malgun Gothic',sans-serif}. Null = no fallback.
+     *
+     * <p>Two ways a font reaches the buyer's browser: (1) the binary is downloaded via @font-face from
+     * {@link #publicWebUrl()}, (2) this stack names faces already installed on the device. The stack is
+     * also the tail of the font-family list in case (1), so a failed download still degrades gracefully.</p>
+     */
+    @Column(name = "web_stack", length = 255)
+    private String webStack;
+
+    /** Public URL of the font binary for detail-page @font-face. Null = not downloadable (stack only). */
+    @Column(name = "web_url", length = 500)
+    private String webUrl;
+
+    /**
+     * The URL a buyer's browser can fetch this font from: the explicit {@code webUrl}, else the
+     * {@code storageKey} when it is already a public URL (S3-uploaded fonts predating {@code webUrl}).
+     * Null = no downloadable binary. Single definition — used by the resolver AND the response mapper.
+     */
+    public String publicWebUrl() {
+        if (webUrl != null && !webUrl.isBlank()) return webUrl;
+        return storageKey != null && storageKey.startsWith("http") ? storageKey : null;
+    }
 }

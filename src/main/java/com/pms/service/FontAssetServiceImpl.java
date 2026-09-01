@@ -111,6 +111,8 @@ public class FontAssetServiceImpl implements FontAssetService {
                 .familyKey(f.getFamilyKey())
                 .source(f.getSource())
                 .system(f.getTenantId() == null)
+                .webStack(f.getWebStack())
+                .webUrl(f.publicWebUrl())   // never the raw storageKey (a disk path on local)
                 .build();
     }
 

@@ -47,6 +47,7 @@ public class TemplateDetailContentGenerator implements DetailContentGenerator {
     private final ProductListingOptionRepository productListingOptionRepository;
     private final ProductListingProductRepository productListingProductRepository;
     private final DetailHtmlRenderer detailHtmlRenderer;
+    private final DetailFontResolver detailFontResolver;
     private final ImageProcessor imageProcessor;
     private final ImageStorageService imageStorageService;
     private final ProductImageLoader productImageLoader;
@@ -63,7 +64,9 @@ public class TemplateDetailContentGenerator implements DetailContentGenerator {
         Map<String, String> textBindings = resolveTextBindings(cell);
         Map<String, List<String>> zoneImageUrls = resolveZoneImageUrls(master.getId());
         zoneImageUrls = applyImageProcessing(template, master.getId(), zoneImageUrls);
-        return detailHtmlRenderer.render(template, textBindings, zoneImageUrls);
+        // Fonts are a DB lookup (FontAsset ids in textStyle) → resolved here, keeping the renderer pure.
+        Map<String, DetailFont> fonts = detailFontResolver.resolve(template.getBlocks());
+        return detailHtmlRenderer.render(template, textBindings, zoneImageUrls, fonts);
     }
 
     /**

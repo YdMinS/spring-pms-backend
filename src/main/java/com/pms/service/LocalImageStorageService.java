@@ -119,6 +119,13 @@ public class LocalImageStorageService implements ImageStorageService {
     }
 
     @Override
+    public String uploadShared(byte[] data, String category, String filename, String contentType) {
+        // Tenant-independent counterpart of uploadBytes: {uploadDir}/_system/{category}/{filename}.
+        // ⚠️ The returned disk path is NOT a public URL — callers persist it only when it starts with http.
+        return uploadBytes(data, "_system/" + category, filename, contentType);
+    }
+
+    @Override
     public byte[] getBytes(String storedValue) throws FileNotFoundException {
         // storedValue is the disk-relative path returned by uploadBytes/uploadImage.
         Path filePath = Paths.get(storedValue);
