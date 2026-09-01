@@ -275,6 +275,15 @@ class LiquibaseChangelogApplyTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM font_asset WHERE web_stack IS NULL AND web_url IS NULL",
                 Integer.class)).isNotNull();
+
+        // changeset 049: stock_quantity exists on both option tables (102). Nullable with no backfill on
+        // purpose — NULL means "unset/inherit" — so a successful count over the new name is the proof.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM master_product_option WHERE stock_quantity IS NULL",
+                Integer.class)).isNotNull();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing_option WHERE stock_quantity IS NULL",
+                Integer.class)).isNotNull();
     }
 
     @Test

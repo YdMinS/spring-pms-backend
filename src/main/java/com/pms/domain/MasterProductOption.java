@@ -66,4 +66,14 @@ public class MasterProductOption extends BaseEntity {
     @Convert(converter = MapStringConverter.class)
     @Column(name = "category_notices", columnDefinition = "TEXT")
     private Map<String, String> categoryNotices;
+
+    /**
+     * All-channel default stock quantity (FEATURE_2608_06 / 102). Nullable — {@code null} means "unset": a
+     * channel that also leaves it null falls back to {@code ListingStockPolicy.DEFAULT_STOCK_QUANTITY}
+     * (9999). ⚠️ {@code Integer}, not {@code int}: 0 is a deliberate "push as sold out"
+     * value and must stay distinguishable from "unset". Also the per-channel ceiling (D5): a channel override
+     * may not exceed this value.
+     */
+    @Column(name = "stock_quantity")
+    private Integer stockQuantity;
 }

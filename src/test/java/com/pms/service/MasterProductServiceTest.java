@@ -1661,4 +1661,109 @@ class MasterProductServiceTest {
         verify(optionItemRepository, times(1)).findByOptionIdIn(any());
         verify(sellerRepository, times(1)).findAllById(any());
     }
+
+    // ------------------------------------------------------------- 102: option stock quantity
+
+    /**
+     * Master 1 with one editable (unlocked) option "2세트" holding {@code masterStock}, plus one channel cell
+     * whose same-named option holds {@code channelStock}. Returns the master option.
+     */
+    private MasterProductOption givenOptionWithStocks(Integer masterStock, Integer channelStock) {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        MasterProductOption option = MasterProductOption.builder().id(10L).masterProduct(master)
+                .name("2세트").stockQuantity(masterStock).build();
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findById(10L)).willReturn(Optional.of(option));
+        given(optionItemRepository.findByOptionId(10L)).willReturn(List.of(
+                MasterProductOptionItem.builder().option(option).product(product(1L, "상품1")).quantity(2).build()));
+        given(optionRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+        given(componentRepository.findByMasterProductId(1L))
+                .willReturn(List.of(component(master, product(1L, "상품1"))));
+        given(productRepository.findAllById(any())).willReturn(List.of(product(1L, "상품1")));
+        // Unlocked: no cell reached the market → the lock query returns nothing.
+        given(productListingRepository.findByMasterProductIdIn(List.of(1L))).willReturn(List.of());
+        // Clamp axis: this master's cells → same-named channel options.
+        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀").build();
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cell));
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(5L).productListing(cell).optionName("2세트")
+                        .active(true).approvalStatus(OptionApprovalStatus.NOT_APPROVED)
+                        .stockQuantity(channelStock).build()));
+        return option;
+    }
+
+    private MasterOptionRequest stockRequest(Integer stockQuantity) {
+        return MasterOptionRequest.builder().name("2세트").items(List.of(item(1L, 2)))
+                .stockQuantity(stockQuantity).build();
+    }
+
+    // (10) Lowering the master below a channel's value pulls that channel down and reports the count.
+    @Test
+    void updateOption_loweringMasterStock_clampsChannelOptionsAndReportsCount() {
+        givenOptionWithStocks(50, 30);
+
+        MasterOptionResponse response = service.updateOption(1L, 10L, stockRequest(20));
+
+        assertThat(response.getStockQuantity()).isEqualTo(20);
+        assertThat(response.getClampedChannels()).isEqualTo(1);
+        ArgumentCaptor<List<ProductListingOption>> saved = ArgumentCaptor.forClass(List.class);
+        verify(productListingOptionRepository).saveAll(saved.capture());
+        assertThat(saved.getValue().get(0).getStockQuantity()).isEqualTo(20);
+    }
+
+    // (11) Raising the master leaves the channels alone — and saves nothing at all.
+    @Test
+    void updateOption_raisingMasterStock_leavesChannelsUntouched() {
+        givenOptionWithStocks(20, 15);
+
+        MasterOptionResponse response = service.updateOption(1L, 10L, stockRequest(50));
+
+        assertThat(response.getClampedChannels()).isZero();
+        verify(productListingOptionRepository, never()).saveAll(any());
+    }
+
+    // (11-1) A clamp is a local write only: it must never trigger a regeneration or a channel structure sync
+    // (D5 forbids auto-pushing to the market — the front prompts [수정 요청] with clampedChannels).
+    @Test
+    void updateOption_clamp_savesChannelOptionsOnlyAndNeverPushes() {
+        givenOptionWithStocks(50, 30);
+
+        service.updateOption(1L, 10L, stockRequest(20));
+
+        verify(productListingOptionRepository).saveAll(any());
+        verify(listingAssetService, never()).recalculateOptionPrices(any());
+        verify(masterOptionChannelSync, never()).onOptionCreated(any(), any());
+        verify(masterOptionChannelSync, never()).onOptionRenamed(any(), any(), any());
+    }
+
+    // (12) The value round-trips, and null clears it (back to inheriting → the 9999 fallback).
+    @Test
+    void updateOption_stockQuantityRoundTripsAndNullClearsIt() {
+        givenOptionWithStocks(50, null);
+
+        MasterOptionResponse saved = service.updateOption(1L, 10L, stockRequest(40));
+        assertThat(saved.getStockQuantity()).isEqualTo(40);
+
+        MasterOptionResponse cleared = service.updateOption(1L, 10L, stockRequest(null));
+        assertThat(cleared.getStockQuantity()).isNull();
+        ArgumentCaptor<MasterProductOption> captor = ArgumentCaptor.forClass(MasterProductOption.class);
+        verify(optionRepository, times(2)).save(captor.capture());
+        assertThat(captor.getAllValues().get(1).getStockQuantity()).isNull();
+    }
+
+    // (13) The detail response's inline option mapper must carry the stock — otherwise the option editor has
+    // nothing to prefill (the create/update mapper is a different code path and would not cover it).
+    @Test
+    void getMasterProduct_optionsCarryStockQuantity() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(componentRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(
+                MasterProductOption.builder().id(10L).masterProduct(master).name("2세트")
+                        .stockQuantity(50).build()));
+
+        MasterProductResponse response = service.getMasterProduct(1L);
+
+        assertThat(response.getOptions().get(0).getStockQuantity()).isEqualTo(50);
+    }
 }
