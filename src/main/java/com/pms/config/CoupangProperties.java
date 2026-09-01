@@ -37,6 +37,16 @@ public class CoupangProperties {
      */
     private int instructDays = 30;
 
+    /**
+     * 주문번호 단건 발주서 조회 경로. {vendorId}/{orderId} 치환.
+     *
+     * 목록 조회(ordersheetsPath)와 달리 status 조건이 없어 결제완료·배송지시 등 어떤 상태의 주문도
+     * 조회된다 — 주문 단건 송장시트가 상태와 무관할 수 있는 근거.
+     * ⚠️ 실계정 검증 전이라 설정으로 뺀다(PLAN.md 미검증 항목).
+     */
+    private String ordersheetByOrderPath =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/{orderId}/ordersheets";
+
     /** 송장업로드(발송처리) 경로. {vendorId} 치환. 상품준비중(INSTRUCT)→배송지시(DEPARTURE) 전환. */
     private String invoicesPath = "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/orders/invoices";
 

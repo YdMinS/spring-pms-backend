@@ -4,9 +4,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.OrderItem;
 import com.pms.dto.request.ShippingLabelExportRequest.ExportRow;
 import com.pms.dto.response.ShippingLabelPreviewRow;
+import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.OrderItemRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -53,6 +56,7 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
     private final CoupangProperties coupangProperties;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final ObjectMapper objectMapper;
+    private final OrderItemRepository orderItemRepository;
 
     @Override
     public List<ShippingLabelRow> collectRows(Long sellerId) {
@@ -88,6 +92,46 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
     @Override
     public List<ShippingLabelPreviewRow> previewRows(Long sellerId) {
         return collectRows(sellerId).stream().map(ShippingLabelPreviewRow::from).toList();
+    }
+
+    @Override
+    public List<ShippingLabelPreviewRow> previewRowsByOrder(Long orderItemId) {
+        OrderItem order = orderItemRepository.findWithAccountAndSellerById(orderItemId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order", orderItemId));
+
+        MarketplaceAccount account = order.getMarketplaceAccount();
+        if (!PLATFORM_COUPANG.equals(account.getPlatform())) {
+            throw new IllegalArgumentException("쿠팡 주문만 송장시트를 만들 수 있습니다: " + account.getPlatform());
+        }
+
+        String path = coupangProperties.getOrdersheetByOrderPath()
+                .replace("{vendorId}", account.getVendorId())
+                .replace("{orderId}", order.getExternalOrderId());
+
+        List<ShippingLabelRow> rows = new ArrayList<>();
+        try {
+            JsonNode parsed = readTree(coupangApiClient.get(path, "", account));
+            // 단건 조회는 잘못된 orderId 에도 200 + 비정상 봉투가 올 수 있어 "0행"과 "실패"가 섞인다.
+            // 목록 경로와 달리 여기서 봉투를 검사해 둘을 분리한다(0행 자체는 정상 — 전량 취소된 주문).
+            JsonNode data = parsed.path("data");
+            if (parsed.path("code").asInt(200) != 200 || !data.isArray()) {
+                throw new IllegalStateException("쿠팡 발주서 단건 응답 이상: code=" + parsed.path("code").asText());
+            }
+            for (JsonNode box : data) {
+                flattenBox(account, box, rows);          // 목록 경로와 동일한 펼침·취소 제외 규칙
+            }
+        } catch (Exception e) {
+            // 목록 다운로드와 같은 정책: 조회 실패를 빈 시트로 감추지 않는다.
+            log.warn("주문 단건 송장시트 조회 실패: orderItemId={} orderId={}",
+                    orderItemId, order.getExternalOrderId(), e);
+            // 위 봉투 검사가 던진 IllegalStateException 도 이 catch 에 걸린다. 그대로 다시 감싸면
+            // "code=..." 진단 메시지가 cause 로 묻히므로 재던진다.
+            if (e instanceof IllegalStateException ise) {
+                throw ise;
+            }
+            throw new IllegalStateException("쿠팡 발주서 단건 조회 실패", e);
+        }
+        return rows.stream().map(ShippingLabelPreviewRow::from).toList();
     }
 
     /**

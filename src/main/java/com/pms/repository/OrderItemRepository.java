@@ -48,6 +48,16 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
     List<OrderItem> findByExternalOrderId(String externalOrderId);
 
     /**
+     * 단건 송장시트용 조회 — marketplaceAccount 와 seller 를 함께 eager fetch 한다.
+     *
+     * 시트 생성은 @Transactional 없이 외부 HTTP 를 도는 경로라(open-in-view=false),
+     * account.getSeller().getSellerName() 이 지연로딩이면 LazyInitializationException 이 난다.
+     * 기존 findByExternalOrderId 는 seller 를 포함하지 않아 재사용할 수 없다.
+     */
+    @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller"})
+    Optional<OrderItem> findWithAccountAndSellerById(Long id);
+
+    /**
      * 아직 발송 전(status IN statuses) 상태로 남아 있는 이 계정 주문의 고유 주문번호 목록.
      *
      * 취소 보정 재조정용 — 판매자 품절취소(쿠팡 receiptType=RETURN)는 cancelType=CANCEL 조회에
