@@ -41,6 +41,7 @@ import java.time.LocalDateTime;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.lenient;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -119,6 +120,9 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
         // Coupang register response → sellerProductId (no live HTTP).
         given(coupangApiClient.post(anyString(), anyString(), any()))
                 .willReturn("{\"code\":\"SUCCESS\",\"data\":123456789}");
+        // 108: [수정 요청] re-submits the whole object via PUT (no preceding GET since D3-1).
+        lenient().when(coupangApiClient.put(anyString(), anyString(), any()))
+                .thenReturn("{\"code\":\"SUCCESS\"}");
     }
 
     /** Delete the listing graph before base cleanup removes package / carrier_rate (FK targets). */
@@ -154,6 +158,44 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("SUBMITTED"))
                 .andExpect(jsonPath("$.data.platformProductId").value("123456789"));
+    }
+
+    // ---- 108: [수정 요청] forced re-review of an already-registered cell ----
+
+    private String updateRequestPath(Long id) {
+        return "/api/admin/product-listings/" + id + "/update-request";
+    }
+
+    /** Register first (the cell must carry a platformProductId), then re-submit it. */
+    private Long registeredCellId() throws Exception {
+        mockMvc.perform(post(registerPath()).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+        return draftCellId;
+    }
+
+    @Test
+    void updateRequest_adminToken_returns200Submitted() throws Exception {
+        Long id = registeredCellId();
+        mockMvc.perform(post(updateRequestPath(id)).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SUBMITTED"));
+    }
+
+    @Test
+    void updateRequest_userToken_returns403() throws Exception {
+        mockMvc.perform(post(updateRequestPath(draftCellId)).header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void updateRequest_noToken_returns401() throws Exception {
+        mockMvc.perform(post(updateRequestPath(draftCellId))).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void updateRequest_unknownId_returns404() throws Exception {
+        mockMvc.perform(post(updateRequestPath(999999L)).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound());
     }
 
     // ---- fetch-status guard (2nd endpoint wiring): DRAFT cell has no market id → 400 ----

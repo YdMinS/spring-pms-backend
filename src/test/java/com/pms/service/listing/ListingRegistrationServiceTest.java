@@ -178,6 +178,79 @@ class ListingRegistrationServiceTest {
         verify(adapter, never()).register(any(), any(), any());
     }
 
+    // ---- 108/D4: updateRequest — single-cell forced re-review ----
+
+    // 1: pushes via the adapter and marks the cell SUBMITTED + not dirty.
+    @Test
+    void updateRequest_pushesAndMarksSubmitted() {
+        ProductListing cell = cell(ListingStatus.REJECTED, "SP-1").toBuilder().needsMarketSync(true).build();
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
+        stubAccountAndAdapter();
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID))
+                .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+
+        ListingRegisterResponse response = service.updateRequest(CELL_ID);
+
+        assertThat(response.getStatus()).isEqualTo("SUBMITTED");
+        assertThat(response.getPlatformProductId()).isEqualTo("SP-1");
+        verify(adapter).update(any(), any(), any());
+
+        ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(captor.capture());
+        assertThat(captor.getValue().getStatus()).isEqualTo(ListingStatus.SUBMITTED);
+        assertThat(captor.getValue().isNeedsMarketSync()).isFalse();
+    }
+
+    // 2: a DRAFT cell was never pushed → 400 and the adapter is never called.
+    @Test
+    void updateRequest_rejectsDraftCell() {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.DRAFT, null)));
+
+        assertThatThrownBy(() -> service.updateRequest(CELL_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("미등록");
+        verify(adapter, never()).update(any(), any(), any());
+    }
+
+    // 3: deactivated options that were APPROVED are reverted (they are dropped from the payload); active
+    // APPROVED options keep their approval.
+    @Test
+    void updateRequest_revertsApprovedInactiveOption() {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.SELLING, "SP-1")));
+        stubAccountAndAdapter();
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID))
+                .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
+        ProductListingOption activeApproved = option().toBuilder()
+                .id(50L).approvalStatus(OptionApprovalStatus.APPROVED).active(true).build();
+        ProductListingOption inactiveApproved = option().toBuilder()
+                .id(51L).approvalStatus(OptionApprovalStatus.APPROVED).active(false).build();
+        given(productListingOptionRepository.findByProductListingId(CELL_ID))
+                .willReturn(List.of(activeApproved, inactiveApproved));
+
+        service.updateRequest(CELL_ID);
+
+        ArgumentCaptor<ProductListingOption> captor = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository).save(captor.capture());
+        assertThat(captor.getValue().getId()).isEqualTo(51L);
+        assertThat(captor.getValue().getApprovalStatus()).isEqualTo(OptionApprovalStatus.NOT_APPROVED);
+    }
+
+    // 4: no status transition guard — a SELLING cell re-enters review too.
+    @Test
+    void updateRequest_allowsSellingCell() {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.SELLING, "SP-1")));
+        stubAccountAndAdapter();
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID))
+                .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+
+        assertThat(service.updateRequest(CELL_ID).getStatus()).isEqualTo("SUBMITTED");
+    }
+
     // (c) fetchStatus SELLING: matched option → market ids + APPROVED saved; status saved.
     @Test
     void fetchStatus_selling_syncsMatchedOptionApproved() {

@@ -63,8 +63,10 @@ public class CoupangListingAdapter implements ListingChannel {
     private static final String SALE_ENDED_AT = "2099-12-31T23:59:59";
     // Stock is not tracked → fixed per-item max buy count (Coupang max 99999).
     private static final int DEFAULT_MAX_BUY_COUNT = 9999;
-    // Non-exposed draft: save only, no approval request (test vendor account unavailable → deletable draft).
-    private static final boolean DEFAULT_REQUESTED = false;
+    // 108/D1: approval request is the operational default (user decision 2026-09-01) — [마켓 등록] and
+    // [수정 요청] both submit for review. ⚠️ Trade-off: once approved, the product/options can no longer be
+    // physically deleted on Coupang (stop-selling only).
+    private static final boolean DEFAULT_REQUESTED = true;
     // 93: contents[] structure. The docs' only sample is TEXT + an HTML string in `content` (no HTML-type
     // sample exists) → both fixed to TEXT; a live-account 400 here is fixed by changing these two constants.
     private static final String CONTENTS_TYPE = "TEXT";
@@ -132,10 +134,12 @@ public class CoupangListingAdapter implements ListingChannel {
 
     @Override
     public void update(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct) {
-        // Fetch the current full document (kept for parity / future field merges), then re-submit the whole
-        // rebuilt object via PUT. Selling-price-only partial updates are a follow-up path (out of scope).
-        client.get(SELLER_PRODUCTS + "/" + cell.getPlatformProductId(), "", acct);
-        String payload = writeJson(buildPayload(cell, gen, acct));
+        // 108/D3: re-submit the whole rebuilt object via PUT, carrying the update-only identifiers
+        // (top-level sellerProductId + per-item sellerProductItemId/vendorItemId) read from our own DB —
+        // without them Coupang would create a new product instead of revising this one. No preceding GET: we
+        // rebuild the whole document rather than merging the fetched one, so it was a wasted call (rate limit).
+        // Selling-price-only partial updates are a follow-up path (out of scope).
+        String payload = writeJson(buildPayload(cell, gen, acct, true));
         client.put(SELLER_PRODUCTS, payload, acct);
     }
 
@@ -242,9 +246,28 @@ public class CoupangListingAdapter implements ListingChannel {
 
     // --- payload (§4-4, summary — not over-detailed) ---
 
+    /** Register payload (no update-only identifiers) — see the 4-arg overload. */
     private Map<String, Object> buildPayload(ProductListing cell, GeneratedProductData gen,
                                              MarketplaceAccount acct) {
+        return buildPayload(cell, gen, acct, false);
+    }
+
+    /**
+     * 108/D3: {@code forUpdate=true} attaches the Coupang product-update identifiers (top-level
+     * {@code sellerProductId}, per-item {@code sellerProductItemId}/{@code vendorItemId}). They must never
+     * leak into a register payload, hence the flag instead of post-decorating the returned map (which would
+     * assume items[] order matches the option order).
+     *
+     * <p>🔴 The per-item ids only exist after approval ({@code fetchStatus} fills them on SELLING), so a
+     * not-yet-approved cell updates with identifier-less items = Coupang's replace-all semantics. The
+     * top-level {@code sellerProductId} still prevents a duplicate product.</p>
+     */
+    private Map<String, Object> buildPayload(ProductListing cell, GeneratedProductData gen,
+                                             MarketplaceAccount acct, boolean forUpdate) {
         Map<String, Object> payload = new LinkedHashMap<>();
+        if (forUpdate) {
+            payload.put("sellerProductId", cell.getPlatformProductId());
+        }
         // Category code = the master's standard category × platform, resolved from CategoryMapping (44). The
         // channel-add cell's own category column is null. The resolver THROWS 400 on a missing mapping (never
         // returns null), so by this point the code is always non-null and reused below for the notice groups.
@@ -297,6 +320,13 @@ public class CoupangListingAdapter implements ListingChannel {
                 ? registrationNameGenerator.generate(master, activeOptionNames, masterOptions,
                         optionCheckSuffixResolver.resolve(cell))
                 : cell.getName()));
+        // 108/D2: 노출상품명 (the name shown on the Coupang sales page) — optional, ≤100 chars, same cap as
+        // sellerProductName. Reverses 35's "internal only": when omitted Coupang falls back to the
+        // registration name, which is exactly the observed symptom. Blank → omit the key (never send "").
+        String displayName = cell.getName();
+        if (displayName != null && !displayName.isBlank()) {
+            payload.put("displayProductName", limitName(displayName));
+        }
 
         Map<String, String> masterAttributes = master != null ? master.getCategoryAttributes() : null;
         Map<String, String> masterNotices = master != null ? master.getCategoryNotices() : null;
@@ -344,6 +374,16 @@ public class CoupangListingAdapter implements ListingChannel {
                 continue;   // deactivated on this channel → not pushed
             }
             Map<String, Object> item = new LinkedHashMap<>();
+            // 108/D3: existing (approved) options must carry their ids on update; a new option omits the keys
+            // entirely (a null value would be read as "clear it").
+            if (forUpdate) {
+                if (option.getSellerProductItemId() != null) {
+                    item.put("sellerProductItemId", option.getSellerProductItemId());
+                }
+                if (option.getPlatformOptionId() != null) {
+                    item.put("vendorItemId", option.getPlatformOptionId());
+                }
+            }
             item.put("itemName", option.getOptionName());
             // 73: originalPrice = display strike-through (reverse-calc, 73); null → fall back to salePrice.
             item.put("originalPrice", option.getOriginalPrice() != null

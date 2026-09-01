@@ -401,7 +401,7 @@ class CoupangListingAdapterTest {
                 .hasMessageContaining("최소 중량 또는 최소 용량 중 하나");
     }
 
-    // 73: top-level required fields (sale period, vendorUserId, shipping/return/outbound block, requested=false)
+    // 73: top-level required fields (sale period, vendorUserId, shipping/return/outbound block, requested=true)
     // + item defaults (originalPrice, maximumBuyCount, adultOnly …). images/searchTags/contents at item level.
     @Test
     void register_payloadCarriesRequiredTopLevelAndItemDefaults() throws Exception {
@@ -420,7 +420,7 @@ class CoupangListingAdapterTest {
 
         JsonNode json = objectMapper.readTree(payload.getValue());
         // top-level
-        assertThat(json.path("requested").asBoolean()).isFalse();
+        assertThat(json.path("requested").asBoolean()).isTrue();   // 108/D1: approval request is the default
         assertThat(json.path("saleEndedAt").asText()).isEqualTo("2099-12-31T23:59:59");
         assertThat(json.has("saleStartedAt")).isTrue();
         assertThat(json.path("vendorUserId").asText()).isEqualTo("wing-user");
@@ -882,5 +882,73 @@ class CoupangListingAdapterTest {
         assertThatThrownBy(() -> adapter.validateRegistrable(cell, null, acct()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("필수 고시 누락");
+    }
+
+    // ---- 108: displayProductName + requested=true (register) / update identifiers (PUT) ----
+
+    // 108/D2 + D1: the register payload carries the display name and asks for approval; the update-only
+    // identifier must NOT leak into it.
+    @Test
+    void register_sendsDisplayNameAndRequestedTrue() throws Exception {
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("1세트")
+                        .sellingPrice(new BigDecimal("10000")).active(true).build()));
+        given(masterProductService.isBundle(null)).willReturn(false);
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        GeneratedProductData gen = GeneratedProductData.builder()
+                .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell(), gen, acct());
+
+        JsonNode json = objectMapper.readTree(payload.getValue());
+        assertThat(json.path("displayProductName").asText()).isEqualTo("셀");
+        assertThat(json.path("requested").asBoolean()).isTrue();
+        assertThat(json.has("sellerProductId")).isFalse();          // update-only identifier
+        assertThat(json.path("items").get(0).has("sellerProductItemId")).isFalse();
+    }
+
+    // 108/D3: the update payload identifies the existing product + its already-approved options.
+    @Test
+    void update_sendsSellerProductIdAndItemIds() throws Exception {
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("1세트")
+                        .sellingPrice(new BigDecimal("10000")).active(true)
+                        .sellerProductItemId("777").platformOptionId("888").build()));
+        given(masterProductService.isBundle(null)).willReturn(false);
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        GeneratedProductData gen = GeneratedProductData.builder()
+                .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.put(anyString(), payload.capture(), any())).willReturn("{\"code\":\"SUCCESS\"}");
+
+        adapter.update(cell(), gen, acct());
+
+        JsonNode json = objectMapper.readTree(payload.getValue());
+        assertThat(json.path("sellerProductId").asText()).isEqualTo("123456789");
+        JsonNode item = json.path("items").get(0);
+        assertThat(item.path("sellerProductItemId").asText()).isEqualTo("777");
+        assertThat(item.path("vendorItemId").asText()).isEqualTo("888");
+    }
+
+    // 108/D3: a not-yet-approved option has no market ids → the keys are absent (never null-valued).
+    @Test
+    void update_omitsItemIdsForNewOption() throws Exception {
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(2L).optionName("2세트")
+                        .sellingPrice(new BigDecimal("20000")).active(true).build()));   // ids null
+        given(masterProductService.isBundle(null)).willReturn(false);
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        GeneratedProductData gen = GeneratedProductData.builder()
+                .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.put(anyString(), payload.capture(), any())).willReturn("{\"code\":\"SUCCESS\"}");
+
+        adapter.update(cell(), gen, acct());
+
+        JsonNode item = objectMapper.readTree(payload.getValue()).path("items").get(0);
+        assertThat(item.has("sellerProductItemId")).isFalse();
+        assertThat(item.has("vendorItemId")).isFalse();
     }
 }
