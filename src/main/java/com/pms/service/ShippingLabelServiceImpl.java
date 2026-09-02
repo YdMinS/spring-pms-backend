@@ -58,7 +58,6 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
     private final ObjectMapper objectMapper;
     private final OrderItemRepository orderItemRepository;
 
-    @Override
     public List<ShippingLabelRow> collectRows(Long sellerId) {
         List<MarketplaceAccount> accounts = (sellerId == null)
                 ? marketplaceAccountRepository.findByIsActiveTrue()
@@ -271,7 +270,6 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
         }
     }
 
-    @Override
     public byte[] toXlsx(List<ShippingLabelRow> rows) {
         try (XSSFWorkbook workbook = new XSSFWorkbook();
              ByteArrayOutputStream out = new ByteArrayOutputStream()) {

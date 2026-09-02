@@ -3,7 +3,6 @@ package com.pms.controller;
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.ShippingLabelExportRequest;
 import com.pms.dto.response.ShippingLabelPreviewRow;
-import com.pms.service.ShippingLabelRow;
 import com.pms.service.ShippingLabelService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -26,10 +25,11 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 송장 접수용 스프레드시트 다운로드 컨트롤러 (ADMIN 전용, 생성 레그).
+ * 송장 접수용 스프레드시트 컨트롤러 (ADMIN 전용, 생성 레그).
  *
- * {@link ShippingLabelService#collectRows} → {@link ShippingLabelService#toXlsx} 순으로
- * 오케스트레이션한다(별도 파사드 없음). 결과는 xlsx bytes 다운로드.
+ * preview(목록/단건, JSON) 로 편집용 행을 내려주고, 편집된 행을 받아 xlsx 로 변환한다.
+ * 남는 경로 3개: GET /v2/preview · GET /v2/preview/by-order · POST /v2/spreadsheet.
+ * 편집 없이 즉시 xlsx 를 주던 V1(GET /spreadsheet)은 2026-09-02 제거됨(FEATURE_2609_04).
  */
 @RestController
 @RequestMapping("/api/admin/shipping-labels")
@@ -42,28 +42,6 @@ public class ShippingLabelController {
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 
     private final ShippingLabelService shippingLabelService;
-
-    @GetMapping("/spreadsheet")
-    @Operation(summary = "Download shipping label spreadsheet",
-            description = "Coupang INSTRUCT orders → carrier receipt xlsx (ADMIN role required)")
-    @SecurityRequirement(name = "bearerAuth")
-    @ApiResponse(responseCode = "200", description = "xlsx file")
-    @ApiResponse(responseCode = "401", description = "Authentication required")
-    @ApiResponse(responseCode = "403", description = "Permission denied (ADMIN role required)")
-    @ApiResponse(responseCode = "500", description = "Coupang ordersheets fetch/parse failed")
-    public ResponseEntity<byte[]> downloadSpreadsheet(
-            @RequestParam(required = false)
-            @Parameter(description = "Seller ID filter (optional; all active accounts if omitted)")
-            Long sellerId) {
-        List<ShippingLabelRow> rows = shippingLabelService.collectRows(sellerId);
-        byte[] xlsx = shippingLabelService.toXlsx(rows);
-
-        return ResponseEntity.ok()
-                .contentType(XLSX)
-                .header(HttpHeaders.CONTENT_DISPOSITION,
-                        "attachment; filename=\"shipping-labels.xlsx\"")
-                .body(xlsx);
-    }
 
     @GetMapping("/v2/preview")
     @Operation(summary = "Preview editable shipping label rows",
