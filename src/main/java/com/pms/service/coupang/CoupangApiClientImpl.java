@@ -41,12 +41,15 @@ public class CoupangApiClientImpl implements CoupangApiClient {
     private final RestClient restClient;
     private final CoupangHmacSigner signer;
     private final PiiMasker piiMasker;
+    private final CoupangRateLimitGuard rateLimitGuard;
 
-    public CoupangApiClientImpl(RestClient.Builder builder, CoupangHmacSigner signer, PiiMasker piiMasker) {
+    public CoupangApiClientImpl(RestClient.Builder builder, CoupangHmacSigner signer, PiiMasker piiMasker,
+                                CoupangRateLimitGuard rateLimitGuard) {
         // Inject the auto-configured builder so tests can bind MockRestServiceServer to it.
         this.restClient = builder.baseUrl(HOST).build();
         this.signer = signer;
         this.piiMasker = piiMasker;
+        this.rateLimitGuard = rateLimitGuard;
     }
 
     @Override
@@ -86,8 +89,12 @@ public class CoupangApiClientImpl implements CoupangApiClient {
 
     /**
      * 실제 호출을 감싸 로깅을 일원화한다. raw 는 DEBUG/실패 경로에서만, 항상 mask() 를 통과한다.
+     *
+     * 모든 쿠팡 호출이 여기를 지나므로 429 쿨다운 서킷({@link CoupangRateLimitGuard})도 여기서만 건다 —
+     * 호출 직전 차단창 확인, 429 수신 시 차단창 개시(재시도 금지).
      */
     private String execute(String method, String path, String query, Supplier<String> call) {
+        rateLimitGuard.check();
         long t0 = System.nanoTime();
         try {
             String body = call.get();
@@ -100,6 +107,9 @@ public class CoupangApiClientImpl implements CoupangApiClient {
             }
             return body;
         } catch (RestClientResponseException e) { // non-2xx: has a response body
+            if (e.getStatusCode().value() == 429) {
+                rateLimitGuard.trip();      // Coupang: back off ~10 min instead of retrying
+            }
             log.warn("[COUPANG] {} {} FAIL status={} resp={}", method, path,
                     e.getStatusCode().value(), piiMasker.mask(e.getResponseBodyAsString()));
             throw e;

@@ -20,11 +20,11 @@ import java.util.Optional;
 /**
  * {@link CoupangReturnSyncService} 구현 — returnRequests 페이징 조회 후 취소수량 매칭 보정.
  *
- * 두 경로로 취소를 잡는다:
- *  1) 배치(cancelType=CANCEL, status·orderId 제외, createdAt 기준) — 고객 결제취소를 효율적으로 조회.
- *  2) 재조정(orderId 단위, 필터 없음) — 발송전(ACCEPT/INSTRUCT) 주문에 대해 orderId 로 직접 조회.
- *     판매자 품절취소(출고중지)는 쿠팡에서 receiptType=RETURN 으로 기록되어 (1)의 cancelType=CANCEL
- *     필터에 안 잡힌다 → 이 경로가 전체 타입을 조회해 그런 취소도 반영한다.
+ * 두 경로로 취소를 잡는다 — 둘 다 날짜창 배치라 계정당 호출 수는 상수(1 + status 4종)다:
+ *  1) 취소 배치(cancelType=CANCEL, status·orderId 제외, createdAt 기준) — 고객 결제취소를 조회.
+ *  2) 반품 배치(status=RU/UC/CC/PR, cancelType 생략 = RETURN 기본값) — 판매자 품절취소·고객 출고중지요청은
+ *     쿠팡에서 receiptType=RETURN 으로 기록되어 (1)의 cancelType=CANCEL 필터에 안 잡힌다 →
+ *     이 경로가 status 4종 날짜창 조회로 그런 취소도 반영한다.
  * 매칭은 (orderId + shipmentBoxId + vendorItemId) 4키. 매칭 안 되면 무시(예외 없음).
  */
 @Slf4j
@@ -34,10 +34,8 @@ import java.util.Optional;
 public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
 
     private static final int MAX_PER_PAGE = 50;
-    private static final int MAX_PAGES_PER_ORDER = 20;      // orderId 단위 조회 무한루프 가드
-    private static final int RECON_LOOKBACK_DAYS = 30;      // 재조정 조회창(쿠팡 상한 < 31일)
-    // 아직 발송 전이라 취소가 가능한 상태들 — 재조정 대상.
-    private static final List<String> PRE_SHIPMENT_STATUSES = List.of("ACCEPT", "INSTRUCT");
+    private static final int MAX_PAGES_PER_STATUS = 20;     // nextToken 무한루프 가드
+    private static final List<String> RETURN_STATUSES = List.of("RU", "UC", "CC", "PR");
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");  // 쿠팡 createdAt 창은 KST 달력 기준
 
@@ -48,13 +46,13 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
 
     @Override
     public CancelSyncResult syncCancels(MarketplaceAccount account) {
-        CancelSyncResult batch = syncCancelBatch(account);
-        CancelSyncResult recon = reconcilePreShipment(account);
+        CancelSyncResult cancels = syncCancelBatch(account);
+        CancelSyncResult returns = syncReturnBatch(account);
 
-        int matchedUpdated = batch.matchedUpdated() + recon.matchedUpdated();
-        int pages = batch.pages() + recon.pages();
-        log.info("Coupang cancel sync done: account={} pages={} matchedUpdated={} (batch={}, recon={})",
-                account.getId(), pages, matchedUpdated, batch.matchedUpdated(), recon.matchedUpdated());
+        int matchedUpdated = cancels.matchedUpdated() + returns.matchedUpdated();
+        int pages = cancels.pages() + returns.pages();
+        log.info("Coupang cancel sync done: account={} pages={} matchedUpdated={} (cancel={}, return={})",
+                account.getId(), pages, matchedUpdated, cancels.matchedUpdated(), returns.matchedUpdated());
         return new CancelSyncResult(matchedUpdated, pages);
     }
 
@@ -71,34 +69,28 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
     }
 
     /**
-     * (2) 재조정: 발송전(ACCEPT/INSTRUCT) 주문번호마다 returnRequests?orderId= (전체 타입) 조회.
-     * cancelType=CANCEL 배치가 놓치는 판매자 품절취소(receiptType=RETURN)를 잡아 cancel_count 를 보정한다.
-     * 대상은 조회창(RECON_LOOKBACK_DAYS) 안의 주문으로 제한한다 — 창 밖 주문은 매칭이 불가능하므로.
+     * (2) 반품 배치: status 4종을 날짜창으로 조회(cancelType 생략 = RETURN 기본값).
+     *
+     * 판매자 품절취소·고객 출고중지요청은 receiptType=RETURN 으로 기록돼 (1) 의 cancelType=CANCEL 에
+     * 안 잡힌다. 쿠팡 문서상 그 건은 RU(출고중지요청)·UC(반품접수) 에서 조회되고, 동기화 사이에 상태가
+     * 넘어갔을 수 있어 CC(반품완료)·PR(쿠팡확인요청) 까지 4종을 모두 훑는다.
+     *
+     * ⚠️ 주문번호 1건당 1호출(구 reconcilePreShipment)로 되돌리지 말 것 — 2026-09-02 dev 에서 초당
+     * 버스트로 HTTP 429 를 유발했다. status 를 지정하면 orderId 없이 날짜창 조회가 되므로 루프는 불필요하다.
+     * 조회창은 반품 "접수" 생성시각 기준이라 주문 나이와 무관 → cancelSyncDays 하나로 (1) 과 공유한다.
      */
-    private CancelSyncResult reconcilePreShipment(MarketplaceAccount account) {
-        LocalDate to = LocalDate.now(KST);
-        LocalDate from = to.minusDays(RECON_LOOKBACK_DAYS);
-
-        // Bound the recon set by the same window we query Coupang with: an order older than the
-        // window can never match, so querying it is a wasted round-trip (PLAN D9).
-        // paidAt is stored as KST local time (see CoupangOrderStatusSyncer#parseDateTime),
-        // so comparing it against a KST-derived boundary is consistent.
-        List<String> orderIds = orderItemRepository.findReconcilableExternalOrderIds(
-                account.getId(), PRE_SHIPMENT_STATUSES, from.atStartOfDay());
-        if (orderIds.isEmpty()) {
-            return CancelSyncResult.empty();
-        }
-        log.info("Coupang cancel recon targets: account={} orders={}", account.getId(), orderIds.size());
-
+    private CancelSyncResult syncReturnBatch(MarketplaceAccount account) {
         String path = coupangProperties.getReturnrequestsPath().replace("{vendorId}", account.getVendorId());
+        LocalDate to = LocalDate.now(KST);
+        LocalDate from = to.minusDays(coupangProperties.getCancelSyncDays());
         String window = "&createdAtFrom=" + from.format(DATE)
                 + "&createdAtTo=" + to.format(DATE)
                 + "&maxPerPage=" + MAX_PER_PAGE;
 
         int matched = 0;
         int pages = 0;
-        for (String orderId : orderIds) {
-            CancelSyncResult r = collect(account, path, "orderId=" + orderId + window, MAX_PAGES_PER_ORDER);
+        for (String status : RETURN_STATUSES) {
+            CancelSyncResult r = collect(account, path, "status=" + status + window, MAX_PAGES_PER_STATUS);
             matched += r.matchedUpdated();
             pages += r.pages();
         }
