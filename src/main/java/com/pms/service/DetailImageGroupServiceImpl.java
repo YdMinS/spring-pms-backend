@@ -83,6 +83,17 @@ public class DetailImageGroupServiceImpl implements DetailImageGroupService {
         return mapToResponse(saved, templateNamesByCode(), imageCountsByZone());
     }
 
+    /**
+     * Delete a catalog group. Succeeds only while NO active template binds its code (otherwise 400) — an
+     * in-use zone must be removed from every template first, or its blocks would fail validation on the
+     * next save.
+     *
+     * <p>⚠️ Deletes the group row and the photo mappings carrying its code
+     * ({@code master_image_zone_assignment}) — the photos themselves
+     * ({@code master_product_image} / {@code product_image} / S3) are never touched. Only the
+     * "group ↔ photo" link goes; the images stay in the master's pool as unused entries. A non-zero
+     * {@code imageCount} therefore does NOT block this delete (the UI only warns with it).</p>
+     */
     @Override
     @Transactional
     public void delete(Long id) {

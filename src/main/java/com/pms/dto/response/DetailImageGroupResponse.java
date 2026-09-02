@@ -22,7 +22,9 @@ public class DetailImageGroupResponse {
     @Schema(description = "Group ID", example = "1")
     private Long id;
 
-    @Schema(description = "Immutable zone id (= master_image_zone_assignment.zone_id)", example = "product_photos")
+    @Schema(description = "Immutable after create — this string IS the image mapping key "
+            + "(= master_image_zone_assignment.zone_id and DetailTemplate.blocks[].bind); no rename path",
+            example = "product_photos")
     private String code;
 
     @Schema(description = "Display name", example = "제품 사진")
