@@ -284,6 +284,13 @@ class LiquibaseChangelogApplyTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM product_listing_option WHERE stock_quantity IS NULL",
                 Integer.class)).isNotNull();
+
+        // changeset 050: detail_image_group materialized with all its columns (FEATURE_2609_03). The
+        // table starts empty — the catalog is backfilled by DetailImageGroupSeeder at startup, not here.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM detail_image_group "
+                        + "WHERE tenant_id IS NULL AND code IS NULL AND name IS NULL AND sort_order IS NULL",
+                Integer.class)).isZero();
     }
 
     @Test

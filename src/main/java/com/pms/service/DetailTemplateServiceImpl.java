@@ -1,11 +1,13 @@
 package com.pms.service;
 
 import com.pms.domain.DetailBlock;
+import com.pms.domain.DetailImageGroup;
 import com.pms.domain.DetailTemplate;
 import com.pms.domain.ProcessingPreset;
 import com.pms.dto.request.DetailTemplateRequest;
 import com.pms.dto.response.DetailTemplateResponse;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.DetailImageGroupRepository;
 import com.pms.repository.DetailTemplateRepository;
 import com.pms.repository.ProcessingPresetRepository;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +17,7 @@ import org.springframework.util.StringUtils;
 
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Detail-page template CRUD (FEATURE_2608_06 / 17). Tenant isolation is automatic via {@code @TenantId}
@@ -33,6 +36,7 @@ public class DetailTemplateServiceImpl implements DetailTemplateService {
 
     private final DetailTemplateRepository detailTemplateRepository;
     private final ProcessingPresetRepository processingPresetRepository;
+    private final DetailImageGroupRepository detailImageGroupRepository;
 
     @Override
     public List<DetailTemplateResponse> list() {
@@ -113,6 +117,10 @@ public class DetailTemplateServiceImpl implements DetailTemplateService {
         if (blocks == null) {
             return;
         }
+        // Looked up once per save (never per block); skipped entirely for a partial update.
+        Set<String> knownCodes = detailImageGroupRepository.findAllByOrderBySortOrderAscIdAsc().stream()
+                .map(DetailImageGroup::getCode)
+                .collect(Collectors.toSet());
         for (DetailBlock block : blocks) {
             String type = block.getType();
             if (!KNOWN_TYPES.contains(type)) {
@@ -127,6 +135,11 @@ public class DetailTemplateServiceImpl implements DetailTemplateService {
                 case "imageZone" -> {
                     if (!StringUtils.hasText(block.getBind())) {
                         throw new IllegalArgumentException("이미지존 블록은 zoneId가 필요합니다");
+                    }
+                    // The only place free-typed zone ids are blocked (FEATURE_2609_03) — front-end
+                    // validation alone would let the per-template zone sprawl come back.
+                    if (!knownCodes.contains(block.getBind())) {
+                        throw new IllegalArgumentException("등록되지 않은 이미지 그룹입니다: " + block.getBind());
                     }
                 }
                 case "asset" -> {

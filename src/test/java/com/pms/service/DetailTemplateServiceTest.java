@@ -6,6 +6,7 @@ import com.pms.domain.ProcessingPreset;
 import com.pms.dto.request.DetailTemplateRequest;
 import com.pms.dto.response.DetailTemplateResponse;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.DetailImageGroupRepository;
 import com.pms.repository.ProcessingPresetRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,6 +37,7 @@ class DetailTemplateServiceTest {
 
     @Mock private DetailTemplateRepository detailTemplateRepository;
     @Mock private ProcessingPresetRepository processingPresetRepository;
+    @Mock private DetailImageGroupRepository detailImageGroupRepository;
 
     @InjectMocks private DetailTemplateServiceImpl service;
 
@@ -138,6 +140,39 @@ class DetailTemplateServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("알 수 없는 블록 타입");
         verify(detailTemplateRepository, never()).save(any());
+    }
+
+    // ---- imageZone bind must exist in the tenant catalog (FEATURE_2609_03) ----
+
+    @Test
+    void create_imageZoneBindNotInCatalog_throws() {
+        given(detailImageGroupRepository.findAllByOrderBySortOrderAscIdAsc()).willReturn(List.of());
+
+        DetailTemplateRequest request = DetailTemplateRequest.builder()
+                .name("T")
+                .blocks(List.of(DetailBlock.builder().type("imageZone").bind("product_photos").build()))
+                .build();
+
+        assertThatThrownBy(() -> service.create(request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("등록되지 않은 이미지 그룹입니다");
+        verify(detailTemplateRepository, never()).save(any());
+    }
+
+    @Test
+    void create_imageZoneBindInCatalog_saves() {
+        given(detailImageGroupRepository.findAllByOrderBySortOrderAscIdAsc()).willReturn(List.of(
+                com.pms.domain.DetailImageGroup.builder()
+                        .id(1L).code("product_photos").name("제품 사진").sortOrder(0).build()));
+        given(detailTemplateRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+
+        DetailTemplateRequest request = DetailTemplateRequest.builder()
+                .name("T")
+                .blocks(List.of(DetailBlock.builder().type("imageZone").bind("product_photos").build()))
+                .build();
+        DetailTemplateResponse response = service.create(request);
+
+        assertThat(response.getBlocks()).hasSize(1);
     }
 
     // ---- image processing preset reference (FEATURE_2608_08) ----
