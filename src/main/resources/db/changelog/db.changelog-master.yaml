@@ -97,3 +97,5 @@ databaseChangeLog:
       file: db/changelog/changes/048-font-asset-web-font.yaml
   - include:
       file: db/changelog/changes/049-option-stock-quantity.yaml
+  - include:
+      file: db/changelog/changes/050-detail-image-group.yaml
