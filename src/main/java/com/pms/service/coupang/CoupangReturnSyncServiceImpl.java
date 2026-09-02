@@ -73,17 +73,24 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
     /**
      * (2) 재조정: 발송전(ACCEPT/INSTRUCT) 주문번호마다 returnRequests?orderId= (전체 타입) 조회.
      * cancelType=CANCEL 배치가 놓치는 판매자 품절취소(receiptType=RETURN)를 잡아 cancel_count 를 보정한다.
+     * 대상은 조회창(RECON_LOOKBACK_DAYS) 안의 주문으로 제한한다 — 창 밖 주문은 매칭이 불가능하므로.
      */
     private CancelSyncResult reconcilePreShipment(MarketplaceAccount account) {
-        List<String> orderIds = orderItemRepository
-                .findDistinctExternalOrderIdByAccountAndStatusIn(account.getId(), PRE_SHIPMENT_STATUSES);
+        LocalDate to = LocalDate.now(KST);
+        LocalDate from = to.minusDays(RECON_LOOKBACK_DAYS);
+
+        // Bound the recon set by the same window we query Coupang with: an order older than the
+        // window can never match, so querying it is a wasted round-trip (PLAN D9).
+        // paidAt is stored as KST local time (see CoupangOrderStatusSyncer#parseDateTime),
+        // so comparing it against a KST-derived boundary is consistent.
+        List<String> orderIds = orderItemRepository.findReconcilableExternalOrderIds(
+                account.getId(), PRE_SHIPMENT_STATUSES, from.atStartOfDay());
         if (orderIds.isEmpty()) {
             return CancelSyncResult.empty();
         }
+        log.info("Coupang cancel recon targets: account={} orders={}", account.getId(), orderIds.size());
 
         String path = coupangProperties.getReturnrequestsPath().replace("{vendorId}", account.getVendorId());
-        LocalDate to = LocalDate.now(KST);
-        LocalDate from = to.minusDays(RECON_LOOKBACK_DAYS);
         String window = "&createdAtFrom=" + from.format(DATE)
                 + "&createdAtTo=" + to.format(DATE)
                 + "&maxPerPage=" + MAX_PER_PAGE;
