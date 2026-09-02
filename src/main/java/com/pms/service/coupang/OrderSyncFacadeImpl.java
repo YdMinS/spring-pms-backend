@@ -80,6 +80,11 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
         try {
             TenantContext.set(account.getTenantId());
             SyncResult orders = coupangOrderSyncService.syncAccount(account);
+            if (!orders.failedStatuses().isEmpty()) {
+                // 일부 상태만 실패 — 성공한 상태는 이미 커밋됐다(PLAN D15).
+                log.warn("Order sync partial: account={} failedStatuses={}",
+                        account.getId(), orders.failedStatuses());
+            }
             CancelSyncResult cancels = coupangReturnSyncService.syncCancels(account);
             return new OrderSyncResult(
                     LocalDateTime.now(),

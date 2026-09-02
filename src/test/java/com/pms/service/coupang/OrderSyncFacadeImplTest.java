@@ -47,7 +47,7 @@ class OrderSyncFacadeImplTest {
     void sync_runsOrderThenCancel() {
         MarketplaceAccount acc = account(1L);
         given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
-        given(coupangOrderSyncService.syncAccount(acc)).willReturn(new SyncResult(3, 1, 1));
+        given(coupangOrderSyncService.syncAccount(acc)).willReturn(new SyncResult(3, 1, 1, List.of()));
         given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(2, 1));
 
         OrderSyncResult result = facade.sync(1L);
@@ -66,7 +66,7 @@ class OrderSyncFacadeImplTest {
         MarketplaceAccount a2 = account(2L);
         given(marketplaceAccountRepository.findBySeller_IdAndIsActiveTrue(100L))
                 .willReturn(List.of(a1, a2));
-        given(coupangOrderSyncService.syncAccount(any())).willReturn(new SyncResult(1, 0, 0));
+        given(coupangOrderSyncService.syncAccount(any())).willReturn(new SyncResult(1, 0, 0, List.of()));
         given(coupangReturnSyncService.syncCancels(any())).willReturn(new CancelSyncResult(0, 1));
 
         OrderSyncResult result = facade.syncBySeller(100L);
@@ -86,7 +86,7 @@ class OrderSyncFacadeImplTest {
         given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(a1, a2));
         // a1 실패, a2 성공 → 전체 롤백 아님, a2 결과는 반영
         when(coupangOrderSyncService.syncAccount(a1)).thenThrow(new RuntimeException("coupang down"));
-        when(coupangOrderSyncService.syncAccount(a2)).thenReturn(new SyncResult(5, 0, 0));
+        when(coupangOrderSyncService.syncAccount(a2)).thenReturn(new SyncResult(5, 0, 0, List.of()));
         given(coupangReturnSyncService.syncCancels(a2)).willReturn(new CancelSyncResult(0, 1));
 
         OrderSyncResult result = facade.syncAll();

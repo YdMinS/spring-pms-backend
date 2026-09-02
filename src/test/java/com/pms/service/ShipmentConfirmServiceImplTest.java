@@ -6,6 +6,7 @@ import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
 import com.pms.domain.Seller;
+import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderItemRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import org.apache.poi.ss.usermodel.Row;
@@ -18,6 +19,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.web.client.RestClientException;
 
 import java.io.ByteArrayOutputStream;
 import java.util.List;
@@ -42,6 +44,8 @@ class ShipmentConfirmServiceImplTest {
 
     private static final String INVOICES_PATH =
             "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/orders/invoices";
+    private static final String ORDER_BY_ID_PATH =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/{orderId}/ordersheets";
 
     @Mock
     private CoupangApiClient coupangApiClient;
@@ -51,6 +55,8 @@ class ShipmentConfirmServiceImplTest {
     private CarrierCodeService carrierCodeService;
     @Mock
     private CoupangProperties coupangProperties;
+    @Mock
+    private MarketplaceAccountRepository marketplaceAccountRepository;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private ShipmentConfirmServiceImpl service;
@@ -58,7 +64,8 @@ class ShipmentConfirmServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new ShipmentConfirmServiceImpl(
-                coupangApiClient, coupangProperties, orderItemRepository, carrierCodeService, objectMapper);
+                coupangApiClient, coupangProperties, orderItemRepository,
+                marketplaceAccountRepository, carrierCodeService, objectMapper);
     }
 
     @Test
@@ -140,6 +147,8 @@ class ShipmentConfirmServiceImplTest {
         verify(coupangApiClient, never()).post(anyString(), anyString(), any());
         // 플랫폼 가드 잠금: resolve 도 미호출.
         verify(carrierCodeService, never()).resolveDeliveryCompanyCode(anyString());
+        // 비-COUPANG 은 폴백 대상이 아니다 — 네이버 주문을 쿠팡에 조회하면 안 된다.
+        verify(coupangApiClient, never()).get(anyString(), anyString(), any());
     }
 
     @Test
@@ -166,6 +175,78 @@ class ShipmentConfirmServiceImplTest {
         ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{"4000", "123"}, {"5000", ""}}));
 
         assertThat(result.totalRows()).isEqualTo(1);
+    }
+
+    // --- 폴백 (PLAN D16): DB 미매칭 주문을 쿠팡 단건 조회로 확정 ---
+
+    @Test
+    void confirm_DB미매칭이면_쿠팡단건조회로_폴백해_송장업로드() throws Exception {
+        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of());
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(account));
+        given(coupangProperties.getOrdersheetByOrderPath()).willReturn(ORDER_BY_ID_PATH);
+        given(coupangApiClient.get(anyString(), anyString(), any()))
+                .willReturn(singleOrderTwoLines());
+        given(carrierCodeService.resolveDeliveryCompanyCode("COUPANG")).willReturn("CJGLS");
+        given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
+        given(coupangApiClient.post(anyString(), anyString(), any()))
+                .willReturn(responseAllSuccess("302012345678", "302012345678"));
+
+        ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{4000019469460L, "123456789"}}));
+
+        // 조회 경로에 vendorId·orderId 가 치환된다.
+        ArgumentCaptor<String> getPath = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient).get(getPath.capture(), eq(""), eq(account));
+        assertThat(getPath.getValue()).contains("A001").contains("4000019469460");
+
+        // 합포장 전량 전송: 박스의 vendorItemId 2개가 모두 dto 로 나간다.
+        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient).post(anyString(), bodyCaptor.capture(), eq(account));
+        JsonNode dtos = objectMapper.readTree(bodyCaptor.getValue()).get("orderSheetInvoiceApplyDtos");
+        assertThat(dtos).hasSize(2);
+        assertThat(List.of(dtos.get(0).get("vendorItemId").asLong(), dtos.get(1).get("vendorItemId").asLong()))
+                .containsExactlyInAnyOrder(3823839899L, 3823839900L);
+        assertThat(dtos.get(0).get("invoiceNumber").asText()).isEqualTo("123456789");
+
+        assertThat(result.unmatched()).isEmpty();
+        assertThat(result.matchedOrders()).isEqualTo(1);
+    }
+
+    @Test
+    void confirm_폴백조회도실패하면_미매칭유지하고_POST안함() throws Exception {
+        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        given(orderItemRepository.findByExternalOrderId("4000")).willReturn(List.of());
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(account));
+        given(coupangProperties.getOrdersheetByOrderPath()).willReturn(ORDER_BY_ID_PATH);
+        given(coupangApiClient.get(anyString(), anyString(), any()))
+                .willThrow(new RestClientException("504 Gateway Timeout"));
+
+        ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{"4000", "123"}}));
+
+        assertThat(result.unmatched()).containsExactly("4000");
+        assertThat(result.matchedOrders()).isZero();
+        verify(coupangApiClient, never()).post(anyString(), anyString(), any());
+    }
+
+    @Test
+    void confirm_폴백응답의_전량취소라인은_제외() throws Exception {
+        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        given(orderItemRepository.findByExternalOrderId("4000")).willReturn(List.of());
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(account));
+        given(coupangProperties.getOrdersheetByOrderPath()).willReturn(ORDER_BY_ID_PATH);
+        given(coupangApiClient.get(anyString(), anyString(), any()))
+                .willReturn(singleOrderOneCancelledLine());
+        given(carrierCodeService.resolveDeliveryCompanyCode("COUPANG")).willReturn("CJGLS");
+        given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
+        given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302"));
+
+        service.confirm(xlsx(new Object[][]{{"4000", "123"}}));
+
+        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient).post(anyString(), bodyCaptor.capture(), any());
+        JsonNode dtos = objectMapper.readTree(bodyCaptor.getValue()).get("orderSheetInvoiceApplyDtos");
+        assertThat(dtos).hasSize(1);                                   // 전량 취소 라인 제외
+        assertThat(dtos.get(0).get("vendorItemId").asLong()).isEqualTo(5002L);
     }
 
     // --- helpers ---
@@ -229,6 +310,32 @@ class ShipmentConfirmServiceImplTest {
                     .append("\",\"succeed\":true,\"resultCode\":\"OK\",\"resultMessage\":\"\"}");
         }
         return "{\"code\":200,\"data\":{\"responseCode\":0,\"responseList\":[" + list + "]}}";
+    }
+
+    /** 쿠팡 단건 발주서 응답: 박스 1개 × vendorItemId 2개(합포장). */
+    private String singleOrderTwoLines() {
+        return """
+            {"code":200,"data":[
+              {"orderId":"4000019469460","shipmentBoxId":"302012345678","status":"INSTRUCT",
+               "orderItems":[
+                 {"vendorItemId":"3823839899","shippingCount":1},
+                 {"vendorItemId":"3823839900","shippingCount":2,"cancelCount":1}
+               ]}
+            ]}
+            """;
+    }
+
+    /** 쿠팡 단건 발주서 응답: 전량 확정취소 라인 1개 + 정상 라인 1개. */
+    private String singleOrderOneCancelledLine() {
+        return """
+            {"code":200,"data":[
+              {"orderId":"4000","shipmentBoxId":"302","status":"INSTRUCT",
+               "orderItems":[
+                 {"vendorItemId":"5001","shippingCount":1,"cancelCount":1},
+                 {"vendorItemId":"5002","shippingCount":1}
+               ]}
+            ]}
+            """;
     }
 
     private String responsePartialFail() {
