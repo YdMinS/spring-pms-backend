@@ -99,3 +99,5 @@ databaseChangeLog:
       file: db/changelog/changes/049-option-stock-quantity.yaml
   - include:
       file: db/changelog/changes/050-detail-image-group.yaml
+  - include:
+      file: db/changelog/changes/051-marketplace-sync-status.yaml

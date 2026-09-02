@@ -58,14 +58,21 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
     Optional<OrderItem> findWithAccountAndSellerById(Long id);
 
     /**
-     * 아직 발송 전(status IN statuses) 상태로 남아 있는 이 계정 주문의 고유 주문번호 목록.
+     * 취소 재조정(recon) 대상 주문번호 — 발송전 상태(status IN statuses) + 조회창 안(paidAt >= from).
      *
      * 취소 보정 재조정용 — 판매자 품절취소(쿠팡 receiptType=RETURN)는 cancelType=CANCEL 조회에
      * 안 잡혀 발송전 주문이 취소돼도 로컬 status/cancel_count 가 갱신되지 않는다. 이 주문번호들을
      * returnRequests?orderId= (전체 타입) 로 재조회해 취소를 반영한다.
+     *
+     * from 바운드가 없으면 동기화 창(syncDays) 밖에서 status 가 얼어붙은 행이 무한 누적돼, 매칭이
+     * 불가능한 주문에도 매 동기화마다 쿠팡 1호출씩 나간다(PLAN D9). paidAt 이 null 인 행(파싱 실패)은
+     * 제외되며, 이는 표시 쿼리(findRecentOrders)와 동일한 정책이다.
      */
     @Query("SELECT DISTINCT o.externalOrderId FROM OrderItem o " +
-            "WHERE o.marketplaceAccount.id = :accountId AND o.status IN :statuses")
-    List<String> findDistinctExternalOrderIdByAccountAndStatusIn(
-            @Param("accountId") Long accountId, @Param("statuses") Collection<String> statuses);
+            "WHERE o.marketplaceAccount.id = :accountId AND o.status IN :statuses " +
+            "AND o.paidAt >= :from")
+    List<String> findReconcilableExternalOrderIds(
+            @Param("accountId") Long accountId,
+            @Param("statuses") Collection<String> statuses,
+            @Param("from") LocalDateTime from);
 }

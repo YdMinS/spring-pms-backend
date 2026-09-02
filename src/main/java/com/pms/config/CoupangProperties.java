@@ -55,4 +55,10 @@ public class CoupangProperties {
 
     /** 취소 보정 조회 기간(일). 취소는 늦게 처리되므로 ordersheets 보다 넉넉히. 쿠팡 최대 31일. */
     private int cancelSyncDays = 7;
+
+    /** 쿠팡 API connect 타임아웃(ms). 미설정 시 무제한 → 게이트웨이 지연이 요청 스레드를 무한 점유한다. */
+    private int connectTimeoutMs = 10_000;
+
+    /** 쿠팡 API read 타임아웃(ms). 송장시트처럼 무거운 조회도 있어 넉넉히 잡되 무제한은 금지. */
+    private int readTimeoutMs = 60_000;
 }

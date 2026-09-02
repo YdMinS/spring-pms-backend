@@ -89,7 +89,7 @@ class OrderSyncTenantScopingTest {
         AtomicReference<Long> tenantSeenBySync = new AtomicReference<>();
         given(coupangOrderSyncService.syncAccount(any())).willAnswer(inv -> {
             tenantSeenBySync.set(TenantContext.get());
-            return new SyncResult(0, 0, 0);
+            return new SyncResult(0, 0, 0, java.util.List.of());
         });
         given(coupangReturnSyncService.syncCancels(any())).willReturn(new CancelSyncResult(0, 0));
 

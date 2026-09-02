@@ -5,6 +5,8 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.TenantId;
 
+import java.time.LocalDateTime;
+
 /**
  * 외부 판매 플랫폼(쿠팡 등)의 셀러 계정 + API 자격증명.
  *
@@ -82,4 +84,25 @@ public class MarketplaceAccount extends BaseEntity {
 
     @Column(name = "option_check_suffix", length = 50)
     private String optionCheckSuffix;
+
+    // Last sync outcome per channel (FEATURE_2609_02 / changeset 051, PLAN D6). All nullable with no
+    // backfill: NULL = never synced yet. Written only by SyncStatusRecorder in a REQUIRES_NEW transaction
+    // (D7) so a rolled-back sync cannot erase the record that it failed.
+    // ⚠️ lastOrderSyncAt / lastCancelSyncAt = the last time that stage COMPLETED. A partial run leaves them
+    //    untouched (D18) — they answer "when was this channel last trustworthy", not "when did we last try".
+    @Enumerated(EnumType.STRING)
+    @Column(name = "last_sync_status", length = 20)
+    private SyncStatus lastSyncStatus;
+
+    @Column(name = "last_sync_at")
+    private LocalDateTime lastSyncAt;              // 마지막 시도 시각 (성공·실패 무관)
+
+    @Column(name = "last_order_sync_at")
+    private LocalDateTime lastOrderSyncAt;         // ordersheets 마지막 성공 시각
+
+    @Column(name = "last_cancel_sync_at")
+    private LocalDateTime lastCancelSyncAt;        // 취소 보정 마지막 성공 시각
+
+    @Column(name = "last_sync_error", length = 500)
+    private String lastSyncError;                  // 실패 사유 요약 (응답 바디 미포함 — PII·자격증명)
 }
