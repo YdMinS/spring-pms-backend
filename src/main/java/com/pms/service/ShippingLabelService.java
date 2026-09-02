@@ -16,27 +16,11 @@ import java.util.List;
  *
  * <p>사용 예제 (Controller):
  * <pre>{@code
- * List<ShippingLabelRow> rows = shippingLabelService.collectRows(sellerId);
- * byte[] xlsx = shippingLabelService.toXlsx(rows);
+ * List<ShippingLabelPreviewRow> rows = shippingLabelService.previewRows(sellerId);
+ * byte[] xlsx = shippingLabelService.toXlsxFromExport(editedRows);
  * }</pre>
- *
- * @see ShippingLabelRow
  */
 public interface ShippingLabelService {
-
-    /**
-     * 대상 계정의 쿠팡 ordersheets(INSTRUCT)를 조회·펼쳐 행 목록을 수집한다.
-     *
-     * @param sellerId null 이면 활성 전체 계정, 지정 시 해당 셀러의 활성 계정만
-     * @return 발주가능수량 > 0 인 상품 라인 행들
-     */
-    List<ShippingLabelRow> collectRows(Long sellerId);
-
-    /**
-     * 행 목록을 택배사 접수 xlsx bytes 로 변환한다 (1행 헤더, 2행부터 데이터).
-     * 행 0건이어도 헤더만 있는 빈 시트를 반환한다.
-     */
-    byte[] toXlsx(List<ShippingLabelRow> rows);
 
     /**
      * 대상 계정의 쿠팡 ordersheets(INSTRUCT)를 조회·펼쳐 편집용 미리보기 행으로 반환한다 (V2).
