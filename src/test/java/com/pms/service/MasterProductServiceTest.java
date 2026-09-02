@@ -19,6 +19,7 @@ import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterOptionRequest;
+import com.pms.dto.request.MasterProductQuery;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
 import com.pms.dto.response.ChannelSyncPreviewResponse;
@@ -55,6 +56,11 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 
 import java.math.BigDecimal;
 import java.util.LinkedHashMap;
@@ -64,6 +70,8 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.data.domain.Sort.Direction.ASC;
+import static org.springframework.data.domain.Sort.Direction.DESC;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
@@ -258,14 +266,14 @@ class MasterProductServiceTest {
     @Test
     void getMasterProducts_returnsOnlyActive_excludesSoftDeleted() {
         // Repository filters active=true, so a soft-deleted master never reaches the response.
-        given(masterProductRepository.findByActiveTrue())
-                .willReturn(List.of(MasterProduct.builder().id(1L).name("활성").active(true).build()));
+        givenActivePage(MasterProduct.builder().id(1L).name("활성").active(true).build());
 
-        List<MasterProductResponse> result = service.getMasterProducts();
+        Page<MasterProductResponse> result = service.getMasterProducts(new MasterProductQuery());
 
-        assertThat(result).extracting(MasterProductResponse::getId).containsExactly(1L);
+        assertThat(result.getContent()).extracting(MasterProductResponse::getId).containsExactly(1L);
+        assertThat(result.getTotalElements()).isEqualTo(1);
         // List path does NOT call the generator (N+1 guard) → registrationName stays null.
-        assertThat(result.get(0).getRegistrationName()).isNull();
+        assertThat(result.getContent().get(0).getRegistrationName()).isNull();
         verify(registrationNameGenerator, never()).generate(any(), any());
         verify(masterProductRepository, never()).findAll();
     }
@@ -273,16 +281,97 @@ class MasterProductServiceTest {
     @Test
     void getMasterProducts_overlaysSourceMappingCover() {
         // The __source__ pool mapping (37) wins over the legacy sourceImageUrl in the list thumbnail.
-        given(masterProductRepository.findByActiveTrue())
-                .willReturn(List.of(MasterProduct.builder()
-                        .id(7L).name("커버").active(true).sourceImageUrl("legacy.jpg").build()));
+        givenActivePage(MasterProduct.builder()
+                .id(7L).name("커버").active(true).sourceImageUrl("legacy.jpg").build());
         given(masterImageZoneAssignmentRepository.findZoneImageUrlsByMasterIds(
                 MasterImageZoneAssignment.SOURCE_ZONE, List.of(7L)))
                 .willReturn(List.<Object[]>of(new Object[] { 7L, "https://cdn/mapped.jpg" }));
 
-        List<MasterProductResponse> result = service.getMasterProducts();
+        Page<MasterProductResponse> result = service.getMasterProducts(new MasterProductQuery());
 
-        assertThat(result.get(0).getSourceImageUrl()).isEqualTo("https://cdn/mapped.jpg");
+        assertThat(result.getContent().get(0).getSourceImageUrl()).isEqualTo("https://cdn/mapped.jpg");
+    }
+
+    // ------------------------------------------------------------- list paging / sort / search (110)
+
+    @Test
+    void list_defaultQuery_usesPage0Size25CreatedAtDesc() {
+        // The front omits default-valued keys → page=0, size=0, sort=null, search=null arrive. All
+        // normalisation is the service's job.
+        givenActivePage(MasterProduct.builder().id(1L).name("A").active(true).build());
+
+        service.getMasterProducts(new MasterProductQuery());
+
+        Pageable pageable = captureActivePageable();
+        assertThat(pageable.getPageNumber()).isZero();
+        assertThat(pageable.getPageSize()).isEqualTo(25);
+        assertThat(pageable.getSort()).isEqualTo(Sort.by(DESC, "createdAt").and(Sort.by(DESC, "id")));
+    }
+
+    @Test
+    void list_blankSearch_usesActiveQuery() {
+        givenActivePage(MasterProduct.builder().id(1L).name("A").active(true).build());
+        MasterProductQuery query = new MasterProductQuery();
+        query.setSearch(" ");
+
+        service.getMasterProducts(query);
+
+        verify(masterProductRepository).findByActiveTrue(any(Pageable.class));
+        verify(masterProductRepository, never()).searchActiveByNamePage(any(), any());
+    }
+
+    @Test
+    void list_searchTrimmedAndDelegated() {
+        given(masterProductRepository.searchActiveByNamePage(eq("커피"), any(Pageable.class)))
+                .willReturn(new PageImpl<>(List.of(), PageRequest.of(0, 25), 0));
+        MasterProductQuery query = new MasterProductQuery();
+        query.setSearch(" 커피 ");
+
+        service.getMasterProducts(query);
+
+        verify(masterProductRepository).searchActiveByNamePage(eq("커피"), any(Pageable.class));
+        verify(masterProductRepository, never()).findByActiveTrue(any(Pageable.class));
+    }
+
+    @Test
+    void list_ascSort_appliesAscTiebreaker() {
+        givenActivePage(MasterProduct.builder().id(1L).name("A").active(true).build());
+        MasterProductQuery query = new MasterProductQuery();
+        query.setSort("createdAt,asc");
+
+        service.getMasterProducts(query);
+
+        assertThat(captureActivePageable().getSort())
+                .isEqualTo(Sort.by(ASC, "createdAt").and(Sort.by(ASC, "id")));
+    }
+
+    @Test
+    void list_unknownSortKey_throws400() {
+        // Not in SORT_FIELDS → IllegalArgumentException (GlobalExceptionHandler → 400), no query issued.
+        MasterProductQuery query = new MasterProductQuery();
+        query.setSort("name,desc");
+
+        assertThatThrownBy(() -> service.getMasterProducts(query))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("정렬 키가 올바르지 않습니다");
+        verify(masterProductRepository, never()).findByActiveTrue(any(Pageable.class));
+        verify(masterProductRepository, never()).searchActiveByNamePage(any(), any());
+    }
+
+    @Test
+    void list_sizeClampedToBounds() {
+        givenActivePage(MasterProduct.builder().id(1L).name("A").active(true).build());
+        MasterProductQuery omitted = new MasterProductQuery();
+        omitted.setSize(0);
+        MasterProductQuery oversized = new MasterProductQuery();
+        oversized.setSize(500);
+
+        service.getMasterProducts(omitted);
+        service.getMasterProducts(oversized);
+
+        ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
+        verify(masterProductRepository, times(2)).findByActiveTrue(captor.capture());
+        assertThat(captor.getAllValues()).extracting(Pageable::getPageSize).containsExactly(25, 100);
     }
 
     @Test
@@ -1037,10 +1126,10 @@ class MasterProductServiceTest {
     @Test
     void lockJudgement_listPath_queriesLockRepositoriesOnce() {
         // N+1 guard: three masters, still exactly one query per lock repository.
-        given(masterProductRepository.findByActiveTrue()).willReturn(List.of(
+        givenActivePage(
                 MasterProduct.builder().id(1L).name("A").active(true).build(),
                 MasterProduct.builder().id(2L).name("B").active(true).build(),
-                MasterProduct.builder().id(3L).name("C").active(true).build()));
+                MasterProduct.builder().id(3L).name("C").active(true).build());
         ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
                 .platformProductId("SP-1")
                 .masterProduct(MasterProduct.builder().id(2L).name("B").build()).build();
@@ -1052,11 +1141,24 @@ class MasterProductServiceTest {
         given(optionRepository.findByMasterProductId(2L)).willReturn(List.of(
                 MasterProductOption.builder().id(10L).name("2세트").build()));
 
-        List<MasterProductResponse> result = service.getMasterProducts();
+        Page<MasterProductResponse> result = service.getMasterProducts(new MasterProductQuery());
 
-        assertThat(result.get(1).getOptions().get(0).getMarketRegistered()).isTrue();
+        assertThat(result.getContent().get(1).getOptions().get(0).getMarketRegistered()).isTrue();
         verify(productListingRepository, times(1)).findByMasterProductIdIn(any());
         verify(productListingOptionRepository, times(1)).findByProductListingIdIn(any());
+    }
+
+    /** Stubs the paged active-master query with a real {@link PageImpl} so {@code Page.map} works. */
+    private void givenActivePage(MasterProduct... masters) {
+        given(masterProductRepository.findByActiveTrue(any(Pageable.class))).willReturn(
+                new PageImpl<>(List.of(masters), PageRequest.of(0, 25), masters.length));
+    }
+
+    /** The {@link Pageable} the service built from the (normalised) query. */
+    private Pageable captureActivePageable() {
+        ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
+        verify(masterProductRepository).findByActiveTrue(captor.capture());
+        return captor.getValue();
     }
 
     // --- guards -------------------------------------------------------------

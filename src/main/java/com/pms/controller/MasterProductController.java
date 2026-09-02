@@ -5,6 +5,7 @@ import com.pms.dto.request.CategoryAttributesRequest;
 import com.pms.dto.request.ImportProductImagesRequest;
 import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterOptionRequest;
+import com.pms.dto.request.MasterProductQuery;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
 import com.pms.dto.request.MasterSourceImageRequest;
@@ -29,6 +30,8 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springdoc.core.annotations.ParameterObject;
+import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -52,11 +55,20 @@ public class MasterProductController {
     private final MasterProductImageService masterProductImageService;
     private final CategoryMetaService categoryMetaService;
 
+    /**
+     * Paged master list (110). {@code @ParameterObject} makes springdoc expand {@link MasterProductQuery}
+     * into individual query parameters in swagger-ui (without it the object renders as a body schema).
+     */
     @GetMapping
-    @Operation(summary = "List master products")
+    @Operation(summary = "List master products",
+            description = "활성 마스터 목록(페이징). page(0-indexed, 기본 0) / size(기본 25, 최대 100으로 clamp) / "
+                    + "sort(`필드,방향` — 허용 필드: createdAt, 기본 `createdAt,desc`, 허용 외 필드는 400) / "
+                    + "search(마스터 이름 부분일치·대소문자 무시). 응답 data 는 Page 객체 "
+                    + "(content/totalElements/totalPages/number/size).")
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<ResponseDTO<List<MasterProductResponse>>> getMasterProducts() {
-        return ResponseEntity.ok(ResponseDTO.success(masterProductService.getMasterProducts()));
+    public ResponseEntity<ResponseDTO<Page<MasterProductResponse>>> getMasterProducts(
+            @ParameterObject @ModelAttribute MasterProductQuery query) {
+        return ResponseEntity.ok(ResponseDTO.success(masterProductService.getMasterProducts(query)));
     }
 
     @GetMapping("/{id}")

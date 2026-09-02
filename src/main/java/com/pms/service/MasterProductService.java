@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterOptionRequest;
+import com.pms.dto.request.MasterProductQuery;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
 import com.pms.dto.request.OptionCheckSuffixRequest;
@@ -10,6 +11,7 @@ import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductResponse;
+import org.springframework.data.domain.Page;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
@@ -23,7 +25,28 @@ import java.util.List;
  */
 public interface MasterProductService {
 
-    List<MasterProductResponse> getMasterProducts();
+    /**
+     * Paged list of active masters (110). Soft-deleted (active=false) masters are never returned.
+     *
+     * <p>The raw {@link MasterProductQuery} is normalised here — the front omits default-valued keys,
+     * so missing values arrive as {@code 0}/{@code null}:</p>
+     * <ul>
+     *   <li>{@code page < 0} → 0; {@code size <= 0} → 25; {@code size > 100} → 100 (clamped, never 400)</li>
+     *   <li>{@code sort} null/blank → {@code createdAt,desc}. Format {@code field,direction}; direction
+     *       optional (defaults to desc), case-insensitive. The field must be in the sort whitelist —
+     *       anything else throws {@link IllegalArgumentException} → HTTP 400. {@code id} is always
+     *       appended as a tie-breaker so page boundaries are deterministic.</li>
+     *   <li>{@code search} null/blank → no condition; otherwise a trimmed, case-insensitive partial
+     *       match on the master <b>name</b>.</li>
+     * </ul>
+     *
+     * <p>{@code registrationName} stays null on this path (N+1 guard) — see {@link #getMasterProduct}.</p>
+     *
+     * @param query raw request conditions (never null; bound via {@code @ModelAttribute})
+     * @return one page of responses with the source-zone cover overlaid
+     * @throws IllegalArgumentException if the sort field is not whitelisted
+     */
+    Page<MasterProductResponse> getMasterProducts(MasterProductQuery query);
 
     MasterProductResponse getMasterProduct(Long id);
 
