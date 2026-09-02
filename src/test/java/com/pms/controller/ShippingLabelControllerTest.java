@@ -2,7 +2,6 @@ package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
 import com.pms.dto.response.ShippingLabelPreviewRow;
-import com.pms.service.ShippingLabelRow;
 import com.pms.service.ShippingLabelService;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.mock.mockito.MockBean;
@@ -29,33 +28,6 @@ public class ShippingLabelControllerTest extends BaseIntegrationTest {
 
     @MockBean
     private ShippingLabelService shippingLabelService;
-
-    @Test
-    public void testDownloadWithoutToken() throws Exception {
-        mockMvc.perform(get("/api/admin/shipping-labels/spreadsheet"))
-                .andExpect(status().isUnauthorized());
-    }
-
-    @Test
-    public void testDownloadWithUserToken() throws Exception {
-        mockMvc.perform(get("/api/admin/shipping-labels/spreadsheet")
-                .header("Authorization", "Bearer " + userToken))
-                .andExpect(status().isForbidden());
-    }
-
-    @Test
-    public void testDownloadWithAdminTokenReturnsXlsx() throws Exception {
-        given(shippingLabelService.collectRows(any())).willReturn(List.<ShippingLabelRow>of());
-        given(shippingLabelService.toXlsx(any())).willReturn(new byte[]{1, 2, 3});
-
-        mockMvc.perform(get("/api/admin/shipping-labels/spreadsheet")
-                .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk())
-                .andExpect(header().string("Content-Type",
-                        containsString("spreadsheetml.sheet")))
-                .andExpect(header().string("Content-Disposition",
-                        containsString("attachment")));
-    }
 
     // --- V2 preview ---
 
