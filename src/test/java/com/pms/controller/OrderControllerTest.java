@@ -15,6 +15,7 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 
 import java.time.LocalDateTime;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
@@ -67,6 +68,28 @@ class OrderControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data[0].purchasableQty").value(7))   // 10-(2+1)
                 .andExpect(jsonPath("$.data[0].raw").doesNotExist())
                 .andExpect(jsonPath("$.data[0].secretKey").doesNotExist());
+    }
+
+    @Test
+    void syncTargets_returns200_withoutCredentials() throws Exception {
+        String body = mockMvc.perform(get("/api/orders/sync/targets")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isArray())
+                .andExpect(jsonPath("$.data[0].accountAlias").value("쿠팡본점"))
+                .andExpect(jsonPath("$.data[0].sellerName").value("테스트셀러"))
+                .andReturn().getResponse().getContentAsString();
+
+        // D2 보안 회귀: 동기화 화면에 자격증명을 흘리지 않는다
+        assertThat(body).doesNotContain("accessKey")
+                .doesNotContain("secretKey")
+                .doesNotContain("vendorId");
+    }
+
+    @Test
+    void syncTargets_returns401_whenNoToken() throws Exception {
+        mockMvc.perform(get("/api/orders/sync/targets"))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

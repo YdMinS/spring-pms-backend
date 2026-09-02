@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * {@link OrderSyncFacade} 구현.
@@ -36,6 +37,7 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final CoupangOrderSyncService coupangOrderSyncService;
     private final CoupangReturnSyncService coupangReturnSyncService;
+    private final SyncStatusRecorder syncStatusRecorder;
 
     @Override
     public OrderSyncResult sync(Long accountId) {
@@ -79,8 +81,44 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
         Long previousTenant = TenantContext.get();
         try {
             TenantContext.set(account.getTenantId());
-            SyncResult orders = coupangOrderSyncService.syncAccount(account);
-            CancelSyncResult cancels = coupangReturnSyncService.syncCancels(account);
+
+            SyncResult orders;
+            try {
+                orders = coupangOrderSyncService.syncAccount(account);
+            } catch (RuntimeException e) {
+                syncStatusRecorder.recordFailure(account.getId(), e);
+                throw e;                    // 격리는 syncEach 담당, 단건은 전파(D4)
+            }
+
+            // 00(D15) 이후 일부 상태만 실패하면 예외가 아니라 failedStatuses 로 돌아온다(전 상태 실패는 예외).
+            // 이걸 무시하고 SUCCESS 를 찍으면 2026-09-02 사고 계정이 "정상"으로 낙인된다(D18).
+            String orderPartial = null;
+            if (!orders.failedStatuses().isEmpty()) {
+                // 일부 상태만 실패 — 성공한 상태는 이미 커밋됐다(PLAN D15).
+                // 00(D17) 이 넣은 WARN 로그다. 지우지 말 것 — 사후 추적의 유일한 근거.
+                log.warn("Order sync partial: account={} failedStatuses={}",
+                        account.getId(), orders.failedStatuses());
+                orderPartial = "주문 조회 일부 실패 — 상태: " + orders.failedStatuses().stream()
+                        .map(Enum::name).collect(Collectors.joining(", "));
+            }
+
+            CancelSyncResult cancels;
+            try {
+                cancels = coupangReturnSyncService.syncCancels(account);
+            } catch (RuntimeException e) {
+                // Orders landed but cancellations did not: canceled lines can still look purchasable,
+                // so this is NOT a success (PLAN D8). 취소 보정 사유를 앞에 둔다(더 위험한 쪽).
+                String reason = "취소 보정 실패 — " + SyncStatusRecorder.summarize(e)
+                        + (orderPartial == null ? "" : " / " + orderPartial);
+                syncStatusRecorder.recordPartial(account.getId(), reason, orderPartial == null, false);
+                throw e;
+            }
+
+            if (orderPartial != null) {
+                syncStatusRecorder.recordPartial(account.getId(), orderPartial, false, true);
+            } else {
+                syncStatusRecorder.recordSuccess(account.getId());
+            }
             return new OrderSyncResult(
                     LocalDateTime.now(),
                     orders.newCount(),

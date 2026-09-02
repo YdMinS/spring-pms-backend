@@ -13,6 +13,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 
@@ -90,7 +93,7 @@ class CoupangReturnSyncServiceImplTest {
     void syncCancels_reconcilesPreShipmentReturnTypeCancel() {
         // 발송전(INSTRUCT) 주문의 판매자 품절취소는 쿠팡에서 receiptType=RETURN 으로 기록되어
         // cancelType=CANCEL 배치엔 안 잡힌다 → orderId 재조정이 전체 타입을 조회해 cancel_count 반영.
-        given(orderItemRepository.findDistinctExternalOrderIdByAccountAndStatusIn(eq(1L), any()))
+        given(orderItemRepository.findReconcilableExternalOrderIds(eq(1L), any(), any()))
                 .willReturn(List.of("O1"));
         given(coupangApiClient.get(anyString(), contains("cancelType=CANCEL"), any())).willReturn(emptyData());
         given(coupangApiClient.get(anyString(), contains("orderId=O1"), any())).willReturn(oneReturn("O1", "B1", "I1", 2));
@@ -122,6 +125,34 @@ class CoupangReturnSyncServiceImplTest {
 
         verify(coupangApiClient, times(2)).get(anyString(), anyString(), any());
         assertThat(result.pages()).isEqualTo(2);
+    }
+
+    @Test
+    void reconcile_boundsTargetsToLookbackWindow() {
+        given(orderItemRepository.findReconcilableExternalOrderIds(eq(1L), any(), any()))
+                .willReturn(List.of("100"));
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(emptyData());
+
+        service.syncCancels(account);
+
+        // recon 조회창(RECON_LOOKBACK_DAYS=30)과 같은 경계가 쿼리에도 전달돼야 한다.
+        // 30 은 의도적으로 여기 고정 — 상수를 바꾸면 이 테스트가 같이 깨져야 한다.
+        ArgumentCaptor<LocalDateTime> fromCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(orderItemRepository).findReconcilableExternalOrderIds(eq(1L), any(), fromCaptor.capture());
+        assertThat(fromCaptor.getValue())
+                .isEqualTo(LocalDate.now(ZoneId.of("Asia/Seoul")).minusDays(30).atStartOfDay());
+    }
+
+    @Test
+    void reconcile_skipsApiCall_whenNoTargetsInWindow() {
+        // 창 밖 주문만 남은 상황: 대상이 0건이면 orderId 단위 호출이 한 번도 나가면 안 된다.
+        given(orderItemRepository.findReconcilableExternalOrderIds(eq(1L), any(), any()))
+                .willReturn(List.of());
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(emptyData());
+
+        service.syncCancels(account);
+
+        verify(coupangApiClient, times(1)).get(any(), any(), any());   // 배치 1회뿐
     }
 
     // --- canned JSON ---

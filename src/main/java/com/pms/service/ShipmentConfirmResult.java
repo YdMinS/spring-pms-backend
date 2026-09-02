@@ -9,8 +9,8 @@ import java.util.List;
  * String 을 유지한다(요청 바디만 Long 으로 변환).
  *
  * @param totalRows     파싱된 데이터 행 수(공백행 제외)
- * @param matchedOrders order_item 매칭된 주문 수(COUPANG 계정만)
- * @param unmatched     order_item 이 없거나 비-COUPANG 이라 스킵된 orderId
+ * @param matchedOrders order_item 매칭 + 쿠팡 폴백으로 확정된 주문 수(COUPANG 계정만)
+ * @param unmatched     비-COUPANG 이거나, order_item 도 없고 쿠팡 폴백(PLAN D16)으로도 확정하지 못한 orderId
  * @param succeeded     성공 박스 수(응답 responseList succeed=true 집계)
  * @param failed        실패 상세
  */

@@ -3,9 +3,11 @@ package com.pms.controller;
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.response.OrderItemResponse;
 import com.pms.dto.response.OrderSyncResponse;
+import com.pms.dto.response.SyncTargetResponse;
 import com.pms.service.coupang.OrderQueryService;
 import com.pms.service.coupang.OrderSyncFacade;
 import com.pms.service.coupang.OrderSyncFacade.OrderSyncResult;
+import com.pms.service.coupang.SyncTargetService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,6 +30,7 @@ public class OrderController {
 
     private final OrderQueryService queryService;
     private final OrderSyncFacade syncFacade;
+    private final SyncTargetService syncTargetService;
 
     /** 주문 목록 조회. sellerId 없으면 전체. */
     @GetMapping
@@ -49,5 +52,15 @@ public class OrderController {
                 : syncFacade.syncAll();
         return ResponseEntity.ok(ResponseDTO.success(
                 new OrderSyncResponse(result, queryService.list(sellerId))));
+    }
+
+    /**
+     * 동기화 대상 채널 목록(진행 표시·재시도용). 자격증명은 포함하지 않는다.
+     * sellerId 없으면 전체. 대상이 없으면 빈 배열.
+     */
+    @GetMapping("/sync/targets")
+    public ResponseEntity<ResponseDTO<List<SyncTargetResponse>>> syncTargets(
+            @RequestParam(required = false) Long sellerId) {
+        return ResponseEntity.ok(ResponseDTO.success(syncTargetService.list(sellerId)));
     }
 }
