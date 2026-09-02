@@ -1,11 +1,12 @@
 package com.pms.repository;
 
 import com.pms.domain.MasterProduct;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import java.util.List;
 import java.util.Optional;
 
 /**
@@ -22,6 +23,19 @@ public interface MasterProductRepository extends JpaRepository<MasterProduct, Lo
     @Query("select m from MasterProduct m where m.id = :id")
     Optional<MasterProduct> findScopedById(@Param("id") Long id);
 
-    /** Active masters only — excludes soft-deleted (active=false) rows. @TenantId auto-filters tenant. */
-    List<MasterProduct> findByActiveTrue();
+    /**
+     * Active masters only — excludes soft-deleted (active=false) rows. @TenantId auto-filters tenant
+     * (derived queries are HQL-based, so the filter applies; only the inherited PK findById is exempt).
+     *
+     * <p>Paged since 110 — the sort comes from the {@link Pageable} the service builds off a whitelist.</p>
+     */
+    Page<MasterProduct> findByActiveTrue(Pageable pageable);
+
+    /**
+     * Active masters whose name contains {@code keyword} (case-insensitive partial match), paged.
+     * The service passes an already-trimmed, non-blank keyword. @TenantId auto-filters tenant.
+     */
+    @Query("select m from MasterProduct m where m.active = true " +
+           "and lower(m.name) like lower(concat('%', :keyword, '%'))")
+    Page<MasterProduct> searchActiveByNamePage(@Param("keyword") String keyword, Pageable pageable);
 }
