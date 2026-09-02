@@ -1,0 +1,28 @@
+# Per-channel last sync outcome (FEATURE_2609_02 / D6). A failed or partially failed channel has to stay
+# visible after a refresh/reconnect, so the outcome lives on marketplace_account rather than in session memory.
+# ⚠️ All five columns are nullable with NO default and NO backfill on purpose: NULL means "never synced yet",
+#    and every existing row staying NULL is exactly the current fact.
+# ⚠️ last_order_sync_at / last_cancel_sync_at hold the last time that stage COMPLETED — a partial run leaves
+#    them untouched (PLAN D18) so "last time this was trustworthy" never gets blurred.
+# No boolean column here -> the 006 MySQL BIT follow-up changeset is deliberately NOT needed.
+databaseChangeLog:
+
+  - changeSet:
+      id: 051-marketplace-sync-status
+      author: oclyx
+      comment: "FEATURE_2609_02: marketplace_account last sync status/timestamps/error (nullable, no backfill)."
+      changes:
+        - addColumn:
+            tableName: marketplace_account
+            columns:
+              - column: { name: last_sync_status, type: VARCHAR(20) }
+              - column: { name: last_sync_at, type: TIMESTAMP }
+              - column: { name: last_order_sync_at, type: TIMESTAMP }
+              - column: { name: last_cancel_sync_at, type: TIMESTAMP }
+              - column: { name: last_sync_error, type: VARCHAR(500) }
+      rollback:
+        - dropColumn: { tableName: marketplace_account, columnName: last_sync_status }
+        - dropColumn: { tableName: marketplace_account, columnName: last_sync_at }
+        - dropColumn: { tableName: marketplace_account, columnName: last_order_sync_at }
+        - dropColumn: { tableName: marketplace_account, columnName: last_cancel_sync_at }
+        - dropColumn: { tableName: marketplace_account, columnName: last_sync_error }

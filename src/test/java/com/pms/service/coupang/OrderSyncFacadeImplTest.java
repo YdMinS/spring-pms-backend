@@ -8,6 +8,7 @@ import com.pms.service.coupang.CoupangReturnSyncService.CancelSyncResult;
 import com.pms.service.coupang.OrderSyncFacade.OrderSyncResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -19,6 +20,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
@@ -34,6 +36,7 @@ class OrderSyncFacadeImplTest {
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock private CoupangOrderSyncService coupangOrderSyncService;
     @Mock private CoupangReturnSyncService coupangReturnSyncService;
+    @Mock private SyncStatusRecorder syncStatusRecorder;
 
     @InjectMocks private OrderSyncFacadeImpl facade;
 
@@ -93,6 +96,53 @@ class OrderSyncFacadeImplTest {
 
         assertThat(result.newOrders()).isEqualTo(5);                 // a2만 반영
         verify(coupangReturnSyncService, never()).syncCancels(a1);   // a1은 ordersheets에서 끊김
+    }
+
+    @Test
+    void syncOne_recordsFailure_whenOrdersThrow() {
+        MarketplaceAccount acc = account(1L);
+        RuntimeException boom = new RuntimeException("coupang down");
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        when(coupangOrderSyncService.syncAccount(acc)).thenThrow(boom);
+
+        assertThatThrownBy(() -> facade.sync(1L)).isSameAs(boom);   // 단건은 전파(D4)
+
+        verify(syncStatusRecorder).recordFailure(1L, boom);
+        verify(syncStatusRecorder, never()).recordSuccess(any());
+    }
+
+    @Test
+    void syncOne_recordsPartial_whenCancelThrows() {
+        MarketplaceAccount acc = account(1L);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        given(coupangOrderSyncService.syncAccount(acc)).willReturn(new SyncResult(1, 0, 1, List.of()));
+        when(coupangReturnSyncService.syncCancels(acc)).thenThrow(new RuntimeException("cancel down"));
+
+        assertThatThrownBy(() -> facade.sync(1L)).isInstanceOf(RuntimeException.class);
+
+        ArgumentCaptor<String> reason = ArgumentCaptor.forClass(String.class);
+        // 주문은 온전히 성공(orderDone=true), 취소 보정만 실패(cancelDone=false)
+        verify(syncStatusRecorder).recordPartial(eq(1L), reason.capture(), eq(true), eq(false));
+        assertThat(reason.getValue()).startsWith("취소 보정 실패 — ");
+        verify(syncStatusRecorder, never()).recordSuccess(any());
+    }
+
+    @Test
+    void syncOne_recordsPartial_whenOrderStatusesPartiallyFail() {
+        // D18 회귀: 일부 상태만 실패하면 예외가 아니라 failedStatuses 로 온다 → SUCCESS 로 낙인 금지
+        MarketplaceAccount acc = account(1L);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        given(coupangOrderSyncService.syncAccount(acc))
+                .willReturn(new SyncResult(1, 0, 1, List.of(CoupangOrderStatus.FINAL_DELIVERY)));
+        given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(0, 0));
+
+        facade.sync(1L);
+
+        ArgumentCaptor<String> reason = ArgumentCaptor.forClass(String.class);
+        // 주문 조회는 미완료(false), 취소 보정만 완료(true)
+        verify(syncStatusRecorder).recordPartial(eq(1L), reason.capture(), eq(false), eq(true));
+        assertThat(reason.getValue()).contains("FINAL_DELIVERY");
+        verify(syncStatusRecorder, never()).recordSuccess(any());
     }
 
     @Test

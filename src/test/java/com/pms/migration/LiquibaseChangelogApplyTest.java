@@ -291,6 +291,16 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM detail_image_group "
                         + "WHERE tenant_id IS NULL AND code IS NULL AND name IS NULL AND sort_order IS NULL",
                 Integer.class)).isZero();
+
+        // changeset 051: the five sync-status columns exist on marketplace_account (FEATURE_2609_02).
+        // All nullable with no backfill on purpose — NULL means "never synced yet" — so a successful
+        // count over the new names is what proves they were added.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM marketplace_account "
+                        + "WHERE last_sync_status IS NULL AND last_sync_at IS NULL "
+                        + "AND last_order_sync_at IS NULL AND last_cancel_sync_at IS NULL "
+                        + "AND last_sync_error IS NULL",
+                Integer.class)).isNotNull();
     }
 
     @Test
