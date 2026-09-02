@@ -1,0 +1,37 @@
+# Tenant-wide detail image group catalog (FEATURE_2609_03).
+#   detail_image_group = the catalog of detail-page image zones. `code` is IMMUTABLE and holds the very
+#   string used as master_image_zone_assignment.zone_id / detail_template.blocks[].bind — changing it would
+#   orphan every master's photo mapping, so no rename path exists for it (display name = `name`).
+# Structured tags for H2<->MySQL portability (no raw SQL).
+# ⚠️ No boolean column here -> the 006 BIT follow-up changeset is deliberately NOT needed.
+# ⚠️ H2 constraint names are schema-global unique -> distinct names (fk_detailimggroup_tenant, uq_*).
+databaseChangeLog:
+  - changeSet:
+      id: 050-detail-image-group
+      author: oclyx
+      comment: "FEATURE_2609_03: tenant-wide detail image group catalog (code immutable = zone_id)."
+      changes:
+        - createTable:
+            tableName: detail_image_group
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: code, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: name, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: sort_order, type: INT, constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_detailimggroup_tenant
+            baseTableName: detail_image_group
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            constraintName: uq_detailimggroup_tenant_code
+            tableName: detail_image_group
+            columnNames: tenant_id, code
+        - addUniqueConstraint:
+            constraintName: uq_detailimggroup_tenant_name
+            tableName: detail_image_group
+            columnNames: tenant_id, name

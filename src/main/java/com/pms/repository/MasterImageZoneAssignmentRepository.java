@@ -55,4 +55,32 @@ public interface MasterImageZoneAssignmentRepository extends JpaRepository<Maste
             + "WHERE a.zoneId = :zoneId AND a.image.masterProduct.id IN :masterIds")
     List<Object[]> findZoneImageUrlsByMasterIds(
             @Param("zoneId") String zoneId, @Param("masterIds") Collection<Long> masterIds);
+
+    /**
+     * Photo-mapping count per zone across the current tenant's masters (FEATURE_2609_03 catalog list) —
+     * one grouped query for the whole catalog, so listing N groups stays a single round trip.
+     * Returns rows of {@code [zoneId (String), count (Long)]}, including {@code __source__}.
+     *
+     * <p>🔴 The {@code MasterProduct} subquery IS the tenant isolation: this entity has no
+     * {@code @TenantId}, so only routing through the {@code @TenantId} master filters other tenants out.
+     * Never simplify it away.</p>
+     */
+    @Query("SELECT a.zoneId, COUNT(a) FROM MasterImageZoneAssignment a "
+            + "WHERE a.image.masterProduct.id IN (SELECT m.id FROM MasterProduct m) GROUP BY a.zoneId")
+    List<Object[]> countByZoneIdGrouped();
+
+    /**
+     * Drop every mapping onto one zone for the current tenant (catalog group delete cleanup). Deletes only
+     * the mapping rows — the pool images themselves ({@code master_product_image} / {@code product_image} /
+     * S3 objects) are never touched; they stay in the master's pool as unused entries.
+     *
+     * <p>🔴 The {@code MasterProduct} subquery IS the tenant isolation (see {@link #countByZoneIdGrouped()}).
+     * A derived {@code deleteByZoneId(String)} would wipe OTHER tenants' mappings — do not replace it.
+     * The two-hop association path mirrors {@code ProductListingProductRepository.deleteByProductListingId}.</p>
+     */
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM MasterImageZoneAssignment a WHERE a.zoneId = :zoneId "
+            + "AND a.image.masterProduct.id IN (SELECT m.id FROM MasterProduct m)")
+    int deleteByZoneIdScoped(@Param("zoneId") String zoneId);
 }
