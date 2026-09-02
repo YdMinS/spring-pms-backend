@@ -17,6 +17,7 @@ import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterOptionRequest;
+import com.pms.dto.request.MasterProductQuery;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
 import com.pms.dto.request.OptionCheckSuffixRequest;
@@ -54,6 +55,10 @@ import com.pms.service.listing.OptionQuantitySync;
 import com.pms.service.listing.TagMergeService;
 import com.pms.service.listing.shipping.ShippingOverrideKeys;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -115,13 +120,32 @@ public class MasterProductServiceImpl implements MasterProductService {
 
     private static final String IMAGE_STORAGE_CATEGORY = "master";
 
+    /** Default page size when the client omits {@code size} (110). */
+    private static final int DEFAULT_PAGE_SIZE = 25;
+    /** Upper clamp for {@code size} — an oversized request is trimmed, not rejected (110 / D3). */
+    private static final int MAX_PAGE_SIZE = 100;
+    private static final String DEFAULT_SORT = "createdAt,desc";
+    /**
+     * Sort whitelist: request key → entity property (110 / D2). A client string is never handed to
+     * {@code Sort.by} directly (it would leak/expose internal property names and blow up at query time).
+     * <b>Extension point</b>: a new sort key is one entry here.
+     */
+    private static final Map<String, String> SORT_FIELDS = Map.of("createdAt", "createdAt");
+
     // ---------------------------------------------------------------- reads
 
     @Override
-    public List<MasterProductResponse> getMasterProducts() {
+    public Page<MasterProductResponse> getMasterProducts(MasterProductQuery query) {
+        Pageable pageable = PageRequest.of(
+                Math.max(query.getPage(), 0), normalizeSize(query.getSize()), parseSort(query.getSort()));
+        String keyword = query.getSearch() == null ? null : query.getSearch().trim();
+
         // Active only — soft-deleted (active=false) masters are hidden from the list (recover via PATCH active=true).
-        List<MasterProduct> masters = masterProductRepository.findByActiveTrue();
-        List<Long> ids = masters.stream().map(MasterProduct::getId).toList();
+        Page<MasterProduct> masters = (keyword == null || keyword.isEmpty())
+                ? masterProductRepository.findByActiveTrue(pageable)
+                : masterProductRepository.searchActiveByNamePage(keyword, pageable);
+        // Overlay + lock judgement run on the PAGE CONTENT only — never load everything and sub-list.
+        List<Long> ids = masters.getContent().stream().map(MasterProduct::getId).toList();
         // Resolve the list cover from the __source__ mapping (37) in one batch query. Priority mirrors
         // resolveBaseImage: mapped cover > legacy master.sourceImageUrl (kept when no mapping exists).
         Map<Long, String> coverByMaster = ids.isEmpty()
@@ -132,14 +156,41 @@ public class MasterProductServiceImpl implements MasterProductService {
                                 r -> (Long) r[0], r -> (String) r[1], (first, dup) -> first));
         // 84: one batched lock judgement for the whole page (2 queries regardless of master count).
         Map<Long, Set<String>> lockedByMaster = marketRegisteredOptionNames(ids);
-        return masters.stream()
-                .map(master -> {
-                    MasterProductResponse response = mapToResponse(
-                            master, lockedByMaster.getOrDefault(master.getId(), Set.of()));
-                    String cover = coverByMaster.get(master.getId());
-                    return cover != null ? response.toBuilder().sourceImageUrl(cover).build() : response;
-                })
-                .toList();
+        return masters.map(master -> {
+            MasterProductResponse response = mapToResponse(
+                    master, lockedByMaster.getOrDefault(master.getId(), Set.of()));
+            String cover = coverByMaster.get(master.getId());
+            return cover != null ? response.toBuilder().sourceImageUrl(cover).build() : response;
+        });
+    }
+
+    /** {@code size <= 0} (= omitted) → 25, {@code > 100} → 100. Never a 400 (110 / D3). */
+    private int normalizeSize(int size) {
+        if (size <= 0) {
+            return DEFAULT_PAGE_SIZE;
+        }
+        return Math.min(size, MAX_PAGE_SIZE);
+    }
+
+    /**
+     * {@code "field,direction"} → {@code Sort}, with {@code id} appended as a tie-breaker: rows sharing a
+     * created_date (same-second creation, backfill) would otherwise repeat/vanish across page boundaries.
+     * Backfilled masters may have a null created_date — MySQL orders NULLs first ASC / last DESC, and that
+     * is accepted as-is (no COALESCE).
+     */
+    private Sort parseSort(String sort) {
+        String raw = (sort == null || sort.isBlank()) ? DEFAULT_SORT : sort;
+        String[] parts = raw.split(",");
+        String key = parts[0].trim();
+        String field = SORT_FIELDS.get(key);
+        if (field == null) {
+            throw new IllegalArgumentException(
+                    "정렬 키가 올바르지 않습니다: " + key + " (허용: " + SORT_FIELDS.keySet() + ")");
+        }
+        Sort.Direction direction = (parts.length > 1 && "asc".equalsIgnoreCase(parts[1].trim()))
+                ? Sort.Direction.ASC
+                : Sort.Direction.DESC;
+        return Sort.by(direction, field).and(Sort.by(direction, "id"));
     }
 
     @Override

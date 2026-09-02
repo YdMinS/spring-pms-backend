@@ -209,10 +209,26 @@ class MasterProductControllerTest extends BaseIntegrationTest {
 
     @Test
     void list_adminToken_returns200() throws Exception {
+        // 110: data is a Page object now (was a bare array).
         mockMvc.perform(get(PATH).header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUCCESS"))
-                .andExpect(jsonPath("$.data").isArray());
+                .andExpect(jsonPath("$.data.content").isArray())
+                .andExpect(jsonPath("$.data.totalElements").exists());
+    }
+
+    @Test
+    void list_honoursSizeParam() throws Exception {
+        mockMvc.perform(get(PATH).param("size", "50").header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.size").value(50));
+    }
+
+    @Test
+    void list_invalidSort_returns400() throws Exception {
+        mockMvc.perform(get(PATH).param("sort", "hack,desc")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest());
     }
 
     // ------------------------------------------------------------- create master authority
