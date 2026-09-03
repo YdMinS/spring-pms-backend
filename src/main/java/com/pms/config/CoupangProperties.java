@@ -55,6 +55,14 @@ public class CoupangProperties {
     /** 송장업로드(발송처리) 경로. {vendorId} 치환. 상품준비중(INSTRUCT)→배송지시(DEPARTURE) 전환. */
     private String invoicesPath = "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/orders/invoices";
 
+    /**
+     * 송장수정 경로(UPDATE_ORDER_INVOICE). {vendorId} 치환. dto 구조는 송장업로드와 동일.
+     * 이미 배송지시 이상인 박스의 운송장을 정정할 때만 쓴다(PLAN 2609_11 D3).
+     * ⚠️ 실계정 검증 전이라 설정으로 뺀다(ordersheet-by-order-path 와 같은 판단).
+     */
+    private String updateInvoicesPath =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/orders/updateInvoices";
+
     /** returnRequests(반품/취소 요청 목록) 조회 경로. {vendorId} 치환. */
     private String returnrequestsPath = "/v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests";
 
