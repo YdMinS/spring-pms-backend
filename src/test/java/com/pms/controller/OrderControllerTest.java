@@ -13,7 +13,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -25,7 +27,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * OrderController 통합 테스트 — 인증(401), 목록 조회(raw/secretKey 미노출), 동기화 트리거.
+ * OrderController 통합 테스트 — 인증(401), 목록 조회(raw/secretKey 미노출), 기간 조회, 월별 건수, 동기화 트리거.
  * 외부 호출(CoupangApiClient)은 @MockBean 으로 빈 응답 처리(네트워크 차단).
  */
 class OrderControllerTest extends BaseIntegrationTest {
@@ -102,5 +104,53 @@ class OrderControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.syncedAt").exists())
                 .andExpect(jsonPath("$.data.orders[0].externalItemId").value("I1"))
                 .andExpect(jsonPath("$.data.orders[0].raw").doesNotExist());
+    }
+
+    @Test
+    void getOrders_withTodayPeriod_includesSeededOrder() throws Exception {
+        // to 당일이 포함된다는 증거 — seed 주문의 paidAt 은 오늘이다
+        String today = LocalDate.now().format(DateTimeFormatter.ISO_DATE);
+
+        mockMvc.perform(get("/api/orders")
+                        .param("from", today)
+                        .param("to", today)
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].externalItemId").value("I1"));
+    }
+
+    @Test
+    void getOrders_withPastPeriod_returnsEmpty() throws Exception {
+        mockMvc.perform(get("/api/orders")
+                        .param("from", "2020-01-01")
+                        .param("to", "2020-01-31")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(0));
+    }
+
+    @Test
+    void getOrders_withOnlyFrom_returns400() throws Exception {
+        mockMvc.perform(get("/api/orders")
+                        .param("from", LocalDate.now().format(DateTimeFormatter.ISO_DATE))
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void months_returns401_whenNoToken() throws Exception {
+        mockMvc.perform(get("/api/orders/months"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void months_returnsSeededMonth() throws Exception {
+        String thisMonth = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM"));
+
+        mockMvc.perform(get("/api/orders/months").header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].ym").value(thisMonth))
+                .andExpect(jsonPath("$.data[0].count").value(org.hamcrest.Matchers.greaterThanOrEqualTo(1)));
     }
 }
