@@ -141,6 +141,36 @@ class CoupangOrderStatusSyncerTest {
         assertThat(orderItem(5, 5, 0).purchasableQty()).isZero();   // 음수면 0
     }
 
+    @Test
+    void syncStatus_storesCustomerNames_fromBoxLevel() {
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(twoBoxesThreeLines());
+
+        syncer.syncStatus(account, CoupangOrderStatus.ACCEPT);
+
+        // 박스 레벨 값이 그 박스의 모든 라인에 복제된다 (B1 = I1, I2)
+        assertThat(store.get(key(1L, "B1", "O1", "I1")).getOrdererName()).isEqualTo("홍길동");
+        assertThat(store.get(key(1L, "B1", "O1", "I1")).getReceiverName()).isEqualTo("김철수");
+        assertThat(store.get(key(1L, "B1", "O1", "I2")).getReceiverName()).isEqualTo("김철수");
+        // 이름 필드가 없는 박스는 null 로 남는다 (D7)
+        assertThat(store.get(key(1L, "B2", "O2", "I3")).getOrdererName()).isNull();
+        assertThat(store.get(key(1L, "B2", "O2", "I3")).getReceiverName()).isNull();
+    }
+
+    @Test
+    void syncStatus_backfillsCustomerNames_onExistingRow() {
+        given(coupangApiClient.get(anyString(), anyString(), any()))
+                .willReturn(singleLine(false), singleLine(true));
+
+        syncer.syncStatus(account, CoupangOrderStatus.ACCEPT);          // 1회차: 이름 없는 응답
+        assertThat(store.get(key(1L, "B1", "O1", "I1")).getReceiverName()).isNull();
+
+        syncer.syncStatus(account, CoupangOrderStatus.ACCEPT);          // 2회차: 이름 있는 응답
+
+        assertThat(store).hasSize(1);                                   // 행이 늘지 않는다(멱등 유지)
+        assertThat(store.get(key(1L, "B1", "O1", "I1")).getOrdererName()).isEqualTo("홍길동");
+        assertThat(store.get(key(1L, "B1", "O1", "I1")).getReceiverName()).isEqualTo("김철수");
+    }
+
     // --- helpers ---
 
     private static OrderItem orderItem(int order, int cancel, int hold) {
@@ -177,13 +207,27 @@ class CoupangOrderStatusSyncerTest {
         return repo;
     }
 
+    /** B1(O1)의 I1 한 줄만. withNames=true 면 박스에 orderer/receiver 를 넣는다(백필 검증용). */
+    private String singleLine(boolean withNames) {
+        String names = withNames
+                ? "\"orderer\":{\"name\":\"홍길동\"},\"receiver\":{\"name\":\"김철수\"},"
+                : "";
+        return """
+            {"data":[
+              {"orderId":"O1","shipmentBoxId":"B1","status":"ACCEPT",%s
+               "orderItems":[{"vendorItemId":"I1","vendorItemName":"양말A","shippingCount":3}]}
+            ],"nextToken":""}
+            """.formatted(names);
+    }
+
     // --- canned JSON ---
 
-    // box B1(order O1): 2 lines I1,I2 / box B2(order O2): 1 line I3
+    // box B1(order O1): 2 lines I1,I2 + 고객명 있음 / box B2(order O2): 1 line I3, 고객명 없음
     private String twoBoxesThreeLines() {
         return """
             {"data":[
               {"orderId":"O1","shipmentBoxId":"B1","status":"ACCEPT","paidAt":"2026-06-15T01:00:00+09:00",
+               "orderer":{"name":"홍길동"},"receiver":{"name":"김철수"},
                "orderItems":[
                  {"vendorItemId":"I1","vendorItemName":"양말A","shippingCount":3,"holdCountForCancel":1},
                  {"vendorItemId":"I2","vendorItemName":"양말B","shippingCount":2}

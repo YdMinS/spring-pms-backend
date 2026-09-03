@@ -36,6 +36,7 @@ public class CoupangOrderStatusSyncer {
 
     private static final String PLATFORM_COUPANG = "COUPANG";
     private static final int MAX_PER_PAGE = 50;
+    private static final int NAME_MAX_LENGTH = 100;
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final String KST_OFFSET = "%2B09:00";        // +09:00, URL-encoded (+ → %2B)
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
@@ -113,6 +114,9 @@ public class CoupangOrderStatusSyncer {
         String status = box.path("status").asText();
         LocalDateTime paidAt = parseDateTime(box.path("paidAt").asText(null));
         String itemName = item.path("vendorItemName").asText(null);
+        // orderer/receiver live on the shipmentBox, not on the order line.
+        String ordererName = trimName(box.path("orderer").path("name").asText(null));
+        String receiverName = trimName(box.path("receiver").path("name").asText(null));
         String rawJson = item.toString();
 
         Optional<OrderItem> existing = orderItemRepository
@@ -128,6 +132,8 @@ public class CoupangOrderStatusSyncer {
                     .status(status)
                     .paidAt(paidAt)
                     .itemName(itemName)
+                    .ordererName(ordererName)
+                    .receiverName(receiverName)
                     .raw(rawJson)
                     .build();
             orderItemRepository.save(updated);
@@ -146,6 +152,8 @@ public class CoupangOrderStatusSyncer {
                 .status(status)
                 .paidAt(paidAt)
                 .itemName(itemName)
+                .ordererName(ordererName)
+                .receiverName(receiverName)
                 .raw(rawJson)
                 .build());
         return true;
@@ -172,6 +180,14 @@ public class CoupangOrderStatusSyncer {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /** 컬럼 상한(100자)을 넘는 이름은 잘라서 저장한다 — MySQL 은 초과 시 INSERT 자체가 실패한다(D8). */
+    private String trimName(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.length() <= NAME_MAX_LENGTH ? value : value.substring(0, NAME_MAX_LENGTH);
     }
 
     /** 상태 1개 처리 결과. */

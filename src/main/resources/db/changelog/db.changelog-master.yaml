@@ -101,3 +101,5 @@ databaseChangeLog:
       file: db/changelog/changes/050-detail-image-group.yaml
   - include:
       file: db/changelog/changes/051-marketplace-sync-status.yaml
+  - include:
+      file: db/changelog/changes/052-order-customer-name.yaml

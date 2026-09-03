@@ -8,6 +8,8 @@
       "shipmentBoxId": 700000012345,
       "status": "ACCEPT",
       "paidAt": "2026-08-05T14:17:13.973885+09:00",
+      "orderer": { "name": "홍길동" },
+      "receiver": { "name": "김철수" },
       "orderItems": [
         {
           "vendorItemId": 800000012345,

@@ -10,7 +10,8 @@ import java.util.List;
  *
  * 쿠팡 ordersheets(status=INSTRUCT)를 <b>온디맨드 조회</b>해 택배사 접수용 xlsx 로 내려준다.
  *
- * <p>❌ 고객 개인정보(수령인)는 DB 에 저장하지 않는다 — xlsx 에만 담고 버린다.
+ * <p>❌ 수령인 연락처·주소·배송메시지는 DB 에 저장하지 않는다 — xlsx 에만 담고 버린다.
+ * (이름은 order_item 에 저장됨, FEATURE_2609_06)
  * <br>❌ order_item 테이블에 쓰지도 읽지도 않는다 (OrderSyncFacade 와 무관, 독립 read-through).
  * <br>대상 플랫폼: 쿠팡(COUPANG)만.
  *

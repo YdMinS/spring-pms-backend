@@ -49,7 +49,8 @@ class OrderControllerTest extends BaseIntegrationTest {
         orderItemRepository.save(OrderItem.builder()
                 .marketplaceAccount(account).platform("COUPANG")
                 .externalOrderId("O1").externalBoxId("B1").externalItemId("I1")
-                .itemName("양말").orderCount(10).cancelCount(2).holdCount(1)
+                .itemName("양말").ordererName("홍길동").receiverName("김철수")
+                .orderCount(10).cancelCount(2).holdCount(1)
                 .status("ACCEPT").paidAt(LocalDateTime.now())   // 조회 윈도우(syncDays) 안에 들도록
                 .raw("{\"secret\":\"should-not-leak\"}").build());
     }
@@ -66,6 +67,8 @@ class OrderControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].externalItemId").value("I1"))
                 .andExpect(jsonPath("$.data[0].purchasableQty").value(7))   // 10-(2+1)
+                .andExpect(jsonPath("$.data[0].ordererName").value("홍길동"))
+                .andExpect(jsonPath("$.data[0].receiverName").value("김철수"))
                 .andExpect(jsonPath("$.data[0].raw").doesNotExist())
                 .andExpect(jsonPath("$.data[0].secretKey").doesNotExist());
     }
