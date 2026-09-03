@@ -6,7 +6,8 @@ import org.springframework.web.multipart.MultipartFile;
  * 발송처리 레그: 택배사 결과 xlsx → order_item 전개 → 쿠팡 송장업로드(상품준비중→배송지시) 배치 전송.
  *
  * 생성 레그({@link ShippingLabelService})의 후속. 생성은 접수시트 xlsx 다운로드, 이 서비스는 결과 업로드→발송처리.
- * ❌ order_item 에 쓰지 않는다(읽기 전용). 동기화는 {@code OrderSyncFacade} 담당.
+ * 조회는 읽기 전용. 단, 송장업로드에 성공한 박스의 {@code status} 만 {@code DEPARTURE} 로 갱신한다
+ * (PLAN 2609_07 D4) — 그 외 필드·행은 동기화({@code OrderSyncFacade}) 전담.
  * ⚠️ 현재 대상 플랫폼은 COUPANG 뿐 — 네이버 등은 후속 어댑터(현재 스코프 아님).
  */
 public interface ShipmentConfirmService {

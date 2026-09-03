@@ -46,7 +46,7 @@ public class ShipmentConfirmControllerTest extends BaseIntegrationTest {
     @Test
     public void testConfirmWithAdminTokenReturnsResult() throws Exception {
         given(shipmentConfirmService.confirm(any())).willReturn(
-                new ShipmentConfirmResult(2, 1, List.of("9999"), 2, List.of()));
+                new ShipmentConfirmResult(2, 1, List.of("9999"), 2, List.of(), List.of()));
 
         mockMvc.perform(multipart("/api/admin/shipping-labels/confirm").file(file())
                 .header("Authorization", "Bearer " + adminToken))
