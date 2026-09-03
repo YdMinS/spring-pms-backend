@@ -301,6 +301,14 @@ class LiquibaseChangelogApplyTest {
                         + "AND last_order_sync_at IS NULL AND last_cancel_sync_at IS NULL "
                         + "AND last_sync_error IS NULL",
                 Integer.class)).isNotNull();
+
+        // changeset 052: the two customer-name columns exist on order_item (FEATURE_2609_06).
+        // Nullable with no backfill on purpose — the next sync's upsert fills orders inside the sync
+        // window — so a successful count over the new names is what proves they were added.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM order_item "
+                        + "WHERE orderer_name IS NULL AND receiver_name IS NULL",
+                Integer.class)).isNotNull();
     }
 
     @Test

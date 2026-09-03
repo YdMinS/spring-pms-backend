@@ -17,6 +17,8 @@ import java.time.LocalDateTime;
  *
  * 파생: 발주가능수량 = order_count − (cancel_count + hold_count). {@link #purchasableQty()} 참고.
  *
+ * 고객 <b>이름</b>(주문자·수취인)만 저장한다 — 연락처·주소·배송메시지는 여전히 미저장(개인정보 최소화).
+ *
  * ⚠️ ddl-auto=validate(운영) → @Column 정의가 실제 order_item DDL 과 일치해야 한다.
  *    raw 는 운영(MySQL) JSON 컬럼(JDBC LONGVARCHAR)이다. @Lob 은 CLOB 을 기대해 검증에 실패하므로
  *    @JdbcTypeCode(LONGVARCHAR) 로 매핑해 json 컬럼과 일치시킨다(H2 create-drop 호환).
@@ -74,6 +76,12 @@ public class OrderItem extends BaseEntity {
 
     @Column(name = "item_name", length = 500)
     private String itemName;                 // 표시용
+
+    @Column(name = "orderer_name", length = 100)
+    private String ordererName;              // 쿠팡 shipmentBox.orderer.name (박스 레벨 → 라인마다 복제)
+
+    @Column(name = "receiver_name", length = 100)
+    private String receiverName;             // 쿠팡 shipmentBox.receiver.name
 
     @JdbcTypeCode(SqlTypes.LONGVARCHAR)
     @Column(name = "raw")
