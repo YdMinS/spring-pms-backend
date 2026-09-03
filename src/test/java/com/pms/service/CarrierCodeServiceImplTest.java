@@ -60,4 +60,40 @@ class CarrierCodeServiceImplTest {
         assertThatThrownBy(() -> carrierCodeService.resolveDeliveryCompanyCode("COUPANG"))
                 .isInstanceOf(IllegalStateException.class);
     }
+
+    @Test
+    void findOptions_플랫폼코드있는활성택배사만() {
+        Carrier cj = Carrier.builder().id(1L).name("CJ대한통운").isActive(true).build();
+        Carrier lotte = Carrier.builder().id(2L).name("롯데택배").isActive(true).build();
+        given(platformCarrierCodeRepository.findByPlatformAndCarrier_IsActiveTrueOrderByCarrier_IdAsc("COUPANG"))
+                .willReturn(List.of(
+                        PlatformCarrierCode.builder().id(1L).carrier(cj)
+                                .platform("COUPANG").deliveryCompanyCode("CJGLS").build(),
+                        PlatformCarrierCode.builder().id(2L).carrier(lotte)
+                                .platform("COUPANG").deliveryCompanyCode("HYUNDAI").build()));
+
+        List<CarrierOption> options = carrierCodeService.findOptions("COUPANG");
+
+        assertThat(options).containsExactly(
+                new CarrierOption(1L, "CJ대한통운", "CJGLS"),
+                new CarrierOption(2L, "롯데택배", "HYUNDAI"));
+    }
+
+    @Test
+    void findOptions_없으면_빈리스트() {
+        given(platformCarrierCodeRepository.findByPlatformAndCarrier_IsActiveTrueOrderByCarrier_IdAsc("NAVER"))
+                .willReturn(List.of());
+
+        assertThat(carrierCodeService.findOptions("NAVER")).isEmpty();
+    }
+
+    @Test
+    void resolveDeliveryCompanyCode_carrierId_미등록이면_IllegalArgumentException() {
+        given(platformCarrierCodeRepository.findByCarrier_IdAndPlatform(9L, "COUPANG"))
+                .willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> carrierCodeService.resolveDeliveryCompanyCode(9L, "COUPANG"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("COUPANG");
+    }
 }
