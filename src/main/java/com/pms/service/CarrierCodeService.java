@@ -12,8 +12,8 @@ import java.util.List;
  * <p>코드 해석 경로는 <b>둘</b>이고 용도가 다르다:
  * <ul>
  *   <li>일괄(xlsx) 발송처리 — {@link #resolveDeliveryCompanyCode(String)}: 활성 택배사 1개를 서버가 자동 선택.</li>
- *   <li>단건 수동 발송처리 — {@link #findOptions(String)} 로 고른 것을
- *       {@link #resolveDeliveryCompanyCode(Long, String)} 로 해석(사용자 선택).</li>
+ *   <li>단건 수동 발송처리 — {@link #findOptions(String)} 로 고른 코드를
+ *       {@link #validateDeliveryCompanyCode(String, String)} 로 검증(사용자 선택).</li>
  * </ul>
  *
  * @see com.pms.service.ShippingLabelService 발송처리 레그(이 메서드로 코드를 얻는다)
@@ -29,17 +29,25 @@ public interface CarrierCodeService {
      */
     String resolveDeliveryCompanyCode(String platform);
 
-    /** 그 플랫폼에 코드가 등록된 활성 택배사 목록(없으면 빈 리스트 — 예외 아님, PLAN 2609_11 D16). */
+    /**
+     * 단건 발송처리 드롭다운용 택배사 목록.
+     *
+     * <p>쿠팡은 <b>택배사 목록 API 가 없고</b> 문서의 정적 코드표가 SSOT 라, COUPANG 은
+     * {@link CoupangCourierCodes} 전량을 준다(D2 개정 2026-09-03) — 택배사 관리에 등록해 둔 코드는
+     * {@code registered=true} 로 맨 위에 온다. 다른 플랫폼은 예전대로 등록된 활성 택배사만 준다
+     * (없으면 빈 리스트 — 예외 아님, D16).
+     */
     List<CarrierOption> findOptions(String platform);
 
     /**
-     * 사용자가 고른 택배사의, 해당 플랫폼 코드를 반환(단건 발송처리 전용).
+     * 사용자가 고른 택배사 코드를 검증하고 그대로 반환(단건 발송처리 전용).
      *
-     * <p>⚠️ 활성 여부를 다시 확인하지 않는다 — 목록이 활성만 주고, 등록된 코드로 보내는 것 자체는 유효하다.
-     * 코드가 없으면 {@link IllegalArgumentException}(400) 이며,
+     * <p>드롭다운이 코드를 그대로 돌려주므로 해석할 것은 없고, <b>화이트리스트 검증</b>이 일이다 —
+     * 쿠팡은 {@link CoupangCourierCodes} 표에 있는 코드만, 다른 플랫폼은 택배사 관리에 등록된 코드만 통과한다.
+     * 없는 코드면 {@link IllegalArgumentException}(400) 이며,
      * {@link #resolveDeliveryCompanyCode(String)} 의 {@link IllegalStateException}(설정 오류=500)과 의미가 다르다.
      *
-     * @throws IllegalArgumentException 그 (carrierId, platform) 코드가 없을 때 → 400
+     * @throws IllegalArgumentException 그 플랫폼에서 쓸 수 없는 코드일 때 → 400
      */
-    String resolveDeliveryCompanyCode(Long carrierId, String platform);
+    String validateDeliveryCompanyCode(String deliveryCompanyCode, String platform);
 }
