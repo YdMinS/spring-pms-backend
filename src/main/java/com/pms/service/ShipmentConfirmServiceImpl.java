@@ -208,8 +208,8 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
         boolean update = UPDATE_MODE_STATUSES.contains(anchor.getStatus());
         String mode = update ? "UPDATE" : "CREATE";
         // 택배사 코드를 먼저 해석한다 — 미등록이면 400 이므로 설정(경로)을 읽기 전에 끝낸다.
-        String deliveryCompanyCode =
-                carrierCodeService.resolveDeliveryCompanyCode(request.carrierId(), account.getPlatform());
+        String deliveryCompanyCode = carrierCodeService
+                .validateDeliveryCompanyCode(request.deliveryCompanyCode(), account.getPlatform());
         String path = (update ? coupangProperties.getUpdateInvoicesPath() : coupangProperties.getInvoicesPath())
                 .replace("{vendorId}", account.getVendorId());
 
