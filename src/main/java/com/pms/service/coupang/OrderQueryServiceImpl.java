@@ -46,6 +46,8 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 .externalBoxId(o.getExternalBoxId())
                 .externalItemId(o.getExternalItemId())
                 .itemName(o.getItemName())
+                .ordererName(o.getOrdererName())
+                .receiverName(o.getReceiverName())
                 .orderCount(o.getOrderCount())
                 .cancelCount(o.getCancelCount())
                 .holdCount(o.getHoldCount())

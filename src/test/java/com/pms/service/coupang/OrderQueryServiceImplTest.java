@@ -37,7 +37,8 @@ class OrderQueryServiceImplTest {
         return OrderItem.builder()
                 .id(1L).marketplaceAccount(acc).platform("COUPANG")
                 .externalOrderId("O1").externalBoxId("B1").externalItemId("I1")
-                .itemName("양말").orderCount(10).cancelCount(2).holdCount(1)
+                .itemName("양말").ordererName("홍길동").receiverName("김철수")
+                .orderCount(10).cancelCount(2).holdCount(1)
                 .status("ACCEPT").raw("{\"big\":\"json\"}").build();
     }
 
@@ -64,6 +65,8 @@ class OrderQueryServiceImplTest {
         OrderItemResponse r = result.get(0);
         assertThat(r.getPurchasableQty()).isEqualTo(7);        // 10-(2+1)
         assertThat(r.getExternalItemId()).isEqualTo("I1");
+        assertThat(r.getOrdererName()).isEqualTo("홍길동");
+        assertThat(r.getReceiverName()).isEqualTo("김철수");
         // raw 필드는 DTO에 존재하지 않음 → 직렬화/노출 불가 (목록 가벼움)
     }
 
