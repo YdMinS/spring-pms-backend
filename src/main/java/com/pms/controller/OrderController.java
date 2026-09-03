@@ -2,6 +2,7 @@ package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.response.OrderItemResponse;
+import com.pms.dto.response.OrderMonthResponse;
 import com.pms.dto.response.OrderSyncResponse;
 import com.pms.dto.response.SyncTargetResponse;
 import com.pms.service.coupang.OrderQueryService;
@@ -9,6 +10,7 @@ import com.pms.service.coupang.OrderSyncFacade;
 import com.pms.service.coupang.OrderSyncFacade.OrderSyncResult;
 import com.pms.service.coupang.SyncTargetService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -32,11 +35,26 @@ public class OrderController {
     private final OrderSyncFacade syncFacade;
     private final SyncTargetService syncTargetService;
 
-    /** 주문 목록 조회. sellerId 없으면 전체. */
+    /**
+     * 주문 목록 조회. sellerId 없으면 전체.
+     * from·to(yyyy-MM-dd)를 함께 주면 그 기간(결제일 기준, 양끝 포함)을, 없으면 최근 sync-days 를 반환한다.
+     * 둘 중 하나만 주거나 from > to 면 400.
+     */
     @GetMapping
     public ResponseEntity<ResponseDTO<List<OrderItemResponse>>> list(
-            @RequestParam(required = false) Long sellerId) {
-        return ResponseEntity.ok(ResponseDTO.success(queryService.list(sellerId)));
+            @RequestParam(required = false) Long sellerId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return ResponseEntity.ok(ResponseDTO.success(queryService.list(sellerId, from, to)));
+    }
+
+    /**
+     * 주문이 존재하는 달과 건수(최신순). 기간 드롭다운이 데이터 없는 달을 라벨링하는 데 쓴다.
+     * 판매자 필터와 무관한 전체 기준이며, 데이터가 없으면 빈 배열.
+     */
+    @GetMapping("/months")
+    public ResponseEntity<ResponseDTO<List<OrderMonthResponse>>> months() {
+        return ResponseEntity.ok(ResponseDTO.success(queryService.months()));
     }
 
     /**
@@ -51,7 +69,7 @@ public class OrderController {
                 : (sellerId != null) ? syncFacade.syncBySeller(sellerId)
                 : syncFacade.syncAll();
         return ResponseEntity.ok(ResponseDTO.success(
-                new OrderSyncResponse(result, queryService.list(sellerId))));
+                new OrderSyncResponse(result, queryService.list(sellerId, null, null))));
     }
 
     /**

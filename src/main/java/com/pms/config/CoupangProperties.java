@@ -24,7 +24,9 @@ public class CoupangProperties {
      *
      * status 는 이 윈도우(주문 생성일 기준) 안의 주문만 갱신된다 — 윈도우를 벗어난 주문은 다시 조회되지
      * 않아 마지막 상태(예: 결제완료)로 얼어붙는다. 넓히면 쿠팡이 504(Gateway Timeout)를 자주 내므로,
-     * 대신 조회/구매목록 화면도 같은 윈도우(syncDays)로 제한해 stale 행이 노출되지 않게 한다.
+     * 대신 구매목록 화면을 같은 윈도우(syncDays)로 제한해 stale 행이 노출되지 않게 한다.
+     * 주문내역 조회에는 이 값이 <b>기본 창</b>일 뿐이다 — from/to 를 명시하면 창 밖 과거도 조회하며,
+     * stale 고지는 클라이언트 책임이다(FEATURE_2609_08).
      * (표시 필터는 order_item.paidAt 기준 — 주문 createdAt 은 저장하지 않음.)
      */
     private int syncDays = 14;
