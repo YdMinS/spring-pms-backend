@@ -107,6 +107,53 @@ class OrderControllerTest extends BaseIntegrationTest {
     }
 
     @Test
+    void postSyncPeriod_returnsCounts() throws Exception {
+        Long accountId = marketplaceAccountRepository.findAll().get(0).getId();
+
+        mockMvc.perform(post("/api/orders/sync/period")
+                        .param("accountId", String.valueOf(accountId))
+                        .param("from", "2026-08-01")
+                        .param("to", "2026-08-31")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.syncedAt").exists())
+                .andExpect(jsonPath("$.data.newOrders").value(0))
+                .andExpect(jsonPath("$.data.canceledUpdated").value(0));   // 취소 보정 없음(D4)
+    }
+
+    @Test
+    void postSyncPeriod_missingFrom_returns400() throws Exception {
+        Long accountId = marketplaceAccountRepository.findAll().get(0).getId();
+
+        mockMvc.perform(post("/api/orders/sync/period")
+                        .param("accountId", String.valueOf(accountId))
+                        .param("to", "2026-08-31")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void postSyncPeriod_rangeTooWide_returns400() throws Exception {
+        Long accountId = marketplaceAccountRepository.findAll().get(0).getId();
+
+        mockMvc.perform(post("/api/orders/sync/period")
+                        .param("accountId", String.valueOf(accountId))
+                        .param("from", "2026-08-01")
+                        .param("to", "2026-09-01")          // 31일 차이 = 쿠팡 상한 초과
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void postSyncPeriod_requiresAuth() throws Exception {
+        mockMvc.perform(post("/api/orders/sync/period")
+                        .param("accountId", "1")
+                        .param("from", "2026-08-01")
+                        .param("to", "2026-08-31"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void getOrders_withTodayPeriod_includesSeededOrder() throws Exception {
         // to 당일이 포함된다는 증거 — seed 주문의 paidAt 은 오늘이다
         String today = LocalDate.now().format(DateTimeFormatter.ISO_DATE);

@@ -73,6 +73,19 @@ public class OrderController {
     }
 
     /**
+     * 기간 지정 주문 불러오기 (과거 달 백필). 계정 1건 단위 — 여러 계정은 클라이언트가 순차 호출한다.
+     * 정기 동기화와 달리 취소 보정·동기화 상태 기록을 하지 않는다(FEATURE_2609_10 D4·D5).
+     * accountId/from/to 는 전부 필수이며, from > to 이거나 간격이 31일 이상이면 400.
+     */
+    @PostMapping("/sync/period")
+    public ResponseEntity<ResponseDTO<OrderSyncResult>> syncPeriod(
+            @RequestParam Long accountId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return ResponseEntity.ok(ResponseDTO.success(syncFacade.syncPeriod(accountId, from, to)));
+    }
+
+    /**
      * 동기화 대상 채널 목록(진행 표시·재시도용). 자격증명은 포함하지 않는다.
      * sellerId 없으면 전체. 대상이 없으면 빈 배열.
      */

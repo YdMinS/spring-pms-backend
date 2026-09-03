@@ -11,7 +11,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -49,13 +48,16 @@ public class CoupangOrderStatusSyncer {
     /**
      * 상태 1개를 nextToken 이 빌 때까지 페이징 조회해 order_item 에 멱등 upsert 한다.
      *
+     * 조회 창({@link SyncWindow})은 <b>호출자가 만들어 넘긴다</b>(FEATURE_2609_10 D6) — 정기 동기화는
+     * 기본 창(오늘 − sync-days), 기간 백필은 사용자가 고른 창이다. 이 클래스는 창을 계산하지 않는다.
+     *
      * account 는 detached 로 들어온다(파사드가 트랜잭션 밖에서 조회) — scalar 필드만 사용하므로 안전하다.
      * TenantContext 는 파사드가 같은 스레드에 세팅해 두므로 이 트랜잭션도 그 테넌트로 열린다.
      */
     @Transactional
-    public StatusSyncResult syncStatus(MarketplaceAccount account, CoupangOrderStatus status) {
+    public StatusSyncResult syncStatus(MarketplaceAccount account, CoupangOrderStatus status, SyncWindow window) {
         String path = coupangProperties.getOrdersheetsPath().replace("{vendorId}", account.getVendorId());
-        String baseQuery = baseQuery(status);
+        String baseQuery = baseQuery(status, window);
         String nextToken = null;
 
         int newCount = 0;
@@ -86,16 +88,12 @@ public class CoupangOrderStatusSyncer {
     }
 
     /**
-     * 최근 sync-days 의 주문서 기본 쿼리 (지정 status, nextToken 제외).
+     * 지정 창의 주문서 기본 쿼리 (지정 status, nextToken 제외).
      * 날짜는 ISO-8601 KST: "yyyy-MM-dd+09:00" (+ 는 %2B 로 인코딩, 서명/전송 동일 문자열 사용).
      */
-    private String baseQuery(CoupangOrderStatus status) {
-        // 쿠팡 createdAt 필터는 KST 기준 → 서버 TZ(UTC)로 계산하면 KST 자정~오전9시에 만든 주문이
-        // 전날로 밀려 창 밖으로 빠진다. 반드시 KST 달력으로 오늘을 계산한다.
-        LocalDate to = LocalDate.now(KST);
-        LocalDate from = to.minusDays(coupangProperties.getSyncDays());
-        return "createdAtFrom=" + from.format(DATE) + KST_OFFSET
-                + "&createdAtTo=" + to.format(DATE) + KST_OFFSET
+    private String baseQuery(CoupangOrderStatus status, SyncWindow window) {
+        return "createdAtFrom=" + window.from().format(DATE) + KST_OFFSET
+                + "&createdAtTo=" + window.to().format(DATE) + KST_OFFSET
                 + "&status=" + status.name()
                 + "&maxPerPage=" + MAX_PER_PAGE;
     }

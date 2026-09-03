@@ -14,6 +14,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
@@ -25,6 +26,7 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -143,6 +145,81 @@ class OrderSyncFacadeImplTest {
         verify(syncStatusRecorder).recordPartial(eq(1L), reason.capture(), eq(false), eq(true));
         assertThat(reason.getValue()).contains("FINAL_DELIVERY");
         verify(syncStatusRecorder, never()).recordSuccess(any());
+    }
+
+    @Test
+    void syncPeriod_callsSyncAccountWithWindow() {
+        MarketplaceAccount acc = account(1L);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        given(coupangOrderSyncService.syncAccount(eq(acc), any(SyncWindow.class)))
+                .willReturn(new SyncResult(4, 2, 1, List.of()));
+
+        OrderSyncResult result = facade.syncPeriod(1L, LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 31));
+
+        ArgumentCaptor<SyncWindow> window = ArgumentCaptor.forClass(SyncWindow.class);
+        verify(coupangOrderSyncService).syncAccount(eq(acc), window.capture());
+        assertThat(window.getValue().from()).isEqualTo(LocalDate.of(2026, 8, 1));
+        assertThat(window.getValue().to()).isEqualTo(LocalDate.of(2026, 8, 31));
+        assertThat(result.newOrders()).isEqualTo(4);
+        assertThat(result.updatedOrders()).isEqualTo(2);
+        assertThat(result.canceledUpdated()).isZero();          // 취소 보정 없음(D4)
+    }
+
+    @Test
+    void syncPeriod_doesNotRunCancelSync() {
+        MarketplaceAccount acc = account(1L);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        given(coupangOrderSyncService.syncAccount(eq(acc), any(SyncWindow.class)))
+                .willReturn(new SyncResult(1, 0, 1, List.of()));
+
+        facade.syncPeriod(1L, LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 31));
+
+        verifyNoInteractions(coupangReturnSyncService);         // D4
+    }
+
+    @Test
+    void syncPeriod_doesNotRecordSyncStatus() {
+        MarketplaceAccount acc = account(1L);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        given(coupangOrderSyncService.syncAccount(eq(acc), any(SyncWindow.class)))
+                .willReturn(new SyncResult(1, 0, 1, List.of()));
+
+        facade.syncPeriod(1L, LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 31));
+
+        verifyNoInteractions(syncStatusRecorder);               // D5 — 과거 백필이 배너를 덮지 않는다
+    }
+
+    @Test
+    void syncPeriod_nonCoupangAccount_throws() {
+        MarketplaceAccount naver = MarketplaceAccount.builder()
+                .id(9L).platform("NAVER").vendorId("V9")
+                .accessKey("ak").secretKey("sk").isActive(true).build();
+        given(marketplaceAccountRepository.findById(9L)).willReturn(Optional.of(naver));
+
+        assertThatThrownBy(() -> facade.syncPeriod(9L, LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 31)))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        verify(coupangOrderSyncService, never()).syncAccount(any(), any(SyncWindow.class));
+    }
+
+    @Test
+    void syncPeriod_propagatesFailure() {
+        MarketplaceAccount acc = account(1L);
+        RuntimeException boom = new RuntimeException("coupang 504");
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        when(coupangOrderSyncService.syncAccount(eq(acc), any(SyncWindow.class))).thenThrow(boom);
+
+        // 계정 단위 격리는 호출자(프론트 순차 루프)가 담당한다(D9).
+        assertThatThrownBy(() -> facade.syncPeriod(1L, LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 31)))
+                .isSameAs(boom);
+    }
+
+    @Test
+    void syncPeriod_accountNotFound_throws() {
+        given(marketplaceAccountRepository.findById(999L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> facade.syncPeriod(999L, LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 31)))
+                .isInstanceOf(ResourceNotFoundException.class);
     }
 
     @Test
