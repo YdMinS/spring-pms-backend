@@ -1,5 +1,6 @@
 package com.pms.service.coupang;
 
+import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.service.coupang.CoupangOrderStatusSyncer.StatusSyncResult;
@@ -34,6 +35,7 @@ public class CoupangOrderSyncServiceImpl implements CoupangOrderSyncService {
 
     private final CoupangOrderStatusSyncer statusSyncer;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
+    private final CoupangProperties coupangProperties;
 
     @Override
     public SyncResult syncAll() {
@@ -49,6 +51,12 @@ public class CoupangOrderSyncServiceImpl implements CoupangOrderSyncService {
 
     @Override
     public SyncResult syncAccount(MarketplaceAccount account) {
+        // 기본 창은 여기서 한 번만 만든다(D6) — syncer 는 창을 계산하지 않는다.
+        return syncAccount(account, SyncWindow.recent(coupangProperties.getSyncDays()));
+    }
+
+    @Override
+    public SyncResult syncAccount(MarketplaceAccount account, SyncWindow window) {
         int newCount = 0;
         int updatedCount = 0;
         int pages = 0;
@@ -57,15 +65,15 @@ public class CoupangOrderSyncServiceImpl implements CoupangOrderSyncService {
         // 상태 순서는 enum 순서(라이프사이클) 유지 — ACCEPT → INSTRUCT 가 먼저 커밋되는 게 발송처리에 유리.
         for (CoupangOrderStatus status : SYNC_STATUSES) {
             try {
-                StatusSyncResult r = statusSyncer.syncStatus(account, status);
+                StatusSyncResult r = statusSyncer.syncStatus(account, status, window);
                 newCount += r.newCount();
                 updatedCount += r.updatedCount();
                 pages += r.pages();
             } catch (Exception e) {
                 // 이미 커밋된 앞 상태는 살아남는다. 남은 상태도 계속 시도한다(부분 성공 > 전량 실패).
                 failedStatuses.add(status);
-                log.warn("Coupang status sync failed (committed statuses kept): account={} status={}",
-                        account.getId(), status, e);
+                log.warn("Coupang status sync failed (committed statuses kept): account={} status={} window={}",
+                        account.getId(), status, window, e);
             }
         }
 
@@ -74,8 +82,8 @@ public class CoupangOrderSyncServiceImpl implements CoupangOrderSyncService {
             throw new IllegalStateException("쿠팡 주문 동기화 전 상태 실패: account=" + account.getId());
         }
 
-        log.info("Coupang sync done: account={} statuses={} pages={} new={} updated={} failed={}",
-                account.getId(), SYNC_STATUSES, pages, newCount, updatedCount, failedStatuses);
+        log.info("Coupang sync done: account={} window={} statuses={} pages={} new={} updated={} failed={}",
+                account.getId(), window, SYNC_STATUSES, pages, newCount, updatedCount, failedStatuses);
         return new SyncResult(newCount, updatedCount, pages, List.copyOf(failedStatuses));
     }
 }
