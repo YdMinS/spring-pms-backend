@@ -86,15 +86,15 @@ public class ShipmentConfirmControllerTest extends BaseIntegrationTest {
     @Test
     public void testCarrierOptionsWithAdminTokenReturnsOptions() throws Exception {
         given(carrierCodeService.findOptions("COUPANG"))
-                .willReturn(List.of(new CarrierOption(1L, "CJ대한통운", "CJGLS")));
+                .willReturn(List.of(new CarrierOption("CJGLS", "CJ대한통운", true)));
 
         mockMvc.perform(get("/api/admin/shipping-labels/carrier-options").param("platform", "COUPANG")
                 .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUCCESS"))
-                .andExpect(jsonPath("$.data[0].carrierId").value(1))
+                .andExpect(jsonPath("$.data[0].deliveryCompanyCode").value("CJGLS"))
                 .andExpect(jsonPath("$.data[0].carrierName").value("CJ대한통운"))
-                .andExpect(jsonPath("$.data[0].deliveryCompanyCode").value("CJGLS"));
+                .andExpect(jsonPath("$.data[0].registered").value(true));
     }
 
     @Test
@@ -137,6 +137,6 @@ public class ShipmentConfirmControllerTest extends BaseIntegrationTest {
     }
 
     private String manualBody(String invoiceNumber) {
-        return "{\"orderItemId\":1,\"carrierId\":7,\"invoiceNumber\":\"" + invoiceNumber + "\"}";
+        return "{\"orderItemId\":1,\"deliveryCompanyCode\":\"CJGLS\",\"invoiceNumber\":\"" + invoiceNumber + "\"}";
     }
 }

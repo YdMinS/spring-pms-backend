@@ -402,12 +402,12 @@ class ShipmentConfirmServiceImplTest {
         OrderItem l3 = line(account, "302012345678", "4000019469460", "8003");
         given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
         given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor, l2, l3));
-        given(carrierCodeService.resolveDeliveryCompanyCode(7L, "COUPANG")).willReturn("CJGLS");
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", "COUPANG")).willReturn("CJGLS");
         given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302012345678"));
 
         ManualShipmentResult result = service.confirmManual(
-                new ManualShipmentRequest(1L, 7L, " 123456789 "));
+                new ManualShipmentRequest(1L, "CJGLS", " 123456789 "));
 
         ArgumentCaptor<String> pathCaptor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
@@ -433,11 +433,11 @@ class ShipmentConfirmServiceImplTest {
         OrderItem l2 = line(account, "302012345678", "4000019469460", "8002");
         given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
         given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor, l2));
-        given(carrierCodeService.resolveDeliveryCompanyCode(7L, "COUPANG")).willReturn("CJGLS");
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", "COUPANG")).willReturn("CJGLS");
         given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302012345678"));
 
-        ManualShipmentResult result = service.confirmManual(new ManualShipmentRequest(1L, 7L, "123456789"));
+        ManualShipmentResult result = service.confirmManual(new ManualShipmentRequest(1L, "CJGLS", "123456789"));
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<OrderItem>> captor = ArgumentCaptor.forClass(List.class);
@@ -455,11 +455,11 @@ class ShipmentConfirmServiceImplTest {
         OrderItem anchor = line(account, "302012345678", "4000019469460", "8001", "DEPARTURE");
         given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
         given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor));
-        given(carrierCodeService.resolveDeliveryCompanyCode(7L, "COUPANG")).willReturn("CJGLS");
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", "COUPANG")).willReturn("CJGLS");
         given(coupangProperties.getUpdateInvoicesPath()).willReturn(UPDATE_INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302012345678"));
 
-        ManualShipmentResult result = service.confirmManual(new ManualShipmentRequest(1L, 7L, "987654321"));
+        ManualShipmentResult result = service.confirmManual(new ManualShipmentRequest(1L, "CJGLS", "987654321"));
 
         ArgumentCaptor<String> pathCaptor = ArgumentCaptor.forClass(String.class);
         verify(coupangApiClient).post(pathCaptor.capture(), anyString(), eq(account));
@@ -478,11 +478,11 @@ class ShipmentConfirmServiceImplTest {
         given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
         given(orderItemRepository.findByExternalOrderId("4000019469460"))
                 .willReturn(List.of(anchor, sameBox, otherBox));
-        given(carrierCodeService.resolveDeliveryCompanyCode(7L, "COUPANG")).willReturn("CJGLS");
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", "COUPANG")).willReturn("CJGLS");
         given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302012345678"));
 
-        ManualShipmentResult result = service.confirmManual(new ManualShipmentRequest(1L, 7L, "123456789"));
+        ManualShipmentResult result = service.confirmManual(new ManualShipmentRequest(1L, "CJGLS", "123456789"));
 
         ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
         verify(coupangApiClient).post(anyString(), bodyCaptor.capture(), eq(account));
@@ -500,7 +500,7 @@ class ShipmentConfirmServiceImplTest {
         OrderItem anchor = line(account, "302012345678", "4000019469460", "8001");
         given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
 
-        assertThatThrownBy(() -> service.confirmManual(new ManualShipmentRequest(1L, 7L, "123456789")))
+        assertThatThrownBy(() -> service.confirmManual(new ManualShipmentRequest(1L, "CJGLS", "123456789")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("쿠팡");
         verify(coupangApiClient, never()).post(anyString(), anyString(), any());
@@ -512,22 +512,22 @@ class ShipmentConfirmServiceImplTest {
         OrderItem anchor = line(account, null, "4000019469460", "8001");
         given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
 
-        assertThatThrownBy(() -> service.confirmManual(new ManualShipmentRequest(1L, 7L, "123456789")))
+        assertThatThrownBy(() -> service.confirmManual(new ManualShipmentRequest(1L, "CJGLS", "123456789")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("박스");
         verify(coupangApiClient, never()).post(anyString(), anyString(), any());
     }
 
     @Test
-    void confirmManual_택배사코드_미등록이면_IllegalArgumentException() {
+    void confirmManual_택배사코드가_그플랫폼에_없으면_IllegalArgumentException() {
         MarketplaceAccount account = account(1L, "COUPANG", "A001");
         OrderItem anchor = line(account, "302012345678", "4000019469460", "8001");
         given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
         given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor));
-        given(carrierCodeService.resolveDeliveryCompanyCode(7L, "COUPANG"))
-                .willThrow(new IllegalArgumentException("선택한 택배사의 COUPANG 코드가 등록되지 않았습니다"));
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", "COUPANG"))
+                .willThrow(new IllegalArgumentException("선택한 택배사를 COUPANG 에 사용할 수 없습니다: CJGLS"));
 
-        assertThatThrownBy(() -> service.confirmManual(new ManualShipmentRequest(1L, 7L, "123456789")))
+        assertThatThrownBy(() -> service.confirmManual(new ManualShipmentRequest(1L, "CJGLS", "123456789")))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(coupangApiClient, never()).post(anyString(), anyString(), any());
     }
@@ -538,11 +538,11 @@ class ShipmentConfirmServiceImplTest {
         OrderItem anchor = line(account, "302", "4000019469460", "8001");
         given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
         given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor));
-        given(carrierCodeService.resolveDeliveryCompanyCode(7L, "COUPANG")).willReturn("CJGLS");
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", "COUPANG")).willReturn("CJGLS");
         given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responsePartialFail());
 
-        ManualShipmentResult result = service.confirmManual(new ManualShipmentRequest(1L, 7L, "123456789"));
+        ManualShipmentResult result = service.confirmManual(new ManualShipmentRequest(1L, "CJGLS", "123456789"));
 
         assertThat(result.succeeded()).isZero();
         assertThat(result.failed()).hasSize(1);
@@ -557,7 +557,7 @@ class ShipmentConfirmServiceImplTest {
     void confirmManual_라인없으면_IllegalArgumentException() {
         given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.confirmManual(new ManualShipmentRequest(1L, 7L, "123456789")))
+        assertThatThrownBy(() -> service.confirmManual(new ManualShipmentRequest(1L, "CJGLS", "123456789")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("주문 라인");
         verify(coupangApiClient, never()).post(anyString(), anyString(), any());
