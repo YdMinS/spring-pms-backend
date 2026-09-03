@@ -11,8 +11,10 @@ import java.time.LocalDateTime;
 /**
  * 주문 라인 (플랫폼 공통, 쿠팡 데이터의 거울).
  *
- * 동기화({@link com.pms.service.coupang.CoupangOrderSyncService})만 이 테이블에 쓴다 — 우리 작업 상태는
- * 여기에 두지 않는다(별도 product_purchase). ordersheets 응답의 shipmentBox×orderItem 1줄이 1행이며,
+ * 동기화({@link com.pms.service.coupang.CoupangOrderSyncService})가 이 테이블의 쓰기 주체다 — 우리 작업 상태는
+ * 여기에 두지 않는다(별도 product_purchase). 예외 하나: 발송처리({@link com.pms.service.ShipmentConfirmService})가
+ * 송장업로드에 성공한 박스의 {@code status} 만 {@code DEPARTURE} 로 갱신한다(PLAN 2609_07 D4).
+ * ordersheets 응답의 shipmentBox×orderItem 1줄이 1행이며,
  * UNIQUE(marketplace_account_id, external_box_id, external_order_id, external_item_id) 로 멱등 upsert 된다.
  *
  * 파생: 발주가능수량 = order_count − (cancel_count + hold_count). {@link #purchasableQty()} 참고.

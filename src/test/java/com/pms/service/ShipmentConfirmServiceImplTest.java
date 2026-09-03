@@ -249,6 +249,142 @@ class ShipmentConfirmServiceImplTest {
         assertThat(dtos.get(0).get("vendorItemId").asLong()).isEqualTo(5002L);
     }
 
+    // --- 상태 필터 (PLAN 2609_07): 이미 발송된 라인 제외 + 성공 박스 write-back ---
+
+    @Test
+    void confirm_DEPARTURE라인은_조회없이_스킵() throws Exception {
+        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        given(orderItemRepository.findByExternalOrderId("4000"))
+                .willReturn(List.of(line(account, "302", "4000", "5001", "DEPARTURE")));
+
+        ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{"4000", "123"}}));
+
+        // 쿠팡 호출 0회: 전송도, 상태 확인 조회도 하지 않는다.
+        verify(coupangApiClient, never()).post(anyString(), anyString(), any());
+        verify(coupangApiClient, never()).get(anyString(), anyString(), any());
+        assertThat(result.skipped()).hasSize(1);
+        assertThat(result.skipped().get(0).orderId()).isEqualTo("4000");
+        assertThat(result.skipped().get(0).status()).isEqualTo("DEPARTURE");
+        assertThat(result.matchedOrders()).isZero();
+        assertThat(result.unmatched()).isEmpty();
+        assertThat(result.failed()).isEmpty();
+    }
+
+    @Test
+    void confirm_박스별상태혼재시_미발송박스만전송() throws Exception {
+        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        given(orderItemRepository.findByExternalOrderId("4000")).willReturn(List.of(
+                line(account, "9001", "4000", "5001", "INSTRUCT"),
+                line(account, "9002", "4000", "5002", "DEPARTURE")));
+        given(carrierCodeService.resolveDeliveryCompanyCode("COUPANG")).willReturn("CJGLS");
+        given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
+        given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("9001"));
+
+        ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{"4000", "123"}}));
+
+        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient).post(anyString(), bodyCaptor.capture(), any());
+        JsonNode dtos = objectMapper.readTree(bodyCaptor.getValue()).get("orderSheetInvoiceApplyDtos");
+        assertThat(dtos).hasSize(1);                                   // 미발송 박스만
+        assertThat(dtos.get(0).get("shipmentBoxId").asLong()).isEqualTo(9001L);
+        // 스킵 박스는 별도 보고하지 않는다(이미 발송된 박스라 알릴 게 없다).
+        assertThat(result.skipped()).isEmpty();
+        assertThat(result.matchedOrders()).isEqualTo(1);
+    }
+
+    @Test
+    void confirm_로컬ACCEPT라인도_조회없이_전송() throws Exception {
+        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        given(orderItemRepository.findByExternalOrderId("4000"))
+                .willReturn(List.of(line(account, "302", "4000", "5001", "ACCEPT")));
+        given(carrierCodeService.resolveDeliveryCompanyCode("COUPANG")).willReturn("CJGLS");
+        given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
+        given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302"));
+
+        ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{"4000", "123"}}));
+
+        verify(coupangApiClient).post(anyString(), anyString(), any());
+        // 승격 조회 없음: 로컬 ACCEPT 는 동기화 지연일 뿐이라 그냥 전송한다.
+        verify(coupangApiClient, never()).get(anyString(), anyString(), any());
+        assertThat(result.matchedOrders()).isEqualTo(1);
+        assertThat(result.skipped()).isEmpty();
+    }
+
+    @Test
+    void confirm_성공박스는_로컬status를_DEPARTURE로갱신() throws Exception {
+        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        given(orderItemRepository.findByExternalOrderId("4000"))
+                .willReturn(List.of(line(account, "9001", "4000", "5001", "INSTRUCT")));
+        given(orderItemRepository.findByExternalOrderId("4001"))
+                .willReturn(List.of(line(account, "9002", "4001", "5002", "INSTRUCT")));
+        given(carrierCodeService.resolveDeliveryCompanyCode("COUPANG")).willReturn("CJGLS");
+        given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
+        given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseMixed());
+
+        ShipmentConfirmResult result = service.confirm(
+                xlsx(new Object[][]{{"4000", "i1"}, {"4001", "i2"}}));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<OrderItem>> saved = ArgumentCaptor.forClass(List.class);
+        verify(orderItemRepository).saveAll(saved.capture());
+        assertThat(saved.getValue()).hasSize(1);                       // 실패 박스는 갱신하지 않는다
+        assertThat(saved.getValue().get(0).getExternalBoxId()).isEqualTo("9001");
+        assertThat(saved.getValue().get(0).getStatus()).isEqualTo("DEPARTURE");
+        assertThat(result.succeeded()).isEqualTo(1);
+        assertThat(result.failed()).hasSize(1);
+    }
+
+    @Test
+    void confirm_로컬갱신실패해도_성공집계유지() throws Exception {
+        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        given(orderItemRepository.findByExternalOrderId("4000"))
+                .willReturn(List.of(line(account, "302", "4000", "5001", "INSTRUCT")));
+        given(carrierCodeService.resolveDeliveryCompanyCode("COUPANG")).willReturn("CJGLS");
+        given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
+        given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302"));
+        given(orderItemRepository.saveAll(any())).willThrow(new RuntimeException("db"));
+
+        ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{"4000", "123"}}));
+
+        // 쿠팡 전송은 이미 성공 — 로컬 갱신 실패가 결과를 뒤집으면 사용자가 재업로드(중복 전송)한다.
+        assertThat(result.succeeded()).isEqualTo(1);
+        assertThat(result.failed()).isEmpty();
+    }
+
+    @Test
+    void confirm_폴백응답의_발송완료박스는_스킵() throws Exception {
+        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        given(orderItemRepository.findByExternalOrderId("4000")).willReturn(List.of());
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(account));
+        given(coupangProperties.getOrdersheetByOrderPath()).willReturn(ORDER_BY_ID_PATH);
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(singleOrderDelivering());
+
+        ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{"4000", "123"}}));
+
+        verify(coupangApiClient, never()).post(anyString(), anyString(), any());
+        assertThat(result.skipped()).hasSize(1);
+        assertThat(result.skipped().get(0).orderId()).isEqualTo("4000");
+        assertThat(result.skipped().get(0).status()).isEqualTo("DELIVERING");
+        assertThat(result.unmatched()).isEmpty();
+        assertThat(result.matchedOrders()).isZero();
+    }
+
+    @Test
+    void confirm_폴백_전량취소주문은_스킵아님_미매칭유지() throws Exception {
+        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        given(orderItemRepository.findByExternalOrderId("4000")).willReturn(List.of());
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(account));
+        given(coupangProperties.getOrdersheetByOrderPath()).willReturn(ORDER_BY_ID_PATH);
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(singleOrderAllCancelled());
+
+        ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{"4000", "123"}}));
+
+        // 라인이 빈 이유가 상태가 아니라 전량취소 → "이미 발송됨"으로 거짓 보고하면 안 된다.
+        assertThat(result.skipped()).isEmpty();
+        assertThat(result.unmatched()).containsExactly("4000");
+        verify(coupangApiClient, never()).post(anyString(), anyString(), any());
+    }
+
     // --- helpers ---
 
     private int dtoCount(String body) {
@@ -267,10 +403,14 @@ class ShipmentConfirmServiceImplTest {
     }
 
     private OrderItem line(MarketplaceAccount account, String boxId, String orderId, String itemId) {
+        return line(account, boxId, orderId, itemId, "INSTRUCT");
+    }
+
+    private OrderItem line(MarketplaceAccount account, String boxId, String orderId, String itemId, String status) {
         return OrderItem.builder()
                 .marketplaceAccount(account).platform(account.getPlatform())
                 .externalOrderId(orderId).externalBoxId(boxId).externalItemId(itemId)
-                .orderCount(1).cancelCount(0).holdCount(0).status("INSTRUCT").build();
+                .orderCount(1).cancelCount(0).holdCount(0).status(status).build();
     }
 
     /** 택배사 고정 양식 xlsx 생성: 헤더(10칸) + 데이터행(주문번호 col5, 운송장번호 col6). */
@@ -333,6 +473,38 @@ class ShipmentConfirmServiceImplTest {
                "orderItems":[
                  {"vendorItemId":"5001","shippingCount":1,"cancelCount":1},
                  {"vendorItemId":"5002","shippingCount":1}
+               ]}
+            ]}
+            """;
+    }
+
+    /** 박스 2개 중 첫 박스만 성공. */
+    private String responseMixed() {
+        return "{\"code\":200,\"data\":{\"responseCode\":1,\"responseList\":["
+                + "{\"shipmentBoxId\":\"9001\",\"succeed\":true,\"resultCode\":\"OK\",\"resultMessage\":\"\"},"
+                + "{\"shipmentBoxId\":\"9002\",\"succeed\":false,"
+                + "\"resultCode\":\"DUPLICATE_INVOICE_NUMBER\",\"resultMessage\":\"중복 송장번호\"}]}}";
+    }
+
+    /** 쿠팡 단건 발주서 응답: 이미 배송중인 박스. */
+    private String singleOrderDelivering() {
+        return """
+            {"code":200,"data":[
+              {"orderId":"4000","shipmentBoxId":"302","status":"DELIVERING",
+               "orderItems":[
+                 {"vendorItemId":"5001","shippingCount":1}
+               ]}
+            ]}
+            """;
+    }
+
+    /** 쿠팡 단건 발주서 응답: 상태는 정상(INSTRUCT)인데 라인이 전량 확정취소. */
+    private String singleOrderAllCancelled() {
+        return """
+            {"code":200,"data":[
+              {"orderId":"4000","shipmentBoxId":"302","status":"INSTRUCT",
+               "orderItems":[
+                 {"vendorItemId":"5001","shippingCount":1,"cancelCount":1}
                ]}
             ]}
             """;
