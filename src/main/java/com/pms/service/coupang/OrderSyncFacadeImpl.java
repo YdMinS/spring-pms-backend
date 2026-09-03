@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -54,6 +55,35 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
     @Override
     public OrderSyncResult syncAll() {
         return syncEach(marketplaceAccountRepository.findByIsActiveTrue());
+    }
+
+    @Override
+    public OrderSyncResult syncPeriod(Long accountId, LocalDate from, LocalDate to) {
+        MarketplaceAccount account = marketplaceAccountRepository.findById(accountId)
+                .orElseThrow(() -> new ResourceNotFoundException("MarketplaceAccount", accountId));
+        if (!PLATFORM_COUPANG.equals(account.getPlatform())) {
+            throw new IllegalArgumentException("쿠팡 계정만 기간 조회를 지원합니다. accountId=" + accountId);
+        }
+        SyncWindow window = new SyncWindow(from, to);      // 검증은 record 생성자
+
+        // syncOne 을 재사용하지 않는다 — 취소 보정과 상태 기록이 붙어 있다(D4·D5).
+        Long previousTenant = TenantContext.get();
+        try {
+            TenantContext.set(account.getTenantId());
+            SyncResult orders = coupangOrderSyncService.syncAccount(account, window);
+            if (!orders.failedStatuses().isEmpty()) {
+                log.warn("Period sync partial: account={} window={} failedStatuses={}",
+                        accountId, window, orders.failedStatuses());
+            }
+            // 취소 보정 없음(D4) → canceledUpdated = 0. 상태 기록 없음(D5).
+            return new OrderSyncResult(LocalDateTime.now(), orders.newCount(), orders.updatedCount(), 0);
+        } finally {
+            if (previousTenant != null) {
+                TenantContext.set(previousTenant);
+            } else {
+                TenantContext.clear();
+            }
+        }
     }
 
     /** 계정 목록을 격리 동기화해 합산 (COUPANG 만, 한 계정 실패는 로그 후 계속). */

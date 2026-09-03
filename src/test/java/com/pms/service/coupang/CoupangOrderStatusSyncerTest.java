@@ -13,6 +13,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
@@ -48,6 +49,10 @@ class CoupangOrderStatusSyncerTest {
     /** external 4키 → 저장된 OrderItem (실 DB 의 UNIQUE 제약을 흉내). */
     private Map<String, OrderItem> store;
 
+    /** 조회 창은 호출자가 만든다(D6) — 이 클래스는 받은 창을 그대로 쿼리에 싣는다. */
+    private static final SyncWindow WINDOW =
+            new SyncWindow(LocalDate.of(2026, 6, 10), LocalDate.of(2026, 6, 15));
+
     @BeforeEach
     void setUp() {
         account = MarketplaceAccount.builder()
@@ -74,7 +79,7 @@ class CoupangOrderStatusSyncerTest {
     void syncStatus_insertsNewOrderItems() {
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(twoBoxesThreeLines());
 
-        StatusSyncResult result = syncer.syncStatus(account, CoupangOrderStatus.ACCEPT);
+        StatusSyncResult result = syncer.syncStatus(account, CoupangOrderStatus.ACCEPT, WINDOW);
 
         assertThat(store).hasSize(3);
         assertThat(result.newCount()).isEqualTo(3);
@@ -85,7 +90,10 @@ class CoupangOrderStatusSyncerTest {
         ArgumentCaptor<String> queryCaptor = ArgumentCaptor.forClass(String.class);
         verify(coupangApiClient).get(pathCaptor.capture(), queryCaptor.capture(), any());
         assertThat(pathCaptor.getValue()).contains("V0001");
-        assertThat(queryCaptor.getValue()).contains("status=ACCEPT");
+        assertThat(queryCaptor.getValue()).contains("status=ACCEPT")
+                // 창은 파라미터에서 온다(D6) — 클래스가 오늘 날짜를 계산하지 않는다.
+                .contains("createdAtFrom=2026-06-10%2B09:00")
+                .contains("createdAtTo=2026-06-15%2B09:00");
 
         // paidAt: 오프셋 포함 ISO-8601 → KST 로컬시각 (2026-06-15T01:00:00+09:00 == 2026-06-15T01:00)
         OrderItem line = store.get(key(1L, "B1", "O1", "I1"));
@@ -99,8 +107,8 @@ class CoupangOrderStatusSyncerTest {
     void syncStatus_isIdempotent_noDuplicateOnSecondRun() {
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(twoBoxesThreeLines());
 
-        syncer.syncStatus(account, CoupangOrderStatus.ACCEPT);                 // 1회차: 3 insert
-        StatusSyncResult second = syncer.syncStatus(account, CoupangOrderStatus.ACCEPT); // 2회차: 모두 update
+        syncer.syncStatus(account, CoupangOrderStatus.ACCEPT, WINDOW);                 // 1회차: 3 insert
+        StatusSyncResult second = syncer.syncStatus(account, CoupangOrderStatus.ACCEPT, WINDOW); // 2회차: 모두 update
 
         assertThat(store).hasSize(3);                 // 중복 안 쌓임 ★
         assertThat(second.newCount()).isZero();
@@ -112,8 +120,8 @@ class CoupangOrderStatusSyncerTest {
         given(coupangApiClient.get(anyString(), anyString(), any()))
                 .willReturn(twoBoxesThreeLines(), twoBoxesThreeLinesCancelChanged());
 
-        syncer.syncStatus(account, CoupangOrderStatus.ACCEPT);   // 1회차: cancelCount=0
-        syncer.syncStatus(account, CoupangOrderStatus.ACCEPT);   // 2회차: line(order=O1, box=B1, item=I1) cancelCount=2
+        syncer.syncStatus(account, CoupangOrderStatus.ACCEPT, WINDOW);   // 1회차: cancelCount=0
+        syncer.syncStatus(account, CoupangOrderStatus.ACCEPT, WINDOW);   // 2회차: line(order=O1, box=B1, item=I1) cancelCount=2
 
         OrderItem changed = store.get(key(1L, "B1", "O1", "I1"));
         assertThat(changed.getCancelCount()).isEqualTo(2);
@@ -127,7 +135,7 @@ class CoupangOrderStatusSyncerTest {
         given(coupangApiClient.get(anyString(), anyString(), any()))
                 .willReturn(pageWithToken("t"), pageWithToken(""));
 
-        StatusSyncResult result = syncer.syncStatus(account, CoupangOrderStatus.ACCEPT);
+        StatusSyncResult result = syncer.syncStatus(account, CoupangOrderStatus.ACCEPT, WINDOW);
 
         verify(coupangApiClient, times(2)).get(anyString(), anyString(), any());
         assertThat(result.pages()).isEqualTo(2);
@@ -145,7 +153,7 @@ class CoupangOrderStatusSyncerTest {
     void syncStatus_storesCustomerNames_fromBoxLevel() {
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(twoBoxesThreeLines());
 
-        syncer.syncStatus(account, CoupangOrderStatus.ACCEPT);
+        syncer.syncStatus(account, CoupangOrderStatus.ACCEPT, WINDOW);
 
         // 박스 레벨 값이 그 박스의 모든 라인에 복제된다 (B1 = I1, I2)
         assertThat(store.get(key(1L, "B1", "O1", "I1")).getOrdererName()).isEqualTo("홍길동");
@@ -161,10 +169,10 @@ class CoupangOrderStatusSyncerTest {
         given(coupangApiClient.get(anyString(), anyString(), any()))
                 .willReturn(singleLine(false), singleLine(true));
 
-        syncer.syncStatus(account, CoupangOrderStatus.ACCEPT);          // 1회차: 이름 없는 응답
+        syncer.syncStatus(account, CoupangOrderStatus.ACCEPT, WINDOW);          // 1회차: 이름 없는 응답
         assertThat(store.get(key(1L, "B1", "O1", "I1")).getReceiverName()).isNull();
 
-        syncer.syncStatus(account, CoupangOrderStatus.ACCEPT);          // 2회차: 이름 있는 응답
+        syncer.syncStatus(account, CoupangOrderStatus.ACCEPT, WINDOW);          // 2회차: 이름 있는 응답
 
         assertThat(store).hasSize(1);                                   // 행이 늘지 않는다(멱등 유지)
         assertThat(store.get(key(1L, "B1", "O1", "I1")).getOrdererName()).isEqualTo("홍길동");

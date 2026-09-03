@@ -18,8 +18,17 @@ public interface CoupangOrderSyncService {
     /** 활성 COUPANG 계정 전체 동기화 (결과 합산). */
     SyncResult syncAll();
 
-    /** 계정 1개 동기화. Phase 3 OrderSyncFacade 가 신규/갱신 수를 받기 위해 결과를 반환한다. */
+    /**
+     * 계정 1개 동기화 (기본 창 = 오늘(KST) − sync-days).
+     * Phase 3 OrderSyncFacade 가 신규/갱신 수를 받기 위해 결과를 반환한다.
+     */
     SyncResult syncAccount(MarketplaceAccount account);
+
+    /**
+     * 계정 1개를 <b>지정 창</b>으로 동기화 (과거 기간 불러오기, FEATURE_2609_10).
+     * 상태 루프·부분 실패 처리는 기본 창과 동일하다.
+     */
+    SyncResult syncAccount(MarketplaceAccount account, SyncWindow window);
 
     /**
      * 동기화 결과 집계.
