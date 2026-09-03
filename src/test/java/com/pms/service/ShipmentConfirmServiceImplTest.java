@@ -6,6 +6,7 @@ import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
 import com.pms.domain.Seller;
+import com.pms.dto.request.ManualShipmentRequest;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderItemRepository;
 import com.pms.service.coupang.CoupangApiClient;
@@ -23,8 +24,10 @@ import org.springframework.web.client.RestClientException;
 
 import java.io.ByteArrayOutputStream;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -44,6 +47,8 @@ class ShipmentConfirmServiceImplTest {
 
     private static final String INVOICES_PATH =
             "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/orders/invoices";
+    private static final String UPDATE_INVOICES_PATH =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/orders/updateInvoices";
     private static final String ORDER_BY_ID_PATH =
             "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/{orderId}/ordersheets";
 
@@ -386,6 +391,177 @@ class ShipmentConfirmServiceImplTest {
     }
 
     // --- helpers ---
+
+    // ---------- 단건 발송처리(confirmManual, PLAN 2609_11) ----------
+
+    @Test
+    void confirmManual_신규모드_박스전체라인전송() throws Exception {
+        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        OrderItem anchor = line(account, "302012345678", "4000019469460", "8001");
+        OrderItem l2 = line(account, "302012345678", "4000019469460", "8002");
+        OrderItem l3 = line(account, "302012345678", "4000019469460", "8003");
+        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
+        given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor, l2, l3));
+        given(carrierCodeService.resolveDeliveryCompanyCode(7L, "COUPANG")).willReturn("CJGLS");
+        given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
+        given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302012345678"));
+
+        ManualShipmentResult result = service.confirmManual(
+                new ManualShipmentRequest(1L, 7L, " 123456789 "));
+
+        ArgumentCaptor<String> pathCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient).post(pathCaptor.capture(), bodyCaptor.capture(), eq(account));
+        assertThat(pathCaptor.getValue()).isEqualTo(INVOICES_PATH.replace("{vendorId}", "A001"));
+
+        JsonNode dtos = objectMapper.readTree(bodyCaptor.getValue()).get("orderSheetInvoiceApplyDtos");
+        assertThat(dtos).hasSize(3);
+        for (JsonNode dto : dtos) {
+            assertThat(dto.get("invoiceNumber").asText()).isEqualTo("123456789");   // trim (D15)
+            assertThat(dto.get("deliveryCompanyCode").asText()).isEqualTo("CJGLS");
+            assertThat(dto.get("shipmentBoxId").asLong()).isEqualTo(302012345678L);
+        }
+        assertThat(result.mode()).isEqualTo("CREATE");
+        assertThat(result.sentLines()).isEqualTo(3);
+        assertThat(result.failed()).isEmpty();
+    }
+
+    @Test
+    void confirmManual_신규모드_성공시_DEPARTURE_writeback() throws Exception {
+        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        OrderItem anchor = line(account, "302012345678", "4000019469460", "8001");
+        OrderItem l2 = line(account, "302012345678", "4000019469460", "8002");
+        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
+        given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor, l2));
+        given(carrierCodeService.resolveDeliveryCompanyCode(7L, "COUPANG")).willReturn("CJGLS");
+        given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
+        given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302012345678"));
+
+        ManualShipmentResult result = service.confirmManual(new ManualShipmentRequest(1L, 7L, "123456789"));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<OrderItem>> captor = ArgumentCaptor.forClass(List.class);
+        verify(orderItemRepository).saveAll(captor.capture());
+        assertThat(captor.getValue()).hasSize(2)
+                .allMatch(l -> "DEPARTURE".equals(l.getStatus()));
+        assertThat(result.resultStatus()).isEqualTo("DEPARTURE");
+        assertThat(result.succeeded()).isEqualTo(1);
+    }
+
+    @Test
+    void confirmManual_수정모드_updateInvoices경로_writeback없음() throws Exception {
+        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        // 앵커가 이미 배송지시 → 송장수정 모드(D3)
+        OrderItem anchor = line(account, "302012345678", "4000019469460", "8001", "DEPARTURE");
+        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
+        given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor));
+        given(carrierCodeService.resolveDeliveryCompanyCode(7L, "COUPANG")).willReturn("CJGLS");
+        given(coupangProperties.getUpdateInvoicesPath()).willReturn(UPDATE_INVOICES_PATH);
+        given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302012345678"));
+
+        ManualShipmentResult result = service.confirmManual(new ManualShipmentRequest(1L, 7L, "987654321"));
+
+        ArgumentCaptor<String> pathCaptor = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient).post(pathCaptor.capture(), anyString(), eq(account));
+        assertThat(pathCaptor.getValue()).isEqualTo(UPDATE_INVOICES_PATH.replace("{vendorId}", "A001"));
+        verify(orderItemRepository, never()).saveAll(any());
+        assertThat(result.mode()).isEqualTo("UPDATE");
+        assertThat(result.resultStatus()).isNull();
+    }
+
+    @Test
+    void confirmManual_다른박스라인은_제외() throws Exception {
+        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        OrderItem anchor = line(account, "302012345678", "4000019469460", "8001");
+        OrderItem sameBox = line(account, "302012345678", "4000019469460", "8002");
+        OrderItem otherBox = line(account, "302012345679", "4000019469460", "8003");
+        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
+        given(orderItemRepository.findByExternalOrderId("4000019469460"))
+                .willReturn(List.of(anchor, sameBox, otherBox));
+        given(carrierCodeService.resolveDeliveryCompanyCode(7L, "COUPANG")).willReturn("CJGLS");
+        given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
+        given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302012345678"));
+
+        ManualShipmentResult result = service.confirmManual(new ManualShipmentRequest(1L, 7L, "123456789"));
+
+        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient).post(anyString(), bodyCaptor.capture(), eq(account));
+        JsonNode dtos = objectMapper.readTree(bodyCaptor.getValue()).get("orderSheetInvoiceApplyDtos");
+        assertThat(dtos).hasSize(2);
+        for (JsonNode dto : dtos) {
+            assertThat(dto.get("shipmentBoxId").asLong()).isEqualTo(302012345678L);
+        }
+        assertThat(result.shipmentBoxId()).isEqualTo("302012345678");
+    }
+
+    @Test
+    void confirmManual_비쿠팡이면_IllegalArgumentException() {
+        MarketplaceAccount account = account(1L, "NAVER", "N001");
+        OrderItem anchor = line(account, "302012345678", "4000019469460", "8001");
+        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
+
+        assertThatThrownBy(() -> service.confirmManual(new ManualShipmentRequest(1L, 7L, "123456789")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("쿠팡");
+        verify(coupangApiClient, never()).post(anyString(), anyString(), any());
+    }
+
+    @Test
+    void confirmManual_박스ID없으면_IllegalArgumentException() {
+        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        OrderItem anchor = line(account, null, "4000019469460", "8001");
+        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
+
+        assertThatThrownBy(() -> service.confirmManual(new ManualShipmentRequest(1L, 7L, "123456789")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("박스");
+        verify(coupangApiClient, never()).post(anyString(), anyString(), any());
+    }
+
+    @Test
+    void confirmManual_택배사코드_미등록이면_IllegalArgumentException() {
+        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        OrderItem anchor = line(account, "302012345678", "4000019469460", "8001");
+        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
+        given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor));
+        given(carrierCodeService.resolveDeliveryCompanyCode(7L, "COUPANG"))
+                .willThrow(new IllegalArgumentException("선택한 택배사의 COUPANG 코드가 등록되지 않았습니다"));
+
+        assertThatThrownBy(() -> service.confirmManual(new ManualShipmentRequest(1L, 7L, "123456789")))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(coupangApiClient, never()).post(anyString(), anyString(), any());
+    }
+
+    @Test
+    void confirmManual_쿠팡실패응답이면_failed채우고_writeback없음() throws Exception {
+        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        OrderItem anchor = line(account, "302", "4000019469460", "8001");
+        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
+        given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor));
+        given(carrierCodeService.resolveDeliveryCompanyCode(7L, "COUPANG")).willReturn("CJGLS");
+        given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
+        given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responsePartialFail());
+
+        ManualShipmentResult result = service.confirmManual(new ManualShipmentRequest(1L, 7L, "123456789"));
+
+        assertThat(result.succeeded()).isZero();
+        assertThat(result.failed()).hasSize(1);
+        assertThat(result.failed().get(0).shipmentBoxId()).isEqualTo("302");
+        assertThat(result.failed().get(0).resultCode()).isEqualTo("DUPLICATE_INVOICE_NUMBER");
+        assertThat(result.failed().get(0).message()).isEqualTo("중복 송장번호");
+        assertThat(result.resultStatus()).isNull();
+        verify(orderItemRepository, never()).saveAll(any());
+    }
+
+    @Test
+    void confirmManual_라인없으면_IllegalArgumentException() {
+        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.confirmManual(new ManualShipmentRequest(1L, 7L, "123456789")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("주문 라인");
+        verify(coupangApiClient, never()).post(anyString(), anyString(), any());
+    }
 
     private int dtoCount(String body) {
         try {

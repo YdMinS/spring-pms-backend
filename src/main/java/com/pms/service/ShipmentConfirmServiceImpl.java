@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
+import com.pms.dto.request.ManualShipmentRequest;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderItemRepository;
 import com.pms.service.ShipmentConfirmResult.FailedBox;
@@ -27,6 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * {@link ShipmentConfirmService} 구현 — COUPANG 전용 발송처리 레그.
@@ -41,6 +43,11 @@ import java.util.Set;
  *    — 다른 계정 배치는 계속. 네이버 등 비-COUPANG 은 unmatched 로 리포트(후속 어댑터 스코프).
  * ⚠️ 폴백(PLAN 송장시트 D16)은 동기화가 실패해 order_item 이 비어도 시트로 발송처리가 되게 하는 안전망이다
  *    — 정상 경로(DB 매칭)에서는 쿠팡을 한 번도 호출하지 않는다.
+ *
+ * <p>{@code confirmManual}(단건 수동, PLAN 2609_11)은 같은 전송 헬퍼({@code postInvoices})만 공유하고 판정은 따로 한다:
+ * 앵커 라인이 속한 <b>박스 1개</b>만 전개하고(같은 주문의 다른 박스는 손대지 않는다, D1),
+ * 앵커 상태가 배송지시 이상이면 송장수정(updateInvoices)·아니면 신규 업로드로 모드를 서버가 정하며(D3),
+ * write-back(DEPARTURE)은 <b>신규 업로드 성공</b>일 때만 한다(수정 모드는 상태를 바꾸지 않는다, D4).
  */
 @Slf4j
 @Service
@@ -67,6 +74,13 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
             CoupangOrderStatus.FINAL_DELIVERY.name(),
             CoupangOrderStatus.NONE_TRACKING.name());
     private static final String STATUS_DEPARTURE = CoupangOrderStatus.DEPARTURE.name();
+
+    /**
+     * 송장수정(UPDATE) 모드로 보낼 상태 — "배송지시 이상"이라는 뜻이 {@link #SKIP_STATUSES} 와 같으므로 같은 집합을 가리킨다.
+     * ⚠️ 이름을 갈라 두는 이유: 일괄 경로의 "전송 스킵"과 단건 경로의 "모드 판정"은 서로 다른 관심사다.
+     *    스킵 목록에 상태를 더할 일이 생기면 단건 모드가 조용히 UPDATE 로 뒤집히지 않게 여기서 분리할 것(PLAN 2609_11 D3).
+     */
+    private static final Set<String> UPDATE_MODE_STATUSES = SKIP_STATUSES;
 
     private final CoupangApiClient coupangApiClient;
     private final CoupangProperties coupangProperties;
@@ -165,6 +179,66 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
         }
 
         return new ShipmentConfirmResult(uploadRows.size(), matchedOrders, unmatched, succeeded, failed, skipped);
+    }
+
+    @Override
+    public ManualShipmentResult confirmManual(ManualShipmentRequest request) {
+        String invoiceNumber = request.invoiceNumber().trim();          // D15
+        // 1) 앵커 라인 — account 를 eager 로 읽는 finder 만 사용(open-in-view=false)
+        OrderItem anchor = orderItemRepository.findWithAccountAndSellerById(request.orderItemId())
+                .orElseThrow(() -> new IllegalArgumentException("주문 라인을 찾을 수 없습니다"));
+        MarketplaceAccount account = anchor.getMarketplaceAccount();
+        if (!PLATFORM_COUPANG.equals(account.getPlatform())) {
+            throw new IllegalArgumentException("쿠팡 주문만 발송처리할 수 있습니다");     // D7
+        }
+        String boxId = anchor.getExternalBoxId();
+        if (boxId == null || boxId.isBlank()) {
+            throw new IllegalArgumentException("박스 ID가 없습니다. 주문동기화 후 다시 시도하세요");   // D7
+        }
+        // 2) 박스 전개 — 같은 주문 + 같은 계정 + 같은 박스 라인 전부(D1). 취소 라인은 거르지 않는다(D8).
+        List<OrderItem> boxLines = orderItemRepository.findByExternalOrderId(anchor.getExternalOrderId())
+                .stream()
+                .filter(l -> l.getMarketplaceAccount().getId().equals(account.getId()))
+                .filter(l -> boxId.equals(l.getExternalBoxId()))
+                .toList();
+        if (boxLines.isEmpty()) {
+            boxLines = List.of(anchor);      // 방어적: 앵커는 항상 그 박스의 라인이다
+        }
+        // 3) 모드 판정 = 앵커 상태(박스 상태의 거울). 클라이언트는 관여하지 않는다(D3).
+        boolean update = UPDATE_MODE_STATUSES.contains(anchor.getStatus());
+        String mode = update ? "UPDATE" : "CREATE";
+        // 택배사 코드를 먼저 해석한다 — 미등록이면 400 이므로 설정(경로)을 읽기 전에 끝낸다.
+        String deliveryCompanyCode =
+                carrierCodeService.resolveDeliveryCompanyCode(request.carrierId(), account.getPlatform());
+        String path = (update ? coupangProperties.getUpdateInvoicesPath() : coupangProperties.getInvoicesPath())
+                .replace("{vendorId}", account.getVendorId());
+
+        List<InvoiceLine> lines = toInvoiceLines(boxLines);
+        AccountResult result;
+        try {
+            result = postInvoices(account, lines, orderId -> invoiceNumber, deliveryCompanyCode, path);
+        } catch (Exception e) {
+            // 일괄 경로의 계정 격리와 같은 형태로 실패 1건을 만든다(예외를 500 으로 새게 두지 않는다).
+            log.warn("단건 발송처리 전송 실패: orderItemId={} box={} mode={}",
+                    request.orderItemId(), boxId, mode, e);
+            return new ManualShipmentResult(anchor.getExternalOrderId(), boxId, mode,
+                    lines.size(), 0, List.of(new FailedBox(boxId, "ERROR", e.getMessage())), null);
+        }
+        // 4) 신규 업로드 성공만 write-back(D4·D5). 수정 모드는 상태를 바꾸지 않는다.
+        //    ⚠️ resultStatus 는 write-back 성공 여부와 무관하게 DEPARTURE 다 — markDeparted 는 실패해도 삼킨다.
+        //       클라이언트 표시가 다음 동기화로 수렴하는 쪽이, 성공을 실패로 보이게 하는 것보다 낫다.
+        String resultStatus = null;
+        if (!update && result.succeeded() > 0) {
+            Map<String, List<OrderItem>> byBox = new LinkedHashMap<>();
+            registerWriteBack(boxLines, byBox);
+            markDeparted(result.succeededBoxIds(), byBox);
+            resultStatus = STATUS_DEPARTURE;
+        }
+        log.info("단건 발송처리: orderId={} box={} mode={} lines={} succeeded={} failed={}",
+                anchor.getExternalOrderId(), boxId, mode,
+                lines.size(), result.succeeded(), result.failed().size());
+        return new ManualShipmentResult(anchor.getExternalOrderId(), boxId, mode,
+                lines.size(), result.succeeded(), result.failed(), resultStatus);
     }
 
     /**
@@ -366,7 +440,19 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
                                     Map<String, String> invoiceByOrderId) throws Exception {
         // deliveryCompanyCode 는 계정당 1회 (하드코딩 금지, 미설정 시 IllegalStateException).
         String deliveryCompanyCode = carrierCodeService.resolveDeliveryCompanyCode(account.getPlatform());
+        String path = coupangProperties.getInvoicesPath().replace("{vendorId}", account.getVendorId());
+        return postInvoices(account, lines, invoiceByOrderId::get, deliveryCompanyCode, path);
+    }
 
+    /**
+     * dto 조립 → 1 POST → responseList 집계. 일괄(xlsx)·단건 공용 (PLAN 2609_11 D10).
+     * 경로만 다르면 송장수정도 같은 바디다(dto 구조 동일).
+     *
+     * ⚠️ 이름을 {@code post} 로 짓지 말 것 — 본문에서 {@code coupangApiClient.post(...)} 와 섞여 읽힌다.
+     */
+    private AccountResult postInvoices(MarketplaceAccount account, List<InvoiceLine> lines,
+                                       Function<String, String> invoiceResolver,
+                                       String deliveryCompanyCode, String path) throws Exception {
         List<Map<String, Object>> dtos = new ArrayList<>();
         for (InvoiceLine line : lines) {
             Map<String, Object> dto = new LinkedHashMap<>();
@@ -374,7 +460,7 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
             dto.put("shipmentBoxId", Long.parseLong(line.shipmentBoxId()));
             dto.put("orderId", Long.parseLong(line.orderId()));
             dto.put("deliveryCompanyCode", deliveryCompanyCode);
-            dto.put("invoiceNumber", invoiceByOrderId.get(line.orderId()));
+            dto.put("invoiceNumber", invoiceResolver.apply(line.orderId()));
             dto.put("vendorItemId", Long.parseLong(line.vendorItemId()));
             dto.put("splitShipping", false);
             dto.put("preSplitShipped", false);
@@ -387,7 +473,6 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
         body.put("orderSheetInvoiceApplyDtos", dtos);
 
         String json = objectMapper.writeValueAsString(body);
-        String path = coupangProperties.getInvoicesPath().replace("{vendorId}", account.getVendorId());
         String response = coupangApiClient.post(path, json, account);
 
         return parseResponse(response);

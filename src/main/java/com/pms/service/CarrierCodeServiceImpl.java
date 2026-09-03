@@ -42,4 +42,22 @@ public class CarrierCodeServiceImpl implements CarrierCodeService {
 
         return code.getDeliveryCompanyCode();
     }
+
+    @Override
+    public List<CarrierOption> findOptions(String platform) {
+        return platformCarrierCodeRepository
+                .findByPlatformAndCarrier_IsActiveTrueOrderByCarrier_IdAsc(platform)
+                .stream()
+                .map(code -> new CarrierOption(code.getCarrier().getId(), code.getCarrier().getName(),
+                        code.getDeliveryCompanyCode()))
+                .toList();
+    }
+
+    @Override
+    public String resolveDeliveryCompanyCode(Long carrierId, String platform) {
+        return platformCarrierCodeRepository.findByCarrier_IdAndPlatform(carrierId, platform)
+                .map(PlatformCarrierCode::getDeliveryCompanyCode)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "선택한 택배사의 " + platform + " 코드가 등록되지 않았습니다"));
+    }
 }
