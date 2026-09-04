@@ -12,7 +12,9 @@ import java.util.List;
  *
  * <p>❌ 수령인 연락처·주소·배송메시지는 DB 에 저장하지 않는다 — xlsx 에만 담고 버린다.
  * (이름은 order_item 에 저장됨, FEATURE_2609_06)
- * <br>❌ order_item 테이블에 쓰지도 읽지도 않는다 (OrderSyncFacade 와 무관, 독립 read-through).
+ * <br>✅ 조회분을 {@code order_item} 에 upsert 한다(2609_13 D1) — 시트에 실린 주문은 발송처리 시
+ * DB 에 있어야 하므로, 받아온 라인을 버리지 않는다. 주소·연락처·배송메시지는 여전히 저장하지 않는다(D7).
+ * 저장은 best-effort 라 실패해도 xlsx 는 그대로 나간다(D6).
  * <br>대상 플랫폼: 쿠팡(COUPANG)만.
  *
  * <p>사용 예제 (Controller):
