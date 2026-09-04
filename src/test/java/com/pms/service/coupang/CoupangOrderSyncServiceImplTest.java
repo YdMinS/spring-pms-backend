@@ -13,6 +13,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.client.RestClientException;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -50,6 +55,7 @@ class CoupangOrderSyncServiceImplTest {
         service = new CoupangOrderSyncServiceImpl(statusSyncer, null, coupangProperties);
         // 스텁이 없으면 int 기본값 0 → from == to 인 창이 만들어져 창 단언이 조용히 어긋난다.
         lenient().when(coupangProperties.getSyncDays()).thenReturn(14);
+        lenient().when(coupangProperties.getTerminalSyncMinDays()).thenReturn(3);
         account = MarketplaceAccount.builder()
                 .id(1L)
                 .platform("COUPANG")
@@ -119,6 +125,79 @@ class CoupangOrderSyncServiceImplTest {
         ArgumentCaptor<SyncWindow> window = ArgumentCaptor.forClass(SyncWindow.class);
         verify(statusSyncer, times(STATUS_COUNT)).syncStatus(any(), any(), window.capture());
         assertThat(window.getValue()).isEqualTo(requested);
+    }
+
+    /** 캡처한 상태·창 두 리스트를 상태 → 창 길이(일) 맵으로 zip 한다. 캡처 순서에 기대지 않기 위한 헬퍼. */
+    private static Map<CoupangOrderStatus, Long> zipToDays(List<CoupangOrderStatus> statuses, List<SyncWindow> windows) {
+        Map<CoupangOrderStatus, Long> days = new EnumMap<>(CoupangOrderStatus.class);
+        for (int i = 0; i < statuses.size(); i++) {
+            days.put(statuses.get(i), ChronoUnit.DAYS.between(windows.get(i).from(), windows.get(i).to()));
+        }
+        return days;
+    }
+
+    private Map<CoupangOrderStatus, Long> captureWindowLengths() {
+        ArgumentCaptor<CoupangOrderStatus> statuses = ArgumentCaptor.forClass(CoupangOrderStatus.class);
+        ArgumentCaptor<SyncWindow> windows = ArgumentCaptor.forClass(SyncWindow.class);
+        verify(statusSyncer, times(STATUS_COUNT)).syncStatus(eq(account), statuses.capture(), windows.capture());
+        return zipToDays(statuses.getAllValues(), windows.getAllValues());
+    }
+
+    /** lastOrderSyncAt 은 서버 시각(UTC) naive 다 — 테스트 데이터도 UTC 로 고정한다(오후에만 깨지는 것 방지). */
+    private static LocalDateTime utcDaysAgo(long days) {
+        return LocalDate.now(SyncWindow.KST).minusDays(days).atTime(3, 0);
+    }
+
+    @Test
+    void syncAccount_종결상태는좁은창_활성상태는기본창() {
+        given(statusSyncer.syncStatus(any(), any(), any())).willReturn(new StatusSyncResult(0, 0, 1));
+        account = account.toBuilder().lastOrderSyncAt(utcDaysAgo(1)).build();
+
+        service.syncAccount(account);
+
+        Map<CoupangOrderStatus, Long> lengths = captureWindowLengths();
+        assertThat(lengths.get(CoupangOrderStatus.ACCEPT)).isEqualTo(14);
+        assertThat(lengths.get(CoupangOrderStatus.INSTRUCT)).isEqualTo(14);
+        assertThat(lengths.get(CoupangOrderStatus.DEPARTURE)).isEqualTo(3);
+        assertThat(lengths.get(CoupangOrderStatus.DELIVERING)).isEqualTo(3);
+        assertThat(lengths.get(CoupangOrderStatus.FINAL_DELIVERY)).isEqualTo(3);
+        assertThat(lengths.get(CoupangOrderStatus.NONE_TRACKING)).isEqualTo(3);
+    }
+
+    @Test
+    void syncAccount_명시창은_전상태동일() {
+        // 기간 백필(D7): 지정 창에는 축소를 끼얹지 않는다.
+        given(statusSyncer.syncStatus(any(), any(), any())).willReturn(new StatusSyncResult(0, 0, 1));
+        SyncWindow requested = new SyncWindow(LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 21));
+
+        service.syncAccount(account, requested);
+
+        ArgumentCaptor<SyncWindow> windows = ArgumentCaptor.forClass(SyncWindow.class);
+        verify(statusSyncer, times(STATUS_COUNT)).syncStatus(any(), any(), windows.capture());
+        assertThat(windows.getAllValues()).containsOnly(requested);
+    }
+
+    @Test
+    void syncAccount_마지막성공없으면_전상태기본창() {
+        // 한 번도 성공 못 한 계정 = 현행 동작 그대로(D4).
+        given(statusSyncer.syncStatus(any(), any(), any())).willReturn(new StatusSyncResult(0, 0, 1));
+
+        service.syncAccount(account);
+
+        assertThat(captureWindowLengths().values()).containsOnly(14L);
+    }
+
+    @Test
+    void syncAccount_상태별창이달라도_실패격리는그대로() {
+        given(statusSyncer.syncStatus(any(), any(), any())).willReturn(new StatusSyncResult(1, 1, 1));
+        willThrow(new RestClientException("504 Gateway Timeout"))
+                .given(statusSyncer).syncStatus(any(), eq(CoupangOrderStatus.DELIVERING), any());
+        account = account.toBuilder().lastOrderSyncAt(utcDaysAgo(1)).build();
+
+        SyncResult result = service.syncAccount(account);
+
+        assertThat(result.newCount()).isEqualTo(STATUS_COUNT - 1);
+        assertThat(result.failedStatuses()).containsExactly(CoupangOrderStatus.DELIVERING);
     }
 
     @Test

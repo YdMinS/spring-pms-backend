@@ -19,7 +19,7 @@ public interface CoupangOrderSyncService {
     SyncResult syncAll();
 
     /**
-     * 계정 1개 동기화 (기본 창 = 오늘(KST) − sync-days).
+     * 계정 1개 동기화 (활성 상태(ACCEPT·INSTRUCT) = 오늘(KST) − sync-days, 종결 상태 = 마지막 성공 기준 축소 창(2609_14 D3)).
      * Phase 3 OrderSyncFacade 가 신규/갱신 수를 받기 위해 결과를 반환한다.
      */
     SyncResult syncAccount(MarketplaceAccount account);
