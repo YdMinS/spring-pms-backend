@@ -26,6 +26,10 @@ import java.util.stream.Collectors;
  *
  * <p>⚠️ Entity is immutable (no setters): updates rebuild via {@code toBuilder} (partial — null request
  * fields keep existing values).</p>
+ *
+ * <p>⚠️ Two preset lookups with deliberately different outcomes: an unknown template-level
+ * {@code imageProcessingPresetId} is a 404 ({@link #resolvePreset}), an unknown per-block
+ * {@code processingPresetId} is a 400 (block validation, FEATURE_2608_08/03) — do not unify them.</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -121,6 +125,11 @@ public class DetailTemplateServiceImpl implements DetailTemplateService {
         Set<String> knownCodes = detailImageGroupRepository.findAllByOrderBySortOrderAscIdAsc().stream()
                 .map(DetailImageGroup::getCode)
                 .collect(Collectors.toSet());
+        // Same "once per save" rule for the per-block preset ids (FEATURE_2608_08/03): the tenant's preset
+        // library is a few dozen rows, so one list beats a findScopedById round trip per block.
+        Set<Long> knownPresetIds = processingPresetRepository.findAllByOrderByIdDesc().stream()
+                .map(ProcessingPreset::getId)
+                .collect(Collectors.toSet());
         for (DetailBlock block : blocks) {
             String type = block.getType();
             if (!KNOWN_TYPES.contains(type)) {
@@ -140,6 +149,12 @@ public class DetailTemplateServiceImpl implements DetailTemplateService {
                     // validation alone would let the per-template zone sprawl come back.
                     if (!knownCodes.contains(block.getBind())) {
                         throw new IllegalArgumentException("등록되지 않은 이미지 그룹입니다: " + block.getBind());
+                    }
+                    // Per-block preset override (FEATURE_2608_08/03). Unknown id → 400, staying consistent
+                    // with the block-validation family; the template-level resolvePreset keeps its 404.
+                    Long presetId = block.getProcessingPresetId();
+                    if (presetId != null && !knownPresetIds.contains(presetId)) {
+                        throw new IllegalArgumentException("존재하지 않는 이미지 처리 프리셋입니다: " + presetId);
                     }
                 }
                 case "asset" -> {

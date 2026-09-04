@@ -15,7 +15,8 @@ import lombok.NoArgsConstructor;
  * (FEATURE_2608_06 / Step 2-1). Persisted as part of {@code DetailTemplate.blocks} via
  * {@link com.pms.domain.converter.DetailBlockListConverter} (JSON TEXT column). The block array is the
  * only extension seam of the detail model — new block kinds and per-block options are added as data,
- * never as schema changes.</p>
+ * never as schema changes (e.g. {@code processingPresetId}, the per-block image-processing preset of
+ * FEATURE_2608_08/03, needed no changeset)</p>
  *
  * <p><b>type</b> = {@code text} (bind a master field / free text) | {@code imageZone} (an ordered array
  * of input images referenced by {@code bind}=zoneId) | {@code asset} (a fixed library image reused via
@@ -55,6 +56,12 @@ public class DetailBlock {
 
     /** text = optional inline style overrides (key → value); see TextStyleSupport registry. Other types → null. */
     private java.util.Map<String, String> textStyle;
+
+    /**
+     * imageZone = this block's image-processing preset id; null → inherit {@code DetailTemplate.imageProcessingPreset}.
+     * Other types → null.
+     */
+    private Long processingPresetId;
 
     @JsonPOJOBuilder(withPrefix = "")
     public static class DetailBlockBuilder {

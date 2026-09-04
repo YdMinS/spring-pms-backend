@@ -12,6 +12,7 @@ import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
+import com.pms.repository.ProcessingPresetRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import org.junit.jupiter.api.Test;
@@ -24,6 +25,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -52,6 +54,7 @@ class TemplateDetailContentGeneratorTest {
     @Mock private ImageProcessor imageProcessor;
     @Mock private ImageStorageService imageStorageService;
     @Mock private ProductImageLoader productImageLoader;
+    @Mock private ProcessingPresetRepository processingPresetRepository;
     @InjectMocks private TemplateDetailContentGenerator generator;
 
     @BeforeEach
@@ -184,6 +187,165 @@ class TemplateDetailContentGeneratorTest {
         // URLs swapped to the freshly uploaded composites (filename = {master}_{preset}_{zone}_{index}.jpg).
         assertThat(zoneCaptor.getValue().get("product_photos"))
                 .containsExactly("out/1_5_product_photos_0.jpg", "out/1_5_product_photos_1.jpg");
+    }
+
+    // ---- per-block preset (FEATURE_2608_08 / 03) ----
+
+    private ProcessingPreset preset(Long id, String assetKey) {
+        return ProcessingPreset.builder().id(id).name("P" + id).active(true)
+                .operations(List.of(ImageOp.builder().type("overlay").assetStorageKey(assetKey).build()))
+                .build();
+    }
+
+    /** A template whose imageZone blocks carry the given preset ids (null = inherit), plus an optional template preset. */
+    private DetailTemplate templateWithBlocks(ProcessingPreset templatePreset, DetailBlock... blocks) {
+        return DetailTemplate.builder().id(3L).name("기본").active(true).isDefault(true)
+                .imageProcessingPreset(templatePreset)
+                .blocks(List.of(blocks))
+                .build();
+    }
+
+    private DetailBlock zoneBlock(String bind, Long presetId) {
+        return DetailBlock.builder().type("imageZone").bind(bind).processingPresetId(presetId).build();
+    }
+
+    /** Stubs the loader/processor/storage chain so an upload URL encodes the filename (and thus the preset id). */
+    private void stubCompositePipeline() {
+        given(productImageLoader.loadUrl(any())).willReturn(new byte[]{1});
+        given(imageProcessor.process(any(), any())).willReturn(new byte[]{2});
+        given(imageStorageService.uploadBytes(any(), eq("master-detail"), any(), eq("image/jpeg")))
+                .willAnswer(inv -> "out/" + inv.getArgument(2));
+    }
+
+    private ProductListing cellWithZones(List<MasterImageZoneAssignment> assignments) {
+        MasterProduct master = MasterProduct.builder().id(MASTER_ID).name("마스터").build();
+        given(masterImageZoneAssignmentRepository.findByImage_MasterProductIdOrderByZoneIdAscSortOrderAsc(MASTER_ID))
+                .willReturn(assignments);
+        given(productImageUrlResolver.resolve(any()))
+                .willAnswer(inv -> ((MasterProductImage) inv.getArgument(0)).getImageUrl());
+        given(detailHtmlRenderer.render(any(), any(), any(), any())).willReturn("<html/>");
+        return ProductListing.builder().id(CELL_ID).masterProduct(master).build();
+    }
+
+    private Map<String, List<String>> capturedZones() {
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, List<String>>> zoneCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(detailHtmlRenderer).render(any(), any(), zoneCaptor.capture(), any());
+        return zoneCaptor.getValue();
+    }
+
+    @Test
+    void generate_blocksWithDifferentPresets_compositesEachWithItsOwnOps() {
+        ProductListing cell = cellWithZones(List.of(
+                assignment("product_photos", 0, "a0.jpg"),
+                assignment("detail_photos", 0, "b0.jpg")));
+        given(channelTemplateResolver.resolveDetail(any())).willReturn(templateWithBlocks(null,
+                zoneBlock("product_photos", 1L), zoneBlock("detail_photos", 2L)));
+        given(processingPresetRepository.findScopedById(1L)).willReturn(Optional.of(preset(1L, "wm1.png")));
+        given(processingPresetRepository.findScopedById(2L)).willReturn(Optional.of(preset(2L, "wm2.png")));
+        stubCompositePipeline();
+
+        generator.generate(cell);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ImageOp>> opsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(imageProcessor, times(2)).process(any(), opsCaptor.capture());
+        assertThat(opsCaptor.getAllValues().get(0).get(0).getAssetStorageKey()).isEqualTo("wm1.png");
+        assertThat(opsCaptor.getAllValues().get(1).get(0).getAssetStorageKey()).isEqualTo("wm2.png");
+
+        Map<String, List<String>> zones = capturedZones();
+        assertThat(zones.get("product_photos#1")).containsExactly("out/1_1_product_photos_0.jpg");
+        assertThat(zones.get("detail_photos#2")).containsExactly("out/1_2_detail_photos_0.jpg");
+    }
+
+    @Test
+    void generate_sameZoneTwoPresets_compositesTwice_underTwoKeys() {
+        ProductListing cell = cellWithZones(List.of(assignment("product_photos", 0, "a0.jpg")));
+        given(channelTemplateResolver.resolveDetail(any())).willReturn(templateWithBlocks(null,
+                zoneBlock("product_photos", 1L), zoneBlock("product_photos", 2L)));
+        given(processingPresetRepository.findScopedById(1L)).willReturn(Optional.of(preset(1L, "wm1.png")));
+        given(processingPresetRepository.findScopedById(2L)).willReturn(Optional.of(preset(2L, "wm2.png")));
+        stubCompositePipeline();
+
+        generator.generate(cell);
+
+        verify(imageProcessor, times(2)).process(any(), any());
+        Map<String, List<String>> zones = capturedZones();
+        assertThat(zones.get("product_photos#1")).containsExactly("out/1_1_product_photos_0.jpg");
+        assertThat(zones.get("product_photos#2")).containsExactly("out/1_2_product_photos_0.jpg");
+    }
+
+    @Test
+    void generate_sameZoneSamePresetTwice_compositesOnce() {
+        ProductListing cell = cellWithZones(List.of(
+                assignment("product_photos", 0, "a0.jpg"),
+                assignment("product_photos", 1, "a1.jpg")));
+        given(channelTemplateResolver.resolveDetail(any())).willReturn(templateWithBlocks(null,
+                zoneBlock("product_photos", 1L), zoneBlock("product_photos", 1L)));
+        given(processingPresetRepository.findScopedById(1L)).willReturn(Optional.of(preset(1L, "wm1.png")));
+        stubCompositePipeline();
+
+        generator.generate(cell);
+
+        verify(imageProcessor, times(2)).process(any(), any()); // 2 images, composited once each
+        Map<String, List<String>> zones = capturedZones();
+        assertThat(zones.get("product_photos#1"))
+                .containsExactly("out/1_1_product_photos_0.jpg", "out/1_1_product_photos_1.jpg");
+    }
+
+    @Test
+    void generate_inheritedAndExplicitSamePreset_sharesComposite_underBothKeys() {
+        ProcessingPreset templatePreset = preset(1L, "wm1.png");
+        ProductListing cell = cellWithZones(List.of(assignment("product_photos", 0, "a0.jpg")));
+        given(channelTemplateResolver.resolveDetail(any())).willReturn(templateWithBlocks(templatePreset,
+                zoneBlock("product_photos", null), zoneBlock("product_photos", 1L)));
+        stubCompositePipeline();
+
+        generator.generate(cell);
+
+        verify(imageProcessor, times(1)).process(any(), any());        // one image, composited once
+        verify(processingPresetRepository, never()).findScopedById(any()); // template preset is already loaded
+        Map<String, List<String>> zones = capturedZones();
+        assertThat(zones.get("product_photos")).containsExactly("out/1_1_product_photos_0.jpg");
+        assertThat(zones.get("product_photos#1")).containsExactly("out/1_1_product_photos_0.jpg");
+    }
+
+    @Test
+    void generate_unknownBlockPresetId_skipsThatZone_othersComposited() {
+        ProductListing cell = cellWithZones(List.of(
+                assignment("product_photos", 0, "a0.jpg"),
+                assignment("detail_photos", 0, "b0.jpg")));
+        given(channelTemplateResolver.resolveDetail(any())).willReturn(templateWithBlocks(null,
+                zoneBlock("product_photos", 9L), zoneBlock("detail_photos", 2L)));
+        given(processingPresetRepository.findScopedById(9L)).willReturn(Optional.empty());
+        given(processingPresetRepository.findScopedById(2L)).willReturn(Optional.of(preset(2L, "wm2.png")));
+        stubCompositePipeline();
+
+        generator.generate(cell);
+
+        verify(imageProcessor, times(1)).process(any(), any());
+        Map<String, List<String>> zones = capturedZones();
+        assertThat(zones).doesNotContainKey("product_photos#9");
+        assertThat(zones.get("product_photos")).containsExactly("a0.jpg"); // original kept
+        assertThat(zones.get("detail_photos#2")).containsExactly("out/1_2_detail_photos_0.jpg");
+    }
+
+    @Test
+    void generate_zoneNotReferencedByAnyBlock_isNotComposited_butKeptVerbatim() {
+        ProductListing cell = cellWithZones(List.of(
+                assignment("product_photos", 0, "a0.jpg"),
+                assignment("detail_photos", 0, "b0.jpg")));
+        // Only product_photos is bound by a block; detail_photos images exist but no block references them.
+        given(channelTemplateResolver.resolveDetail(any()))
+                .willReturn(templateWithBlocks(preset(5L, "wm.png"), zoneBlock("product_photos", null)));
+        stubCompositePipeline();
+
+        generator.generate(cell);
+
+        verify(imageProcessor, times(1)).process(any(), any()); // detail_photos never loaded/uploaded
+        Map<String, List<String>> zones = capturedZones();
+        assertThat(zones.get("product_photos")).containsExactly("out/1_5_product_photos_0.jpg");
+        assertThat(zones.get("detail_photos")).containsExactly("b0.jpg");
     }
 
     @Test
