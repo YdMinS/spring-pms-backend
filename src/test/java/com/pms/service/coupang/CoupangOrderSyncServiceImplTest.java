@@ -201,6 +201,55 @@ class CoupangOrderSyncServiceImplTest {
     }
 
     @Test
+    void syncAccount_ACTIVE는_활성상태만_조회한다() {
+        given(statusSyncer.syncStatus(any(), any(), any())).willReturn(new StatusSyncResult(0, 0, 1));
+
+        service.syncAccount(account, OrderSyncScope.ACTIVE);
+
+        ArgumentCaptor<CoupangOrderStatus> statuses = ArgumentCaptor.forClass(CoupangOrderStatus.class);
+        verify(statusSyncer, times(2)).syncStatus(eq(account), statuses.capture(), any());
+        assertThat(statuses.getAllValues())
+                .containsExactly(CoupangOrderStatus.ACCEPT, CoupangOrderStatus.INSTRUCT);
+    }
+
+    @Test
+    void syncAccount_ACTIVE여도_활성상태창은_기본창그대로() {
+        // 2609_14 회귀: 범위는 창을 건드리지 않는다(2609_16 D8).
+        // ⚠️ captureWindowLengths() 헬퍼는 times(STATUS_COUNT)=6 이 박혀 있어 여기선 못 쓴다.
+        given(statusSyncer.syncStatus(any(), any(), any())).willReturn(new StatusSyncResult(0, 0, 1));
+        account = account.toBuilder().lastOrderSyncAt(utcDaysAgo(1)).build();
+
+        service.syncAccount(account, OrderSyncScope.ACTIVE);
+
+        ArgumentCaptor<CoupangOrderStatus> statuses = ArgumentCaptor.forClass(CoupangOrderStatus.class);
+        ArgumentCaptor<SyncWindow> windows = ArgumentCaptor.forClass(SyncWindow.class);
+        verify(statusSyncer, times(2)).syncStatus(eq(account), statuses.capture(), windows.capture());
+        assertThat(zipToDays(statuses.getAllValues(), windows.getAllValues()))
+                .containsEntry(CoupangOrderStatus.ACCEPT, 14L)
+                .containsEntry(CoupangOrderStatus.INSTRUCT, 14L);
+    }
+
+    @Test
+    void syncAccount_ACTIVE_두상태모두실패시_예외() {
+        // D7: 실패 판정 기준은 그 범위가 조회한 상태 수(2)다. 6 과 비교하면 이 테스트가 깨진다.
+        willThrow(new RestClientException("boom")).given(statusSyncer).syncStatus(any(), any(), any());
+
+        assertThatThrownBy(() -> service.syncAccount(account, OrderSyncScope.ACTIVE))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("전 상태 실패");
+    }
+
+    @Test
+    void syncAccount_무인자는_전상태_조회한다() {
+        // 기본값 회귀: 파라미터를 안 주면 오늘과 동일(D3).
+        given(statusSyncer.syncStatus(any(), any(), any())).willReturn(new StatusSyncResult(0, 0, 1));
+
+        service.syncAccount(account);
+
+        verify(statusSyncer, times(STATUS_COUNT)).syncStatus(any(), any(), any());
+    }
+
+    @Test
     void syncResult_plus_실패목록이어붙임() {
         SyncResult a = new SyncResult(1, 2, 3, java.util.List.of(CoupangOrderStatus.ACCEPT));
         SyncResult b = new SyncResult(4, 5, 6, java.util.List.of(CoupangOrderStatus.ACCEPT,

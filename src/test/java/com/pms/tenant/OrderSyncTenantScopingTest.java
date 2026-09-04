@@ -10,6 +10,7 @@ import com.pms.service.coupang.CoupangOrderSyncService.SyncResult;
 import com.pms.service.coupang.CoupangReturnSyncService;
 import com.pms.service.coupang.CoupangReturnSyncService.CancelSyncResult;
 import com.pms.service.coupang.OrderSyncFacade;
+import com.pms.service.coupang.OrderSyncScope;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -87,7 +88,7 @@ class OrderSyncTenantScopingTest {
 
         // Capture the tenant visible to the inner sync at invocation time.
         AtomicReference<Long> tenantSeenBySync = new AtomicReference<>();
-        given(coupangOrderSyncService.syncAccount(any())).willAnswer(inv -> {
+        given(coupangOrderSyncService.syncAccount(any(), any(OrderSyncScope.class))).willAnswer(inv -> {
             tenantSeenBySync.set(TenantContext.get());
             return new SyncResult(0, 0, 0, java.util.List.of());
         });

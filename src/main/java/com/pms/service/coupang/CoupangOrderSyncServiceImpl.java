@@ -29,10 +29,6 @@ import java.util.function.Function;
 public class CoupangOrderSyncServiceImpl implements CoupangOrderSyncService {
 
     private static final String PLATFORM_COUPANG = "COUPANG";
-    // 전체 상태를 상태별로 조회한다. status 는 단일값 파라미터라, 한 상태만 조회하면 주문이
-    // 다음 단계로 넘어갔을 때(예: ACCEPT→INSTRUCT) 그 필터에 안 잡혀 status 갱신이 누락된다.
-    // 모든 상태를 돌면 박스 누락 없이 현재 상태가 항상 최신으로 반영된다.
-    private static final List<CoupangOrderStatus> SYNC_STATUSES = List.of(CoupangOrderStatus.values());
 
     private final CoupangOrderStatusSyncer statusSyncer;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
@@ -52,27 +48,39 @@ public class CoupangOrderSyncServiceImpl implements CoupangOrderSyncService {
 
     @Override
     public SyncResult syncAccount(MarketplaceAccount account) {
+        return syncAccount(account, OrderSyncScope.FULL);
+    }
+
+    @Override
+    public SyncResult syncAccount(MarketplaceAccount account, OrderSyncScope scope) {
         // 정기 동기화 = 상태 부류별로 창이 다르다(PLAN 2609_14 D1). 창 계산은 SyncWindow 안에서만 한다(D8).
+        // 범위(2609_16)는 창을 건드리지 않는다 — 도는 상태 수만 줄인다(D8).
         SyncWindow active = SyncWindow.recent(coupangProperties.getSyncDays());
         SyncWindow terminal = SyncWindow.recentSince(account.getLastOrderSyncAt(),
                 coupangProperties.getTerminalSyncMinDays(), coupangProperties.getSyncDays());
-        return sync(account, status -> status.isTerminal() ? terminal : active);
+        return sync(account, scope, status -> status.isTerminal() ? terminal : active);
     }
 
     @Override
     public SyncResult syncAccount(MarketplaceAccount account, SyncWindow window) {
-        // 기간 백필 = 사용자가 지정한 창을 전 상태에 그대로 쓴다(D7). 여기에 축소를 끼얹으면 요청을 배신한다.
-        return sync(account, status -> window);
+        // 기간 백필 = 사용자가 지정한 창을 전 상태에 그대로 쓴다(2609_14 D7). 축소도 범위 축약도 끼얹지
+        // 않는다(2609_16 D3) — 요청한 기간의 주문을 상태 불문 전부 가져오는 게 이 경로의 계약이다.
+        return sync(account, OrderSyncScope.FULL, status -> window);
     }
 
-    private SyncResult sync(MarketplaceAccount account, Function<CoupangOrderStatus, SyncWindow> windowFor) {
+    private SyncResult sync(MarketplaceAccount account, OrderSyncScope scope,
+                            Function<CoupangOrderStatus, SyncWindow> windowFor) {
+        // status 는 단일값 파라미터다 — 한 상태만 조회하면 주문이 다음 단계로 넘어갔을 때(예: ACCEPT→INSTRUCT)
+        // 그 필터에 안 잡혀 status 갱신이 누락된다. 그래서 상태별로 돈다. 어디까지 도는지는 scope 가 정한다:
+        // FULL 은 전 상태(박스 누락 없이 현재 상태가 항상 최신), ACTIVE 는 활성 상태만(2609_16 D1).
+        List<CoupangOrderStatus> syncStatuses = scope.statuses();
         int newCount = 0;
         int updatedCount = 0;
         int pages = 0;
         List<CoupangOrderStatus> failedStatuses = new ArrayList<>();
 
         // 상태 순서는 enum 순서(라이프사이클) 유지 — ACCEPT → INSTRUCT 가 먼저 커밋되는 게 발송처리에 유리.
-        for (CoupangOrderStatus status : SYNC_STATUSES) {
+        for (CoupangOrderStatus status : syncStatuses) {
             SyncWindow w = windowFor.apply(status);   // 이 루프의 유일한 창 — 로그도 전부 이 값을 쓴다
             try {
                 long startedAt = System.currentTimeMillis();
@@ -93,13 +101,15 @@ public class CoupangOrderSyncServiceImpl implements CoupangOrderSyncService {
         }
 
         // 전 상태 실패 = 계정 자체 문제(자격증명·네트워크) → 기존처럼 예외로 파사드 격리에 맡긴다.
-        if (failedStatuses.size() == SYNC_STATUSES.size()) {
+        // 판정 기준은 "그 범위가 조회한 상태 수" 다(2609_16 D7) — ACTIVE(2개)를 6과 비교하면
+        // 두 상태가 다 죽어도 예외가 안 나 계정 장애가 부분 실패로 위장된다.
+        if (failedStatuses.size() == syncStatuses.size()) {
             throw new IllegalStateException("쿠팡 주문 동기화 전 상태 실패: account=" + account.getId());
         }
 
         // 창이 상태 부류별로 다르므로 집계 로그에는 창을 싣지 않는다 — 상태별 창은 위 계측 로그가 찍는다.
         log.info("Coupang sync done: account={} statuses={} pages={} new={} updated={} failed={}",
-                account.getId(), SYNC_STATUSES, pages, newCount, updatedCount, failedStatuses);
+                account.getId(), syncStatuses, pages, newCount, updatedCount, failedStatuses);
         return new SyncResult(newCount, updatedCount, pages, List.copyOf(failedStatuses));
     }
 }
