@@ -87,4 +87,13 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
      */
     @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller"})
     Optional<OrderItem> findWithAccountAndSellerById(Long id);
+
+    /**
+     * id 목록으로 주문 라인 조회 — 발주처리 전개용(PLAN 2609_17 D1).
+     *
+     * 발주처리 서비스는 @Transactional 없이(open-in-view=false) account.getPlatform()/getVendorId() 를
+     * 읽으므로 marketplaceAccount 를 즉시 로딩한다. seller 는 쓰지 않으므로 포함하지 않는다.
+     */
+    @EntityGraph(attributePaths = "marketplaceAccount")
+    List<OrderItem> findWithAccountByIdIn(List<Long> ids);
 }
