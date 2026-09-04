@@ -69,6 +69,8 @@ oklyx:
     # Unlike the list query this path has no status condition, so an order in any status can be fetched
     # (that is why the single-order shipping sheet works regardless of order status).
     ordersheet-by-order-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/{orderId}/ordersheets
+    # Acknowledgement (결제완료→상품준비중). Unverified against a live account — keep it overridable.
+    acknowledgement-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/ordersheets/acknowledgement
     # Return/cancel request list query GET_RETURN_REQUEST_BY_QUERY (cancelType=CANCEL to reconcile paid-order cancellations).
     returnrequests-path: /v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests
     # Cancel reconciliation window (days): wider than ordersheets to cover delayed cancellations. Coupang max 31 days.

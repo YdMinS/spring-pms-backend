@@ -59,6 +59,14 @@ public class CoupangProperties {
     private String ordersheetByOrderPath =
             "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/{orderId}/ordersheets";
 
+    /**
+     * 발주처리(상품준비중 처리) 경로. {vendorId} 치환. 결제완료(ACCEPT)→상품준비중(INSTRUCT) 전환.
+     * 바디는 {"vendorId":..., "shipmentBoxIds":[...]} 이고 전환은 되돌릴 수 없다.
+     * ⚠️ 실계정 검증 전이라 설정으로 뺀다(ordersheet-by-order-path 와 같은 판단, PLAN 2609_17 D13).
+     */
+    private String acknowledgementPath =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/ordersheets/acknowledgement";
+
     /** 송장업로드(발송처리) 경로. {vendorId} 치환. 상품준비중(INSTRUCT)→배송지시(DEPARTURE) 전환. */
     private String invoicesPath = "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/orders/invoices";
 
