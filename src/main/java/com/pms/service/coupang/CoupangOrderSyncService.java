@@ -25,6 +25,15 @@ public interface CoupangOrderSyncService {
     SyncResult syncAccount(MarketplaceAccount account);
 
     /**
+     * 계정 1개를 <b>지정 범위</b>로 동기화 (FEATURE_2609_16).
+     *
+     * 쿠팡 ordersheets 의 {@code status} 는 단일값이라 상태 수가 곧 왕복 수다 —
+     * 출고관리처럼 종결 상태가 필요 없는 화면이 {@link OrderSyncScope#ACTIVE} 로 왕복을 6 → 2 로 줄이는 자리다.
+     * 창 계산·부분 실패 처리는 {@link #syncAccount(MarketplaceAccount)} 와 동일하고, 도는 상태만 달라진다.
+     */
+    SyncResult syncAccount(MarketplaceAccount account, OrderSyncScope scope);
+
+    /**
      * 계정 1개를 <b>지정 창</b>으로 동기화 (과거 기간 불러오기, FEATURE_2609_10).
      * 상태 루프·부분 실패 처리는 기본 창과 동일하다.
      */

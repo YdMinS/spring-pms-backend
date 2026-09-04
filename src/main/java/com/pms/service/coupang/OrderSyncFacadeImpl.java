@@ -42,9 +42,14 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
 
     @Override
     public OrderSyncResult sync(Long accountId) {
+        return sync(accountId, OrderSyncScope.FULL);
+    }
+
+    @Override
+    public OrderSyncResult sync(Long accountId, OrderSyncScope scope) {
         MarketplaceAccount account = marketplaceAccountRepository.findById(accountId)
                 .orElseThrow(() -> new ResourceNotFoundException("MarketplaceAccount", accountId));
-        return syncOne(account);   // 단건은 격리 없이 예외 전파
+        return syncOne(account, scope);   // 단건은 격리 없이 예외 전파
     }
 
     @Override
@@ -86,7 +91,12 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
         }
     }
 
-    /** 계정 목록을 격리 동기화해 합산 (COUPANG 만, 한 계정 실패는 로그 후 계속). */
+    /**
+     * 계정 목록을 격리 동기화해 합산 (COUPANG 만, 한 계정 실패는 로그 후 계속).
+     *
+     * 범위는 항상 {@link OrderSyncScope#FULL} 이다(PLAN 2609_16 D4) — 셀러/전체 동기화는 어느 화면이
+     * 불렀는지 구분 없이 도는 호출이라 범위를 실어 보낼 자리가 아니다.
+     */
     private OrderSyncResult syncEach(List<MarketplaceAccount> accounts) {
         OrderSyncResult total = OrderSyncResult.empty();
         for (MarketplaceAccount account : accounts) {
@@ -94,7 +104,7 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
                 continue;
             }
             try {
-                total = total.plus(syncOne(account));
+                total = total.plus(syncOne(account, OrderSyncScope.FULL));
             } catch (Exception e) {
                 log.warn("Order sync failed for account={}, isolated and continue", account.getId(), e);
             }
@@ -102,8 +112,13 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
         return total;
     }
 
-    /** 한 계정: ordersheets 먼저 → 취소 보정(이미 적재된 주문 위에 보정). */
-    private OrderSyncResult syncOne(MarketplaceAccount account) {
+    /**
+     * 한 계정: ordersheets 먼저 → 취소 보정(이미 적재된 주문 위에 보정).
+     *
+     * {@code scope} 는 ordersheets 가 조회할 상태만 좁힌다 — 취소 보정과 상태 기록은 범위와 무관하게
+     * 그대로 돈다(PLAN 2609_16 D5·D6).
+     */
+    private OrderSyncResult syncOne(MarketplaceAccount account, OrderSyncScope scope) {
         // Drive the tenant from the account being synced so saved order_item/shopping_list_item
         // (@TenantId) land in the account's tenant regardless of trigger (web admin or a future
         // batch/@Scheduled with no SecurityContext). Save/restore the previous value instead of
@@ -114,7 +129,7 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
 
             SyncResult orders;
             try {
-                orders = coupangOrderSyncService.syncAccount(account);
+                orders = coupangOrderSyncService.syncAccount(account, scope);
             } catch (RuntimeException e) {
                 syncStatusRecorder.recordFailure(account.getId(), e);
                 throw e;                    // 격리는 syncEach 담당, 단건은 전파(D4)
