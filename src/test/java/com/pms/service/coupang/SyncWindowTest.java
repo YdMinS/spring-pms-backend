@@ -3,6 +3,8 @@ package com.pms.service.coupang;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -38,6 +40,39 @@ class SyncWindowTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new SyncWindow(LocalDate.of(2026, 8, 1), null))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // recentSince: lastSuccess 는 서버 시각(UTC) naive 라 UTC 로 해석된다 → 테스트 데이터도 UTC 로 고정한다.
+    // KST 기준으로 만들면(LocalDateTime.now() 는 로컬=KST) 환산에서 날짜가 하루 당겨져 오후에만 깨진다.
+    private static LocalDateTime utcDaysAgo(long days) {
+        return LocalDate.now(SyncWindow.KST).minusDays(days).atTime(3, 0);   // UTC 03:00 = KST 12:00
+    }
+
+    private static long lengthInDays(SyncWindow window) {
+        return ChronoUnit.DAYS.between(window.from(), window.to());
+    }
+
+    @Test
+    void 마지막성공이없으면상한창() {
+        // 한 번도 성공 못 한 계정 = 현행 동작 그대로(D4).
+        assertThat(lengthInDays(SyncWindow.recentSince(null, 3, 14))).isEqualTo(14);
+    }
+
+    @Test
+    void 어제성공했으면하한창() {
+        assertThat(lengthInDays(SyncWindow.recentSince(utcDaysAgo(1), 3, 14))).isEqualTo(3);
+    }
+
+    @Test
+    void 오래쉬었으면경과만큼넓어지되상한까지() {
+        // 상한(sync-days)을 넘지 않는다 — 어떤 경로에서도 현행보다 넓어지지 않는다(D4).
+        assertThat(lengthInDays(SyncWindow.recentSince(utcDaysAgo(20), 3, 14))).isEqualTo(14);
+    }
+
+    @Test
+    void 일주일쉬었으면8일창() {
+        // 경과 7일 + 1 = 8일. clamp 에 걸리지 않는 유일한 케이스라 UTC 고정이 특히 중요하다.
+        assertThat(lengthInDays(SyncWindow.recentSince(utcDaysAgo(7), 3, 14))).isEqualTo(8);
     }
 
     @Test

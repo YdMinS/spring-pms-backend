@@ -1,7 +1,9 @@
 package com.pms.service.coupang;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 
 /**
@@ -35,5 +37,29 @@ public record SyncWindow(LocalDate from, LocalDate to) {
     public static SyncWindow recent(int syncDays) {
         LocalDate to = LocalDate.now(KST);
         return new SyncWindow(to.minusDays(syncDays), to);
+    }
+
+    /**
+     * 종결 상태 전용 창 — 마지막 성공 동기화 이후만 덮는다(PLAN 2609_14 D3).
+     *
+     * 종결 상태는 되돌아오지 않으므로, 창은 "마지막 동기화 이후 경과 + 배송 소요"만 덮으면 충분하다.
+     * 매일 돌면 minDays, 오래 쉬었으면 자동으로 넓어진다 — 고정 숫자를 튜닝할 필요가 없다.
+     *
+     * @param lastSuccess 마지막 ordersheets 성공 시각(null = 한 번도 성공 못 함)
+     * @param minDays     하한. 자정 경계에서 하루가 통째로 비지 않게 하는 최소치
+     * @param maxDays     상한 = 정기 창(sync-days). <b>현행보다 넓어지는 일은 없다</b>(D4)
+     */
+    public static SyncWindow recentSince(LocalDateTime lastSuccess, int minDays, int maxDays) {
+        if (lastSuccess == null) {
+            return recent(maxDays);          // 한 번도 성공 못 한 계정 = 현행 동작 그대로(D4)
+        }
+        // lastOrderSyncAt 은 서버 시각(UTC) naive 다 → UTC 로 해석한 뒤 KST 달력 날짜로 환산한다.
+        // KST 로 바로 붙이면 9시간 최근으로 오독해 경과일이 하루 적게 나온다(놓치는 방향의 오차).
+        LocalDate lastDate = lastSuccess.atZone(ZoneOffset.UTC).withZoneSameInstant(KST).toLocalDate();
+        // 경과는 날짜끼리 뺀다 — 시각끼리 빼면 자정 직후에 0일이 나온다.
+        long elapsed = ChronoUnit.DAYS.between(lastDate, LocalDate.now(KST));
+        // min 이 바깥이라 minDays > maxDays 로 잘못 설정돼도 창이 상한을 넘지 못한다(D4).
+        int days = (int) Math.min(maxDays, Math.max(minDays, elapsed + 1));
+        return recent(days);
     }
 }

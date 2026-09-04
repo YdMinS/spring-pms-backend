@@ -35,6 +35,13 @@ public class CoupangProperties {
     private int syncDays = 14;
 
     /**
+     * 종결 상태(배송지시~추적불가) 조회 창의 <b>하한</b>(일). 상한은 {@link #syncDays} 다.
+     * 실제 창 = clamp(마지막 성공 이후 경과 + 1, 이 값, syncDays) — {@link com.pms.service.coupang.SyncWindow#recentSince}.
+     * ⚠️ 1 로 낮추지 말 것: 창이 KST 달력 날짜 단위라 자정 경계에서 하루가 통째로 빈다.
+     */
+    private int terminalSyncMinDays = 3;
+
+    /**
      * INSTRUCT(상품준비중) 조회 윈도우(일). 송장 접수시트 생성 전용.
      * createdAtFrom = 오늘 − instructDays. INSTRUCT 는 결제완료(ACCEPT) 후 사용자가 나중에 수동 전환하므로
      * 주문 생성일(createdAt)이 오래됐을 수 있다 — 좁은 윈도우면 현재 INSTRUCT 주문이 조회에서 누락된다.

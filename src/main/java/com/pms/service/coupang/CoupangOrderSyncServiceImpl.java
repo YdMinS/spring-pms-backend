@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
 
 /**
  * {@link CoupangOrderSyncService} 구현 — 상태별 동기화 오케스트레이션.
@@ -51,12 +52,20 @@ public class CoupangOrderSyncServiceImpl implements CoupangOrderSyncService {
 
     @Override
     public SyncResult syncAccount(MarketplaceAccount account) {
-        // 기본 창은 여기서 한 번만 만든다(D6) — syncer 는 창을 계산하지 않는다.
-        return syncAccount(account, SyncWindow.recent(coupangProperties.getSyncDays()));
+        // 정기 동기화 = 상태 부류별로 창이 다르다(PLAN 2609_14 D1). 창 계산은 SyncWindow 안에서만 한다(D8).
+        SyncWindow active = SyncWindow.recent(coupangProperties.getSyncDays());
+        SyncWindow terminal = SyncWindow.recentSince(account.getLastOrderSyncAt(),
+                coupangProperties.getTerminalSyncMinDays(), coupangProperties.getSyncDays());
+        return sync(account, status -> status.isTerminal() ? terminal : active);
     }
 
     @Override
     public SyncResult syncAccount(MarketplaceAccount account, SyncWindow window) {
+        // 기간 백필 = 사용자가 지정한 창을 전 상태에 그대로 쓴다(D7). 여기에 축소를 끼얹으면 요청을 배신한다.
+        return sync(account, status -> window);
+    }
+
+    private SyncResult sync(MarketplaceAccount account, Function<CoupangOrderStatus, SyncWindow> windowFor) {
         int newCount = 0;
         int updatedCount = 0;
         int pages = 0;
@@ -64,8 +73,14 @@ public class CoupangOrderSyncServiceImpl implements CoupangOrderSyncService {
 
         // 상태 순서는 enum 순서(라이프사이클) 유지 — ACCEPT → INSTRUCT 가 먼저 커밋되는 게 발송처리에 유리.
         for (CoupangOrderStatus status : SYNC_STATUSES) {
+            SyncWindow w = windowFor.apply(status);   // 이 루프의 유일한 창 — 로그도 전부 이 값을 쓴다
             try {
-                StatusSyncResult r = statusSyncer.syncStatus(account, status, window);
+                long startedAt = System.currentTimeMillis();
+                StatusSyncResult r = statusSyncer.syncStatus(account, status, w);
+                // 상태별 비용 계측(PLAN 2609_14 D9) — 어느 상태가 무거운지가 이후 튜닝(2609_16)의 유일한 근거다.
+                log.info("Coupang status sync: account={} status={} window={} pages={} new={} updated={} elapsedMs={}",
+                        account.getId(), status, w, r.pages(), r.newCount(), r.updatedCount(),
+                        System.currentTimeMillis() - startedAt);
                 newCount += r.newCount();
                 updatedCount += r.updatedCount();
                 pages += r.pages();
@@ -73,7 +88,7 @@ public class CoupangOrderSyncServiceImpl implements CoupangOrderSyncService {
                 // 이미 커밋된 앞 상태는 살아남는다. 남은 상태도 계속 시도한다(부분 성공 > 전량 실패).
                 failedStatuses.add(status);
                 log.warn("Coupang status sync failed (committed statuses kept): account={} status={} window={}",
-                        account.getId(), status, window, e);
+                        account.getId(), status, w, e);
             }
         }
 
@@ -82,8 +97,9 @@ public class CoupangOrderSyncServiceImpl implements CoupangOrderSyncService {
             throw new IllegalStateException("쿠팡 주문 동기화 전 상태 실패: account=" + account.getId());
         }
 
-        log.info("Coupang sync done: account={} window={} statuses={} pages={} new={} updated={} failed={}",
-                account.getId(), window, SYNC_STATUSES, pages, newCount, updatedCount, failedStatuses);
+        // 창이 상태 부류별로 다르므로 집계 로그에는 창을 싣지 않는다 — 상태별 창은 위 계측 로그가 찍는다.
+        log.info("Coupang sync done: account={} statuses={} pages={} new={} updated={} failed={}",
+                account.getId(), SYNC_STATUSES, pages, newCount, updatedCount, failedStatuses);
         return new SyncResult(newCount, updatedCount, pages, List.copyOf(failedStatuses));
     }
 }
