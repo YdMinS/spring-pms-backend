@@ -10,6 +10,7 @@ import com.pms.dto.request.ManualShipmentRequest;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderItemRepository;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.coupang.OrderItemUpserter;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -32,6 +33,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -62,6 +64,8 @@ class ShipmentConfirmServiceImplTest {
     private CoupangProperties coupangProperties;
     @Mock
     private MarketplaceAccountRepository marketplaceAccountRepository;
+    @Mock
+    private OrderItemUpserter orderItemUpserter;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private ShipmentConfirmServiceImpl service;
@@ -70,7 +74,7 @@ class ShipmentConfirmServiceImplTest {
     void setUp() {
         service = new ShipmentConfirmServiceImpl(
                 coupangApiClient, coupangProperties, orderItemRepository,
-                marketplaceAccountRepository, carrierCodeService, objectMapper);
+                marketplaceAccountRepository, carrierCodeService, objectMapper, orderItemUpserter);
     }
 
     @Test
@@ -372,6 +376,62 @@ class ShipmentConfirmServiceImplTest {
         assertThat(result.skipped().get(0).status()).isEqualTo("DELIVERING");
         assertThat(result.unmatched()).isEmpty();
         assertThat(result.matchedOrders()).isZero();
+    }
+
+    // --- 적재 단일화 (PLAN 2609_13): 폴백으로 조회한 박스도 order_item 에 남긴다 ---
+
+    @Test
+    void 폴백조회분을적재한다() throws Exception {
+        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of());
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(account));
+        given(coupangProperties.getOrdersheetByOrderPath()).willReturn(ORDER_BY_ID_PATH);
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(singleOrderTwoLines());
+        given(carrierCodeService.resolveDeliveryCompanyCode("COUPANG")).willReturn("CJGLS");
+        given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
+        given(coupangApiClient.post(anyString(), anyString(), any()))
+                .willReturn(responseAllSuccess("302012345678", "302012345678"));
+
+        service.confirm(xlsx(new Object[][]{{4000019469460L, "123456789"}}));
+
+        // 이미 받아온 응답이라 추가 API 호출 없이 저장된다(PLAN 2609_13 D1).
+        verify(orderItemUpserter).upsertBox(eq(account), any());
+    }
+
+    @Test
+    void 전송제외박스도적재한다() throws Exception {
+        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        given(orderItemRepository.findByExternalOrderId("4000")).willReturn(List.of());
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(account));
+        given(coupangProperties.getOrdersheetByOrderPath()).willReturn(ORDER_BY_ID_PATH);
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(singleOrderDelivering());
+
+        ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{"4000", "123"}}));
+
+        // 배송지시 이상이라 전송에선 빠지지만, 그 상태가 정확한 값이라 저장 가치가 있다(D9).
+        verify(orderItemUpserter).upsertBox(eq(account), any());
+        assertThat(result.skipped()).hasSize(1);
+        verify(coupangApiClient, never()).post(anyString(), anyString(), any());
+    }
+
+    @Test
+    void 적재실패해도전송은진행된다() throws Exception {
+        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of());
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(account));
+        given(coupangProperties.getOrdersheetByOrderPath()).willReturn(ORDER_BY_ID_PATH);
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(singleOrderTwoLines());
+        given(carrierCodeService.resolveDeliveryCompanyCode("COUPANG")).willReturn("CJGLS");
+        given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
+        given(coupangApiClient.post(anyString(), anyString(), any()))
+                .willReturn(responseAllSuccess("302012345678", "302012345678"));
+        willThrow(new RuntimeException("boom")).given(orderItemUpserter).upsertBox(any(), any());
+
+        ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{4000019469460L, "123456789"}}));
+
+        // 전송이 우선이다(D6) — 저장 실패는 삼키고 송장은 그대로 나간다.
+        verify(coupangApiClient).post(anyString(), anyString(), eq(account));
+        assertThat(result.succeeded()).isEqualTo(2);
     }
 
     @Test

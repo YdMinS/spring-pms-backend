@@ -4,18 +4,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.OrderItem;
-import com.pms.repository.OrderItemRepository;
+import com.pms.service.coupang.OrderItemUpserter.UpsertCount;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
-import java.time.OffsetDateTime;
-import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.Optional;
 
 /**
  * 쿠팡 ordersheets 를 상태 1개 단위로 조회·upsert 하는 커밋 경계.
@@ -33,15 +28,12 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class CoupangOrderStatusSyncer {
 
-    private static final String PLATFORM_COUPANG = "COUPANG";
     private static final int MAX_PER_PAGE = 50;
-    private static final int NAME_MAX_LENGTH = 100;
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final String KST_OFFSET = "%2B09:00";        // +09:00, URL-encoded (+ → %2B)
-    private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
     private final CoupangApiClient coupangApiClient;
-    private final OrderItemRepository orderItemRepository;
+    private final OrderItemUpserter orderItemUpserter;
     private final CoupangProperties coupangProperties;
     private final ObjectMapper objectMapper;
 
@@ -72,15 +64,11 @@ public class CoupangOrderStatusSyncer {
             JsonNode parsed = readTree(coupangApiClient.get(path, query, account));
             pages++;
 
-            for (JsonNode box : parsed.path("data")) {
-                for (JsonNode item : box.path("orderItems")) {
-                    if (upsert(account, box, item)) {
-                        newCount++;
-                    } else {
-                        updatedCount++;
-                    }
-                }
-            }
+            // 적재는 단일 진입점을 통한다(PLAN 2609_13 D1·D2) — 시트·폴백 경로와 같은 규칙으로 저장된다.
+            // 이 호출은 syncStatus 의 트랜잭션에 REQUIRED 로 합류한다(의도된 동작 — 커밋 경계는 여전히 상태 1개, D15).
+            UpsertCount counted = orderItemUpserter.upsertBoxes(account, parsed.path("data"));
+            newCount += counted.newCount();
+            updatedCount += counted.updatedCount();
             nextToken = parsed.path("nextToken").asText("");
         } while (nextToken != null && !nextToken.isBlank());
 
@@ -98,94 +86,12 @@ public class CoupangOrderStatusSyncer {
                 + "&maxPerPage=" + MAX_PER_PAGE;
     }
 
-    /**
-     * 주문 라인 멱등 upsert. 신규면 insert(true), 기존이면 가변 필드만 갱신(false) 반환.
-     */
-    private boolean upsert(MarketplaceAccount account, JsonNode box, JsonNode item) {
-        String orderId = box.path("orderId").asText();
-        String boxId = box.path("shipmentBoxId").asText();
-        String vendorItemId = item.path("vendorItemId").asText();
-
-        int shippingCount = item.path("shippingCount").asInt(0);
-        int cancelCount = item.path("cancelCount").asInt(0);
-        int holdCount = item.path("holdCountForCancel").asInt(0);
-        String status = box.path("status").asText();
-        LocalDateTime paidAt = parseDateTime(box.path("paidAt").asText(null));
-        String itemName = item.path("vendorItemName").asText(null);
-        // orderer/receiver live on the shipmentBox, not on the order line.
-        String ordererName = trimName(box.path("orderer").path("name").asText(null));
-        String receiverName = trimName(box.path("receiver").path("name").asText(null));
-        String rawJson = item.toString();
-
-        Optional<OrderItem> existing = orderItemRepository
-                .findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
-                        account.getId(), boxId, orderId, vendorItemId);
-
-        if (existing.isPresent()) {
-            // 기존 줄: 가변 필드만 갱신 (status·취소수량·수량·raw) — toBuilder 로 불변성 유지
-            OrderItem updated = existing.get().toBuilder()
-                    .orderCount(shippingCount)
-                    .cancelCount(cancelCount)
-                    .holdCount(holdCount)
-                    .status(status)
-                    .paidAt(paidAt)
-                    .itemName(itemName)
-                    .ordererName(ordererName)
-                    .receiverName(receiverName)
-                    .raw(rawJson)
-                    .build();
-            orderItemRepository.save(updated);
-            return false;
-        }
-
-        orderItemRepository.save(OrderItem.builder()
-                .marketplaceAccount(account)
-                .platform(PLATFORM_COUPANG)
-                .externalOrderId(orderId)
-                .externalBoxId(boxId)
-                .externalItemId(vendorItemId)
-                .orderCount(shippingCount)
-                .cancelCount(cancelCount)
-                .holdCount(holdCount)
-                .status(status)
-                .paidAt(paidAt)
-                .itemName(itemName)
-                .ordererName(ordererName)
-                .receiverName(receiverName)
-                .raw(rawJson)
-                .build());
-        return true;
-    }
-
     private JsonNode readTree(String json) {
         try {
             return objectMapper.readTree(json);
         } catch (Exception e) {
             throw new IllegalStateException("쿠팡 ordersheets 응답 파싱 실패", e);
         }
-    }
-
-    /**
-     * 쿠팡 paidAt 파싱. 응답은 오프셋 포함 ISO-8601 (예: 2025-01-15T14:17:13.973885-08:00) →
-     * KST 로컬시각으로 환산. 파싱 실패 시 null (paidAt 은 참고/정렬용, 필터 아님).
-     */
-    private LocalDateTime parseDateTime(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        try {
-            return OffsetDateTime.parse(value).atZoneSameInstant(KST).toLocalDateTime();
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /** 컬럼 상한(100자)을 넘는 이름은 잘라서 저장한다 — MySQL 은 초과 시 INSERT 자체가 실패한다(D8). */
-    private String trimName(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        return value.length() <= NAME_MAX_LENGTH ? value : value.substring(0, NAME_MAX_LENGTH);
     }
 
     /** 상태 1개 처리 결과. */

@@ -12,6 +12,7 @@ import com.pms.service.ShipmentConfirmResult.FailedBox;
 import com.pms.service.ShipmentConfirmResult.SkippedOrder;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangOrderStatus;
+import com.pms.service.coupang.OrderItemUpserter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.Cell;
@@ -43,6 +44,8 @@ import java.util.function.Function;
  *    — 다른 계정 배치는 계속. 네이버 등 비-COUPANG 은 unmatched 로 리포트(후속 어댑터 스코프).
  * ⚠️ 폴백(PLAN 송장시트 D16)은 동기화가 실패해 order_item 이 비어도 시트로 발송처리가 되게 하는 안전망이다
  *    — 정상 경로(DB 매칭)에서는 쿠팡을 한 번도 호출하지 않는다.
+ * ⚠️ 폴백으로 조회한 박스는 {@code order_item} 에 적재된다(PLAN 2609_13 D1·D9) — best-effort 라
+ *    저장이 실패해도 송장은 그대로 전송된다(D6). 이 서비스에 @Transactional 을 붙이면 안 된다(D3).
  *
  * <p>{@code confirmManual}(단건 수동, PLAN 2609_11)은 같은 전송 헬퍼({@code postInvoices})만 공유하고 판정은 따로 한다:
  * 앵커 라인이 속한 <b>박스 1개</b>만 전개하고(같은 주문의 다른 박스는 손대지 않는다, D1),
@@ -88,6 +91,7 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final CarrierCodeService carrierCodeService;
     private final ObjectMapper objectMapper;
+    private final OrderItemUpserter orderItemUpserter;
 
     @Override
     public ShipmentConfirmResult confirm(MultipartFile file) {
@@ -111,7 +115,8 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
         List<String> fallbackCandidates = new ArrayList<>();
         Map<Long, MarketplaceAccount> accountById = new LinkedHashMap<>();
         Map<Long, List<InvoiceLine>> linesByAccount = new LinkedHashMap<>();
-        // 송장업로드 성공 시 status 를 갱신할 DB 라인(박스 단위). 폴백으로만 잡힌 박스는 여기 없다.
+        // 송장업로드 성공 시 status 를 갱신할 DB 라인(박스 단위).
+        // 폴백으로 확정된 주문도 조회 시점에 적재되므로(PLAN 2609_13 D9) 여기 편입된다.
         Map<String, List<OrderItem>> dbLinesByBoxId = new LinkedHashMap<>();
         int matchedOrders = 0;
 
@@ -143,7 +148,8 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
             registerWriteBack(sendable, dbLinesByBoxId);
         }
 
-        matchedOrders += fallback(fallbackCandidates, unmatched, skipped, accountById, linesByAccount);
+        matchedOrders += fallback(fallbackCandidates, unmatched, skipped, accountById, linesByAccount,
+                dbLinesByBoxId);
 
         int succeeded = 0;
         List<FailedBox> failed = new ArrayList<>();
@@ -295,11 +301,15 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
      * <p>응답 {@code box.status} 가 배송지시 이상이면 그 박스를 제외하고, 남는 라인이 없으면
      * {@code skipped} 로 보고한다(PLAN 2609_07 D6).</p>
      *
+     * <p>조회로 받아온 박스는 전송 여부와 무관하게 {@code order_item} 에 적재되고(PLAN 2609_13 D9),
+     * 확정된 주문의 DB 라인은 {@code dbLinesByBoxId} 에 편입돼 성공 시 write-back 대상이 된다.</p>
+     *
      * @return 폴백으로 확정된 주문 수(스킵분 제외). 실패한 주문은 {@code unmatched} 에 추가된다.
      */
     private int fallback(List<String> candidates, List<String> unmatched, List<SkippedOrder> skipped,
                          Map<Long, MarketplaceAccount> accountById,
-                         Map<Long, List<InvoiceLine>> linesByAccount) {
+                         Map<Long, List<InvoiceLine>> linesByAccount,
+                         Map<String, List<OrderItem>> dbLinesByBoxId) {
         if (candidates.isEmpty()) {
             return 0;                       // 정상 경로: 쿠팡 호출 0회
         }
@@ -352,6 +362,11 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
             MarketplaceAccount account = hit.account();
             accountById.putIfAbsent(account.getId(), account);
             linesByAccount.computeIfAbsent(account.getId(), k -> new ArrayList<>()).addAll(hit.lines());
+            // 조회 시점에 적재했으므로(fetchOrderLines) 이 주문도 write-back 대상이 된다(PLAN 2609_13 D9).
+            // upsertBox 가 자기 트랜잭션에서 커밋한 뒤라 여기서 읽으면 방금 저장한 라인이 보인다.
+            // 전송에서 빠진 박스(DEPARTURE 이상)가 섞여도 무해하다 — markDeparted 는 쿠팡이 성공을
+            // 돌려준 박스 id 만 갱신한다. 여기서 다시 거르면 폴백 경로에만 필터 규칙이 하나 더 생긴다.
+            registerWriteBack(orderItemRepository.findByExternalOrderId(orderId), dbLinesByBoxId);
             promoteToFront(coupangAccounts, account);
             log.info("발송처리 폴백 확정: orderId={} account={} boxes={}",
                     orderId, account.getId(), distinctBoxIds(hit.lines()).size());
@@ -400,6 +415,8 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
      * 규칙은 시트 생성 {@code flattenBox} 와 동일: {@code shippingCount - cancelCount <= 0} 이면 제외.</p>
      * <p>⚠️ 배송지시 이상 박스는 제외하고 그 상태를 {@code skippedStatus} 로 남긴다(PLAN 2609_07 D6) —
      * 전량취소로 0행이 된 경우와 반드시 구분된다.</p>
+     * <p>⚠️ 받아온 박스는 <b>skip 여부와 무관하게</b> {@code order_item} 에 적재한다(PLAN 2609_13 D9) —
+     * 다음 발송처리가 폴백을 타지 않게 하는 것이 이 저장의 목적이다. 추가 API 호출은 없다.</p>
      */
     private OrderLookup fetchOrderLines(MarketplaceAccount account, String orderId) {
         String path = coupangProperties.getOrdersheetByOrderPath()
@@ -417,6 +434,14 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
         String skippedStatus = null;
         for (JsonNode box : data) {
             String boxStatus = box.path("status").asText("");
+            // 조회 응답은 이미 정확하다 — 전송 대상에서 빠지는 박스도 저장한다(PLAN 2609_13 D9).
+            // ⚠️ 전송이 우선이다(D6). 저장 실패가 발송처리를 막으면 안 되므로 박스 단위로 삼킨다(D4·D5).
+            try {
+                orderItemUpserter.upsertBox(account, box);
+            } catch (Exception e) {
+                log.warn("발송처리 폴백 주문 적재 실패(전송은 계속): orderId={} account={}",
+                        orderId, account.getId(), e);
+            }
             if (SKIP_STATUSES.contains(boxStatus)) {
                 if (skippedStatus == null) {
                     skippedStatus = boxStatus;                  // 첫 번째로 걸러진 박스의 상태만 기억
