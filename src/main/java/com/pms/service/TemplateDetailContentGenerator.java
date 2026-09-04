@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.DetailBlock;
 import com.pms.domain.DetailTemplate;
 import com.pms.domain.ImageOp;
 import com.pms.domain.MasterImageZoneAssignment;
@@ -10,13 +11,16 @@ import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
+import com.pms.repository.ProcessingPresetRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,14 +33,19 @@ import java.util.Map;
  * <p>⚠️ The generator only fills {@code textBindings}; the {@code defaultValue} fallback is the renderer's
  * single responsibility (do NOT assemble defaults here).</p>
  *
- * <p>⚠️ Not pure anymore (FEATURE_2608_08): when the channel's {@link DetailTemplate} references an image
- * {@link ProcessingPreset}, each zone image is loaded, composited through {@link ImageProcessor}
- * (watermarks/badges burned per channel), re-uploaded, and its URL swapped before rendering. With no
- * preset (or empty ops) the URLs pass through verbatim (no I/O). The processor/storage/loader are injected,
- * so this stays a Mockito unit test. LAZY {@code template.getImageProcessingPreset()} /
- * {@code preset.getOperations()} are read inside the existing {@code @Transactional(readOnly)} boundary.</p>
+ * <p>⚠️ Not pure anymore (FEATURE_2608_08): when a zone's block resolves to an image {@link ProcessingPreset},
+ * its images are loaded, composited through {@link ImageProcessor} (watermarks/badges burned per channel),
+ * re-uploaded, and their URLs swapped before rendering. The preset is per block
+ * ({@code DetailBlock.processingPresetId}) with the template-level {@code imageProcessingPreset} as the
+ * fallback (03), so one template can watermark two zones differently. Composites of a block-specified
+ * preset are keyed {@code bind + "#" + presetId}; an inherited preset overwrites the plain {@code bind}
+ * entry, which keeps the pre-03 behaviour byte-identical. With no preset (or empty ops) the URLs pass
+ * through verbatim (no I/O). The processor/storage/loader are injected, so this stays a Mockito unit test.
+ * LAZY {@code template.getImageProcessingPreset()} / {@code preset.getOperations()} are read inside the
+ * existing {@code @Transactional(readOnly)} boundary.</p>
  */
 @Service
+@Slf4j
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class TemplateDetailContentGenerator implements DetailContentGenerator {
@@ -51,6 +60,7 @@ public class TemplateDetailContentGenerator implements DetailContentGenerator {
     private final ImageProcessor imageProcessor;
     private final ImageStorageService imageStorageService;
     private final ProductImageLoader productImageLoader;
+    private final ProcessingPresetRepository processingPresetRepository;
 
     @Override
     public String generate(ProductListing cell) {
@@ -70,32 +80,80 @@ public class TemplateDetailContentGenerator implements DetailContentGenerator {
     }
 
     /**
-     * Burn the channel template's image {@link ProcessingPreset} (watermark/badge overlays) into each zone
-     * image, returning URLs of the freshly uploaded composites. No preset / empty ops → the original URLs
-     * are returned verbatim (no I/O). Composites are per-cell files (channel-specific), so the filename is
-     * unique per {master, preset, zone, index}. Re-generation re-composites (previous files orphaned —
-     * best-effort cleanup is out of scope).
+     * Burn each image zone's resolved {@link ProcessingPreset} (watermark/badge overlays) into its images,
+     * returning URLs of the freshly uploaded composites. The preset of an {@code imageZone} block is its own
+     * {@code processingPresetId}, falling back to the template's {@code imageProcessingPreset}; neither set
+     * (or empty ops) leaves the zone's original URLs in place (no I/O).
+     *
+     * <p>Output keys are decided per block — a block that names its own preset gets {@code bind + "#" +
+     * presetId}, an inherited one overwrites the plain {@code bind} slot — while compositing is cached per
+     * {@code (zone, preset)} combination, so two blocks sharing a preset upload once and are served under
+     * both keys. Composites are per-cell files (channel-specific), so the filename is unique per
+     * {master, preset, zone, index}. Re-generation re-composites (previous files orphaned — best-effort
+     * cleanup is out of scope).</p>
      */
     private Map<String, List<String>> applyImageProcessing(DetailTemplate template, Long masterId,
                                                            Map<String, List<String>> zoneImageUrls) {
-        ProcessingPreset preset = template.getImageProcessingPreset();
-        List<ImageOp> ops = preset == null ? null : preset.getOperations();
-        if (ops == null || ops.isEmpty()) {
-            return zoneImageUrls; // no compositing — pass through
+        List<DetailBlock> blocks = template.getBlocks();
+        if (blocks == null || blocks.isEmpty()) {
+            return zoneImageUrls;
         }
-        Map<String, List<String>> processed = new LinkedHashMap<>();
-        for (Map.Entry<String, List<String>> zone : zoneImageUrls.entrySet()) {
+        ProcessingPreset templatePreset = template.getImageProcessingPreset();
+        Long templatePresetId = templatePreset == null ? null : templatePreset.getId();
+
+        Map<String, List<String>> result = new LinkedHashMap<>(zoneImageUrls);
+        Map<String, List<String>> cacheByCombo = new HashMap<>();   // "zone#preset" → composites (no duplicate I/O)
+        Map<Long, ProcessingPreset> presetCache = new HashMap<>();
+        if (templatePresetId != null) {
+            presetCache.put(templatePresetId, templatePreset);      // already loaded — never re-fetch
+        }
+
+        for (DetailBlock block : blocks) {
+            if (block == null || !"imageZone".equals(block.getType()) || block.getBind() == null) {
+                continue;
+            }
+            Long explicitId = block.getProcessingPresetId();        // null = inherit the template preset
+            Long presetId = explicitId != null ? explicitId : templatePresetId;
+            if (presetId == null) {
+                continue;                                           // no preset at all → originals stay
+            }
+            String bind = block.getBind();
+            List<String> urls = zoneImageUrls.get(bind);
+            if (urls == null || urls.isEmpty()) {
+                continue;
+            }
+            // The key depends on the block, the composite only on the (zone, preset) pair.
+            String outKey = explicitId != null ? bind + "#" + presetId : bind;
+            String combo = bind + "#" + presetId;
+            List<String> cached = cacheByCombo.get(combo);
+            if (cached != null) {
+                result.put(outKey, cached);
+                continue;
+            }
+            if (!presetCache.containsKey(presetId)) {
+                // computeIfAbsent would not cache a null, re-querying a missing id for every block.
+                presetCache.put(presetId, processingPresetRepository.findScopedById(presetId).orElse(null));
+            }
+            ProcessingPreset preset = presetCache.get(presetId);
+            if (preset == null) {
+                log.warn("Detail image preset {} not found for zone {} — leaving the original images", presetId, bind);
+                continue;                                           // skip this combo, never fail the whole page
+            }
+            List<ImageOp> ops = preset.getOperations();
+            if (ops == null || ops.isEmpty()) {
+                continue;                                           // nothing to burn → originals stay
+            }
             List<String> outUrls = new ArrayList<>();
-            List<String> urls = zone.getValue();
             for (int i = 0; i < urls.size(); i++) {
                 byte[] baseBytes = productImageLoader.loadUrl(urls.get(i));
                 byte[] out = imageProcessor.process(baseBytes, ops);
-                String filename = masterId + "_" + preset.getId() + "_" + zone.getKey() + "_" + i + ".jpg";
+                String filename = masterId + "_" + presetId + "_" + bind + "_" + i + ".jpg";
                 outUrls.add(imageStorageService.uploadBytes(out, "master-detail", filename, "image/jpeg"));
             }
-            processed.put(zone.getKey(), outUrls);
+            cacheByCombo.put(combo, outUrls);
+            result.put(outKey, outUrls);
         }
-        return processed;
+        return result;
     }
 
     /**

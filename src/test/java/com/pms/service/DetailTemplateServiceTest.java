@@ -175,6 +175,46 @@ class DetailTemplateServiceTest {
         assertThat(response.getBlocks()).hasSize(1);
     }
 
+    // ---- per-block processing preset (FEATURE_2608_08 / 03) ----
+
+    @Test
+    void create_blockPresetIdNotInLibrary_throws400() {
+        given(detailImageGroupRepository.findAllByOrderBySortOrderAscIdAsc()).willReturn(List.of(
+                com.pms.domain.DetailImageGroup.builder()
+                        .id(1L).code("product_photos").name("제품 사진").sortOrder(0).build()));
+        given(processingPresetRepository.findAllByOrderByIdDesc()).willReturn(List.of());
+
+        DetailTemplateRequest request = DetailTemplateRequest.builder()
+                .name("T")
+                .blocks(List.of(DetailBlock.builder()
+                        .type("imageZone").bind("product_photos").processingPresetId(9L).build()))
+                .build();
+
+        assertThatThrownBy(() -> service.create(request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("존재하지 않는 이미지 처리 프리셋입니다");
+        verify(detailTemplateRepository, never()).save(any());
+    }
+
+    @Test
+    void create_blockPresetIdInLibrary_savesAndRoundTrips() {
+        given(detailImageGroupRepository.findAllByOrderBySortOrderAscIdAsc()).willReturn(List.of(
+                com.pms.domain.DetailImageGroup.builder()
+                        .id(1L).code("product_photos").name("제품 사진").sortOrder(0).build()));
+        given(processingPresetRepository.findAllByOrderByIdDesc()).willReturn(List.of(
+                ProcessingPreset.builder().id(7L).name("W").active(true).build()));
+        given(detailTemplateRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+
+        DetailTemplateRequest request = DetailTemplateRequest.builder()
+                .name("T")
+                .blocks(List.of(DetailBlock.builder()
+                        .type("imageZone").bind("product_photos").processingPresetId(7L).build()))
+                .build();
+        DetailTemplateResponse response = service.create(request);
+
+        assertThat(response.getBlocks().get(0).getProcessingPresetId()).isEqualTo(7L);
+    }
+
     // ---- image processing preset reference (FEATURE_2608_08) ----
 
     @Test

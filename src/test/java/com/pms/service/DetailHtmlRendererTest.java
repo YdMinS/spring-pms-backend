@@ -68,6 +68,49 @@ class DetailHtmlRendererTest {
         assertThat(html).isEmpty();
     }
 
+    // ---- per-block preset lookup (FEATURE_2608_08 / 03) ----
+
+    @Test
+    void imageZone_blockPreset_usesCompositedEntry() {
+        DetailBlock block = DetailBlock.builder()
+                .type("imageZone").bind("product_photos").processingPresetId(1L).build();
+        String html = renderer.render(template(block), Map.of(),
+                Map.of("product_photos", List.of("https://s3/plain.jpg"),
+                        "product_photos#1", List.of("https://s3/marked.jpg")), Map.of());
+
+        assertThat(html).contains("marked.jpg");
+        assertThat(html).doesNotContain("plain.jpg");
+    }
+
+    @Test
+    void imageZone_blockPresetWithoutCompositedEntry_fallsBackToPlainBind() {
+        // e.g. the preset id is unknown or its ops are empty → the generator left the originals in place.
+        DetailBlock block = DetailBlock.builder()
+                .type("imageZone").bind("product_photos").processingPresetId(1L).build();
+        String html = renderer.render(template(block), Map.of(),
+                Map.of("product_photos", List.of("https://s3/plain.jpg")), Map.of());
+
+        assertThat(html).contains("plain.jpg");
+    }
+
+    @Test
+    void imageZone_inheritedPreset_usesPlainBind() {
+        DetailBlock block = DetailBlock.builder().type("imageZone").bind("product_photos").build();
+        String html = renderer.render(template(block), Map.of(),
+                Map.of("product_photos", List.of("https://s3/marked.jpg")), Map.of());
+
+        assertThat(html).contains("marked.jpg");
+    }
+
+    @Test
+    void imageZone_blockPresetAndNoZoneAtAll_isSkipped() {
+        DetailBlock block = DetailBlock.builder()
+                .type("imageZone").bind("product_photos").processingPresetId(1L).build();
+        String html = renderer.render(template(block), Map.of(), Map.of(), Map.of());
+
+        assertThat(html).isEmpty();
+    }
+
     @Test
     void asset_rendersSingleImg() {
         DetailBlock block = DetailBlock.builder().type("asset").src("tenants/1/thumbnail-assets/notice.png").build();
