@@ -119,7 +119,20 @@ public class DetailHtmlRenderer {
 
     /** imageZone: each URL becomes an &lt;img&gt; in order. Empty/absent zone → skip. */
     private void renderImageZone(StringBuilder html, DetailBlock block, Map<String, List<String>> zones) {
-        List<String> urls = block.getBind() != null ? zones.getOrDefault(block.getBind(), List.of()) : List.of();
+        // Per-block preset (FEATURE_2608_08/03): the generator keys a block-specified preset's composites by
+        // "bind#presetId"; an inherited (template-level) preset stays under the plain bind, and no preset at all
+        // leaves the original URLs there — so a 2-step lookup covers every case.
+        String bind = block.getBind();
+        List<String> urls = List.of();
+        if (bind != null) {
+            Long presetId = block.getProcessingPresetId();
+            String composed = presetId != null ? bind + "#" + presetId : null;
+            if (composed != null && zones.containsKey(composed)) {
+                urls = zones.get(composed);                    // block-specified preset → composited entry
+            } else {
+                urls = zones.getOrDefault(bind, List.of());    // inherited / no preset / empty ops → original slot
+            }
+        }
         if (urls.isEmpty()) {
             return;
         }
