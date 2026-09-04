@@ -10,6 +10,7 @@ import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderItemRepository;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.coupang.OrderItemUpserter;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -30,6 +31,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -48,6 +50,8 @@ class ShippingLabelServiceImplTest {
     private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock
     private OrderItemRepository orderItemRepository;
+    @Mock
+    private OrderItemUpserter orderItemUpserter;
 
     private ShippingLabelServiceImpl service;
     private MarketplaceAccount coupangAccount;
@@ -64,7 +68,7 @@ class ShippingLabelServiceImplTest {
 
         service = new ShippingLabelServiceImpl(
                 coupangApiClient, props, marketplaceAccountRepository, new ObjectMapper(),
-                orderItemRepository);
+                orderItemRepository, orderItemUpserter);
     }
 
     @Test
@@ -88,6 +92,30 @@ class ShippingLabelServiceImplTest {
         assertThat(first.shipmentBoxId()).isEqualTo("302012345678");       // 관리코드
         assertThat(first.sellerName()).isEqualTo("셀러A");
         assertThat(first.platform()).isEqualTo("COUPANG");
+    }
+
+    @Test
+    void 시트생성시조회한주문을적재한다() {
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(coupangAccount));
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(oneBoxThreeLines());
+
+        service.collectRows(null);
+
+        // 시트에 실린 주문은 DB 에도 남는다 — 발송처리가 폴백에 기대지 않게 한다(PLAN 2609_13 D1).
+        verify(orderItemUpserter).upsertBoxes(eq(coupangAccount), any());
+    }
+
+    @Test
+    void 적재실패해도시트생성은계속된다() {
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(coupangAccount));
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(oneBoxThreeLines());
+        willThrow(new RuntimeException("boom")).given(orderItemUpserter).upsertBoxes(any(), any());
+
+        List<ShippingLabelRow> rows = service.collectRows(null);
+
+        // 다운로드가 우선이다(D6) — 행 수·내용이 정상 케이스와 동일해야 한다.
+        assertThat(rows).hasSize(2);
+        assertThat(rows.get(0).productName()).isEqualTo("양말세트");
     }
 
     @Test

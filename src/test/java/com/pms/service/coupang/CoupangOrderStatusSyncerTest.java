@@ -71,8 +71,9 @@ class CoupangOrderStatusSyncerTest {
         props.setOrdersheetsPath("/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/ordersheets");
         props.setSyncDays(5);
 
+        // 목이 아니라 진짜 upserter 를 넣는다(그래야 저장 동작이 추출 전 그대로 검증된다).
         syncer = new CoupangOrderStatusSyncer(
-                coupangApiClient, orderItemRepository, props, new ObjectMapper());
+                coupangApiClient, new OrderItemUpserter(orderItemRepository), props, new ObjectMapper());
     }
 
     @Test
