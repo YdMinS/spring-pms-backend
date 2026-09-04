@@ -53,6 +53,13 @@ oklyx:
     # past it for historical months, and the client is responsible for flagging that those rows are stale
     # (FEATURE_2609_08). Keep this in sync with the display filter in OrderQueryService/PurchaseListService.
     sync-days: 14
+    # Lower bound (days) for the TERMINAL statuses (배송지시~추적불가) query window; sync-days is the upper bound.
+    # Those statuses never move back, so re-reading a full 14-day window for them every run is pure waste.
+    # The actual window = clamp(days since the last successful ordersheets sync + 1, this value, sync-days),
+    # so a daily run reads 3 days and a long pause widens it automatically — no fixed number to tune.
+    # ⚠️ Do not lower to 1: the window is a KST calendar-day range, so a midnight boundary would leave a
+    # whole day uncovered. Active statuses (ACCEPT/INSTRUCT) always use the full sync-days window.
+    terminal-sync-min-days: 3
     # INSTRUCT (상품준비중) query window (days) for the shipping-label spreadsheet only.
     # INSTRUCT orders are transitioned manually (by the seller in Coupang WING) well after the order
     # was created, so their createdAt is old — a narrow window drops current INSTRUCT orders and the
