@@ -107,6 +107,25 @@ class OrderControllerTest extends BaseIntegrationTest {
     }
 
     @Test
+    void postSync_withActiveScope_returns200() throws Exception {
+        // scope 는 계정 단건에만 적용된다(D4) → accountId 를 반드시 함께 보낸다.
+        Long accountId = marketplaceAccountRepository.findAll().get(0).getId();
+
+        mockMvc.perform(post("/api/orders/sync")
+                        .param("accountId", String.valueOf(accountId))
+                        .param("scope", "ACTIVE")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.syncedAt").exists());
+    }
+
+    @Test
+    void postSync_requiresAuth() throws Exception {
+        mockMvc.perform(post("/api/orders/sync"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void postSyncPeriod_returnsCounts() throws Exception {
         Long accountId = marketplaceAccountRepository.findAll().get(0).getId();
 

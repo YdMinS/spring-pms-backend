@@ -14,8 +14,17 @@ import java.time.LocalDateTime;
  */
 public interface OrderSyncFacade {
 
-    /** 계정 1개 동기화. 없는 계정이면 ResourceNotFoundException. */
+    /** 계정 1개 동기화(전 상태). 없는 계정이면 ResourceNotFoundException. */
     OrderSyncResult sync(Long accountId);
+
+    /**
+     * 계정 1개를 <b>지정 범위</b>로 동기화 (FEATURE_2609_16).
+     *
+     * 달라지는 건 <b>조회할 주문 상태뿐</b>이다 — 취소 보정(returnRequests)과 동기화 상태 기록은
+     * {@link #sync(Long)} 과 완전히 동일하게 돈다(PLAN 2609_16 D5·D6). 출고관리처럼 종결 상태가
+     * 필요 없는 화면이 {@link OrderSyncScope#ACTIVE} 로 쿠팡 왕복을 6 → 2 로 줄이는 자리다.
+     */
+    OrderSyncResult sync(Long accountId, OrderSyncScope scope);
 
     /** 한 셀러의 활성 COUPANG 계정 전체 동기화 (계정 단위 격리). */
     OrderSyncResult syncBySeller(Long sellerId);

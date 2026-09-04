@@ -8,6 +8,7 @@ import com.pms.dto.response.SyncTargetResponse;
 import com.pms.service.coupang.OrderQueryService;
 import com.pms.service.coupang.OrderSyncFacade;
 import com.pms.service.coupang.OrderSyncFacade.OrderSyncResult;
+import com.pms.service.coupang.OrderSyncScope;
 import com.pms.service.coupang.SyncTargetService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -60,12 +61,17 @@ public class OrderController {
     /**
      * 동기화 트리거(새로고침). 동기화 후 목록까지 함께 반환(클라 추가 GET 불필요).
      * 우선순위: accountId(단건) > sellerId(셀러 단위) > 전체.
+     *
+     * {@code scope=ACTIVE} 는 결제완료·상품준비중만 조회한다 — 종결 상태가 필요 없는 화면(출고관리)이
+     * 쿠팡 왕복을 6 → 2 로 줄이는 값이다. 생략하면 {@code FULL}(전 상태) = 오늘과 동일하다.
+     * ⚠️ <b>계정 단건(accountId)에만 적용된다</b>(FEATURE_2609_16 D4) — 셀러/전체 경로는 항상 FULL.
      */
     @PostMapping("/sync")
     public ResponseEntity<ResponseDTO<OrderSyncResponse>> sync(
             @RequestParam(required = false) Long sellerId,
-            @RequestParam(required = false) Long accountId) {
-        OrderSyncResult result = (accountId != null) ? syncFacade.sync(accountId)
+            @RequestParam(required = false) Long accountId,
+            @RequestParam(required = false, defaultValue = "FULL") OrderSyncScope scope) {
+        OrderSyncResult result = (accountId != null) ? syncFacade.sync(accountId, scope)
                 : (sellerId != null) ? syncFacade.syncBySeller(sellerId)
                 : syncFacade.syncAll();
         return ResponseEntity.ok(ResponseDTO.success(

@@ -52,17 +52,35 @@ class OrderSyncFacadeImplTest {
     void sync_runsOrderThenCancel() {
         MarketplaceAccount acc = account(1L);
         given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
-        given(coupangOrderSyncService.syncAccount(acc)).willReturn(new SyncResult(3, 1, 1, List.of()));
+        given(coupangOrderSyncService.syncAccount(acc, OrderSyncScope.FULL)).willReturn(new SyncResult(3, 1, 1, List.of()));
         given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(2, 1));
 
         OrderSyncResult result = facade.sync(1L);
 
         InOrder order = inOrder(coupangOrderSyncService, coupangReturnSyncService);
-        order.verify(coupangOrderSyncService).syncAccount(acc);   // ordersheets 먼저
+        order.verify(coupangOrderSyncService).syncAccount(acc, OrderSyncScope.FULL);   // ordersheets 먼저
         order.verify(coupangReturnSyncService).syncCancels(acc);  // 그 다음 취소 보정
         assertThat(result.newOrders()).isEqualTo(3);
         assertThat(result.updatedOrders()).isEqualTo(1);
         assertThat(result.canceledUpdated()).isEqualTo(2);
+    }
+
+    @Test
+    void sync_withActiveScope_passesScopeThroughAndStillRunsCancelsAndRecordsSuccess() {
+        // D5·D6: 조회 상태만 좁아지고 취소 보정·상태 기록은 그대로 돈다.
+        MarketplaceAccount acc = account(1L);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        given(coupangOrderSyncService.syncAccount(acc, OrderSyncScope.ACTIVE))
+                .willReturn(new SyncResult(2, 0, 1, List.of()));
+        given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(1, 1));
+
+        OrderSyncResult result = facade.sync(1L, OrderSyncScope.ACTIVE);
+
+        verify(coupangOrderSyncService).syncAccount(acc, OrderSyncScope.ACTIVE);
+        verify(coupangReturnSyncService).syncCancels(acc);   // 범위와 무관(D5)
+        verify(syncStatusRecorder).recordSuccess(1L);        // 범위와 무관(D6)
+        assertThat(result.newOrders()).isEqualTo(2);
+        assertThat(result.canceledUpdated()).isEqualTo(1);
     }
 
     @Test
@@ -71,7 +89,7 @@ class OrderSyncFacadeImplTest {
         MarketplaceAccount a2 = account(2L);
         given(marketplaceAccountRepository.findBySeller_IdAndIsActiveTrue(100L))
                 .willReturn(List.of(a1, a2));
-        given(coupangOrderSyncService.syncAccount(any())).willReturn(new SyncResult(1, 0, 0, List.of()));
+        given(coupangOrderSyncService.syncAccount(any(), eq(OrderSyncScope.FULL))).willReturn(new SyncResult(1, 0, 0, List.of()));
         given(coupangReturnSyncService.syncCancels(any())).willReturn(new CancelSyncResult(0, 1));
 
         OrderSyncResult result = facade.syncBySeller(100L);
@@ -79,8 +97,8 @@ class OrderSyncFacadeImplTest {
         // 셀러 100의 활성 계정 2개만 동기화 (findByIsActiveTrue 전체조회 미사용)
         verify(marketplaceAccountRepository).findBySeller_IdAndIsActiveTrue(100L);
         verify(marketplaceAccountRepository, never()).findByIsActiveTrue();
-        verify(coupangOrderSyncService).syncAccount(a1);
-        verify(coupangOrderSyncService).syncAccount(a2);
+        verify(coupangOrderSyncService).syncAccount(a1, OrderSyncScope.FULL);
+        verify(coupangOrderSyncService).syncAccount(a2, OrderSyncScope.FULL);
         assertThat(result.newOrders()).isEqualTo(2);   // 1 + 1 합산
     }
 
@@ -90,8 +108,8 @@ class OrderSyncFacadeImplTest {
         MarketplaceAccount a2 = account(2L);
         given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(a1, a2));
         // a1 실패, a2 성공 → 전체 롤백 아님, a2 결과는 반영
-        when(coupangOrderSyncService.syncAccount(a1)).thenThrow(new RuntimeException("coupang down"));
-        when(coupangOrderSyncService.syncAccount(a2)).thenReturn(new SyncResult(5, 0, 0, List.of()));
+        when(coupangOrderSyncService.syncAccount(a1, OrderSyncScope.FULL)).thenThrow(new RuntimeException("coupang down"));
+        when(coupangOrderSyncService.syncAccount(a2, OrderSyncScope.FULL)).thenReturn(new SyncResult(5, 0, 0, List.of()));
         given(coupangReturnSyncService.syncCancels(a2)).willReturn(new CancelSyncResult(0, 1));
 
         OrderSyncResult result = facade.syncAll();
@@ -105,7 +123,7 @@ class OrderSyncFacadeImplTest {
         MarketplaceAccount acc = account(1L);
         RuntimeException boom = new RuntimeException("coupang down");
         given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
-        when(coupangOrderSyncService.syncAccount(acc)).thenThrow(boom);
+        when(coupangOrderSyncService.syncAccount(acc, OrderSyncScope.FULL)).thenThrow(boom);
 
         assertThatThrownBy(() -> facade.sync(1L)).isSameAs(boom);   // 단건은 전파(D4)
 
@@ -117,7 +135,7 @@ class OrderSyncFacadeImplTest {
     void syncOne_recordsPartial_whenCancelThrows() {
         MarketplaceAccount acc = account(1L);
         given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
-        given(coupangOrderSyncService.syncAccount(acc)).willReturn(new SyncResult(1, 0, 1, List.of()));
+        given(coupangOrderSyncService.syncAccount(acc, OrderSyncScope.FULL)).willReturn(new SyncResult(1, 0, 1, List.of()));
         when(coupangReturnSyncService.syncCancels(acc)).thenThrow(new RuntimeException("cancel down"));
 
         assertThatThrownBy(() -> facade.sync(1L)).isInstanceOf(RuntimeException.class);
@@ -134,7 +152,7 @@ class OrderSyncFacadeImplTest {
         // D18 회귀: 일부 상태만 실패하면 예외가 아니라 failedStatuses 로 온다 → SUCCESS 로 낙인 금지
         MarketplaceAccount acc = account(1L);
         given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
-        given(coupangOrderSyncService.syncAccount(acc))
+        given(coupangOrderSyncService.syncAccount(acc, OrderSyncScope.FULL))
                 .willReturn(new SyncResult(1, 0, 1, List.of(CoupangOrderStatus.FINAL_DELIVERY)));
         given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(0, 0));
 
