@@ -64,13 +64,24 @@ public class TemplateDetailContentGenerator implements DetailContentGenerator {
 
     @Override
     public String generate(ProductListing cell) {
+        if (cell.getMasterProduct() == null) {
+            return ""; // backfill-transition guard (nullable master) — bail out before resolving a template
+        }
+        // Channel template override (21 + 2609_20/D2): cell ?? account ?? tenant default
+        // (resolver throws if none exists, so the old null guard is removed).
+        return generate(cell, channelTemplateResolver.resolveDetail(cell));
+    }
+
+    /**
+     * The render itself (2609_20/D4) — the only place the HTML is composed, so the resolved and the
+     * injected-template paths cannot drift apart.
+     */
+    @Override
+    public String generate(ProductListing cell, DetailTemplate template) {
         MasterProduct master = cell.getMasterProduct();
         if (master == null) {
             return ""; // backfill-transition guard (nullable master), matching the stub's leniency
         }
-        // Channel template override (21): account's assigned detail template ?? tenant default
-        // (resolver throws if neither exists, so the old null guard is removed).
-        DetailTemplate template = channelTemplateResolver.resolveDetail(cell);
         Map<String, String> textBindings = resolveTextBindings(cell);
         Map<String, List<String>> zoneImageUrls = resolveZoneImageUrls(master.getId());
         zoneImageUrls = applyImageProcessing(template, master.getId(), zoneImageUrls);

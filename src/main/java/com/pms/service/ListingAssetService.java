@@ -28,8 +28,19 @@ public interface ListingAssetService {
     /** Endpoint 4-2: read persisted assets (404 if the cell is absent or not yet generated). */
     GeneratedProductResponse getGenerated(Long listingId);
 
-    /** Non-persistent AUTO detail-HTML preview for a tenant-scoped cell (404 if absent); ignores any override. */
-    DetailPreviewResponse previewDetail(Long listingId);
+    /**
+     * Non-persistent detail-HTML preview for a tenant-scoped cell (404 if absent); ignores any override.
+     * {@code templateId=null} renders with the template resolved for this cell, a value renders with that
+     * template instead (2609_20/D4; unknown/cross-tenant id → 404).
+     */
+    DetailPreviewResponse previewDetail(Long listingId, Long templateId);
+
+    /**
+     * Pin a detail template to this cell (2609_20/D5) and regenerate its assets; {@code templateId=null}
+     * clears the override so the cell inherits the account/tenant default again (D6). 404 when the cell is
+     * absent, its assets are not generated yet, or the template id is unknown/cross-tenant.
+     */
+    GeneratedProductResponse updateDetailTemplate(Long listingId, Long templateId);
 
     /**
      * The detail template actually applied to a tenant-scoped cell (404 if absent): the account-assigned

@@ -576,4 +576,70 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.status").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.thumbnailSource").value("AUTO"));
     }
+
+    // ---- cell detail-template pin (2609_20) ----
+
+    /** A second detail template created inside the test session (same tenant as the seeded default). */
+    private Long createDetailTemplate(String name) throws Exception {
+        String body = objectMapper.writeValueAsString(java.util.Map.of(
+                "name", name, "active", true, "isDefault", false, "blocks", java.util.List.of()));
+        String json = mockMvc.perform(post("/api/admin/detail-templates")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content(body))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(json).path("data").path("id").asLong();
+    }
+
+    @Test
+    void updateDetailTemplate_noToken_returns401() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + listingId + "/detail-template")
+                        .contentType("application/json").content("{\"templateId\":1}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void updateDetailTemplate_userToken_returns403() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + listingId + "/detail-template")
+                        .header("Authorization", "Bearer " + userToken)
+                        .contentType("application/json").content("{\"templateId\":1}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void updateDetailTemplate_adminToken_pinsTemplateToCell() throws Exception {
+        regenerate();                       // the cell must be generated first
+        Long templateId = createDetailTemplate("대체 상세");
+
+        mockMvc.perform(patch(PATH + "/" + listingId + "/detail-template")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content("{\"templateId\":" + templateId + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.detailTemplateId").value(templateId));
+
+        // D2 end-to-end: the cell tier now beats the tenant default the resolver used before.
+        mockMvc.perform(get(PATH + "/" + listingId + "/detail-template")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.name").value("대체 상세"));
+    }
+
+    @Test
+    void updateDetailTemplate_missingCell_returns404() throws Exception {
+        mockMvc.perform(patch(PATH + "/999999/detail-template")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content("{\"templateId\":null}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    @Test
+    void detailPreview_unknownTemplateId_returns404() throws Exception {
+        mockMvc.perform(get(PATH + "/" + listingId + "/detail-preview")
+                        .param("templateId", "999999")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
 }
