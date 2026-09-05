@@ -138,7 +138,7 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
 
         // Create the tenant default template within the test session. The startup-seeded default lives
         // under tenant 1, which the @Transactional test session does not resolve — so regenerate would
-        // otherwise get "기본 템플릿이 없습니다" (mirrors ProductThumbnailControllerTest). Renderer is mocked,
+        // otherwise get "기본 템플릿이 없습니다". Renderer is mocked,
         // so no elements are needed.
         String templateJson = objectMapper.writeValueAsString(java.util.Map.of(
                 "name", "쿠팡 기본", "canvasWidth", 300, "canvasHeight", 300,

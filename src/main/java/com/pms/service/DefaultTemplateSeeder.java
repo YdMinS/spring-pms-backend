@@ -19,7 +19,7 @@ import java.util.List;
 
 /**
  * Seeds a single default {@link ThumbnailTemplate} on startup so thumbnail generation always resolves
- * a template ({@code ProductThumbnailServiceImpl.resolveTemplate}). Idempotent: if an active default
+ * a template ({@link ChannelTemplateResolver}). Idempotent: if an active default
  * already exists it does nothing (two runs still leave exactly one row).
  *
  * <p>Runs {@code @Order(51)} — right after {@link SystemFontSeeder} ({@code @Order(50)}), because it
