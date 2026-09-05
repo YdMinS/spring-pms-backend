@@ -3,24 +3,28 @@ package com.pms.service.coupang;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.service.claim.ClaimOrderBackfillService;
+import com.pms.service.claim.ClaimSyncAdapter;
 import com.pms.service.coupang.CoupangOrderSyncService.SyncResult;
 import com.pms.service.coupang.CoupangReturnSyncService.CancelSyncResult;
 import com.pms.service.coupang.OrderSyncFacade.OrderSyncResult;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.inOrder;
@@ -39,8 +43,24 @@ class OrderSyncFacadeImplTest {
     @Mock private CoupangOrderSyncService coupangOrderSyncService;
     @Mock private CoupangReturnSyncService coupangReturnSyncService;
     @Mock private SyncStatusRecorder syncStatusRecorder;
+    @Mock private ClaimOrderBackfillService claimOrderBackfillService;
 
-    @InjectMocks private OrderSyncFacadeImpl facade;
+    @Mock private ClaimSyncAdapter claimSyncAdapter;
+
+    /**
+     * ⚠️ @InjectMocks 를 쓰지 않는다 — 생성자의 {@code List<ClaimSyncAdapter>} 에는 목이 주입되지 않아
+     * null 이 들어가고, 파사드의 격리 try/catch 가 그 NPE 를 삼켜 어댑터 호출이 조용히 사라진다.
+     * 기본은 빈 리스트(= local/test 프로파일과 같은 상태)이고, 어댑터가 필요한 테스트만 직접 넣는다.
+     */
+    private final List<ClaimSyncAdapter> claimSyncAdapters = new ArrayList<>();
+
+    private OrderSyncFacadeImpl facade;
+
+    @BeforeEach
+    void setUp() {
+        facade = new OrderSyncFacadeImpl(marketplaceAccountRepository, coupangOrderSyncService,
+                coupangReturnSyncService, syncStatusRecorder, claimOrderBackfillService, claimSyncAdapters);
+    }
 
     private MarketplaceAccount account(Long id) {
         return MarketplaceAccount.builder()
@@ -63,6 +83,70 @@ class OrderSyncFacadeImplTest {
         assertThat(result.newOrders()).isEqualTo(3);
         assertThat(result.updatedOrders()).isEqualTo(1);
         assertThat(result.canceledUpdated()).isEqualTo(2);
+    }
+
+    @Test
+    void sync_backfillThrows_stillRecordsSuccessAndKeepsCounts() {
+        // 백필은 정확도 보정이라 실패해도 주문·취소 결과를 깨지 않는다(취소 보정과 다른 판단).
+        MarketplaceAccount acc = account(1L);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        given(coupangOrderSyncService.syncAccount(acc, OrderSyncScope.FULL)).willReturn(new SyncResult(3, 1, 1, List.of()));
+        given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(2, 1));
+        given(claimOrderBackfillService.backfill(acc)).willThrow(new RuntimeException("쿠팡 500"));
+
+        OrderSyncResult result = facade.sync(1L);
+
+        verify(syncStatusRecorder).recordSuccess(1L);
+        assertThat(result.newOrders()).isEqualTo(3);
+        assertThat(result.updatedOrders()).isEqualTo(1);
+        assertThat(result.canceledUpdated()).isEqualTo(2);
+    }
+
+    @Test
+    void sync_recordsClaimSyncCompleted_afterTrackingSucceeds() {
+        MarketplaceAccount acc = account(1L);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        given(coupangOrderSyncService.syncAccount(acc, OrderSyncScope.FULL)).willReturn(new SyncResult(1, 0, 1, List.of()));
+        given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(0, 1));
+
+        facade.sync(1L);
+
+        verify(coupangReturnSyncService).trackOpenClaims(acc);
+        verify(syncStatusRecorder).recordClaimSyncCompleted(1L);
+        verify(syncStatusRecorder).recordSuccess(1L);
+    }
+
+    @Test
+    void sync_trackingThrows_skipsClaimSyncRecordButKeepsSuccess() {
+        // lastClaimSyncAt 미갱신 → 다음 회차 창이 자동으로 넓어져 놓친 구간을 덮는다(D18).
+        // 회차 자체는 성공이다 — 추적은 이미 적재된 건의 상태 따라잡기라 취소 보정과 판단이 다르다.
+        MarketplaceAccount acc = account(1L);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        given(coupangOrderSyncService.syncAccount(acc, OrderSyncScope.FULL)).willReturn(new SyncResult(1, 0, 1, List.of()));
+        given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(0, 1));
+        given(coupangReturnSyncService.trackOpenClaims(acc)).willThrow(new RuntimeException("쿠팡 500"));
+
+        facade.sync(1L);
+
+        verify(syncStatusRecorder, never()).recordClaimSyncCompleted(any());
+        verify(syncStatusRecorder).recordSuccess(1L);
+    }
+
+    @Test
+    void sync_orderPartial_stillRecordsClaimSyncCompleted() {
+        // 클레임 단계는 주문 PARTIAL 과 독립이다 — 적재는 returnRequests 경로라 ordersheets 상태 실패와
+        // 무관하고, 여기서 미갱신하면 멀쩡히 적재된 구간을 다음 회차가 다시 읽는다(D18).
+        MarketplaceAccount acc = account(1L);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        given(coupangOrderSyncService.syncAccount(acc, OrderSyncScope.FULL))
+                .willReturn(new SyncResult(1, 0, 1, List.of(CoupangOrderStatus.INSTRUCT)));
+        given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(0, 1));
+
+        facade.sync(1L);
+
+        verify(syncStatusRecorder).recordPartial(eq(1L), anyString(), eq(false), eq(true));
+        verify(syncStatusRecorder).recordClaimSyncCompleted(1L);
+        verify(syncStatusRecorder, never()).recordSuccess(any());
     }
 
     @Test
@@ -163,6 +247,40 @@ class OrderSyncFacadeImplTest {
         verify(syncStatusRecorder).recordPartial(eq(1L), reason.capture(), eq(false), eq(true));
         assertThat(reason.getValue()).contains("FINAL_DELIVERY");
         verify(syncStatusRecorder, never()).recordSuccess(any());
+    }
+
+    @Test
+    void sync_exchangeAdapterThrows_stillRecordsSuccessAndRunsBackfill() {
+        // 교환은 신규 연동이다 — 실패해도 주문·취소·반품(Stage A)을 되돌리지 않는다(PLAN §9).
+        MarketplaceAccount acc = account(1L);
+        claimSyncAdapters.add(claimSyncAdapter);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        given(coupangOrderSyncService.syncAccount(acc, OrderSyncScope.FULL)).willReturn(new SyncResult(1, 0, 1, List.of()));
+        given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(0, 1));
+        given(claimSyncAdapter.platform()).willReturn("COUPANG");
+        given(claimSyncAdapter.syncExchanges(acc)).willThrow(new RuntimeException("쿠팡 500"));
+
+        facade.sync(1L);
+
+        verify(claimOrderBackfillService).backfill(acc);      // 교환 실패가 백필을 막지 않는다
+        verify(syncStatusRecorder).recordSuccess(1L);
+    }
+
+    @Test
+    void sync_platformWithoutAdapter_skipsExchangeSyncSilently() {
+        // 어댑터가 없는 플랫폼(네이버)은 조용히 건너뛴다 — orElseThrow 금지.
+        MarketplaceAccount acc = account(1L);
+        claimSyncAdapters.add(claimSyncAdapter);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        given(coupangOrderSyncService.syncAccount(acc, OrderSyncScope.FULL)).willReturn(new SyncResult(1, 0, 1, List.of()));
+        given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(0, 1));
+        given(claimSyncAdapter.platform()).willReturn("NAVER");
+
+        facade.sync(1L);
+
+        verify(claimSyncAdapter, never()).syncExchanges(any());
+        verify(claimOrderBackfillService).backfill(acc);
+        verify(syncStatusRecorder).recordSuccess(1L);
     }
 
     @Test

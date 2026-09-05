@@ -64,6 +64,20 @@ class SyncStatusWriter {
         });
     }
 
+    /**
+     * 클레임 적재+추적이 모두 끝난 회차에만 호출한다 — "언제까지 믿을 수 있는가"를 답하는 값이다(D18).
+     *
+     * 다른 write* 와 달리 상태·사유는 건드리지 않는다. 클레임 단계는 주문 조회의 PARTIAL/SUCCESS 판정과
+     * 독립이기 때문이다(2609_18 D18) — 이 시각은 다음 회차의 조회 창을 정하는 데만 쓰인다.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    void writeClaimSyncAt(Long accountId) {
+        find(accountId).ifPresent(account ->
+                marketplaceAccountRepository.save(account.toBuilder()
+                        .lastClaimSyncAt(LocalDateTime.now())
+                        .build()));
+    }
+
     /** 주문 조회 단계 전체 실패 — 두 "마지막 성공" 시각은 미변경. */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     void writeFailure(Long accountId, String summary) {

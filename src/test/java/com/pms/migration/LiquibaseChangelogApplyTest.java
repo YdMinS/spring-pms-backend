@@ -8,6 +8,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -334,6 +336,30 @@ class LiquibaseChangelogApplyTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM product_listing_option WHERE price_source <> 'AUTO'",
                 Integer.class)).isZero();
+    }
+
+    @Test
+    void orderClaimTypeUniqueApplied() {
+        // changeset 056: the upsert key now carries claim_type (FEATURE_2609_18 D24).
+        // The old constraint must be GONE, not merely shadowed — while it stands, an exchange whose
+        // exchangeId equals an existing receiptId still collides with the return row.
+        List<String> constraints = jdbcTemplate.queryForList(
+                "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
+                        + "WHERE TABLE_NAME = 'ORDER_CLAIM'", String.class);
+
+        assertThat(constraints)
+                .contains("UQ_ORDERCLAIM_ACCOUNT_TYPE_CLAIM_ITEM")
+                .doesNotContain("UQ_ORDERCLAIM_ACCOUNT_CLAIM_ITEM");
+    }
+
+    @Test
+    void claimSyncColumnApplied() {
+        // changeset 055: last_claim_sync_at exists on marketplace_account (FEATURE_2609_18 D6·D18).
+        // Nullable with no backfill on purpose — NULL means "never completed a claim run", which makes the
+        // first run fall back to the cancel-sync-days window — so a successful count proves it was added.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM marketplace_account WHERE last_claim_sync_at IS NULL",
+                Integer.class)).isNotNull();
     }
 
     @Test

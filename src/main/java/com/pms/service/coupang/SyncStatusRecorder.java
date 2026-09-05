@@ -51,6 +51,21 @@ public class SyncStatusRecorder {
         }
     }
 
+    /**
+     * 클레임 동기화(적재+추적) 완료 기록(2609_18 D18). 기록 실패는 로그만 남기고 삼킨다(동기화는 계속).
+     *
+     * ⚠️ 주문 조회가 일부 상태만 실패한 회차(recordPartial)에서도 호출한다 — 클레임은 returnRequests
+     * 경로라 ordersheets 상태 실패와 무관하고, 여기서 미갱신하면 멀쩡히 적재된 구간을 다음 회차가
+     * 다시 읽는다.
+     */
+    public void recordClaimSyncCompleted(Long accountId) {
+        try {
+            writer.writeClaimSyncAt(accountId);
+        } catch (Exception e) {
+            log.warn("Claim sync record failed: account={}", accountId, e);
+        }
+    }
+
     /** 주문 조회 단계 전체 실패. */
     public void recordFailure(Long accountId, Throwable error) {
         try {

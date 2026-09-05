@@ -75,6 +75,8 @@ public class CoupangReturnClaimParser {
                     integer(receipt, "returnShippingCharge"),
                     text(firstDelivery, "deliveryInvoiceNo"),
                     text(firstDelivery, "deliveryCompanyCode"),
+                    null,                                      // reshipInvoiceNo — 교환 전용
+                    null,                                      // reshipCarrierCode — 교환 전용
                     text(receipt, "requesterName"),            // D19 — 이름만
                     receivedAt,
                     parseTimestamp(text(receipt, "modifiedAt"))));
