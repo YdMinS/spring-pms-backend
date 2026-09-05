@@ -158,6 +158,21 @@ public class ProductListing extends BaseEntity {
     private MasterProduct masterProduct;
 
     /**
+     * Detail template pinned to this cell only (FEATURE_2609_20 / D1). {@code null} = inherit
+     * (account-assigned ?? tenant default, D2) — every pre-existing row stays null, which is exactly the
+     * previous 2-tier behaviour, so there is no backfill.
+     *
+     * <p>⚠️ LAZY: {@link com.pms.service.ChannelTemplateResolver#resolveDetail} reads it, so every caller
+     * must stay inside a transaction boundary (same trap as the old {@code account.getSeller()} bug).</p>
+     *
+     * @see com.pms.domain.DetailTemplate
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "detail_template_id", nullable = true)
+    @Schema(description = "Detail template pinned to this cell (null = inherit account/tenant default)")
+    private DetailTemplate detailTemplate;
+
+    /**
      * Market-sync dirty marker (FEATURE_2608_06 / 3d, Design 2). {@code true} = "local assets were regenerated
      * (layer A: {@code MasterPropagationService.propagate}) and this cell has NOT yet been pushed to the market"
      * — i.e. pending market reflection. Only <b>on-market</b> cells ({@code platformProductId != null}) are

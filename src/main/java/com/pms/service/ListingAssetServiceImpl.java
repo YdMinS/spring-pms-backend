@@ -16,6 +16,7 @@ import com.pms.dto.response.DetailTemplateResponse;
 import com.pms.dto.response.GeneratedProductResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.domain.MasterImageZoneAssignment;
+import com.pms.repository.DetailTemplateRepository;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.MasterProductOptionRepository;
@@ -72,6 +73,7 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     private final MasterProductOptionRepository masterProductOptionRepository;
     private final MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     private final GeneratedProductDataRepository generatedProductDataRepository;
+    private final DetailTemplateRepository detailTemplateRepository;
     private final ChannelTemplateResolver channelTemplateResolver;
     private final ProductImageUrlResolver productImageUrlResolver;
     private final ThumbnailRenderer thumbnailRenderer;
@@ -114,12 +116,47 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     }
 
     @Override
-    public DetailPreviewResponse previewDetail(Long listingId) {
+    public DetailPreviewResponse previewDetail(Long listingId, Long templateId) {
         ProductListing cell = requireScopedCell(listingId);
-        // Non-persistent AUTO preview from the current master + template (ignores any override — for comparison).
-        return DetailPreviewResponse.builder()
-                .html(detailContentGenerator.generate(cell))
-                .build();
+        // Non-persistent AUTO preview from the current master (ignores any override — for comparison).
+        // 2609_20/D4: templateId picks a different template than the one resolved for this cell.
+        String html = templateId == null
+                ? detailContentGenerator.generate(cell)
+                : detailContentGenerator.generate(cell, requireScopedTemplate(templateId));
+        return DetailPreviewResponse.builder().html(html).build();
+    }
+
+    /**
+     * Pin a detail template to this cell and regenerate (2609_20/D5·D6·D7).
+     *
+     * <p>⚠️ D7 — dropping a MANUAL_OVERRIDE detail HTML is an exception <b>of this method only</b>: picking a
+     * template must produce what the preview showed. {@code regenerateAssets}' own override guard is
+     * unchanged (D9), so every other regeneration path still preserves a hand-edited detail HTML.</p>
+     */
+    @Override
+    @Transactional
+    public GeneratedProductResponse updateDetailTemplate(Long listingId, Long templateId) {
+        ProductListing cell = requireScopedCell(listingId);
+        // A not-yet-generated cell is a 404 — same policy as clearDetailHtml/overrideThumbnail. Without this
+        // guard regenerateAssets would render the thumbnail from scratch (resolveBaseImage) and blow up with
+        // a 500 when the cell has no source image.
+        generatedProductDataRepository.findByProductListingId(listingId)
+                .orElseThrow(() -> new ResourceNotFoundException("GeneratedProductData", listingId));
+        // D6: null clears the cell override (back to account ?? tenant default).
+        DetailTemplate template = templateId == null ? null : requireScopedTemplate(templateId);
+        ProductListing updated = productListingRepository.save(
+                cell.toBuilder().detailTemplate(template).build());
+        // Thumbnail + option prices are refreshed too; the override guard inside is untouched (D9).
+        GeneratedProductData data = regenerateAssets(updated);
+        // D7: only here do we drop a hand-edited detail HTML — the preview and the saved result must match.
+        if (data.getSource() == GeneratedContentSource.MANUAL_OVERRIDE) {
+            data = generatedProductDataRepository.save(data.toBuilder()
+                    .detailHtml(detailContentGenerator.generate(updated))
+                    .source(GeneratedContentSource.AUTO)
+                    .generatedAt(LocalDateTime.now())
+                    .build());
+        }
+        return toResponse(updated, data);
     }
 
     @Override
@@ -371,6 +408,18 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     }
 
     /**
+     * The detail template a cell may be pinned to (2609_20/D11). {@code @TenantId} filters the query, so a
+     * cross-tenant id comes back empty → 404.
+     *
+     * <p>⚠️ An {@code active=false} template passes through on purpose — filtering the choices is the
+     * frontend dropdown's job (D10), and a 400 here would block re-saving an already pinned template.</p>
+     */
+    private DetailTemplate requireScopedTemplate(Long templateId) {
+        return detailTemplateRepository.findById(templateId)
+                .orElseThrow(() -> new ResourceNotFoundException("DetailTemplate", templateId));
+    }
+
+    /**
      * Best-effort storage delete — never rolls back the transaction. {@code deleteImage} is graceful and
      * branches on path vs URL, so passing the stored thumbnail value is compatible with Local and S3.
      */
@@ -516,6 +565,8 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                 .fieldValues(cell.getFieldValues() != null ? cell.getFieldValues() : Map.of())
                 .tags(cell.getTags() != null ? cell.getTags() : List.of())
                 .shippingOverride(cell.getShippingOverride() != null ? cell.getShippingOverride() : Map.of())
+                // 2609_20/D12: the cell's own pin (null = inherited); the resolved template is GET /detail-template.
+                .detailTemplateId(cell.getDetailTemplate() != null ? cell.getDetailTemplate().getId() : null)
                 // 77: channel-owned judgement; an unsupported platform yields null (= the UI does not guard).
                 .shippingReady(listingChannelResolver.resolveOptional(cell.getPlatform())
                         .map(channel -> channel.isShippingReady(cell))

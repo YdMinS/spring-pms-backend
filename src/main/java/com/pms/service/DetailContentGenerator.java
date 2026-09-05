@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.DetailTemplate;
 import com.pms.domain.ProductListing;
 
 /**
@@ -16,4 +17,13 @@ public interface DetailContentGenerator {
      * @return detail-page HTML (may be empty when the master or default template is absent)
      */
     String generate(ProductListing cell);
+
+    /**
+     * 템플릿을 직접 주입하는 렌더(2609_20/D4). 저장 전 미리보기 전용 — 셀의 지정값을 무시하고 이 템플릿으로 렌더한다.
+     *
+     * @param cell     the channel listing to build a detail page for
+     * @param template 렌더에 쓸 템플릿(null 금지 — 호출부가 404 로 먼저 걸러낸다)
+     * @return detail-page HTML (may be empty when the master is absent)
+     */
+    String generate(ProductListing cell, DetailTemplate template);
 }

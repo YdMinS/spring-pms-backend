@@ -2,6 +2,7 @@ package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.DetailHtmlOverrideRequest;
+import com.pms.dto.request.DetailTemplateSelectRequest;
 import com.pms.dto.request.DisplayNameRequest;
 import com.pms.dto.request.FieldValuesRequest;
 import com.pms.dto.request.ShippingOverrideRequest;
@@ -48,10 +49,21 @@ public class ListingAssetController {
     }
 
     @GetMapping("/{id}/detail-preview")
-    @Operation(summary = "Non-persistent AUTO detail-HTML preview (ignores any override, for comparison)")
+    @Operation(summary = "Non-persistent detail-HTML preview (templateId= renders with that template instead)")
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<ResponseDTO<DetailPreviewResponse>> detailPreview(@PathVariable Long id) {
-        return ResponseEntity.ok(ResponseDTO.success(listingAssetService.previewDetail(id)));
+    public ResponseEntity<ResponseDTO<DetailPreviewResponse>> detailPreview(
+            @PathVariable Long id,
+            @RequestParam(name = "templateId", required = false) Long templateId) {
+        return ResponseEntity.ok(ResponseDTO.success(listingAssetService.previewDetail(id, templateId)));
+    }
+
+    @PatchMapping("/{id}/detail-template")
+    @Operation(summary = "Pin a detail template to this cell (null = inherit account/tenant), then regenerate")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<GeneratedProductResponse>> updateDetailTemplate(
+            @PathVariable Long id, @RequestBody DetailTemplateSelectRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                listingAssetService.updateDetailTemplate(id, request.getTemplateId())));
     }
 
     @GetMapping("/{id}/detail-template")

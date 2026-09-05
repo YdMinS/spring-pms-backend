@@ -60,6 +60,7 @@ class ListingAssetServiceTest {
     @Mock private MasterProductOptionRepository masterProductOptionRepository;
     @Mock private MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     @Mock private GeneratedProductDataRepository generatedProductDataRepository;
+    @Mock private com.pms.repository.DetailTemplateRepository detailTemplateRepository;
     @Mock private ChannelTemplateResolver channelTemplateResolver;
     @Mock private ProductImageUrlResolver productImageUrlResolver;
     @Mock private ThumbnailRenderer thumbnailRenderer;
@@ -538,5 +539,135 @@ class ListingAssetServiceTest {
         verify(productListingOptionRepository, times(1)).save(saved.capture());
         assertThat(saved.getValue().getId()).isEqualTo(51L);
         assertThat(saved.getValue().getSellingPrice()).isEqualByComparingTo("10670");
+    }
+
+    // ---- detail-template preview + pin (2609_20) ----
+
+    private DetailTemplate detailTemplate(Long id) {
+        return DetailTemplate.builder().id(id).name("템플릿" + id).active(true).isDefault(false).build();
+    }
+
+    @Test
+    void previewDetail_noTemplateId_usesResolvedTemplate() {
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
+        given(detailContentGenerator.generate(cell)).willReturn("<p>해석된 템플릿</p>");
+
+        assertThat(service.previewDetail(CELL_ID, null).getHtml()).isEqualTo("<p>해석된 템플릿</p>");
+
+        verify(detailContentGenerator, times(1)).generate(cell);
+        // Non-persistent: nothing is read from or written to the assets row.
+        org.mockito.Mockito.verifyNoInteractions(generatedProductDataRepository);
+    }
+
+    @Test
+    void previewDetail_withTemplateId_rendersThatTemplate() {
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        DetailTemplate other = detailTemplate(7L);
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
+        given(detailTemplateRepository.findById(7L)).willReturn(Optional.of(other));
+        given(detailContentGenerator.generate(cell, other)).willReturn("<p>대체 템플릿</p>");
+
+        assertThat(service.previewDetail(CELL_ID, 7L).getHtml()).isEqualTo("<p>대체 템플릿</p>");
+
+        verify(detailContentGenerator, times(1)).generate(cell, other);
+        verify(detailContentGenerator, never()).generate(any(ProductListing.class));
+        org.mockito.Mockito.verifyNoInteractions(generatedProductDataRepository);
+    }
+
+    @Test
+    void previewDetail_unknownTemplate_throws404() {
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
+        given(detailTemplateRepository.findById(999L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.previewDetail(CELL_ID, 999L))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    /** Cell + assets + option/BOM stubs shared by the updateDetailTemplate tests (regeneration runs for real). */
+    private ProductListing pinnableCell() {
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
+        given(productListingRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+        given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
+                .willReturn(List.of(ProductListingProduct.builder().product(product()).quantity(1).build()));
+        given(productImageLoader.load(any())).willReturn(new byte[]{7});
+        return cell;
+    }
+
+    @Test
+    void updateDetailTemplate_templateId_persistsAndRegenerates() {
+        pinnableCell();
+        GeneratedProductData existing = GeneratedProductData.builder()
+                .id(88L).detailHtml("OLD").source(GeneratedContentSource.AUTO)
+                .thumbnailSource(GeneratedContentSource.AUTO).build();
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID)).willReturn(Optional.of(existing));
+        given(detailTemplateRepository.findById(7L)).willReturn(Optional.of(detailTemplate(7L)));
+        commonRenderStubs();
+
+        GeneratedProductResponse response = service.updateDetailTemplate(CELL_ID, 7L);
+
+        ArgumentCaptor<ProductListing> cellCaptor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(cellCaptor.capture());
+        assertThat(cellCaptor.getValue().getDetailTemplate()).isNotNull();
+        assertThat(cellCaptor.getValue().getDetailTemplate().getId()).isEqualTo(7L);
+        // Regeneration ran once (thumbnail re-rendered) and the pin is echoed back.
+        verify(thumbnailRenderer, times(1)).render(any(), any(), any());
+        assertThat(response.getDetailTemplateId()).isEqualTo(7L);
+    }
+
+    @Test
+    void updateDetailTemplate_nullTemplateId_clearsCellOverride() {
+        ProductListing pinned = pinnableCell().toBuilder().detailTemplate(detailTemplate(7L)).build();
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(pinned));
+        GeneratedProductData existing = GeneratedProductData.builder()
+                .id(88L).detailHtml("OLD").source(GeneratedContentSource.AUTO)
+                .thumbnailSource(GeneratedContentSource.AUTO).build();
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID)).willReturn(Optional.of(existing));
+        commonRenderStubs();
+
+        GeneratedProductResponse response = service.updateDetailTemplate(CELL_ID, null);
+
+        ArgumentCaptor<ProductListing> cellCaptor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(cellCaptor.capture());
+        assertThat(cellCaptor.getValue().getDetailTemplate()).isNull();
+        assertThat(response.getDetailTemplateId()).isNull();
+        // null never looks a template up.
+        org.mockito.Mockito.verifyNoInteractions(detailTemplateRepository);
+    }
+
+    @Test
+    void updateDetailTemplate_notYetGenerated_throws404() {
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.updateDetailTemplate(CELL_ID, 7L))
+                .isInstanceOf(ResourceNotFoundException.class);
+
+        // The cell is guarded before it is written.
+        verify(productListingRepository, never()).save(any());
+    }
+
+    @Test
+    void updateDetailTemplate_manualOverride_dropsOverrideToAuto() {
+        pinnableCell();
+        GeneratedProductData overridden = GeneratedProductData.builder()
+                .id(88L).detailHtml("HAND EDITED").source(GeneratedContentSource.MANUAL_OVERRIDE)
+                .thumbnailSource(GeneratedContentSource.AUTO).build();
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID)).willReturn(Optional.of(overridden));
+        given(detailTemplateRepository.findById(7L)).willReturn(Optional.of(detailTemplate(7L)));
+        commonRenderStubs();
+
+        service.updateDetailTemplate(CELL_ID, 7L);
+
+        // Two saves: the regenerate upsert (override guard preserved it) then the D7 drop back to AUTO.
+        ArgumentCaptor<GeneratedProductData> dataCaptor = ArgumentCaptor.forClass(GeneratedProductData.class);
+        verify(generatedProductDataRepository, times(2)).save(dataCaptor.capture());
+        GeneratedProductData last = dataCaptor.getAllValues().get(1);
+        assertThat(last.getSource()).isEqualTo(GeneratedContentSource.AUTO);
+        assertThat(last.getDetailHtml()).isEqualTo("<p>운동화</p>");   // generator output, not the edit
     }
 }
