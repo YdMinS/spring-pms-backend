@@ -5,6 +5,8 @@ import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
 import com.pms.repository.OrderItemRepository;
+import com.pms.service.claim.ClaimUpserter;
+import com.pms.service.claim.CoupangReturnClaimParser;
 import com.pms.service.coupang.CoupangReturnSyncService.CancelSyncResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,6 +39,7 @@ class CoupangReturnSyncServiceImplTest {
 
     @Mock private CoupangApiClient coupangApiClient;
     @Mock private OrderItemRepository orderItemRepository;
+    @Mock private ClaimUpserter claimUpserter;      // 클레임 적재는 별도 트랜잭션 — 취소 보정과 분리 검증
 
     private CoupangReturnSyncServiceImpl service;
     private MarketplaceAccount account;
@@ -52,7 +55,8 @@ class CoupangReturnSyncServiceImplTest {
         props.setCancelSyncDays(7);
 
         service = new CoupangReturnSyncServiceImpl(
-                coupangApiClient, orderItemRepository, props, new ObjectMapper());
+                coupangApiClient, orderItemRepository, props, new ObjectMapper(),
+                new CoupangReturnClaimParser(), claimUpserter);
     }
 
     @Test

@@ -16,6 +16,16 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
     Optional<OrderItem> findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
             Long accountId, String boxId, String orderId, String itemId);
 
+    /**
+     * 3키 폴백 조회 (계정 + orderId + vendorItemId) — 클레임 주문 매칭 2단계 (FEATURE_2609_18 / D22).
+     *
+     * 반품 <b>목록</b> 응답에 shipmentBoxId 가 실려 오는지 문서로 확정되지 않아, 4키 매칭이 실패하거나
+     * boxId 가 없을 때 이 폴백을 쓴다. 반환이 List 인 것이 핵심이다 — 합포장으로 같은 옵션이 여러 박스에
+     * 걸리면 2건 이상 나오고, 그때는 틀린 라인에 붙이느니 미연결로 둔다(호출자가 판단).
+     */
+    List<OrderItem> findByMarketplaceAccount_IdAndExternalOrderIdAndExternalItemId(
+            Long accountId, String externalOrderId, String externalItemId);
+
     // ── 조회/구매목록 윈도우 필터 ──────────────────────────────────────────────
     // 동기화가 syncDays(주문 createdAt 기준) 밖 주문의 status 를 갱신하지 못해 stale 행이 남으므로,
     // 표시 쿼리도 같은 윈도우로 제한한다. order_item 엔 주문 createdAt 이 없어 paidAt 을 기준으로 쓴다
