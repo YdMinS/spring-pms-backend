@@ -2,12 +2,19 @@ package com.pms.service.coupang;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
+import com.pms.domain.ClaimStatus;
+import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.OrderClaim;
 import com.pms.domain.OrderItem;
+import com.pms.repository.OrderClaimRepository;
 import com.pms.repository.OrderItemRepository;
+import com.pms.service.claim.ClaimStaleSweeper;
+import com.pms.service.claim.ClaimTrackingSlicer;
 import com.pms.service.claim.ClaimUpserter;
 import com.pms.service.claim.CoupangReturnClaimParser;
 import com.pms.service.coupang.CoupangReturnSyncService.CancelSyncResult;
+import com.pms.service.coupang.CoupangReturnSyncService.ClaimTrackingResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -16,8 +23,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -25,6 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -40,7 +50,11 @@ class CoupangReturnSyncServiceImplTest {
     @Mock private CoupangApiClient coupangApiClient;
     @Mock private OrderItemRepository orderItemRepository;
     @Mock private ClaimUpserter claimUpserter;      // 클레임 적재는 별도 트랜잭션 — 취소 보정과 분리 검증
+    @Mock private OrderClaimRepository orderClaimRepository;
 
+    private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+
+    private CoupangProperties props;
     private CoupangReturnSyncServiceImpl service;
     private MarketplaceAccount account;
 
@@ -50,13 +64,15 @@ class CoupangReturnSyncServiceImplTest {
                 .id(1L).platform("COUPANG").vendorId("V0001")
                 .accessKey("ak").secretKey("sk").isActive(true).build();
 
-        CoupangProperties props = new CoupangProperties();
+        props = new CoupangProperties();
         props.setReturnrequestsPath("/v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests");
         props.setCancelSyncDays(7);
 
+        // 스윕·슬라이스는 06 에서 컴포넌트로 추출됐다 — 목이 아니라 실제 구현을 넣어 기존 단언을 그대로 유지한다.
         service = new CoupangReturnSyncServiceImpl(
                 coupangApiClient, orderItemRepository, props, new ObjectMapper(),
-                new CoupangReturnClaimParser(), claimUpserter);
+                new CoupangReturnClaimParser(), claimUpserter, orderClaimRepository,
+                new ClaimStaleSweeper(orderClaimRepository, props), new ClaimTrackingSlicer());
     }
 
     @Test
@@ -158,6 +174,150 @@ class CoupangReturnSyncServiceImplTest {
         verify(coupangApiClient, times(2)).get(anyString(), contains("cancelType=CANCEL"), any());
         // CANCEL 2페이지 + status 4종 × 1페이지(빈 응답도 pages++) = 6 — 합계가 상수임을 함께 고정한다.
         assertThat(result.pages()).isEqualTo(6);
+    }
+
+    // --- 신규 조회 창 (delta, D6) ---
+
+    @Test
+    void newWindow_firstRun_usesCancelSyncDays() {
+        // lastClaimSyncAt = null → "아직 한 번도 완료 안 함" = 현행 동작 그대로(하한).
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(emptyData());
+
+        service.syncCancels(account);
+
+        assertThat(capturedQueries()).allMatch(q -> q.contains(expectedFrom(props.getCancelSyncDays())));
+    }
+
+    @Test
+    void newWindow_idleAccount_widensToElapsedPlusOne() {
+        // 20일 쉰 계정 → 21일 창. 오래 쉰 계정만 자동으로 넓어진다(고정 숫자 튜닝 불필요).
+        account = account.toBuilder().lastClaimSyncAt(utcDaysAgo(20)).build();
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(emptyData());
+
+        service.syncCancels(account);
+
+        assertThat(capturedQueries()).allMatch(q -> q.contains(expectedFrom(21)));
+    }
+
+    @Test
+    void newWindow_recentSuccess_neverNarrowsBelowCancelSyncDays() {
+        // 요지: 창은 좁아지지 않는다 — 취소 보정이 이 창을 공유하기 때문(D15·D16).
+        account = account.toBuilder().lastClaimSyncAt(utcDaysAgo(0)).build();
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(emptyData());
+
+        service.syncCancels(account);
+
+        assertThat(capturedQueries()).allMatch(q -> q.contains(expectedFrom(props.getCancelSyncDays())));
+    }
+
+    // --- STALE 스윕 (D11) ---
+
+    @Test
+    void trackOpenClaims_sweepsOnlyClaimsOlderThanStaleDays() {
+        // 같은 판정 축이라 한 테스트에 모은다: 31일 전(강제 종결) / 29일 전(유지) / 이미 종결된 건은 애초에 조회 대상 아님.
+        OrderClaim old = openClaim(1L, 31);
+        OrderClaim fresh = openClaim(2L, 29);
+        given(orderClaimRepository.findOpen(eq(1L), eq(ClaimType.RETURN), any()))
+                .willReturn(List.of(old, fresh));
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(emptyData());
+
+        ClaimTrackingResult result = service.trackOpenClaims(account);
+
+        ArgumentCaptor<OrderClaim> saved = ArgumentCaptor.forClass(OrderClaim.class);
+        verify(orderClaimRepository, times(1)).save(saved.capture());
+        assertThat(saved.getValue().getId()).isEqualTo(1L);
+        assertThat(saved.getValue().getStatus()).isEqualTo(ClaimStatus.STALE);
+        assertThat(result.staleClosed()).isEqualTo(1);
+    }
+
+    @Test
+    void trackOpenClaims_asksForClosedStatuses_derivedFromIsOpen() {
+        // "무엇이 종결인가"의 정의가 두 벌이 되지 않게 고정한다.
+        given(orderClaimRepository.findOpen(eq(1L), eq(ClaimType.RETURN), any())).willReturn(List.of());
+
+        service.trackOpenClaims(account);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Collection<ClaimStatus>> closed = ArgumentCaptor.forClass(Collection.class);
+        verify(orderClaimRepository).findOpen(eq(1L), eq(ClaimType.RETURN), closed.capture());
+        assertThat(closed.getValue()).containsExactlyInAnyOrderElementsOf(ClaimStatus.closedStatuses());
+        assertThat(ClaimStatus.closedStatuses()).containsExactlyInAnyOrder(
+                ClaimStatus.DONE, ClaimStatus.REJECTED, ClaimStatus.WITHDRAWN, ClaimStatus.STALE);
+    }
+
+    // --- 추적 슬라이스 (D7·D10) ---
+
+    @Test
+    void trackOpenClaims_noOpenClaims_doesNotCallCoupang() {
+        given(orderClaimRepository.findOpen(eq(1L), eq(ClaimType.RETURN), any())).willReturn(List.of());
+
+        ClaimTrackingResult result = service.trackOpenClaims(account);
+
+        verify(coupangApiClient, never()).get(anyString(), anyString(), any());
+        assertThat(result.slices()).isZero();
+    }
+
+    @Test
+    void trackOpenClaims_queriesOneSlice_withoutStatusFilter() {
+        // status 를 슬라이스마다 4번 도는 형태로 만들면 호출이 4배가 된다 — 생략 = 전 상태 조회가 전제(PLAN §4).
+        given(orderClaimRepository.findOpen(eq(1L), eq(ClaimType.RETURN), any()))
+                .willReturn(List.of(openClaim(1L, 5)));
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(emptyData());
+
+        ClaimTrackingResult result = service.trackOpenClaims(account);
+
+        ArgumentCaptor<String> queries = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient, times(1)).get(anyString(), queries.capture(), any());
+        assertThat(queries.getValue()).contains(expectedFrom(5)).doesNotContain("status=");
+        assertThat(result.slices()).isEqualTo(1);
+    }
+
+    @Test
+    void trackOpenClaims_capsSlices_atConfiguredMax() {
+        // 60일 범위 = 30일 폭 슬라이스 2개지만 상한 1 로 잘린다(D10). 잘리는 쪽은 항상 최신 구간이라
+        // 신규 조회 창이 이미 덮는다.
+        props.setClaimTrackingMaxSlices(1);
+        props.setClaimStaleDays(9999);          // 스윕 비활성 스위치는 없다 — 크게 잡는 것이 유일한 구성법
+        given(orderClaimRepository.findOpen(eq(1L), eq(ClaimType.RETURN), any()))
+                .willReturn(List.of(openClaim(1L, 60)));
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(emptyData());
+
+        ClaimTrackingResult result = service.trackOpenClaims(account);
+
+        verify(coupangApiClient, times(1)).get(anyString(), anyString(), any());
+        verify(orderClaimRepository, never()).save(any());
+        assertThat(result.slices()).isEqualTo(1);
+    }
+
+    // --- helpers ---
+
+    private List<String> capturedQueries() {
+        ArgumentCaptor<String> queries = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient, times(5)).get(anyString(), queries.capture(), any());
+        return queries.getAllValues();
+    }
+
+    private String expectedFrom(int days) {
+        return "createdAtFrom=" + LocalDate.now(SyncWindow.KST).minusDays(days).format(DATE_FORMAT);
+    }
+
+    /**
+     * lastClaimSyncAt 픽스처 — 서버 시각(UTC) naive 다.
+     * LocalDateTime.now().minusDays(n) 을 쓰면 recentSince 가 UTC 로 해석해 KST 15시 이후에만 하루
+     * 어긋나는 플래키 테스트가 된다(SyncWindowTest.utcDaysAgo 와 같은 방식).
+     */
+    private static LocalDateTime utcDaysAgo(long days) {
+        return LocalDate.now(SyncWindow.KST).minusDays(days).atTime(3, 0);
+    }
+
+    /** receivedAt 은 쿠팡 createdAt = KST 벽시계다 — 기대치도 KST 로 만든다. */
+    private OrderClaim openClaim(Long id, long receivedDaysAgo) {
+        return OrderClaim.builder()
+                .id(id).marketplaceAccount(account).platform("COUPANG").claimType(ClaimType.RETURN)
+                .externalClaimId("R-" + id).externalOrderId("O-" + id).externalItemId("V-" + id)
+                .status(ClaimStatus.RECEIVED).platformStatus("UC")
+                .receivedAt(LocalDate.now(SyncWindow.KST).minusDays(receivedDaysAgo).atTime(10, 0))
+                .build();
     }
 
     // --- canned JSON ---

@@ -10,8 +10,9 @@ import java.time.LocalDateTime;
  * 클레임(반품·교환) 라인 (FEATURE_2609_18 / PLAN §3).
  *
  * {@link OrderItem} 과 같은 입도 = 라인 단위 1행이며, 한 라인에 클레임이 여러 건 붙을 수 있다
- * (부분 반품 2회, 반품 후 교환). UNIQUE(marketplace_account_id, external_claim_id, external_item_id)
- * 로 멱등 upsert 된다.
+ * (부분 반품 2회, 반품 후 교환). UNIQUE(marketplace_account_id, claim_type, external_claim_id,
+ * external_item_id) 로 멱등 upsert 된다 — {@code claim_type} 이 키에 있어야 반품 {@code receiptId} 와
+ * 교환 {@code exchangeId} 가 겹쳐도 서로를 덮어쓰지 않는다(D24).
  *
  * <p>쓰기 주체는 동기화뿐이다 — 반품은 {@link com.pms.service.coupang.CoupangReturnSyncServiceImpl}
  * 이 이미 도는 returnRequests 5배치 응답을 재사용해 적재한다(D15, 쿠팡 호출 0건 추가).
@@ -23,8 +24,8 @@ import java.time.LocalDateTime;
  */
 @Entity
 @Table(name = "order_claim",
-        uniqueConstraints = @UniqueConstraint(name = "uq_orderclaim_account_claim_item",
-                columnNames = {"marketplace_account_id", "external_claim_id", "external_item_id"}))
+        uniqueConstraints = @UniqueConstraint(name = "uq_orderclaim_account_type_claim_item",
+                columnNames = {"marketplace_account_id", "claim_type", "external_claim_id", "external_item_id"}))
 @Getter
 @NoArgsConstructor
 @AllArgsConstructor

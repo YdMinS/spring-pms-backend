@@ -1,5 +1,8 @@
 package com.pms.domain;
 
+import java.util.Arrays;
+import java.util.List;
+
 /**
  * 플랫폼 중립 클레임 상태 (FEATURE_2609_18 / PLAN §3.1 · D3).
  *
@@ -38,8 +41,39 @@ public enum ClaimStatus {
         };
     }
 
+    /**
+     * 쿠팡 교환 receiptStatus → 정규화 (PLAN §3.1).
+     *
+     * RECEIPT(접수) → {@code RECEIVED} / PROGRESS(진행중) → {@code IN_PROGRESS} /
+     * SUCCESS(완료) → {@code DONE} / REJECT(거부) → {@code REJECTED} / CANCEL(철회) → {@code WITHDRAWN}.
+     * 모르는 값(신규 코드·null)은 {@link #fromCoupangReturn} 과 같은 판단으로 {@code RECEIVED} 다 —
+     * 종결로 오분류하면 추적 대상(D7)에서 빠져 영영 갱신되지 않는다.
+     */
+    public static ClaimStatus fromCoupangExchange(String receiptStatus) {
+        if (receiptStatus == null) {
+            return RECEIVED;
+        }
+        return switch (receiptStatus.trim().toUpperCase()) {
+            case "PROGRESS" -> IN_PROGRESS;
+            case "SUCCESS" -> DONE;
+            case "REJECT" -> REJECTED;
+            case "CANCEL" -> WITHDRAWN;
+            default -> RECEIVED;      // RECEIPT 및 미지의 코드
+        };
+    }
+
     /** 미완결 = 04·05 의 추적 대상. DONE/REJECTED/WITHDRAWN/STALE 이 아닌 것(PLAN §3.1). */
     public boolean isOpen() {
         return this != DONE && this != REJECTED && this != WITHDRAWN && this != STALE;
+    }
+
+    /**
+     * 종결 상태 집합 — 미완결 추적(05)의 조회 인자.
+     *
+     * ⚠️ 목록을 손으로 나열하지 말 것. {@link #isOpen()} 에서 파생해야 상태가 늘어도 "무엇이 종결인가"의
+     * 정의가 두 벌이 되지 않는다.
+     */
+    public static List<ClaimStatus> closedStatuses() {
+        return Arrays.stream(values()).filter(status -> !status.isOpen()).toList();
     }
 }

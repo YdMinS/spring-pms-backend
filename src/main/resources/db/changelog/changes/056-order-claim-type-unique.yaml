@@ -1,0 +1,33 @@
+# Claim upsert key gains claim_type (FEATURE_2609_18 / 06 · D24).
+#   Returns use receiptId and exchanges use exchangeId - different sequences. With claim_type out of the
+#   key, an exchange whose exchangeId happens to equal an existing receiptId (same vendorItemId) would
+#   UPDATE the return row instead of inserting: the update path never rewrites claim_type, so the row
+#   would silently keep claimType=RETURN while carrying the exchange's status and reason.
+# ⚠️ ADD BEFORE DROP on purpose: MySQL refuses to drop the index a foreign key (fk_orderclaim_account)
+#    relies on. Creating the wider constraint first gives that FK another index to lean on, so the drop
+#    never touches the dependency. H2 does not reproduce this - the ordering is the guard.
+# ⚠️ No data migration: every existing order_claim row is RETURN, so narrowing the key cannot collide.
+#    A violation would stop Liquibase at boot rather than pass silently.
+# No boolean column here -> the 006 MySQL BIT follow-up changeset is deliberately NOT needed.
+databaseChangeLog:
+
+  - changeSet:
+      id: 056-order-claim-type-unique
+      author: oclyx
+      comment: "FEATURE_2609_18: order_claim upsert key becomes (account, claim_type, claim_id, item_id)."
+      changes:
+        - addUniqueConstraint:
+            tableName: order_claim
+            columnNames: marketplace_account_id, claim_type, external_claim_id, external_item_id
+            constraintName: uq_orderclaim_account_type_claim_item
+        - dropUniqueConstraint:
+            tableName: order_claim
+            constraintName: uq_orderclaim_account_claim_item
+      rollback:
+        - addUniqueConstraint:
+            tableName: order_claim
+            columnNames: marketplace_account_id, external_claim_id, external_item_id
+            constraintName: uq_orderclaim_account_claim_item
+        - dropUniqueConstraint:
+            tableName: order_claim
+            constraintName: uq_orderclaim_account_type_claim_item
