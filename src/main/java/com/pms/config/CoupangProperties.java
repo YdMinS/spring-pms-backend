@@ -176,6 +176,35 @@ public class CoupangProperties {
     private String returnExchangeInvoicePath =
             "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/return-exchange-invoices/manual";
 
+    /**
+     * 교환요청 입고 확인처리 경로(PATCH). {vendorId}·{exchangeId} 치환. FEATURE_2609_21 X1.
+     *
+     * ⚠️ 조회용 {@link #exchangeRequestsPath} 는 <b>v1/marketplace</b> 지만 액션 3종은 <b>v4</b> 다 —
+     * 반품이 겪은 "조회 v6 vs 액션 v4" 의 교환판이다. 조회 상수를 복사하면 전부 404 다.
+     * ⚠️ 실계정 미검증 — dev 에서 셋 다 404 면 {@code v1/marketplace} 접두를 시도하고 PLAN §6-1 에 적는다.
+     */
+    private String exchangeReceiveConfirmPath =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/exchangeRequests/{exchangeId}/receiveConfirmation";
+
+    /**
+     * 교환요청 거부 경로(PATCH). {vendorId}·{exchangeId} 치환. FEATURE_2609_21 X2.
+     *
+     * 🔴 <b>되돌릴 수 없다.</b> 사유 코드는 {@code SOLDOUT}/{@code WITHDRAW} 2개뿐이며 목록의 소유자는
+     * 어댑터다(D19) — 여기에 값 목록을 두지 않는다.
+     */
+    private String exchangeRejectionPath =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/exchangeRequests/{exchangeId}/rejection";
+
+    /**
+     * 교환상품 송장 업로드 경로(POST). {vendorId}·{exchangeId} 치환. FEATURE_2609_21 X3.
+     *
+     * 🔴 필수 {@code shipmentBoxId} 는 <b>입고확인 후 새로 생성된 재배송 박스</b>다 —
+     * {@code order_claim.external_box_id}(원 배송번호)와 다른 값이라 전송 직전 재조회해서 얻는다(D12).
+     * ⚠️ 택배사 필드명이 이 액션만 {@code goodsDeliveryCode} 다(문서 그대로).
+     */
+    private String exchangeInvoicePath =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/exchangeRequests/{exchangeId}/invoices";
+
     /** 쿠팡 API connect 타임아웃(ms). 미설정 시 무제한 → 게이트웨이 지연이 요청 스레드를 무한 점유한다. */
     private int connectTimeoutMs = 10_000;
 

@@ -1,5 +1,6 @@
 package com.pms.service.claim;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.ClaimStatus;
@@ -20,6 +21,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -148,6 +150,28 @@ class CoupangClaimAdapterTest {
         ArgumentCaptor<ClaimRecord> record = ArgumentCaptor.forClass(ClaimRecord.class);
         verify(claimUpserter).upsert(eq(account), eq(ClaimType.EXCHANGE), record.capture());
         assertThat(record.getValue().externalClaimId()).isEqualTo("9001");
+    }
+
+    @Test
+    void findExchangeReceipt_matchingReceipt_returnsItWithoutUpsertingOrPagingFurther() {
+        // 액션 경로(05 X3)의 재조회다 — 조회 코드를 재사용하면서 적재까지 딸려오면
+        // 사용자가 버튼을 누를 때마다 동기화가 도는 셈이 된다.
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn("""
+                {"data":[
+                  {"exchangeId":9001,"deliveryInvoiceGroupDtos":[{"shipmentBoxId":"777"}]}
+                ],"nextToken":"PAGE2"}
+                """);
+
+        LocalDate day = LocalDate.of(2026, 9, 1);
+        Optional<JsonNode> found = adapter.findExchangeReceipt(
+                account, "9001", new SyncWindow(day, day));
+
+        assertThat(found).isPresent();
+        assertThat(found.get().path("deliveryInvoiceGroupDtos").path(0).path("shipmentBoxId").asText())
+                .isEqualTo("777");
+        verify(claimUpserter, never()).upsert(any(), any(), any());
+        // nextToken 이 남아 있어도 찾았으면 다음 페이지를 치지 않는다.
+        verify(coupangApiClient, times(1)).get(anyString(), anyString(), any());
     }
 
     private void givenNoOpenClaims() {

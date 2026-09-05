@@ -85,6 +85,17 @@ public class OrderClaim extends BaseEntity {
     @Column(name = "platform_status", nullable = false, length = 30)
     private String platformStatus;                  // 원문 (RU / UC / CC / PR ...)
 
+    /**
+     * 교환 회수상태 원문 (BeforeDirection / CompleteCollect ...) — 교환 액션의 가능 조건이다
+     * (FEATURE_2609_21 / 05). 컬럼 이름은 플랫폼 중립, 값은 원문 그대로다({@code platformStatus} 와
+     * 같은 자세) — 우리 enum 으로 정규화하면 액션 판정이 축약된 값 위에서 돌게 된다(D2).
+     *
+     * <p>⚠️ null 이면 <b>액션을 열지 않는다</b>(D3). 비어 있는 것과 조건을 만족하는 것은 다르다 —
+     * 기존 행은 비어 있고 다음 동기화가 채운다(백필 없음).
+     */
+    @Column(name = "collect_status", length = 30)
+    private String collectStatus;
+
     @Column(name = "reason_code", length = 100)
     private String reasonCode;
 

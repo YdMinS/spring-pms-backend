@@ -115,3 +115,5 @@ databaseChangeLog:
       file: db/changelog/changes/057-listing-detail-template.yaml
   - include:
       file: db/changelog/changes/058-order-claim-action.yaml
+  - include:
+      file: db/changelog/changes/059-order-claim-collect-status.yaml

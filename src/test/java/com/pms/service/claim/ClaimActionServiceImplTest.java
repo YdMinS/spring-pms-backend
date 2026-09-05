@@ -57,13 +57,14 @@ class ClaimActionServiceImplTest {
     @Mock private CoupangApiClient coupangApiClient;
     @Mock private com.pms.config.CoupangProperties coupangProperties;
     @Mock private com.pms.service.CarrierCodeService carrierCodeService;
+    @Mock private CoupangClaimAdapter coupangClaimAdapter;
 
     private ClaimActionServiceImpl service;
 
     @BeforeEach
     void setUp() {
         CoupangClaimActionAdapter adapter = new CoupangClaimActionAdapter(
-                coupangApiClient, coupangProperties, carrierCodeService,
+                coupangApiClient, coupangProperties, carrierCodeService, coupangClaimAdapter,
                 new com.fasterxml.jackson.databind.ObjectMapper());
         service = new ClaimActionServiceImpl(
                 List.of(adapter), orderClaimRepository, orderClaimActionRepository);

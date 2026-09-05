@@ -109,6 +109,7 @@ public class ClaimQueryServiceImpl implements ClaimQueryService {
                 claim.getClaimType(),
                 claim.getStatus(),
                 claim.getPlatformStatus(),
+                claim.getCollectStatus(),
                 claim.getExternalClaimId(),
                 claim.getExternalOrderId(),
                 claim.getItemName(),

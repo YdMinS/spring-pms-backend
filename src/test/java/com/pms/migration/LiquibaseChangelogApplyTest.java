@@ -389,6 +389,15 @@ class LiquibaseChangelogApplyTest {
                 "SELECT CONSTRAINT_TYPE FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
                         + "WHERE TABLE_NAME = 'ORDER_CLAIM_ACTION'", String.class);
         assertThat(constraints).doesNotContain("UNIQUE");
+
+        // changeset 059: order_claim.collect_status added, nullable, with no backfill (existing rows
+        // stay empty until the next exchange sync fills them - an empty value opens no action).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM order_claim WHERE collect_status IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE TABLE_NAME = 'ORDER_CLAIM' AND COLUMN_NAME = 'COLLECT_STATUS'",
+                String.class)).isEqualTo("YES");
     }
 
     @Test
