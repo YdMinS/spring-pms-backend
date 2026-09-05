@@ -337,6 +337,16 @@ class LiquibaseChangelogApplyTest {
     }
 
     @Test
+    void claimSyncColumnApplied() {
+        // changeset 055: last_claim_sync_at exists on marketplace_account (FEATURE_2609_18 D6·D18).
+        // Nullable with no backfill on purpose — NULL means "never completed a claim run", which makes the
+        // first run fall back to the cancel-sync-days window — so a successful count proves it was added.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM marketplace_account WHERE last_claim_sync_at IS NULL",
+                Integer.class)).isNotNull();
+    }
+
+    @Test
     void tenantDimensionApplied() {
         // changeset 002: tenant table created + seeded with the default tenant (id=1).
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tenant", Integer.class)).isEqualTo(1);

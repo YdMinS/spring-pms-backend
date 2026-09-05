@@ -107,3 +107,5 @@ databaseChangeLog:
       file: db/changelog/changes/053-order-claim.yaml
   - include:
       file: db/changelog/changes/054-listing-option-price-source.yaml
+  - include:
+      file: db/changelog/changes/055-marketplace-claim-sync.yaml

@@ -162,6 +162,17 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
                 throw e;
             }
 
+            // 확정 순서: 취소 보정 → 추적 → 백필. 추적 슬라이스도 클레임을 적재하므로, 백필이 뒤에
+            // 있어야 그때 새로 생긴 미연결 건까지 같은 회차에 처리된다(2609_18 05 Step 8).
+            try {
+                coupangReturnSyncService.trackOpenClaims(account);
+                syncStatusRecorder.recordClaimSyncCompleted(account.getId());   // 추적까지 끝난 회차만
+            } catch (Exception e) {
+                log.warn("Claim tracking failed (isolated): account={}", account.getId(), e);
+                // lastClaimSyncAt 미갱신 → 다음 회차 창이 자동으로 넓어져 놓친 구간을 덮는다(D18).
+                // 취소 보정과 달리 SUCCESS 를 깨지 않는다 — 추적은 이미 적재된 건의 상태 따라잡기다.
+            }
+
             try {
                 claimOrderBackfillService.backfill(account);
             } catch (Exception e) {

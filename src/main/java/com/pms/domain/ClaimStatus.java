@@ -1,5 +1,8 @@
 package com.pms.domain;
 
+import java.util.Arrays;
+import java.util.List;
+
 /**
  * 플랫폼 중립 클레임 상태 (FEATURE_2609_18 / PLAN §3.1 · D3).
  *
@@ -41,5 +44,15 @@ public enum ClaimStatus {
     /** 미완결 = 04·05 의 추적 대상. DONE/REJECTED/WITHDRAWN/STALE 이 아닌 것(PLAN §3.1). */
     public boolean isOpen() {
         return this != DONE && this != REJECTED && this != WITHDRAWN && this != STALE;
+    }
+
+    /**
+     * 종결 상태 집합 — 미완결 추적(05)의 조회 인자.
+     *
+     * ⚠️ 목록을 손으로 나열하지 말 것. {@link #isOpen()} 에서 파생해야 상태가 늘어도 "무엇이 종결인가"의
+     * 정의가 두 벌이 되지 않는다.
+     */
+    public static List<ClaimStatus> closedStatuses() {
+        return Arrays.stream(values()).filter(status -> !status.isOpen()).toList();
     }
 }

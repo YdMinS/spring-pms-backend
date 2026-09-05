@@ -22,6 +22,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.inOrder;
@@ -82,6 +83,53 @@ class OrderSyncFacadeImplTest {
         assertThat(result.newOrders()).isEqualTo(3);
         assertThat(result.updatedOrders()).isEqualTo(1);
         assertThat(result.canceledUpdated()).isEqualTo(2);
+    }
+
+    @Test
+    void sync_recordsClaimSyncCompleted_afterTrackingSucceeds() {
+        MarketplaceAccount acc = account(1L);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        given(coupangOrderSyncService.syncAccount(acc, OrderSyncScope.FULL)).willReturn(new SyncResult(1, 0, 1, List.of()));
+        given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(0, 1));
+
+        facade.sync(1L);
+
+        verify(coupangReturnSyncService).trackOpenClaims(acc);
+        verify(syncStatusRecorder).recordClaimSyncCompleted(1L);
+        verify(syncStatusRecorder).recordSuccess(1L);
+    }
+
+    @Test
+    void sync_trackingThrows_skipsClaimSyncRecordButKeepsSuccess() {
+        // lastClaimSyncAt 미갱신 → 다음 회차 창이 자동으로 넓어져 놓친 구간을 덮는다(D18).
+        // 회차 자체는 성공이다 — 추적은 이미 적재된 건의 상태 따라잡기라 취소 보정과 판단이 다르다.
+        MarketplaceAccount acc = account(1L);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        given(coupangOrderSyncService.syncAccount(acc, OrderSyncScope.FULL)).willReturn(new SyncResult(1, 0, 1, List.of()));
+        given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(0, 1));
+        given(coupangReturnSyncService.trackOpenClaims(acc)).willThrow(new RuntimeException("쿠팡 500"));
+
+        facade.sync(1L);
+
+        verify(syncStatusRecorder, never()).recordClaimSyncCompleted(any());
+        verify(syncStatusRecorder).recordSuccess(1L);
+    }
+
+    @Test
+    void sync_orderPartial_stillRecordsClaimSyncCompleted() {
+        // 클레임 단계는 주문 PARTIAL 과 독립이다 — 적재는 returnRequests 경로라 ordersheets 상태 실패와
+        // 무관하고, 여기서 미갱신하면 멀쩡히 적재된 구간을 다음 회차가 다시 읽는다(D18).
+        MarketplaceAccount acc = account(1L);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        given(coupangOrderSyncService.syncAccount(acc, OrderSyncScope.FULL))
+                .willReturn(new SyncResult(1, 0, 1, List.of(CoupangOrderStatus.INSTRUCT)));
+        given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(0, 1));
+
+        facade.sync(1L);
+
+        verify(syncStatusRecorder).recordPartial(eq(1L), anyString(), eq(false), eq(true));
+        verify(syncStatusRecorder).recordClaimSyncCompleted(1L);
+        verify(syncStatusRecorder, never()).recordSuccess(any());
     }
 
     @Test

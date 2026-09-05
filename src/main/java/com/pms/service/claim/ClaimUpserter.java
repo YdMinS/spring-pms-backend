@@ -1,5 +1,6 @@
 package com.pms.service.claim;
 
+import com.pms.domain.ClaimStatus;
 import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
@@ -74,6 +75,14 @@ public class ClaimUpserter {
         }
 
         OrderClaim existing = found.get();
+        // STALE 은 로컬 강제 종결이다(D11). 플랫폼이 여전히 미완결이라고 답해도 되돌리지 않는다 —
+        // 되돌리면 다음 스윕이 다시 STALE 로 만들어 회차마다 STALE↔RECEIVED 를 왕복한다.
+        // 종결 상태로의 갱신만 받아들인다(platformStatus·기타 필드도 함께 멈춘다 — 한 행의 상태와
+        // 원문이 어긋나면 안 된다).
+        if (existing.getStatus() == ClaimStatus.STALE && record.status().isOpen()) {
+            return;
+        }
+
         // 이미 주문 라인이 붙어 있으면 재매칭하지 않는다 (D22) — 04 백필이 붙인 결과도 보존된다.
         OrderItem orderItem = existing.getOrderItem() != null
                 ? existing.getOrderItem()

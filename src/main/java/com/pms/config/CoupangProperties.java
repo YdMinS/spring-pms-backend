@@ -108,6 +108,19 @@ public class CoupangProperties {
      */
     private int claimBackfillMaxAttempts = 3;
 
+    /** 클레임 조회 창의 상한(일). 하한은 cancel-sync-days 다. 쿠팡 상한이 31일 미만이라 30을 넘기지 말 것. */
+    private int claimWindowMaxDays = 30;
+
+    /** 이 일수를 넘긴 미완결 클레임은 STALE 로 강제 종결한다(D11). 추적 슬라이스의 폭을 실질적으로 결정한다. */
+    private int claimStaleDays = 30;
+
+    /**
+     * 회차당 추적 슬라이스 상한(D10) = 호출 폭주 안전망. 0 = 슬라이스 조회 비활성.
+     * ⚠️ 0 이어도 STALE 스윕은 돈다 — 스윕은 쿠팡을 치지 않는 로컬 종결이고, 이걸 같이 끄면
+     * 미완결이 무한히 쌓여 다시 켤 때 슬라이스가 폭발한다.
+     */
+    private int claimTrackingMaxSlices = 6;
+
     /** 쿠팡 API connect 타임아웃(ms). 미설정 시 무제한 → 게이트웨이 지연이 요청 스레드를 무한 점유한다. */
     private int connectTimeoutMs = 10_000;
 

@@ -1,5 +1,6 @@
 package com.pms.repository;
 
+import com.pms.domain.ClaimStatus;
 import com.pms.domain.ClaimType;
 import com.pms.domain.OrderClaim;
 import org.springframework.data.domain.Pageable;
@@ -9,6 +10,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -55,10 +57,25 @@ public interface OrderClaimRepository extends JpaRepository<OrderClaim, Long> {
     @Query("select c from OrderClaim c where c.marketplaceAccount.id = :accountId "
             + "and c.orderItem is null and c.orderItemMatchAttempts < :maxAttempts "
             + "and c.externalOrderId is not null "
+            + "and c.status <> com.pms.domain.ClaimStatus.STALE "
             + "order by c.receivedAt desc")
     List<OrderClaim> findUnlinked(@Param("accountId") Long accountId,
                                   @Param("maxAttempts") int maxAttempts,
                                   Pageable pageable);
+
+    /**
+     * 미완결 클레임(05 의 추적 대상) — 접수 오래된 순.
+     *
+     * 종결 집합은 호출자가 {@link com.pms.domain.ClaimStatus#closedStatuses()} 로 넘긴다 — 여기에
+     * 목록을 박으면 "무엇이 종결인가"가 두 벌이 된다.
+     * ⚠️ {@code @EntityGraph} 를 붙이지 않는다 — 추적은 id·status·receivedAt 만 읽고 응답에 싣지 않는다.
+     * 정렬이 오래된 순인 이유: 맨 앞이 곧 슬라이스의 시작일이다.
+     */
+    @Query("select c from OrderClaim c where c.marketplaceAccount.id = :accountId "
+            + "and c.claimType = :type and c.status not in :closed order by c.receivedAt asc")
+    List<OrderClaim> findOpen(@Param("accountId") Long accountId,
+                              @Param("type") ClaimType type,
+                              @Param("closed") Collection<ClaimStatus> closed);
 
     /** 단건 상세 — GET /api/claims/{id}. */
     @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller", "orderItem"})

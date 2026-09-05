@@ -170,6 +170,31 @@ class ClaimUpserterTest {
         assertThat(captor.getValue().getOrderItemMatchAttempts()).isEqualTo(1);
     }
 
+    @Test
+    void upsert_staleClaim_isNotRevertedByOpenPlatformStatus() {
+        // STALE 은 로컬 강제 종결이다(D11) — 되돌리면 다음 스윕이 다시 STALE 로 만들어 회차마다 왕복한다.
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndExternalClaimIdAndExternalItemId(
+                1L, "R-1", "V-1")).willReturn(Optional.of(existingClaim(ClaimStatus.STALE, "STALE", 2)));
+
+        upserter.upsert(account, ClaimType.RETURN, record("B-1", ClaimStatus.RECEIVED, "UC", 2));
+
+        verify(orderClaimRepository, never()).save(any());
+    }
+
+    @Test
+    void upsert_staleClaim_acceptsClosingStatus() {
+        // 종결 상태로의 갱신은 받아들인다 — 뒤늦게 CC 가 오면 그게 진짜 결말이다.
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndExternalClaimIdAndExternalItemId(
+                1L, "R-1", "V-1")).willReturn(Optional.of(existingClaim(ClaimStatus.STALE, "STALE", 2)));
+
+        upserter.upsert(account, ClaimType.RETURN, record("B-1", ClaimStatus.DONE, "CC", 2));
+
+        ArgumentCaptor<OrderClaim> captor = ArgumentCaptor.forClass(OrderClaim.class);
+        verify(orderClaimRepository, times(1)).save(captor.capture());
+        assertThat(captor.getValue().getStatus()).isEqualTo(ClaimStatus.DONE);
+        assertThat(captor.getValue().getPlatformStatus()).isEqualTo("CC");
+    }
+
     /** 04 백필 대상 — 주문 라인이 아직 붙지 않은 클레임. */
     private OrderClaim unlinked(long id) {
         return OrderClaim.builder()
