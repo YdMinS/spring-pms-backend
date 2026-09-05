@@ -18,6 +18,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -36,6 +37,9 @@ class ClaimQueryServiceImplTest {
 
     @Mock private OrderClaimRepository orderClaimRepository;
     @Mock private CoupangProperties coupangProperties;
+    // ⚠️ 목으로 둔다 — @InjectMocks 는 누락된 생성자 인자를 컴파일 에러 없이 null 로 주입하고,
+    //    그러면 toResponse 의 availableActions 조회가 NPE 로 죽는다.
+    @Mock private ClaimActionService claimActionService;
     @InjectMocks private ClaimQueryServiceImpl service;
 
     @Test
@@ -67,6 +71,7 @@ class ClaimQueryServiceImplTest {
 
     @Test
     void getClaims_keywordAndStatus_filterAfterQuery() {
+        given(claimActionService.availableActions(any())).willReturn(Map.of());
         given(orderClaimRepository.findInPeriod(eq(ClaimType.RETURN), any(), any()))
                 .willReturn(List.of(
                         claim(1L, ClaimStatus.RECEIVED, "O-100", "홍길동", "양말"),
@@ -82,11 +87,14 @@ class ClaimQueryServiceImplTest {
         assertThat(byStatus).extracting(OrderClaimResponse::id).containsExactly(3L);
         assertThat(byStatus.get(0).sellerName()).isEqualTo("테스트셀러");
         assertThat(byStatus.get(0).linked()).isFalse();
+        // 판정 진입점이 액션을 안 주면 null 이 아니라 빈 목록으로 내려간다(클라이언트가 분기하지 않게).
+        assertThat(byStatus.get(0).availableActions()).isEmpty();
     }
 
     @Test
     void getClaims_exchangeWithReshipInvoice_exposesBothInvoicePairs() {
         // 07·08 이 이 두 필드를 읽는다 — 빠지면 화면이 조용히 빈칸을 그린다.
+        given(claimActionService.availableActions(any())).willReturn(Map.of());
         given(orderClaimRepository.findInPeriod(eq(ClaimType.EXCHANGE), any(), any()))
                 .willReturn(List.of(exchangeClaim()));
 

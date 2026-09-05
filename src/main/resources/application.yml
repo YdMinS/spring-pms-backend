@@ -87,6 +87,13 @@ oklyx:
     return-withdraw-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/returnWithdrawRequests
     # Cancel reconciliation window (days): wider than ordersheets to cover delayed cancellations. Coupang max 31 days.
     cancel-sync-days: 7
+    # Claim processing actions (FEATURE_2609_21). Prefix is v4 - the return LIST above is v6, so copying
+    # its prefix would 404 every action. Unverified against a live account -> keep them overridable.
+    return-receive-confirm-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/returnRequests/{receiptId}/receiveConfirmation
+    # Approving a return CONFIRMS THE REFUND. Irreversible, no sandbox - only the controller calls it.
+    return-approval-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/returnRequests/{receiptId}/approval
+    # Collect-invoice registration, shared by returns and exchanges (returnExchangeDeliveryType picks one).
+    return-exchange-invoice-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/return-exchange-invoices/manual
     # HTTP timeouts for every Coupang call. Without them a slow gateway pins the request thread forever,
     # so one hung call stalls the whole sync. Connect is short (TCP handshake); read is generous because
     # some queries (shipping-label sheets) legitimately take a while — generous, never unbounded.

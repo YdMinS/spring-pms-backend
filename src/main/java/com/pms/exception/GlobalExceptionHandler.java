@@ -1,6 +1,8 @@
 package com.pms.exception;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.response.ClaimActionResponse;
+import com.pms.service.claim.ClaimActionFailedException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -60,6 +62,20 @@ public class GlobalExceptionHandler {
         log.warn("DuplicatePlatformCarrierCodeException: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ResponseDTO.failure(e.getMessage()));
+    }
+
+    /**
+     * 마켓이 클레임 액션을 거절한 경우 → 502 + 원문(FEATURE_2609_21 D15).
+     *
+     * ⚠️ 실패도 {@code data} 를 채운다 — 클라이언트가 성공/실패에서 다른 스키마를 파싱하지 않게.
+     * {@code resultMessage} 는 <b>번역·요약 없이 원문 그대로</b>여야 실계정 디버깅에서 검색된다.
+     */
+    @ExceptionHandler(ClaimActionFailedException.class)
+    public ResponseEntity<ResponseDTO<ClaimActionResponse>> handleClaimActionFailedException(
+            ClaimActionFailedException e) {
+        log.warn("ClaimActionFailedException: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(ResponseDTO.failure("쿠팡 처리에 실패했습니다", e.getResult()));
     }
 
     @ExceptionHandler(BusinessException.class)

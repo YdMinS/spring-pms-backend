@@ -80,6 +80,6 @@ class OrderClaimControllerTest extends BaseIntegrationTest {
         return new OrderClaimResponse(1L, "COUPANG", ClaimType.RETURN, ClaimStatus.RECEIVED, "UC",
                 "R-1", "O-1", "양말", 2, "CHANGEMIND", "단순변심", "CUSTOMER", 3000,
                 "INV-9", "CJGLS", null, null, "홍길동", LocalDateTime.of(2026, 9, 1, 10, 0),
-                5L, "테스트셀러", 10L, true);
+                5L, "테스트셀러", 10L, true, List.of());
     }
 }

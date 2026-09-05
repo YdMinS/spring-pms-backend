@@ -373,6 +373,25 @@ class LiquibaseChangelogApplyTest {
     }
 
     @Test
+    void orderClaimActionApplied() {
+        // changeset 058: order_claim_action + its index (FEATURE_2609_21).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM order_claim_action WHERE succeeded IS NULL", Integer.class)).isZero();
+
+        List<String> indexes = jdbcTemplate.queryForList(
+                "SELECT INDEX_NAME FROM INFORMATION_SCHEMA.INDEXES "
+                        + "WHERE TABLE_NAME = 'ORDER_CLAIM_ACTION'", String.class);
+        assertThat(indexes).contains("IDX_ORDERCLAIMACTION_CLAIM_ACTION_SUCCEEDED");
+
+        // No UNIQUE on purpose: retrying a failed action must be able to pile up rows, so the
+        // duplicate guard is a query over succeeded=true rows rather than a database constraint.
+        List<String> constraints = jdbcTemplate.queryForList(
+                "SELECT CONSTRAINT_TYPE FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
+                        + "WHERE TABLE_NAME = 'ORDER_CLAIM_ACTION'", String.class);
+        assertThat(constraints).doesNotContain("UNIQUE");
+    }
+
+    @Test
     void tenantDimensionApplied() {
         // changeset 002: tenant table created + seeded with the default tenant (id=1).
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tenant", Integer.class)).isEqualTo(1);

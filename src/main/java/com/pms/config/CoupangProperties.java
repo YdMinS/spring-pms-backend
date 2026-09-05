@@ -149,6 +149,33 @@ public class CoupangProperties {
     /** 교환 조회 페이지 크기. ⚠️ 쿠팡 기본값이 10 이라 명시하지 않으면 페이지 수가 5배가 된다. */
     private int exchangeMaxPerPage = 50;
 
+    /**
+     * 반품상품 입고 확인처리 경로(PATCH). {vendorId}·{receiptId} 치환. FEATURE_2609_21 R1.
+     *
+     * ⚠️ 조회용 {@link #returnrequestsPath} 는 <b>v6</b> 지만 액션 3종은 <b>v4</b> 다 — 조회 상수를
+     * 복사해 접두를 맞추면 액션이 전부 404 다.
+     * ⚠️ 실계정 미검증이라 상수가 아니라 설정으로 뺀다(ordersheet-by-order-path 와 같은 판단).
+     */
+    private String returnReceiveConfirmPath =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/returnRequests/{receiptId}/receiveConfirmation";
+
+    /**
+     * 반품요청 승인 경로(PATCH). {vendorId}·{receiptId} 치환. FEATURE_2609_21 R2.
+     *
+     * 🔴 <b>환불 확정 — 되돌릴 수 없다.</b> 호출자는 컨트롤러뿐이고 동기화 경로는 이 값을 읽지 않는다(D4).
+     */
+    private String returnApprovalPath =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/returnRequests/{receiptId}/approval";
+
+    /**
+     * 회수 송장 등록 경로(POST). {vendorId} 치환. FEATURE_2609_21 R3.
+     *
+     * 반품·교환 <b>공용</b>이며 {@code returnExchangeDeliveryType} 으로만 갈린다.
+     * ⚠️ 굿스플로를 쓰는 판매자는 이 API 가 아예 막혀 400 이 온다(PLAN §6-3).
+     */
+    private String returnExchangeInvoicePath =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/return-exchange-invoices/manual";
+
     /** 쿠팡 API connect 타임아웃(ms). 미설정 시 무제한 → 게이트웨이 지연이 요청 스레드를 무한 점유한다. */
     private int connectTimeoutMs = 10_000;
 
