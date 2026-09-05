@@ -47,7 +47,8 @@ public record SyncWindow(LocalDate from, LocalDate to) {
      *
      * @param lastSuccess 마지막 ordersheets 성공 시각(null = 한 번도 성공 못 함)
      * @param minDays     하한. 자정 경계에서 하루가 통째로 비지 않게 하는 최소치
-     * @param maxDays     상한 = 정기 창(sync-days). <b>현행보다 넓어지는 일은 없다</b>(D4)
+     * @param maxDays     상한. <b>호출자가 정한다</b> — 종결 상태 조회는 정기 창(sync-days),
+     *                    클레임 조회는 claim-window-max-days(2609_18 D6, 하한보다 넓다)
      */
     public static SyncWindow recentSince(LocalDateTime lastSuccess, int minDays, int maxDays) {
         if (lastSuccess == null) {

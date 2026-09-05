@@ -103,6 +103,9 @@ public class MarketplaceAccount extends BaseEntity {
     @Column(name = "last_cancel_sync_at")
     private LocalDateTime lastCancelSyncAt;        // 취소 보정 마지막 성공 시각
 
+    @Column(name = "last_claim_sync_at")
+    private LocalDateTime lastClaimSyncAt;         // 클레임 적재+추적이 모두 끝난 회차의 시각 (추적 실패 시 미갱신, D18)
+
     @Column(name = "last_sync_error", length = 500)
     private String lastSyncError;                  // 실패 사유 요약 (응답 바디 미포함 — PII·자격증명)
 }

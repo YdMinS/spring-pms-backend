@@ -49,8 +49,8 @@ class ClaimUpserterTest {
     @Test
     void upsert_newClaimWithBoxId_linksByFourKeyMatch() {
         OrderItem line = orderLine(10L);
-        given(orderClaimRepository.findByMarketplaceAccount_IdAndExternalClaimIdAndExternalItemId(
-                1L, "R-1", "V-1")).willReturn(Optional.empty());
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+                1L, ClaimType.RETURN, "R-1", "V-1")).willReturn(Optional.empty());
         given(orderItemRepository.findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
                 1L, "B-1", "O-1", "V-1")).willReturn(Optional.of(line));
 
@@ -73,8 +73,8 @@ class ClaimUpserterTest {
     @Test
     void upsert_nullBoxId_fallsBackToThreeKeyMatch() {
         OrderItem line = orderLine(11L);
-        given(orderClaimRepository.findByMarketplaceAccount_IdAndExternalClaimIdAndExternalItemId(
-                1L, "R-1", "V-1")).willReturn(Optional.empty());
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+                1L, ClaimType.RETURN, "R-1", "V-1")).willReturn(Optional.empty());
         given(orderItemRepository.findByMarketplaceAccount_IdAndExternalOrderIdAndExternalItemId(
                 1L, "O-1", "V-1")).willReturn(List.of(line));
 
@@ -89,8 +89,8 @@ class ClaimUpserterTest {
     @Test
     void upsert_threeKeyReturnsMultipleLines_storesUnlinked() {
         // D22: 합포장으로 같은 옵션이 여러 박스에 걸리면 모호하다 → 틀린 라인에 붙이느니 미연결
-        given(orderClaimRepository.findByMarketplaceAccount_IdAndExternalClaimIdAndExternalItemId(
-                1L, "R-1", "V-1")).willReturn(Optional.empty());
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+                1L, ClaimType.RETURN, "R-1", "V-1")).willReturn(Optional.empty());
         given(orderItemRepository.findByMarketplaceAccount_IdAndExternalOrderIdAndExternalItemId(
                 1L, "O-1", "V-1")).willReturn(List.of(orderLine(12L), orderLine(13L)));
 
@@ -105,8 +105,8 @@ class ClaimUpserterTest {
     @Test
     void upsert_existingClaimWithChangedStatus_updatesMutableFieldsOnly() {
         OrderClaim existing = existingClaim(ClaimStatus.RECEIVED, "UC", 2);
-        given(orderClaimRepository.findByMarketplaceAccount_IdAndExternalClaimIdAndExternalItemId(
-                1L, "R-1", "V-1")).willReturn(Optional.of(existing));
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+                1L, ClaimType.RETURN, "R-1", "V-1")).willReturn(Optional.of(existing));
 
         upserter.upsert(account, ClaimType.RETURN, record("B-1", ClaimStatus.DONE, "CC", 2));
 
@@ -128,12 +128,154 @@ class ClaimUpserterTest {
     @Test
     void upsert_existingClaimUnchanged_skipsSave() {
         OrderClaim existing = existingClaim(ClaimStatus.RECEIVED, "UC", 2);
-        given(orderClaimRepository.findByMarketplaceAccount_IdAndExternalClaimIdAndExternalItemId(
-                1L, "R-1", "V-1")).willReturn(Optional.of(existing));
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+                1L, ClaimType.RETURN, "R-1", "V-1")).willReturn(Optional.of(existing));
 
         upserter.upsert(account, ClaimType.RETURN, record("B-1", ClaimStatus.RECEIVED, "UC", 2));
 
         verify(orderClaimRepository, never()).save(any());
+    }
+
+    @Test
+    void relink_fourKeyMatches_linksWithoutConsumingAttempt() {
+        OrderItem line = orderLine(20L);
+        given(orderClaimRepository.findById(1L)).willReturn(Optional.of(unlinked(1L)));
+        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
+                1L, "B-1", "O-1", "V-1")).willReturn(Optional.of(line));
+
+        boolean linked = upserter.relink(1L);
+
+        assertThat(linked).isTrue();
+        ArgumentCaptor<OrderClaim> captor = ArgumentCaptor.forClass(OrderClaim.class);
+        verify(orderClaimRepository).save(captor.capture());
+        assertThat(captor.getValue().getOrderItem()).isSameAs(line);
+        // 성공은 시도횟수를 소모하지 않는다 — 포기 조건(D13)은 실패에만 걸린다
+        assertThat(captor.getValue().getOrderItemMatchAttempts()).isZero();
+    }
+
+    @Test
+    void relink_ambiguousThreeKey_incrementsAttemptsAndStaysUnlinked() {
+        given(orderClaimRepository.findById(1L)).willReturn(Optional.of(unlinked(1L)));
+        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
+                1L, "B-1", "O-1", "V-1")).willReturn(Optional.empty());
+        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalOrderIdAndExternalItemId(
+                1L, "O-1", "V-1")).willReturn(List.of(orderLine(21L), orderLine(22L)));
+
+        boolean linked = upserter.relink(1L);
+
+        assertThat(linked).isFalse();
+        ArgumentCaptor<OrderClaim> captor = ArgumentCaptor.forClass(OrderClaim.class);
+        verify(orderClaimRepository).save(captor.capture());
+        assertThat(captor.getValue().getOrderItem()).isNull();
+        assertThat(captor.getValue().getOrderItemMatchAttempts()).isEqualTo(1);
+    }
+
+    @Test
+    void upsert_staleClaim_isNotRevertedByOpenPlatformStatus() {
+        // STALE 은 로컬 강제 종결이다(D11) — 되돌리면 다음 스윕이 다시 STALE 로 만들어 회차마다 왕복한다.
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+                1L, ClaimType.RETURN, "R-1", "V-1")).willReturn(Optional.of(existingClaim(ClaimStatus.STALE, "STALE", 2)));
+
+        upserter.upsert(account, ClaimType.RETURN, record("B-1", ClaimStatus.RECEIVED, "UC", 2));
+
+        verify(orderClaimRepository, never()).save(any());
+    }
+
+    @Test
+    void upsert_staleClaim_acceptsClosingStatus() {
+        // 종결 상태로의 갱신은 받아들인다 — 뒤늦게 CC 가 오면 그게 진짜 결말이다.
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+                1L, ClaimType.RETURN, "R-1", "V-1")).willReturn(Optional.of(existingClaim(ClaimStatus.STALE, "STALE", 2)));
+
+        upserter.upsert(account, ClaimType.RETURN, record("B-1", ClaimStatus.DONE, "CC", 2));
+
+        ArgumentCaptor<OrderClaim> captor = ArgumentCaptor.forClass(OrderClaim.class);
+        verify(orderClaimRepository, times(1)).save(captor.capture());
+        assertThat(captor.getValue().getStatus()).isEqualTo(ClaimStatus.DONE);
+        assertThat(captor.getValue().getPlatformStatus()).isEqualTo("CC");
+    }
+
+    @Test
+    void upsert_exchangeRecord_storesReshipInvoiceAndNoReturnCharge() {
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+                1L, ClaimType.EXCHANGE, "E-1", "V-1")).willReturn(Optional.empty());
+        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
+                1L, "B-1", "O-1", "V-1")).willReturn(Optional.of(orderLine(10L)));
+
+        upserter.upsert(account, ClaimType.EXCHANGE, exchangeRecord("RES-1", "HANJIN"));
+
+        ArgumentCaptor<OrderClaim> captor = ArgumentCaptor.forClass(OrderClaim.class);
+        verify(orderClaimRepository, times(1)).save(captor.capture());
+        OrderClaim saved = captor.getValue();
+        assertThat(saved.getClaimType()).isEqualTo(ClaimType.EXCHANGE);
+        assertThat(saved.getReshipInvoiceNo()).isEqualTo("RES-1");
+        assertThat(saved.getReshipCarrierCode()).isEqualTo("HANJIN");
+        assertThat(saved.getReturnShippingCharge()).isNull();   // 컬럼 이름이 곧 의미다(반품비)
+    }
+
+    @Test
+    void upsert_sameIdsButDifferentClaimType_insertsNewRow() {
+        // D24: receiptId(반품)와 exchangeId(교환)는 다른 시퀀스다 — 키에 claimType 이 빠지면
+        // 교환이 반품 행을 덮어써 claimType=RETURN 인 채 상태·사유만 교환 값인 행이 남는다.
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+                1L, ClaimType.EXCHANGE, "E-1", "V-1")).willReturn(Optional.empty());
+        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
+                1L, "B-1", "O-1", "V-1")).willReturn(Optional.of(orderLine(10L)));
+
+        upserter.upsert(account, ClaimType.EXCHANGE, exchangeRecord("RES-1", "HANJIN"));
+
+        ArgumentCaptor<OrderClaim> captor = ArgumentCaptor.forClass(OrderClaim.class);
+        verify(orderClaimRepository, times(1)).save(captor.capture());
+        assertThat(captor.getValue().getId()).isNull();         // 갱신이 아니라 신규 행
+        assertThat(captor.getValue().getClaimType()).isEqualTo(ClaimType.EXCHANGE);
+    }
+
+    @Test
+    void upsert_existingExchangeWithNewReshipInvoice_savesOnce() {
+        // hasChanges 가 재발송 송장을 보지 않으면 회수 송장만 바뀐 것처럼 판정돼 갱신이 통째로 누락된다.
+        OrderClaim existing = existingExchange("OLD-1", "HANJIN");
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+                1L, ClaimType.EXCHANGE, "E-1", "V-1")).willReturn(Optional.of(existing));
+
+        upserter.upsert(account, ClaimType.EXCHANGE, exchangeRecord("RES-2", "HANJIN"));
+
+        ArgumentCaptor<OrderClaim> captor = ArgumentCaptor.forClass(OrderClaim.class);
+        verify(orderClaimRepository, times(1)).save(captor.capture());
+        assertThat(captor.getValue().getReshipInvoiceNo()).isEqualTo("RES-2");
+    }
+
+    /** 아래 existingExchange 와 같은 값 — 다른 값을 주면 그 필드만 변경 판정된다. */
+    private ClaimRecord exchangeRecord(String reshipInvoiceNo, String reshipCarrierCode) {
+        return new ClaimRecord("E-1", "O-1", "B-1", "V-1", "양말", 1,
+                ClaimStatus.IN_PROGRESS, "PROGRESS", "DEFECT", "상품 불량", "VENDOR", null,
+                "COL-1", "CJGLS", reshipInvoiceNo, reshipCarrierCode, "홍길동",
+                LocalDateTime.of(2026, 9, 1, 10, 0), LocalDateTime.of(2026, 9, 1, 10, 0));
+    }
+
+    private OrderClaim existingExchange(String reshipInvoiceNo, String reshipCarrierCode) {
+        return OrderClaim.builder()
+                .id(98L).marketplaceAccount(account).platform("COUPANG").claimType(ClaimType.EXCHANGE)
+                .externalClaimId("E-1").externalOrderId("O-1").externalBoxId("B-1").externalItemId("V-1")
+                .orderItem(orderLine(10L)).orderItemMatchAttempts(0)
+                .itemName("양말").quantity(1).status(ClaimStatus.IN_PROGRESS).platformStatus("PROGRESS")
+                .reasonCode("DEFECT").reasonText("상품 불량").faultType("VENDOR")
+                .collectInvoiceNo("COL-1").collectCarrierCode("CJGLS")
+                .reshipInvoiceNo(reshipInvoiceNo).reshipCarrierCode(reshipCarrierCode)
+                .requesterName("홍길동")
+                .receivedAt(LocalDateTime.of(2026, 9, 1, 10, 0))
+                .platformModifiedAt(LocalDateTime.of(2026, 9, 1, 10, 0))
+                .syncedAt(LocalDateTime.of(2026, 9, 1, 12, 0))
+                .build();
+    }
+
+    /** 04 백필 대상 — 주문 라인이 아직 붙지 않은 클레임. */
+    private OrderClaim unlinked(long id) {
+        return OrderClaim.builder()
+                .id(id).marketplaceAccount(account).platform("COUPANG").claimType(ClaimType.RETURN)
+                .externalClaimId("R-1").externalOrderId("O-1").externalBoxId("B-1").externalItemId("V-1")
+                .orderItem(null).orderItemMatchAttempts(0).status(ClaimStatus.RECEIVED)
+                .receivedAt(LocalDateTime.of(2026, 9, 1, 10, 0))
+                .build();
     }
 
     private OrderItem orderLine(Long id) {
@@ -146,7 +288,7 @@ class ClaimUpserterTest {
     /** 아래 existingClaim 과 같은 값 — 다른 값을 주면 그 필드만 변경 판정된다. */
     private ClaimRecord record(String boxId, ClaimStatus status, String platformStatus, int quantity) {
         return new ClaimRecord("R-1", "O-1", boxId, "V-1", "양말", quantity, status, platformStatus,
-                "CHANGEMIND", "단순변심", "CUSTOMER", 3000, "INV-9", "CJGLS", "홍길동",
+                "CHANGEMIND", "단순변심", "CUSTOMER", 3000, "INV-9", "CJGLS", null, null, "홍길동",
                 LocalDateTime.of(2026, 9, 1, 10, 0), LocalDateTime.of(2026, 9, 1, 10, 0));
     }
 
