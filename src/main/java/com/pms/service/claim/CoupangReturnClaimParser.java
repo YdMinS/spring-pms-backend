@@ -69,6 +69,7 @@ public class CoupangReturnClaimParser {
                     item.path("cancelCount").asInt(0),
                     ClaimStatus.fromCoupangReturn(platformStatus),
                     platformStatus,
+                    null,                                      // collectStatus — 교환 전용
                     text(receipt, "reasonCode"),
                     reasonText(receipt),
                     text(receipt, "faultByType"),

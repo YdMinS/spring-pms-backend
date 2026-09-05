@@ -66,6 +66,8 @@ class CoupangReturnSyncServiceImplTest {
 
         props = new CoupangProperties();
         props.setReturnrequestsPath("/v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests");
+        // "Withdraw" 조각이 철회 이력 스텁/검증의 매처 기준이다(기존 returnRequests 스텁과 구분).
+        props.setReturnWithdrawPath("/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/returnWithdrawRequests");
         props.setCancelSyncDays(7);
 
         // 스윕·슬라이스는 06 에서 컴포넌트로 추출됐다 — 목이 아니라 실제 구현을 넣어 기존 단언을 그대로 유지한다.
@@ -254,6 +256,8 @@ class CoupangReturnSyncServiceImplTest {
         ClaimTrackingResult result = service.trackOpenClaims(account);
 
         verify(coupangApiClient, never()).get(anyString(), anyString(), any());
+        // 미완결 0건 계정에 철회 이력 조회(+1 호출)가 붙지 않는다.
+        verify(coupangApiClient, never()).get(contains("Withdraw"), anyString(), any());
         assertThat(result.slices()).isZero();
     }
 
@@ -267,7 +271,8 @@ class CoupangReturnSyncServiceImplTest {
         ClaimTrackingResult result = service.trackOpenClaims(account);
 
         ArgumentCaptor<String> queries = ArgumentCaptor.forClass(String.class);
-        verify(coupangApiClient, times(1)).get(anyString(), queries.capture(), any());
+        // 철회 이력 조회가 앞에 하나 더 붙으므로 추적 호출은 경로로 가른다.
+        verify(coupangApiClient, times(1)).get(contains("returnRequests"), queries.capture(), any());
         assertThat(queries.getValue()).contains(expectedFrom(5)).doesNotContain("status=");
         assertThat(result.slices()).isEqualTo(1);
     }
@@ -284,9 +289,73 @@ class CoupangReturnSyncServiceImplTest {
 
         ClaimTrackingResult result = service.trackOpenClaims(account);
 
-        verify(coupangApiClient, times(1)).get(anyString(), anyString(), any());
+        verify(coupangApiClient, times(1)).get(contains("returnRequests"), anyString(), any());
         verify(orderClaimRepository, never()).save(any());
         assertThat(result.slices()).isEqualTo(1);
+    }
+
+    // --- 철회 종결 (2609_21/01) ---
+
+    @Test
+    void trackOpenClaims_closesWithdrawnClaim_andDropsItFromTracking() {
+        // 미완결이 그 1건뿐 + 이력에 그 접수번호 → 종결되고 추적 슬라이스 대상에서 빠진다.
+        given(orderClaimRepository.findOpen(eq(1L), eq(ClaimType.RETURN), any()))
+                .willReturn(List.of(openClaim(1L, 5, "363585")));
+        given(coupangApiClient.get(contains("Withdraw"), anyString(), any())).willReturn(withdrawPage("363585"));
+
+        ClaimTrackingResult result = service.trackOpenClaims(account);
+
+        verify(claimUpserter).closeAsWithdrawn(1L);
+        assertThat(result.slices()).isZero();
+        assertThat(result.staleClosed()).isZero();          // 철회는 STALE 집계에 섞이지 않는다
+        verify(coupangApiClient, never()).get(contains("returnRequests"), anyString(), any());
+    }
+
+    @Test
+    void trackOpenClaims_keepsClaimAbsentFromWithdrawHistory() {
+        given(orderClaimRepository.findOpen(eq(1L), eq(ClaimType.RETURN), any()))
+                .willReturn(List.of(openClaim(1L, 5, "363585")));
+        given(coupangApiClient.get(contains("Withdraw"), anyString(), any())).willReturn(withdrawPage("999999"));
+        given(coupangApiClient.get(contains("returnRequests"), anyString(), any())).willReturn(emptyData());
+
+        ClaimTrackingResult result = service.trackOpenClaims(account);
+
+        verify(claimUpserter, never()).closeAsWithdrawn(any());
+        verify(orderClaimRepository, never()).save(any());  // 상태 불변
+        assertThat(result.slices()).isEqualTo(1);
+    }
+
+    @Test
+    void trackOpenClaims_withdrawQueryFails_syncStillProceeds() {
+        // 철회 라벨은 있으면 좋은 것 — 조회 실패가 회차를 깨면 안 된다.
+        given(orderClaimRepository.findOpen(eq(1L), eq(ClaimType.RETURN), any()))
+                .willReturn(List.of(openClaim(1L, 5, "363585")));
+        given(coupangApiClient.get(contains("Withdraw"), anyString(), any()))
+                .willThrow(new IllegalStateException("boom"));
+        given(coupangApiClient.get(contains("returnRequests"), anyString(), any())).willReturn(emptyData());
+
+        ClaimTrackingResult result = service.trackOpenClaims(account);
+
+        verify(claimUpserter, never()).closeAsWithdrawn(any());
+        assertThat(result.slices()).isEqualTo(1);           // 스윕·슬라이스는 open 전체로 계속 진행
+    }
+
+    @Test
+    void trackOpenClaims_withdrawWindow_isCappedAtCoupangSevenDayLimit() {
+        // 오래 쉰 계정이라 클레임 창은 21일이지만, 철회 이력 조회의 상한은 7일(양끝 포함)이다.
+        account = account.toBuilder().lastClaimSyncAt(utcDaysAgo(20)).build();
+        given(orderClaimRepository.findOpen(eq(1L), eq(ClaimType.RETURN), any()))
+                .willReturn(List.of(openClaim(1L, 5, "363585")));
+        given(coupangApiClient.get(contains("Withdraw"), anyString(), any())).willReturn(withdrawPage("363585"));
+
+        service.trackOpenClaims(account);
+
+        ArgumentCaptor<String> queries = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient).get(contains("Withdraw"), queries.capture(), any());
+        LocalDate today = LocalDate.now(SyncWindow.KST);
+        assertThat(queries.getValue())
+                .contains("dateFrom=" + today.minusDays(6).format(DATE_FORMAT))
+                .contains("dateTo=" + today.format(DATE_FORMAT));
     }
 
     // --- helpers ---
@@ -308,6 +377,10 @@ class CoupangReturnSyncServiceImplTest {
      */
     private static LocalDateTime utcDaysAgo(long days) {
         return LocalDate.now(SyncWindow.KST).minusDays(days).atTime(3, 0);
+    }
+
+    private OrderClaim openClaim(Long id, long receivedDaysAgo, String externalClaimId) {
+        return openClaim(id, receivedDaysAgo).toBuilder().externalClaimId(externalClaimId).build();
     }
 
     /** receivedAt 은 쿠팡 createdAt = KST 벽시계다 — 기대치도 KST 로 만든다. */
@@ -343,6 +416,13 @@ class CoupangReturnSyncServiceImplTest {
                "returnItems":[{"shipmentBoxId":"%s","vendorItemId":"%s","cancelCount":%d}]}
             ],"nextToken":""}
             """.formatted(orderId, boxId, itemId, cancelCount);
+    }
+
+    /** 반품철회 이력 응답 — 접수번호 필드는 cancelId, 페이징은 nextPageIndex 다. */
+    private String withdrawPage(String cancelId) {
+        return """
+            {"code":200,"data":[{"cancelId":%s,"orderId":300012345}],"nextPageIndex":""}
+            """.formatted(cancelId);
     }
 
     private String pageWithToken(String token) {

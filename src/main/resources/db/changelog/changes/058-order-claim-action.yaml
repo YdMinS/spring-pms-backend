@@ -1,0 +1,74 @@
+# Claim processing action audit trail (FEATURE_2609_21 / PLAN §4 · D5).
+#   One row per ATTEMPT (success and failure alike). It is the audit trail for irreversible writes
+#   (a return approval is a confirmed refund), the lookup behind the duplicate-send guard (D6), and
+#   the place the raw Coupang failure text survives.
+# ⚠️ NO UNIQUE constraint on purpose: retrying a failed action must be able to pile up rows. The
+#    duplicate guard is a query over succeeded=true rows, not a database constraint.
+# ⚠️ succeeded is BOOLEAN here and re-typed to BIT(1) for MySQL below: Liquibase's abstract BOOLEAN
+#    materializes as TINYINT on MySQL while Hibernate 6 expects BIT -> ddl-auto: validate crashes the
+#    app at boot. Same 006 pattern (project_thumbnail_boolean_bit_hotfix). H2 needs no follow-up.
+# ⚠️ H2 constraint names are schema-global unique -> distinct names (fk_orderclaimaction_*).
+databaseChangeLog:
+
+  - changeSet:
+      id: 058-order-claim-action
+      author: oclyx
+      comment: "FEATURE_2609_21: order_claim_action table (one row per action attempt, no UNIQUE)."
+      changes:
+        - createTable:
+            tableName: order_claim_action
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: order_claim_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: action, type: VARCHAR(40), constraints: { nullable: false } }
+              - column: { name: succeeded, type: BOOLEAN, constraints: { nullable: false } }
+              - column: { name: platform_status_at_send, type: VARCHAR(30) }
+              - column: { name: request_summary, type: VARCHAR(500) }
+              - column: { name: result_code, type: VARCHAR(50) }
+              - column: { name: result_message, type: VARCHAR(1000) }
+              - column: { name: created_by, type: VARCHAR(100) }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_orderclaimaction_tenant
+            baseTableName: order_claim_action
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_orderclaimaction_claim
+            baseTableName: order_claim_action
+            baseColumnNames: order_claim_id
+            referencedTableName: order_claim
+            referencedColumnNames: id
+        - createIndex:
+            tableName: order_claim_action
+            indexName: idx_orderclaimaction_claim_action_succeeded
+            columns:
+              - column: { name: order_claim_id }
+              - column: { name: action }
+              - column: { name: succeeded }
+      rollback:
+        - dropTable: { tableName: order_claim_action }
+
+  - changeSet:
+      id: 058-order-claim-action-boolean-bit-type
+      author: oclyx
+      dbms: mysql
+      comment: "order_claim_action.succeeded TINYINT -> BIT(1) to satisfy Hibernate schema validation."
+      changes:
+        - modifyDataType:
+            tableName: order_claim_action
+            columnName: succeeded
+            newDataType: BIT(1)
+        # MySQL MODIFY drops NOT NULL, so re-declare it.
+        - addNotNullConstraint:
+            tableName: order_claim_action
+            columnName: succeeded
+            columnDataType: BIT(1)
+      rollback:
+        - modifyDataType:
+            tableName: order_claim_action
+            columnName: succeeded
+            newDataType: BOOLEAN

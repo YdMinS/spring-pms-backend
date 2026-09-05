@@ -45,4 +45,17 @@ public interface CoupangApiClient {
      * @return 응답 바디 (raw JSON 문자열)
      */
     String put(String path, String body, MarketplaceAccount account);
+
+    /**
+     * 서명된 PATCH 요청 (JSON 바디). 클레임 처리 액션 전용 (FEATURE_2609_21 / PLAN D11).
+     *
+     * ⚠️ {@link #put} 으로 우회하지 말 것 — HMAC 은 method 를 서명에 넣으므로 서명 자체는 통과하지만
+     * 쿠팡 게이트웨이가 405 를 준다. 반품 입고확인·승인, 교환 입고확인·거부가 전부 PATCH 다.
+     *
+     * @param path    쿼리 제외 경로
+     * @param body    JSON 바디 문자열
+     * @param account 호출 주체 계정 (자격증명 제공)
+     * @return 응답 바디 (raw JSON 문자열)
+     */
+    String patch(String path, String body, MarketplaceAccount account);
 }

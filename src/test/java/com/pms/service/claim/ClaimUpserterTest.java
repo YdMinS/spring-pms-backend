@@ -247,7 +247,7 @@ class ClaimUpserterTest {
     /** 아래 existingExchange 와 같은 값 — 다른 값을 주면 그 필드만 변경 판정된다. */
     private ClaimRecord exchangeRecord(String reshipInvoiceNo, String reshipCarrierCode) {
         return new ClaimRecord("E-1", "O-1", "B-1", "V-1", "양말", 1,
-                ClaimStatus.IN_PROGRESS, "PROGRESS", "DEFECT", "상품 불량", "VENDOR", null,
+                ClaimStatus.IN_PROGRESS, "PROGRESS", "BeforeDirection", "DEFECT", "상품 불량", "VENDOR", null,
                 "COL-1", "CJGLS", reshipInvoiceNo, reshipCarrierCode, "홍길동",
                 LocalDateTime.of(2026, 9, 1, 10, 0), LocalDateTime.of(2026, 9, 1, 10, 0));
     }
@@ -258,6 +258,7 @@ class ClaimUpserterTest {
                 .externalClaimId("E-1").externalOrderId("O-1").externalBoxId("B-1").externalItemId("V-1")
                 .orderItem(orderLine(10L)).orderItemMatchAttempts(0)
                 .itemName("양말").quantity(1).status(ClaimStatus.IN_PROGRESS).platformStatus("PROGRESS")
+                .collectStatus("BeforeDirection")
                 .reasonCode("DEFECT").reasonText("상품 불량").faultType("VENDOR")
                 .collectInvoiceNo("COL-1").collectCarrierCode("CJGLS")
                 .reshipInvoiceNo(reshipInvoiceNo).reshipCarrierCode(reshipCarrierCode)
@@ -288,7 +289,7 @@ class ClaimUpserterTest {
     /** 아래 existingClaim 과 같은 값 — 다른 값을 주면 그 필드만 변경 판정된다. */
     private ClaimRecord record(String boxId, ClaimStatus status, String platformStatus, int quantity) {
         return new ClaimRecord("R-1", "O-1", boxId, "V-1", "양말", quantity, status, platformStatus,
-                "CHANGEMIND", "단순변심", "CUSTOMER", 3000, "INV-9", "CJGLS", null, null, "홍길동",
+                null, "CHANGEMIND", "단순변심", "CUSTOMER", 3000, "INV-9", "CJGLS", null, null, "홍길동",
                 LocalDateTime.of(2026, 9, 1, 10, 0), LocalDateTime.of(2026, 9, 1, 10, 0));
     }
 

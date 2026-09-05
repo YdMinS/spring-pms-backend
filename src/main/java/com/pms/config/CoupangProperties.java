@@ -93,6 +93,18 @@ public class CoupangProperties {
     /** returnRequests(반품/취소 요청 목록) 조회 경로. {vendorId} 치환. */
     private String returnrequestsPath = "/v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests";
 
+    /**
+     * 반품철회 이력 기간별 조회 경로(GET_RETURN_WITHDRAW_BY_DATE). {vendorId} 치환.
+     *
+     * 철회된 반품 접수는 returnRequests 목록에서 사라지기만 해서 로컬 미완결 건이 STALE 로 떨어질 때까지
+     * 남는다 — 이 경로가 그 건을 WITHDRAWN 으로 종결시킨다(2609_21/01).
+     * ⚠️ 조회 범위 상한이 <b>7일</b>(양끝 포함)이라 클레임 창을 그대로 넘기면 쿠팡이 거절한다 —
+     * {@code CoupangReturnSyncServiceImpl.withdrawWindow} 가 잘라서 넘긴다.
+     * ⚠️ 실계정 검증 전이라 상수가 아니라 설정으로 뺀다(ordersheet-by-order-path 와 같은 판단).
+     */
+    private String returnWithdrawPath =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/returnWithdrawRequests";
+
     /** 취소 보정 조회 기간(일). 취소는 늦게 처리되므로 ordersheets 보다 넉넉히. 쿠팡 최대 31일. */
     private int cancelSyncDays = 7;
 
@@ -136,6 +148,62 @@ public class CoupangProperties {
 
     /** 교환 조회 페이지 크기. ⚠️ 쿠팡 기본값이 10 이라 명시하지 않으면 페이지 수가 5배가 된다. */
     private int exchangeMaxPerPage = 50;
+
+    /**
+     * 반품상품 입고 확인처리 경로(PATCH). {vendorId}·{receiptId} 치환. FEATURE_2609_21 R1.
+     *
+     * ⚠️ 조회용 {@link #returnrequestsPath} 는 <b>v6</b> 지만 액션 3종은 <b>v4</b> 다 — 조회 상수를
+     * 복사해 접두를 맞추면 액션이 전부 404 다.
+     * ⚠️ 실계정 미검증이라 상수가 아니라 설정으로 뺀다(ordersheet-by-order-path 와 같은 판단).
+     */
+    private String returnReceiveConfirmPath =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/returnRequests/{receiptId}/receiveConfirmation";
+
+    /**
+     * 반품요청 승인 경로(PATCH). {vendorId}·{receiptId} 치환. FEATURE_2609_21 R2.
+     *
+     * 🔴 <b>환불 확정 — 되돌릴 수 없다.</b> 호출자는 컨트롤러뿐이고 동기화 경로는 이 값을 읽지 않는다(D4).
+     */
+    private String returnApprovalPath =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/returnRequests/{receiptId}/approval";
+
+    /**
+     * 회수 송장 등록 경로(POST). {vendorId} 치환. FEATURE_2609_21 R3.
+     *
+     * 반품·교환 <b>공용</b>이며 {@code returnExchangeDeliveryType} 으로만 갈린다.
+     * ⚠️ 굿스플로를 쓰는 판매자는 이 API 가 아예 막혀 400 이 온다(PLAN §6-3).
+     */
+    private String returnExchangeInvoicePath =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/return-exchange-invoices/manual";
+
+    /**
+     * 교환요청 입고 확인처리 경로(PATCH). {vendorId}·{exchangeId} 치환. FEATURE_2609_21 X1.
+     *
+     * ⚠️ 조회용 {@link #exchangeRequestsPath} 는 <b>v1/marketplace</b> 지만 액션 3종은 <b>v4</b> 다 —
+     * 반품이 겪은 "조회 v6 vs 액션 v4" 의 교환판이다. 조회 상수를 복사하면 전부 404 다.
+     * ⚠️ 실계정 미검증 — dev 에서 셋 다 404 면 {@code v1/marketplace} 접두를 시도하고 PLAN §6-1 에 적는다.
+     */
+    private String exchangeReceiveConfirmPath =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/exchangeRequests/{exchangeId}/receiveConfirmation";
+
+    /**
+     * 교환요청 거부 경로(PATCH). {vendorId}·{exchangeId} 치환. FEATURE_2609_21 X2.
+     *
+     * 🔴 <b>되돌릴 수 없다.</b> 사유 코드는 {@code SOLDOUT}/{@code WITHDRAW} 2개뿐이며 목록의 소유자는
+     * 어댑터다(D19) — 여기에 값 목록을 두지 않는다.
+     */
+    private String exchangeRejectionPath =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/exchangeRequests/{exchangeId}/rejection";
+
+    /**
+     * 교환상품 송장 업로드 경로(POST). {vendorId}·{exchangeId} 치환. FEATURE_2609_21 X3.
+     *
+     * 🔴 필수 {@code shipmentBoxId} 는 <b>입고확인 후 새로 생성된 재배송 박스</b>다 —
+     * {@code order_claim.external_box_id}(원 배송번호)와 다른 값이라 전송 직전 재조회해서 얻는다(D12).
+     * ⚠️ 택배사 필드명이 이 액션만 {@code goodsDeliveryCode} 다(문서 그대로).
+     */
+    private String exchangeInvoicePath =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/exchangeRequests/{exchangeId}/invoices";
 
     /** 쿠팡 API connect 타임아웃(ms). 미설정 시 무제한 → 게이트웨이 지연이 요청 스레드를 무한 점유한다. */
     private int connectTimeoutMs = 10_000;

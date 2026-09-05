@@ -166,6 +166,36 @@ class CoupangExchangeClaimParserTest {
                 .contains(ClaimStatus.REJECTED, ClaimStatus.WITHDRAWN);
     }
 
+    @Test
+    void parse_collectStatus_prefersTheFirstAliasAndKeepsTheRawValue() {
+        // 회수상태는 교환 액션(05)의 가능 조건이라 원문 그대로 보존해야 한다 — 정규화하면
+        // 액션 판정이 축약된 값 위에서 돌게 된다.
+        JsonNode both = read("""
+                {"exchangeId": 5010, "orderId": "O-10", "createdAt": "2026-09-01T10:00:00",
+                 "collectStatus": "CompleteCollect", "returnDeliveryStatus": "BeforeDirection",
+                 "exchangeItemDtoV1s": [{"vendorItemId": "V-1"}]}
+                """);
+        assertThat(parser.parse(both).get(0).collectStatus()).isEqualTo("CompleteCollect");
+
+        JsonNode aliasOnly = read("""
+                {"exchangeId": 5011, "orderId": "O-11", "createdAt": "2026-09-01T10:00:00",
+                 "returnDeliveryStatus": "BeforeDirection",
+                 "exchangeItemDtoV1s": [{"vendorItemId": "V-1"}]}
+                """);
+        assertThat(parser.parse(aliasOnly).get(0).collectStatus()).isEqualTo("BeforeDirection");
+    }
+
+    @Test
+    void parse_collectStatusMissing_yieldsNullInsteadOfThrowing() {
+        // 값이 없으면 액션을 열지 않는다(D3). 비어 있는 것과 조건을 만족하는 것은 다르다.
+        JsonNode receipt = read("""
+                {"exchangeId": 5012, "orderId": "O-12", "createdAt": "2026-09-01T10:00:00",
+                 "exchangeItemDtoV1s": [{"vendorItemId": "V-1"}]}
+                """);
+
+        assertThat(parser.parse(receipt).get(0).collectStatus()).isNull();
+    }
+
     private JsonNode read(String json) {
         try {
             return objectMapper.readTree(json);

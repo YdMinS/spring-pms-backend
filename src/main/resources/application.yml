@@ -80,8 +80,29 @@ oklyx:
     vendor-item-price-path: /v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendorItemId}/prices/{price}
     # Return/cancel request list query GET_RETURN_REQUEST_BY_QUERY (cancelType=CANCEL to reconcile paid-order cancellations).
     returnrequests-path: /v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests
+    # Return-withdrawal history by date range GET_RETURN_WITHDRAW_BY_DATE. Withdrawn return receipts simply
+    # disappear from returnRequests, so this is the only signal that closes them (WITHDRAWN) instead of
+    # letting them rot until the STALE sweep. Coupang caps this range at 7 days (both ends inclusive).
+    # Unverified against a live account — keep it overridable.
+    return-withdraw-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/returnWithdrawRequests
     # Cancel reconciliation window (days): wider than ordersheets to cover delayed cancellations. Coupang max 31 days.
     cancel-sync-days: 7
+    # Claim processing actions (FEATURE_2609_21). Prefix is v4 - the return LIST above is v6, so copying
+    # its prefix would 404 every action. Unverified against a live account -> keep them overridable.
+    return-receive-confirm-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/returnRequests/{receiptId}/receiveConfirmation
+    # Approving a return CONFIRMS THE REFUND. Irreversible, no sandbox - only the controller calls it.
+    return-approval-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/returnRequests/{receiptId}/approval
+    # Collect-invoice registration, shared by returns and exchanges (returnExchangeDeliveryType picks one).
+    return-exchange-invoice-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/return-exchange-invoices/manual
+    # Exchange actions (FEATURE_2609_21 / 05). Same v4-vs-lookup split as returns: the exchange LIST above is
+    # api/v1/marketplace, so copying its prefix would 404 every action. Unverified against a live account ->
+    # if all three 404 in dev, try the v1/marketplace prefix and record it in PLAN 6-1.
+    exchange-receive-confirm-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/exchangeRequests/{exchangeId}/receiveConfirmation
+    # Rejecting an exchange is irreversible. Reject codes (SOLDOUT / WITHDRAW) live in the adapter, not here.
+    exchange-rejection-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/exchangeRequests/{exchangeId}/rejection
+    # Reship invoice upload. Its shipmentBoxId is the NEW box created after receive-confirmation, not the
+    # original one we stored, so the adapter re-queries the exchange right before sending.
+    exchange-invoice-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/exchangeRequests/{exchangeId}/invoices
     # HTTP timeouts for every Coupang call. Without them a slow gateway pins the request thread forever,
     # so one hung call stalls the whole sync. Connect is short (TCP handshake); read is generous because
     # some queries (shipping-label sheets) legitimately take a while — generous, never unbounded.

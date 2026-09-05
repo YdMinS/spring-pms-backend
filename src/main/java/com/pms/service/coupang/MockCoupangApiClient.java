@@ -29,6 +29,8 @@ import java.nio.charset.StandardCharsets;
  *   <li>{@code categorization/predict} 포함(POST) → 카테고리 추천 fixture (45 predict)</li>
  *   <li>{@code shipping-place/outbound} 포함(GET) → 출고지 목록 fixture (72)</li>
  *   <li>{@code returnShippingCenters} 포함(GET) → 반품지 목록 fixture (72)</li>
+ *   <li>{@code return-exchange-invoices} 포함(POST) → 액션 성공 응답 (2609_21 R3)</li>
+ *   <li>PATCH 전부 → 액션 성공 응답 (2609_21 R1·R2 — PATCH 는 클레임 액션 전용이다)</li>
  *   <li>그 외 → {@code {"code":200,"data":[]}}</li>
  * </ul>
  * 반환 JSON 은 실제 파서(예: CoupangOrderSyncServiceImpl.upsert, CoupangListingAdapter)가 그대로 소화할 수
@@ -43,6 +45,12 @@ public class MockCoupangApiClient implements CoupangApiClient {
     private static final String ORDERSHEETS_FIXTURE = "fixtures/coupang/ordersheets.json";
     private static final String RETURN_REQUESTS_FIXTURE = "fixtures/coupang/returnRequests.json";
     private static final String EMPTY = "{\"code\":200,\"data\":[]}";
+    /**
+     * 클레임 처리 액션(FEATURE_2609_21)의 응답. {@link #EMPTY} 를 재사용하면 안 된다 —
+     * 액션 판정은 바디의 {@code code} 를 읽는데 EMPTY 는 {@code code=200} 이라 무엇을 보내든
+     * 조용히 성공으로 떨어진다. 액션 전용으로 message 까지 채운 응답을 준다.
+     */
+    private static final String ACTION_OK = "{\"code\":200,\"message\":\"OK\"}";
 
     // 3c fixtures (inline): register → sellerProductId, fetchStatus → 승인완료 + option ids.
     private static final String SELLER_PRODUCT_REGISTER =
@@ -98,8 +106,19 @@ public class MockCoupangApiClient implements CoupangApiClient {
             log.info("[COUPANG-MOCK] POST {} → predict fixture", path);
             return PREDICT_FIXTURE;
         }
+        if (path.contains("return-exchange-invoices")) {
+            log.info("[COUPANG-MOCK] POST {} → claim action ok", path);
+            return ACTION_OK;                                       // 2609_21 R3 회수 송장 등록
+        }
         log.info("[COUPANG-MOCK] POST {} → default empty", path);
         return EMPTY;
+    }
+
+    @Override
+    public String patch(String path, String body, MarketplaceAccount account) {
+        // 클레임 처리 액션 전용 메서드라 경로 분기 없이 액션 응답을 준다(2609_21 R1·R2).
+        log.info("[COUPANG-MOCK] PATCH {} → claim action ok", path);
+        return ACTION_OK;
     }
 
     @Override

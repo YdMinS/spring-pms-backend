@@ -373,6 +373,34 @@ class LiquibaseChangelogApplyTest {
     }
 
     @Test
+    void orderClaimActionApplied() {
+        // changeset 058: order_claim_action + its index (FEATURE_2609_21).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM order_claim_action WHERE succeeded IS NULL", Integer.class)).isZero();
+
+        List<String> indexes = jdbcTemplate.queryForList(
+                "SELECT INDEX_NAME FROM INFORMATION_SCHEMA.INDEXES "
+                        + "WHERE TABLE_NAME = 'ORDER_CLAIM_ACTION'", String.class);
+        assertThat(indexes).contains("IDX_ORDERCLAIMACTION_CLAIM_ACTION_SUCCEEDED");
+
+        // No UNIQUE on purpose: retrying a failed action must be able to pile up rows, so the
+        // duplicate guard is a query over succeeded=true rows rather than a database constraint.
+        List<String> constraints = jdbcTemplate.queryForList(
+                "SELECT CONSTRAINT_TYPE FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
+                        + "WHERE TABLE_NAME = 'ORDER_CLAIM_ACTION'", String.class);
+        assertThat(constraints).doesNotContain("UNIQUE");
+
+        // changeset 059: order_claim.collect_status added, nullable, with no backfill (existing rows
+        // stay empty until the next exchange sync fills them - an empty value opens no action).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM order_claim WHERE collect_status IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE TABLE_NAME = 'ORDER_CLAIM' AND COLUMN_NAME = 'COLLECT_STATUS'",
+                String.class)).isEqualTo("YES");
+    }
+
+    @Test
     void tenantDimensionApplied() {
         // changeset 002: tenant table created + seeded with the default tenant (id=1).
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tenant", Integer.class)).isEqualTo(1);
