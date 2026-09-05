@@ -23,9 +23,14 @@ import java.util.Optional;
  */
 public interface OrderClaimRepository extends JpaRepository<OrderClaim, Long> {
 
-    /** UNIQUE 3키로 기존 클레임 조회 (동기화 upsert 의 멱등성 키). */
-    Optional<OrderClaim> findByMarketplaceAccount_IdAndExternalClaimIdAndExternalItemId(
-            Long accountId, String externalClaimId, String externalItemId);
+    /**
+     * UNIQUE 4키로 기존 클레임 조회 (동기화 upsert 의 멱등성 키).
+     *
+     * ⚠️ {@code claimType} 이 키에 들어간다(D24) — 반품 {@code receiptId} 와 교환 {@code exchangeId} 는
+     * 다른 시퀀스라, 빼면 값이 겹칠 때 교환이 반품 행을 덮어쓴다.
+     */
+    Optional<OrderClaim> findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+            Long accountId, ClaimType claimType, String externalClaimId, String externalItemId);
 
     /** 종류 + 접수일 창 [start, end) 의 클레임, 최신 접수순 — GET /api/claims. */
     @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller", "orderItem"})

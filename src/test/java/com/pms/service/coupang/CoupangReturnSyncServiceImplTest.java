@@ -9,6 +9,8 @@ import com.pms.domain.OrderClaim;
 import com.pms.domain.OrderItem;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.repository.OrderItemRepository;
+import com.pms.service.claim.ClaimStaleSweeper;
+import com.pms.service.claim.ClaimTrackingSlicer;
 import com.pms.service.claim.ClaimUpserter;
 import com.pms.service.claim.CoupangReturnClaimParser;
 import com.pms.service.coupang.CoupangReturnSyncService.CancelSyncResult;
@@ -66,9 +68,11 @@ class CoupangReturnSyncServiceImplTest {
         props.setReturnrequestsPath("/v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests");
         props.setCancelSyncDays(7);
 
+        // 스윕·슬라이스는 06 에서 컴포넌트로 추출됐다 — 목이 아니라 실제 구현을 넣어 기존 단언을 그대로 유지한다.
         service = new CoupangReturnSyncServiceImpl(
                 coupangApiClient, orderItemRepository, props, new ObjectMapper(),
-                new CoupangReturnClaimParser(), claimUpserter, orderClaimRepository);
+                new CoupangReturnClaimParser(), claimUpserter, orderClaimRepository,
+                new ClaimStaleSweeper(orderClaimRepository, props), new ClaimTrackingSlicer());
     }
 
     @Test

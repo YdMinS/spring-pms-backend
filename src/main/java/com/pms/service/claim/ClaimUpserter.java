@@ -35,14 +35,18 @@ public class ClaimUpserter {
     private final OrderItemRepository orderItemRepository;
 
     /**
-     * 클레임 1라인을 저장한다. UNIQUE(account, claimId, itemId) 로 멱등이며,
+     * 클레임 1라인을 저장한다. UNIQUE(account, claimType, claimId, itemId) 로 멱등이며,
      * 값이 하나도 바뀌지 않으면 {@code save} 를 호출하지 않는다(불필요한 UPDATE·modified_date 갱신 방지).
+     *
+     * <p>⚠️ 키에 {@code claimType} 이 들어간다(D24). {@code receiptId}(반품)와 {@code exchangeId}(교환)는
+     * 다른 시퀀스라, 타입이 키에서 빠지면 같은 값이 겹칠 때 교환이 반품 행을 덮어쓴다 —
+     * update 경로는 {@code claimType} 을 바꾸지 않으므로 상태·사유만 교환 값인 반품 행이 조용히 남는다.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void upsert(MarketplaceAccount account, ClaimType type, ClaimRecord record) {
         Optional<OrderClaim> found = orderClaimRepository
-                .findByMarketplaceAccount_IdAndExternalClaimIdAndExternalItemId(
-                        account.getId(), record.externalClaimId(), record.externalItemId());
+                .findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+                        account.getId(), type, record.externalClaimId(), record.externalItemId());
         LocalDateTime now = LocalDateTime.now();
 
         if (found.isEmpty()) {
@@ -66,6 +70,8 @@ public class ClaimUpserter {
                     .returnShippingCharge(record.returnShippingCharge())
                     .collectInvoiceNo(record.collectInvoiceNo())
                     .collectCarrierCode(record.collectCarrierCode())
+                    .reshipInvoiceNo(record.reshipInvoiceNo())
+                    .reshipCarrierCode(record.reshipCarrierCode())
                     .requesterName(record.requesterName())
                     .receivedAt(record.receivedAt())
                     .platformModifiedAt(record.platformModifiedAt())
@@ -106,6 +112,8 @@ public class ClaimUpserter {
                 .returnShippingCharge(record.returnShippingCharge())
                 .collectInvoiceNo(record.collectInvoiceNo())
                 .collectCarrierCode(record.collectCarrierCode())
+                .reshipInvoiceNo(record.reshipInvoiceNo())
+                .reshipCarrierCode(record.reshipCarrierCode())
                 .requesterName(record.requesterName())
                 .platformModifiedAt(record.platformModifiedAt())
                 .syncedAt(now)
@@ -213,6 +221,8 @@ public class ClaimUpserter {
                 || !Objects.equals(existing.getReturnShippingCharge(), record.returnShippingCharge())
                 || !Objects.equals(existing.getCollectInvoiceNo(), record.collectInvoiceNo())
                 || !Objects.equals(existing.getCollectCarrierCode(), record.collectCarrierCode())
+                || !Objects.equals(existing.getReshipInvoiceNo(), record.reshipInvoiceNo())
+                || !Objects.equals(existing.getReshipCarrierCode(), record.reshipCarrierCode())
                 || !Objects.equals(existing.getRequesterName(), record.requesterName())
                 || !Objects.equals(existing.getPlatformModifiedAt(), record.platformModifiedAt());
     }

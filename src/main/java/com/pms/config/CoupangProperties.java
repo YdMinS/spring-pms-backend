@@ -121,6 +121,22 @@ public class CoupangProperties {
      */
     private int claimTrackingMaxSlices = 6;
 
+    /**
+     * exchangeRequests(교환 요청 목록) 조회 경로. {vendorId} 치환.
+     * ⚠️ 실계정 검증 전이라 상수가 아니라 설정으로 뺀다(ordersheet-by-order-path 와 같은 판단).
+     */
+    private String exchangeRequestsPath =
+            "/v2/providers/openapi/apis/api/v1/marketplace/vendors/{vendorId}/exchangeRequests";
+
+    /**
+     * 교환 신규 조회 창(일). ⚠️ 쿠팡 상한이 7일이라 이 값을 넘기지 말 것(D9·PLAN §4) —
+     * 반품과 달리 {@code lastClaimSyncAt} 으로 넓힐 수 없다(넓히면 쿠팡이 거절한다).
+     */
+    private int exchangeWindowDays = 7;
+
+    /** 교환 조회 페이지 크기. ⚠️ 쿠팡 기본값이 10 이라 명시하지 않으면 페이지 수가 5배가 된다. */
+    private int exchangeMaxPerPage = 50;
+
     /** 쿠팡 API connect 타임아웃(ms). 미설정 시 무제한 → 게이트웨이 지연이 요청 스레드를 무한 점유한다. */
     private int connectTimeoutMs = 10_000;
 

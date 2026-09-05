@@ -84,6 +84,30 @@ class ClaimQueryServiceImplTest {
         assertThat(byStatus.get(0).linked()).isFalse();
     }
 
+    @Test
+    void getClaims_exchangeWithReshipInvoice_exposesBothInvoicePairs() {
+        // 07·08 이 이 두 필드를 읽는다 — 빠지면 화면이 조용히 빈칸을 그린다.
+        given(orderClaimRepository.findInPeriod(eq(ClaimType.EXCHANGE), any(), any()))
+                .willReturn(List.of(exchangeClaim()));
+
+        List<OrderClaimResponse> claims = service.getClaims(ClaimType.EXCHANGE, null, null,
+                LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 5), null);
+
+        assertThat(claims).hasSize(1);
+        assertThat(claims.get(0).claimType()).isEqualTo(ClaimType.EXCHANGE);
+        assertThat(claims.get(0).collectInvoiceNo()).isEqualTo("COL-1");
+        assertThat(claims.get(0).reshipInvoiceNo()).isEqualTo("RES-1");
+        assertThat(claims.get(0).reshipCarrierCode()).isEqualTo("HANJIN");
+    }
+
+    private OrderClaim exchangeClaim() {
+        return claim(9L, ClaimStatus.IN_PROGRESS, "O-900", "홍길동", "양말").toBuilder()
+                .claimType(ClaimType.EXCHANGE).platformStatus("PROGRESS")
+                .collectInvoiceNo("COL-1").collectCarrierCode("CJGLS")
+                .reshipInvoiceNo("RES-1").reshipCarrierCode("HANJIN")
+                .build();
+    }
+
     private OrderClaim claim(Long id, ClaimStatus status, String orderId, String requester, String itemName) {
         Seller seller = Seller.builder().id(5L).sellerName("테스트셀러").build();
         MarketplaceAccount account = MarketplaceAccount.builder()

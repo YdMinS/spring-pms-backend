@@ -10,6 +10,8 @@ import com.pms.domain.OrderClaim;
 import com.pms.domain.OrderItem;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.repository.OrderItemRepository;
+import com.pms.service.claim.ClaimStaleSweeper;
+import com.pms.service.claim.ClaimTrackingSlicer;
 import com.pms.service.claim.ClaimUpserter;
 import com.pms.service.claim.CoupangReturnClaimParser;
 import lombok.RequiredArgsConstructor;
@@ -17,12 +19,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -59,6 +57,8 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
     private final CoupangReturnClaimParser coupangReturnClaimParser;
     private final ClaimUpserter claimUpserter;
     private final OrderClaimRepository orderClaimRepository;
+    private final ClaimStaleSweeper claimStaleSweeper;
+    private final ClaimTrackingSlicer claimTrackingSlicer;
 
     @Override
     public CancelSyncResult syncCancels(MarketplaceAccount account) {
@@ -153,7 +153,7 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
         List<OrderClaim> open = orderClaimRepository.findOpen(
                 account.getId(), ClaimType.RETURN, ClaimStatus.closedStatuses());
 
-        List<OrderClaim> remaining = sweepStale(account, open);
+        List<OrderClaim> remaining = claimStaleSweeper.sweep(account, open);
         int staleClosed = open.size() - remaining.size();
         if (remaining.isEmpty()) {
             return new ClaimTrackingResult(0, staleClosed);      // 미완결 없음 = 쿠팡을 아예 치지 않는다
@@ -161,7 +161,9 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
 
         String path = returnRequestsPath(account);
         int slices = 0;
-        for (SyncWindow slice : trackingSlices(remaining)) {
+        List<SyncWindow> windows = claimTrackingSlicer.slices(remaining,
+                coupangProperties.getClaimWindowMaxDays(), coupangProperties.getClaimTrackingMaxSlices());
+        for (SyncWindow slice : windows) {
             // cancelType 생략 = RETURN 기본값 / status 생략 = 전 상태
             String query = windowQuery(slice);
             CancelSyncResult r = collect(account, path, query, MAX_PAGES_PER_STATUS);
@@ -171,70 +173,6 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
                     account.getId(), slice.from(), slice.to(), r.pages(), r.matchedUpdated());
         }
         return new ClaimTrackingResult(slices, staleClosed);
-    }
-
-    /**
-     * 종결 신호를 영영 못 받는 건이 추적 대상에 영구히 남는 것을 막는다(D11). 강제 종결이지 삭제가 아니다.
-     *
-     * ⚠️ 벌크 {@code @Modifying} UPDATE 를 쓰지 않는다 — {@code @TenantId} 필터가 JPQL 벌크 갱신에
-     * 적용되는지 확신할 수 없다. 건수가 작으므로 로드 후 개별 저장한다.
-     *
-     * @return 아직 살아 있는(추적 대상) 클레임
-     */
-    private List<OrderClaim> sweepStale(MarketplaceAccount account, List<OrderClaim> open) {
-        // ⚠️ receivedAt 은 쿠팡 createdAt = KST 벽시계(naive)다. LocalDateTime.now() 는 서버 UTC(naive) 라
-        // 그대로 비교하면 9시간 어긋난다(프로젝트의 알려진 지뢰: paidAt KST vs audit UTC).
-        LocalDateTime cutoff = LocalDate.now(SyncWindow.KST)
-                .minusDays(coupangProperties.getClaimStaleDays()).atStartOfDay();
-
-        List<OrderClaim> remaining = new ArrayList<>();
-        int closed = 0;
-        for (OrderClaim claim : open) {
-            if (claim.getReceivedAt() != null && claim.getReceivedAt().isBefore(cutoff)) {
-                orderClaimRepository.save(claim.toBuilder().status(ClaimStatus.STALE).build());
-                closed++;
-            } else {
-                remaining.add(claim);
-            }
-        }
-        log.info("Claim stale sweep: account={} count={} open={}", account.getId(), closed, remaining.size());
-        return remaining;
-    }
-
-    /**
-     * 미완결의 최소 접수일 ~ 오늘(KST) 을 claim-window-max-days 폭으로 자른다(D7·D10).
-     *
-     * ⚠️ {@code receivedAt} 은 이미 KST 벽시계다 — {@code atZone(...)} 으로 다시 환산하면 9시간 밀린다.
-     * 앞(오래된 쪽)부터 claim-tracking-max-slices 개까지만 자른다. 상한 0 = 슬라이스 조회 비활성.
-     */
-    private List<SyncWindow> trackingSlices(List<OrderClaim> open) {
-        int maxSlices = coupangProperties.getClaimTrackingMaxSlices();
-        LocalDate oldest = open.stream()
-                .map(OrderClaim::getReceivedAt)
-                .filter(Objects::nonNull)
-                .min(LocalDateTime::compareTo)
-                .map(LocalDateTime::toLocalDate)
-                .orElse(null);
-        if (maxSlices <= 0 || oldest == null) {
-            return List.of();
-        }
-
-        LocalDate today = LocalDate.now(SyncWindow.KST);
-        int width = coupangProperties.getClaimWindowMaxDays();
-        List<SyncWindow> slices = new ArrayList<>();
-        LocalDate from = oldest.isAfter(today) ? today : oldest;
-        while (slices.size() < maxSlices) {
-            LocalDate to = from.plusDays(width);
-            if (to.isAfter(today)) {
-                to = today;
-            }
-            slices.add(new SyncWindow(from, to));
-            if (!to.isBefore(today)) {
-                break;
-            }
-            from = to.plusDays(1);
-        }
-        return slices;
     }
 
     /** 주어진 returnRequests 쿼리를 nextToken 페이징하며 매칭 취소를 applyCancel 로 반영. */

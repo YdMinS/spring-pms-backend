@@ -5,6 +5,7 @@ import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.security.TenantContext;
 import com.pms.service.claim.ClaimOrderBackfillService;
+import com.pms.service.claim.ClaimSyncAdapter;
 import com.pms.service.coupang.CoupangOrderSyncService.SyncResult;
 import com.pms.service.coupang.CoupangReturnSyncService.CancelSyncResult;
 import lombok.RequiredArgsConstructor;
@@ -19,8 +20,8 @@ import java.util.stream.Collectors;
 /**
  * {@link OrderSyncFacade} 구현.
  *
- * syncOne = ordersheets(Phase2) → returnRequests 취소 보정(§A) → 클레임 주문 백필(04) 순서로
- * 한 계정을 동기화한다.
+ * syncOne = ordersheets(Phase2) → returnRequests 취소 보정(§A) → 미완결 추적(05) → 교환 적재(06) →
+ * 클레임 주문 백필(04) 순서로 한 계정을 동기화한다.
  * syncEach 는 계정마다 try/catch 로 격리해 한 계정 실패가 전체를 롤백하지 않게 한다.
  *
  * ⚠️ 이 파사드는 의도적으로 @Transactional 을 두지 않는다. 공유 트랜잭션을 열면 내부
@@ -42,6 +43,8 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
     private final CoupangReturnSyncService coupangReturnSyncService;
     private final SyncStatusRecorder syncStatusRecorder;
     private final ClaimOrderBackfillService claimOrderBackfillService;
+    /** 교환 클레임 동기화 어댑터(D21). 플랫폼 미지원(네이버)·빈 리스트(local/test)면 조용히 건너뛴다. */
+    private final List<ClaimSyncAdapter> claimSyncAdapters;
 
     @Override
     public OrderSyncResult sync(Long accountId) {
@@ -171,6 +174,17 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
                 log.warn("Claim tracking failed (isolated): account={}", account.getId(), e);
                 // lastClaimSyncAt 미갱신 → 다음 회차 창이 자동으로 넓어져 놓친 구간을 덮는다(D18).
                 // 취소 보정과 달리 SUCCESS 를 깨지 않는다 — 추적은 이미 적재된 건의 상태 따라잡기다.
+            }
+
+            // 교환 적재는 백필 앞이다 — 새로 생긴 미연결 claim 을 같은 회차에 처리하려면 백필이 뒤여야 한다.
+            try {
+                claimSyncAdapters.stream()
+                        .filter(a -> a.platform().equals(account.getPlatform()))
+                        .findFirst()
+                        .ifPresent(a -> a.syncExchanges(account));
+            } catch (Exception e) {
+                // 교환은 신규 연동이다 — 실패해도 주문·취소·반품(Stage A)을 되돌리지 않는다(PLAN §9).
+                log.warn("Exchange claim sync failed (isolated): account={}", account.getId(), e);
             }
 
             try {
