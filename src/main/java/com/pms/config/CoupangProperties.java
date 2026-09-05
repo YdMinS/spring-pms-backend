@@ -69,11 +69,15 @@ public class CoupangProperties {
 
     /**
      * 아이템(vendorItem)별 판매가 변경 경로. {vendorItemId}/{price} 치환. 재심사 없이 즉시 반영된다.
-     * ⚠️ 실계정 미검증이라 설정으로 뺀다(ordersheet-by-order-path 와 같은 판단).
+     *
+     * ⚠️ 네임스페이스는 <b>seller_api</b> 다 — 상품 API 라서 {@code CoupangListingAdapter.SELLER_PRODUCTS}
+     * ({@code /v2/providers/seller_api/apis/api/v1/marketplace/seller-products}) 와 같은 그룹이다.
+     * 이 파일의 다른 경로들이 전부 openapi 인 것은 그쪽이 주문·반품 API 이기 때문이고, 여기에 openapi 를
+     * 쓰면 쿠팡이 404 PRECONDITION_FAILED("No exactly matching API specification") 를 준다(2026-09-05 실계정).
      * ⚠️ forceSalePriceUpdate 쿼리는 붙이지 말 것 — put() 에 쿼리 인자가 없고, path 에 섞으면 HMAC 서명이 깨진다.
      */
     private String vendorItemPricePath =
-            "/v2/providers/openapi/apis/api/v1/marketplace/vendor-items/{vendorItemId}/prices/{price}";
+            "/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendorItemId}/prices/{price}";
 
     /** 송장업로드(발송처리) 경로. {vendorId} 치환. 상품준비중(INSTRUCT)→배송지시(DEPARTURE) 전환. */
     private String invoicesPath = "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/orders/invoices";

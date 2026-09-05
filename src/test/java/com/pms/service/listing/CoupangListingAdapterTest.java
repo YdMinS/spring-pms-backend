@@ -1002,4 +1002,45 @@ class CoupangListingAdapterTest {
     void register_channelStockZero_isSentAsZeroNotInherited() throws Exception {
         assertThat(registeredMaxBuyCount(0, 50)).isZero();
     }
+
+    // ---------------------------------------------------------------- 2609_19: item price change
+
+    /**
+     * Regression for the 2026-09-05 live-account 404: the price endpoint is a <b>product</b> API, so it lives
+     * under {@code seller_api} like seller-products — not under {@code openapi} (orders/returns). The adapter
+     * is given a REAL {@link com.pms.config.CoupangProperties} on purpose: stubbing the path would only assert
+     * the value the test itself supplied, which is exactly what let the wrong namespace ship.
+     */
+    @Test
+    void updateOptionPrice_usesSellerApiNamespaceAndWholeWonPath() {
+        org.springframework.test.util.ReflectionTestUtils.setField(
+                adapter, "properties", new com.pms.config.CoupangProperties());
+        given(client.put(anyString(), anyString(), any())).willReturn("{}");
+        ProductListingOption option = ProductListingOption.builder()
+                .id(1L).optionName("기본").platformOptionId("96018433332")
+                .sellingPrice(new BigDecimal("10990.00")).build();
+
+        adapter.updateOptionPrice(option, new BigDecimal("10990.00"), MarketplaceAccount.builder().build());
+
+        ArgumentCaptor<String> path = ArgumentCaptor.forClass(String.class);
+        verify(client).put(path.capture(), eq("{}"), any());
+        assertThat(path.getValue())
+                .isEqualTo("/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/96018433332/prices/10990");
+    }
+
+    /** A non-SUCCESS code in a 2xx body is still a failure — the message is surfaced verbatim. */
+    @Test
+    void updateOptionPrice_errorCodeInBody_throwsWithCoupangMessage() {
+        org.springframework.test.util.ReflectionTestUtils.setField(
+                adapter, "properties", new com.pms.config.CoupangProperties());
+        given(client.put(anyString(), anyString(), any()))
+                .willReturn("{\"code\":\"ERROR\",\"message\":\"판매중인 상품이 아닙니다\"}");
+        ProductListingOption option = ProductListingOption.builder()
+                .id(1L).optionName("기본").platformOptionId("96018433332").build();
+
+        assertThatThrownBy(() -> adapter.updateOptionPrice(
+                option, new BigDecimal("10990.00"), MarketplaceAccount.builder().build()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("판매중인 상품이 아닙니다");
+    }
 }
