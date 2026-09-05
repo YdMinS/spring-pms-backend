@@ -1,0 +1,23 @@
+# Per-cell detail template override (FEATURE_2609_20 / D1). NULL = 계정 지정값 ?? 테넌트 기본(기존 2단 동작
+# 그대로) → 백필 없음, 기존 전 행 NULL 이 곧 현재 동작이다. boolean 아님 → MySQL BIT 함정(006) 없음.
+# onDelete 미지정 = DB 기본 RESTRICT (참조 중인 셀이 템플릿 삭제를 막는다 — 020 과 동일 의도).
+databaseChangeLog:
+
+  - changeSet:
+      id: 057-listing-detail-template
+      author: oclyx
+      comment: "2609_20: product_listing.detail_template_id (nullable FK) — 셀 단위 상세 템플릿 override."
+      changes:
+        - addColumn:
+            tableName: product_listing
+            columns:
+              - column: { name: detail_template_id, type: BIGINT }
+        - addForeignKeyConstraint:
+            constraintName: fk_product_listing_detail_template
+            baseTableName: product_listing
+            baseColumnNames: detail_template_id
+            referencedTableName: detail_template
+            referencedColumnNames: id
+      rollback:
+        - dropForeignKeyConstraint: { baseTableName: product_listing, constraintName: fk_product_listing_detail_template }
+        - dropColumn: { tableName: product_listing, columnName: detail_template_id }

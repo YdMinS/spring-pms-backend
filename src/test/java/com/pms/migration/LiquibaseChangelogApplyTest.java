@@ -337,6 +337,16 @@ class LiquibaseChangelogApplyTest {
     }
 
     @Test
+    void listingDetailTemplateApplied() {
+        // changeset 057: product_listing.detail_template_id (nullable FK → detail_template, FEATURE_2609_20).
+        // No backfill on purpose — every pre-existing row stays NULL, which IS the previous 2-tier behaviour
+        // (account ?? tenant default), so the count below proves both the column and that nothing was filled.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing WHERE detail_template_id IS NOT NULL",
+                Integer.class)).isZero();
+    }
+
+    @Test
     void tenantDimensionApplied() {
         // changeset 002: tenant table created + seeded with the default tenant (id=1).
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tenant", Integer.class)).isEqualTo(1);

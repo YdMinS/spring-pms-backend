@@ -19,11 +19,12 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 /**
  * Channel template resolution (FEATURE_2608_06 / 21): the account's assigned template wins; a missing
- * account or a null FK falls back to the tenant default; neither present throws. Detail is logically
- * identical to thumbnail, so only the representative fallback case is repeated for it.
+ * account or a null FK falls back to the tenant default; neither present throws. Detail adds a cell tier
+ * on top (2609_20/D2): the cell's own pin wins over the account, and a null pin keeps the old 2-tier path.
  */
 @ExtendWith(MockitoExtension.class)
 class ChannelTemplateResolverTest {
@@ -88,6 +89,26 @@ class ChannelTemplateResolverTest {
     }
 
     // ---- detail (fallback representative) ----
+
+    @Test
+    void resolveDetail_cellHasTemplate_returnsCellTemplate() {
+        // 2609_20/D2: the cell's own pin wins — the account tier is never consulted (so it is NOT stubbed:
+        // MockitoExtension is STRICT_STUBS and an unused stub would fail the very thing under test).
+        DetailTemplate pinned = DetailTemplate.builder().id(7L).name("셀 지정").active(true).isDefault(false).build();
+        ProductListing cell = cell().toBuilder().detailTemplate(pinned).build();
+
+        assertThat(resolver.resolveDetail(cell).getId()).isEqualTo(7L);
+        verifyNoInteractions(marketplaceAccountRepository);
+    }
+
+    @Test
+    void resolveDetail_cellTemplateNull_returnsAccountTemplate() {
+        DetailTemplate assigned = DetailTemplate.builder().id(9L).name("계정 지정").active(true).isDefault(false).build();
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(SELLER_ID, PLATFORM))
+                .willReturn(Optional.of(account(null, assigned)));
+
+        assertThat(resolver.resolveDetail(cell()).getId()).isEqualTo(9L);
+    }
 
     @Test
     void resolveDetail_noAccount_fallsBackToTenantDefault() {

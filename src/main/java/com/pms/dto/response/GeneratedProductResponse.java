@@ -35,6 +35,11 @@ public class GeneratedProductResponse {
      * platform has no adapter yet (no opinion, not a failure) or on a legacy/not-yet-generated response.
      */
     private Boolean shippingReady;
+    /**
+     * 이 셀에 지정된 상세 템플릿 id(2609_20/D12). null = 계정/테넌트 기본 상속. 해석된 템플릿 자체는
+     * {@code GET /api/admin/product-listings/{id}/detail-template}.
+     */
+    private Long detailTemplateId;
     private List<OptionPrice> optionPrices;
 
     @Getter
