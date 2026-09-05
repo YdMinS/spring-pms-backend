@@ -1,0 +1,23 @@
+# Channel price override (FEATURE_2609_19 / D1). The user may set a channel option's selling price by hand;
+# this column only records WHERE that price came from so a cell [재생성] knows what not to overwrite (D2).
+# ⚠️ selling_price keeps its meaning — it is ALWAYS the effective price. Do not write read code that
+# reinterprets selling_price based on this column.
+# Existing rows are all AUTO (that is exactly today's behaviour: every price is calculated).
+# VARCHAR, not boolean → no MySQL BIT trap (see changeset 006).
+databaseChangeLog:
+
+  - changeSet:
+      id: 054-listing-option-price-source
+      author: oclyx
+      comment: "2609_19: product_listing_option.price_source (AUTO | MANUAL_OVERRIDE); selling_price stays the effective price."
+      changes:
+        - addColumn:
+            tableName: product_listing_option
+            columns:
+              - column:
+                  name: price_source
+                  type: VARCHAR(20)
+                  defaultValue: AUTO
+                  constraints: { nullable: false }
+      rollback:
+        - dropColumn: { tableName: product_listing_option, columnName: price_source }

@@ -53,5 +53,8 @@ public class GeneratedProductResponse {
         private Integer stockQuantity;
         /** 102/D5: upper bound for this option's channel stock = master stock ?? 9999; also the inherited value. */
         private int maxStock;
+        /** 2609_19/D1: origin of sellingPrice — "AUTO" (calculated) or "MANUAL_OVERRIDE" (user-set for this
+         *  channel). The price in {@code sellingPrice} is the effective one either way. */
+        private String priceSource;
     }
 }

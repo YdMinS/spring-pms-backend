@@ -105,3 +105,5 @@ databaseChangeLog:
       file: db/changelog/changes/052-order-customer-name.yaml
   - include:
       file: db/changelog/changes/053-order-claim.yaml
+  - include:
+      file: db/changelog/changes/054-listing-option-price-source.yaml

@@ -67,6 +67,14 @@ public class CoupangProperties {
     private String acknowledgementPath =
             "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/ordersheets/acknowledgement";
 
+    /**
+     * 아이템(vendorItem)별 판매가 변경 경로. {vendorItemId}/{price} 치환. 재심사 없이 즉시 반영된다.
+     * ⚠️ 실계정 미검증이라 설정으로 뺀다(ordersheet-by-order-path 와 같은 판단).
+     * ⚠️ forceSalePriceUpdate 쿼리는 붙이지 말 것 — put() 에 쿼리 인자가 없고, path 에 섞으면 HMAC 서명이 깨진다.
+     */
+    private String vendorItemPricePath =
+            "/v2/providers/openapi/apis/api/v1/marketplace/vendor-items/{vendorItemId}/prices/{price}";
+
     /** 송장업로드(발송처리) 경로. {vendorId} 치환. 상품준비중(INSTRUCT)→배송지시(DEPARTURE) 전환. */
     private String invoicesPath = "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/orders/invoices";
 

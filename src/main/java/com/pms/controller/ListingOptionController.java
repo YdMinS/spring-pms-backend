@@ -2,7 +2,9 @@ package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.SetActiveOptionsRequest;
+import com.pms.dto.request.SetOptionPricesRequest;
 import com.pms.dto.request.SetOptionStocksRequest;
+import com.pms.dto.response.ChannelPriceUpdateResponse;
 import com.pms.dto.response.ListingOptionsResponse;
 import com.pms.service.listing.ListingOptionService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -52,5 +54,15 @@ public class ListingOptionController {
             @PathVariable Long id, @Valid @RequestBody SetOptionStocksRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(
                 listingOptionService.setOptionStocks(id, request.getStocks())));
+    }
+
+    @PutMapping("/product-listings/{id}/options/price")
+    @Operation(summary = "Set the selling price of some options by hand and push it to the market "
+            + "(partial; null restores the calculated price)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<ChannelPriceUpdateResponse>> setOptionPrices(
+            @PathVariable Long id, @Valid @RequestBody SetOptionPricesRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                listingOptionService.setOptionPrices(id, request.getPrices())));
     }
 }
