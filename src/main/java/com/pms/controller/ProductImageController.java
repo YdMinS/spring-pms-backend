@@ -16,8 +16,8 @@ import java.util.List;
 
 /**
  * A product's image gallery (1:N). All endpoints are ADMIN-only, enforced globally by SecurityConfig
- * ({@code /api/admin/**} covers POST/GET/PUT/DELETE) — no per-method {@code @PreAuthorize} (matches
- * ProductThumbnailController). See FEATURE_2608_06 / 39.
+ * ({@code /api/admin/**} covers POST/GET/PUT/DELETE) — no per-method {@code @PreAuthorize}.
+ * See FEATURE_2608_06 / 39.
  *
  * <p>⚠️ {@code PUT /images/reorder} (literal) and {@code PUT /images/{imageId}} (replace) coexist —
  * Spring matches the literal path over the {@code {imageId}} variable, so reorder never leaks into replace.</p>
