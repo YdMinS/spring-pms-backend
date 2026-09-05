@@ -6,7 +6,10 @@ import com.pms.domain.MasterProductOption;
 import com.pms.domain.OptionApprovalStatus;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.domain.GeneratedContentSource;
+import com.pms.dto.request.SetOptionPricesRequest.OptionPrice;
 import com.pms.dto.request.SetOptionStocksRequest.OptionStock;
+import com.pms.dto.response.ChannelPriceUpdateResponse;
 import com.pms.dto.response.ListingOptionsResponse;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -28,6 +31,7 @@ import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.any;
@@ -46,6 +50,12 @@ class ListingOptionServiceTest {
     @Mock private MasterProductOptionRepository masterProductOptionRepository;
     @Mock private RegistrationNameGenerator registrationNameGenerator;
     @Mock private com.pms.service.OptionCheckSuffixResolver optionCheckSuffixResolver;
+    // 2609_19: manual pricing dependencies — declared here so @InjectMocks fills them too.
+    @Mock private com.pms.service.PriceCalculator priceCalculator;
+    @Mock private com.pms.service.ListingAssetService listingAssetService;
+    @Mock private ListingChannelResolver resolver;
+    @Mock private com.pms.repository.MarketplaceAccountRepository marketplaceAccountRepository;
+    @Mock private ListingChannel adapter;
     @InjectMocks private ListingOptionServiceImpl service;
 
     private static final Long LISTING_ID = 100L;
@@ -361,5 +371,231 @@ class ListingOptionServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("변경할 옵션이 없습니다");
         verify(productListingOptionRepository, never()).saveAll(any());
+    }
+
+    // ---------------------------------------------------------------- 2609_19: manual channel price
+
+    /** A cell with a seller, so the market path can resolve its marketplace account. */
+    private ProductListing pricingListing() {
+        return ProductListing.builder().id(LISTING_ID).platform("COUPANG").name("셀")
+                .status(ListingStatus.DRAFT)
+                .seller(com.pms.domain.Seller.builder().id(7L).sellerName("행복상회").build())
+                .build();
+    }
+
+    /** {@code platformOptionId} = the Coupang vendorItemId; null means "not on the market yet". */
+    private ProductListingOption pricedOption(Long id, String platformOptionId) {
+        return ProductListingOption.builder().id(id).optionName("opt" + id)
+                .sellingPrice(new BigDecimal("6000.00")).originalPrice(new BigDecimal("7500.00"))
+                .active(true).approvalStatus(OptionApprovalStatus.NOT_APPROVED)
+                .platformOptionId(platformOptionId).build();
+    }
+
+    private com.pms.domain.MarketplaceAccount activeAccount() {
+        return com.pms.domain.MarketplaceAccount.builder().id(3L).platform("COUPANG").isActive(true).build();
+    }
+
+    /** Stub the (seller, platform) account lookup used by the market path. */
+    private void givenActiveAccount() {
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(7L, "COUPANG"))
+                .willReturn(Optional.of(activeAccount()));
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<ProductListingOption> captureSaved() {
+        ArgumentCaptor<List<ProductListingOption>> captor = ArgumentCaptor.forClass(List.class);
+        verify(productListingOptionRepository).saveAll(captor.capture());
+        return captor.getValue();
+    }
+
+    // 1. A hand-set price is stored as-is and flagged MANUAL_OVERRIDE (so a regeneration will skip it).
+    @Test
+    void setOptionPricesSavesManualPrice() {
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(listing(ListingStatus.DRAFT)));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, null)));
+        given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("18750.00"));
+        given(resolver.resolveOptional("COUPANG")).willReturn(Optional.of(adapter));
+
+        service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, new BigDecimal("15000"))));
+
+        ProductListingOption saved = captureSaved().get(0);
+        assertThat(saved.getSellingPrice()).isEqualByComparingTo("15000");
+        assertThat(saved.getPriceSource()).isEqualTo(GeneratedContentSource.MANUAL_OVERRIDE);
+    }
+
+    // 2. null = back to the calculated price, taken from the calculate-only seam (never from PriceCalculator here).
+    @Test
+    void setOptionPricesRecalculatesWhenNull() {
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(listing(ListingStatus.DRAFT)));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, null)));
+        given(listingAssetService.quoteOptionPrice(any(), any()))
+                .willReturn(new com.pms.service.PriceCalculator.PriceResult(
+                        new BigDecimal("9000.00"), new BigDecimal("11250.00")));
+        given(resolver.resolveOptional("COUPANG")).willReturn(Optional.of(adapter));
+
+        service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, null)));
+
+        ProductListingOption saved = captureSaved().get(0);
+        assertThat(saved.getSellingPrice()).isEqualByComparingTo("9000");
+        assertThat(saved.getOriginalPrice()).isEqualByComparingTo("11250");
+        assertThat(saved.getPriceSource()).isEqualTo(GeneratedContentSource.AUTO);
+        verify(priceCalculator, never()).displayOriginalPrice(any(), any());
+    }
+
+    // 3. D7: the strike-through price is refreshed with the manual price, or the market shows sale > original.
+    @Test
+    void setOptionPricesUpdatesOriginalPrice() {
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(listing(ListingStatus.DRAFT)));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, null)));
+        given(priceCalculator.displayOriginalPrice(any(), eq(new BigDecimal("15000.00"))))
+                .willReturn(new BigDecimal("18750.00"));
+        given(resolver.resolveOptional("COUPANG")).willReturn(Optional.of(adapter));
+
+        service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, new BigDecimal("15000"))));
+
+        assertThat(captureSaved().get(0).getOriginalPrice()).isEqualByComparingTo("18750");
+    }
+
+    // 4. An option that exists on the market is repriced there in this same request (no re-approval).
+    @Test
+    void setOptionPricesPushesToMarket() {
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(pricingListing()));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, "V-1")));
+        given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("18750.00"));
+        given(resolver.resolveOptional("COUPANG")).willReturn(Optional.of(adapter));
+        givenActiveAccount();
+
+        ChannelPriceUpdateResponse response =
+                service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, new BigDecimal("15000"))));
+
+        verify(adapter).updateOptionPrice(any(), eq(new BigDecimal("15000.00")), any());
+        assertThat(response.pushed()).isEqualTo(1);
+        assertThat(response.skipped()).isEmpty();
+        assertThat(response.failed()).isEmpty();
+    }
+
+    // 5. D5: no vendorItemId (unapproved / DRAFT) → saved locally, reported as skipped, adapter untouched.
+    @Test
+    void setOptionPricesSkipsWhenNoMarketId() {
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(pricingListing()));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, null)));
+        given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("18750.00"));
+        given(resolver.resolveOptional("COUPANG")).willReturn(Optional.of(adapter));
+
+        ChannelPriceUpdateResponse response =
+                service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, new BigDecimal("15000"))));
+
+        verify(adapter, never()).updateOptionPrice(any(), any(), any());
+        verify(marketplaceAccountRepository, never()).findBySeller_IdAndPlatform(any(), anyString());
+        assertThat(response.skipped()).containsExactly("opt1");
+        assertThat(response.pushed()).isZero();
+        assertThat(captureSaved()).hasSize(1);
+    }
+
+    // 6. D6: what the market refused is NOT saved — the DB must not claim a price the market never took.
+    @Test
+    void setOptionPricesDoesNotSaveWhenMarketFails() {
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(pricingListing()));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, "V-1")));
+        given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("18750.00"));
+        given(resolver.resolveOptional("COUPANG")).willReturn(Optional.of(adapter));
+        givenActiveAccount();
+        org.mockito.BDDMockito.willThrow(new IllegalStateException("쿠팡 가격변경 실패: 판매중이 아닌 상품"))
+                .given(adapter).updateOptionPrice(any(), any(), any());
+
+        ChannelPriceUpdateResponse response =
+                service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, new BigDecimal("15000"))));
+
+        assertThat(captureSaved()).isEmpty();
+        assertThat(response.pushed()).isZero();
+        assertThat(response.failed()).hasSize(1);
+        assertThat(response.failed().get(0).optionName()).isEqualTo("opt1");
+        assertThat(response.failed().get(0).message()).contains("판매중이 아닌 상품");
+    }
+
+    // 7. An id from another listing → 400, nothing saved (same rule/message as the stock write).
+    @Test
+    void setOptionPricesRejectsForeignOption() {
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(listing(ListingStatus.DRAFT)));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, null)));
+
+        assertThatThrownBy(() -> service.setOptionPrices(LISTING_ID,
+                List.of(new OptionPrice(999L, new BigDecimal("15000")))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("리스팅 옵션 아님");
+        verify(productListingOptionRepository, never()).saveAll(any());
+    }
+
+    // 8. An empty list is a mistake, not a silent no-op.
+    @Test
+    void setOptionPricesRejectsEmptyList() {
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(listing(ListingStatus.DRAFT)));
+
+        assertThatThrownBy(() -> service.setOptionPrices(LISTING_ID, List.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("변경할 옵션이 없습니다");
+        verify(productListingOptionRepository, never()).saveAll(any());
+    }
+
+    // 9. D3 × D4: going back to AUTO also reaches the market — the restored price must be the live one.
+    @Test
+    void setOptionPricesPushesRestoredAutoPrice() {
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(pricingListing()));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, "V-1")));
+        given(listingAssetService.quoteOptionPrice(any(), any()))
+                .willReturn(new com.pms.service.PriceCalculator.PriceResult(
+                        new BigDecimal("9000.00"), new BigDecimal("11250.00")));
+        given(resolver.resolveOptional("COUPANG")).willReturn(Optional.of(adapter));
+        givenActiveAccount();
+
+        ChannelPriceUpdateResponse response =
+                service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, null)));
+
+        verify(adapter).updateOptionPrice(any(), eq(new BigDecimal("9000.00")), any());
+        assertThat(response.pushed()).isEqualTo(1);
+        assertThat(captureSaved().get(0).getPriceSource()).isEqualTo(GeneratedContentSource.AUTO);
+    }
+
+    // 10. D13: whole won, and the value sent must equal the value stored (no decimal left in the price path).
+    @Test
+    void setOptionPricesNormalizesToWon() {
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(pricingListing()));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, "V-1")));
+        given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("16250.00"));
+        given(resolver.resolveOptional("COUPANG")).willReturn(Optional.of(adapter));
+        givenActiveAccount();
+
+        service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, new BigDecimal("12999.99"))));
+
+        ArgumentCaptor<BigDecimal> sent = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(adapter).updateOptionPrice(any(), sent.capture(), any());
+        assertThat(sent.getValue()).isEqualByComparingTo("13000");
+        assertThat(captureSaved().get(0).getSellingPrice()).isEqualByComparingTo("13000");
+    }
+
+    // 11. D16: an option going back to AUTO that cannot be priced fails the WHOLE request — no partial save,
+    //     and nothing is sent to the market either (we would not know what to put back).
+    @Test
+    void setOptionPricesFailsWhenAutoRestoreCannotPrice() {
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(pricingListing()));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, "V-1")));
+        given(listingAssetService.quoteOptionPrice(any(), any()))
+                .willThrow(new IllegalArgumentException("마진 프리셋 없음"));
+
+        assertThatThrownBy(() -> service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, null))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("마진 프리셋 없음");
+        verify(productListingOptionRepository, never()).saveAll(any());
+        verify(adapter, never()).updateOptionPrice(any(), any(), any());
     }
 }

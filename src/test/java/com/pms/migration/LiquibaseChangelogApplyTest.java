@@ -327,6 +327,16 @@ class LiquibaseChangelogApplyTest {
     }
 
     @Test
+    void listingOptionPriceSourceApplied() {
+        // changeset 054: price_source exists on product_listing_option and defaults to AUTO (FEATURE_2609_19).
+        // NOT NULL with defaultValue AUTO, so the query below proves both the column and that pre-existing
+        // rows would read as calculated prices (which is exactly today's behaviour).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing_option WHERE price_source <> 'AUTO'",
+                Integer.class)).isZero();
+    }
+
+    @Test
     void tenantDimensionApplied() {
         // changeset 002: tenant table created + seeded with the default tenant (id=1).
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tenant", Integer.class)).isEqualTo(1);

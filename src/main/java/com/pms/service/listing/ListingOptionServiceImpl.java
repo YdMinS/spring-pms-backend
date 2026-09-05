@@ -1,22 +1,33 @@
 package com.pms.service.listing;
 
+import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.ListingStatus;
+import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.dto.request.SetOptionPricesRequest;
 import com.pms.dto.request.SetOptionStocksRequest;
+import com.pms.dto.response.ChannelPriceUpdateResponse;
 import com.pms.dto.response.ListingOptionsResponse;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
+import com.pms.service.ListingAssetService;
 import com.pms.service.OptionCheckSuffixResolver;
+import com.pms.service.PriceCalculator;
 import com.pms.service.RegistrationNameGenerator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,6 +48,13 @@ public class ListingOptionServiceImpl implements ListingOptionService {
     private final MasterProductOptionRepository masterProductOptionRepository;
     private final RegistrationNameGenerator registrationNameGenerator;
     private final OptionCheckSuffixResolver optionCheckSuffixResolver;
+    // 2609_19: manual pricing needs the display (strike-through) price (D7), the calculated price to fall
+    // back to (D3) and the channel adapter + account to push with (D4). No cycle: neither ListingAssetService
+    // nor the Coupang adapter depends on this service.
+    private final PriceCalculator priceCalculator;
+    private final ListingAssetService listingAssetService;
+    private final ListingChannelResolver resolver;
+    private final MarketplaceAccountRepository marketplaceAccountRepository;
 
     @Override
     public ListingOptionsResponse getOptions(Long listingId) {
@@ -161,6 +179,130 @@ public class ListingOptionServiceImpl implements ListingOptionService {
         boolean needsResync = listing.getStatus() != null && listing.getStatus() != ListingStatus.DRAFT;
         return ListingOptionsResponse.of(listing, merged, needsResync,
                 registrationName(listing, merged, byName), byName);
+    }
+
+    /**
+     * Manual per-channel pricing (2609_19). See {@link ListingOptionService#setOptionPrices}. Two things make
+     * this different from the two writes above: the new price is pushed to the market inside this request
+     * (D4), and an option is saved only once the market has accepted it (D6) — so the market call happens
+     * <em>before</em> {@code saveAll}, and its failures are caught rather than thrown (a thrown exception
+     * would roll back the options that did succeed).
+     */
+    @Override
+    @Transactional
+    public ChannelPriceUpdateResponse setOptionPrices(Long listingId,
+                                                      List<SetOptionPricesRequest.OptionPrice> prices) {
+        ProductListing listing = productListingRepository.findScopedById(listingId)
+                .orElseThrow(() -> new ResourceNotFoundException("ProductListing", listingId));
+
+        // A no-op save is a mistake, not a valid request (same rule/message as setOptionStocks).
+        if (prices == null || prices.isEmpty()) {
+            throw new IllegalArgumentException("변경할 옵션이 없습니다");
+        }
+
+        List<ProductListingOption> options = productListingOptionRepository.findByProductListingId(listingId);
+        Map<Long, ProductListingOption> byId = options.stream()
+                .collect(Collectors.toMap(ProductListingOption::getId, Function.identity()));
+        if (!byId.keySet().containsAll(prices.stream()
+                .map(SetOptionPricesRequest.OptionPrice::getOptionId).toList())) {
+            throw new IllegalArgumentException("리스팅 옵션 아님");
+        }
+
+        // 1. Work out every target price first. Nothing is saved and nothing is sent yet: an option returning
+        //    to AUTO that cannot be priced must fail the whole request rather than leave a half-applied batch
+        //    (D16) — PriceCalculator throws IllegalArgumentException → 400, message passed through.
+        Map<Long, TargetPrice> targets = new LinkedHashMap<>();
+        for (SetOptionPricesRequest.OptionPrice price : prices) {
+            ProductListingOption option = byId.get(price.getOptionId());
+            if (price.getSellingPrice() != null) {
+                BigDecimal salePrice = normalize(price.getSellingPrice());
+                targets.put(option.getId(), new TargetPrice(salePrice,
+                        priceCalculator.displayOriginalPrice(listing, salePrice),
+                        GeneratedContentSource.MANUAL_OVERRIDE));
+            } else {
+                // null = drop the manual price. We must know the value it returns to before touching anything,
+                // hence the calculate-only seam (recalculateOptionPrices would save mid-loop).
+                PriceCalculator.PriceResult quoted = listingAssetService.quoteOptionPrice(listing, option);
+                targets.put(option.getId(), new TargetPrice(quoted.salePrice(), quoted.originalPrice(),
+                        GeneratedContentSource.AUTO));
+            }
+        }
+
+        // 2. Push to the market, then keep only what it accepted.
+        ListingChannel adapter = resolver.resolveOptional(listing.getPlatform()).orElse(null);
+        List<String> skipped = new ArrayList<>();
+        List<ChannelPriceUpdateResponse.FailedOption> failed = new ArrayList<>();
+        Map<Long, ProductListingOption> toSave = new LinkedHashMap<>();
+        int pushed = 0;
+        // Resolved up front, and only when something is actually going to be sent: a missing/inactive account
+        // is a request-level 404/400, not a per-option failure, so it must not land inside the catch below.
+        boolean anyToPush = adapter != null && targets.keySet().stream()
+                .anyMatch(id -> StringUtils.hasText(byId.get(id).getPlatformOptionId()));
+        MarketplaceAccount account = anyToPush ? resolveAccount(listing) : null;
+        for (Map.Entry<Long, TargetPrice> entry : targets.entrySet()) {
+            ProductListingOption option = byId.get(entry.getKey());
+            TargetPrice target = entry.getValue();
+            // No market identifier (unapproved option / DRAFT cell) or no adapter for this platform → the
+            // price is ours alone to keep; it reaches the market with the next register/[수정 요청] (D5).
+            if (adapter == null || !StringUtils.hasText(option.getPlatformOptionId())) {
+                skipped.add(option.getOptionName());
+                toSave.put(option.getId(), applied(option, target));
+                continue;
+            }
+            try {
+                adapter.updateOptionPrice(option, target.salePrice(), account);
+                toSave.put(option.getId(), applied(option, target));
+                pushed++;
+            } catch (Exception e) {
+                // Caught, not propagated: a rejected option must not roll back the ones that went through,
+                // and it must not be saved either (DB and market would then disagree, D6).
+                failed.add(new ChannelPriceUpdateResponse.FailedOption(option.getOptionName(), e.getMessage()));
+            }
+        }
+        productListingOptionRepository.saveAll(List.copyOf(toSave.values()));
+
+        // Return the full option set with the saved rows swapped in (setOptionStocks' closing block).
+        List<ProductListingOption> merged = options.stream()
+                .map(option -> toSave.getOrDefault(option.getId(), option))
+                .toList();
+        Map<String, MasterProductOption> byName = masterOptionsByName(listing);
+        // The market side of this change is already done, so there is nothing to re-send (D15) — and the
+        // active option set did not move, so the registration name cannot have changed either.
+        ListingOptionsResponse body = ListingOptionsResponse.of(listing, merged, false,
+                registrationName(listing, merged, byName), byName);
+        return new ChannelPriceUpdateResponse(body, pushed, skipped, failed);
+    }
+
+    /** The prices an option is about to get, held until the market has accepted them (D6). */
+    private record TargetPrice(BigDecimal salePrice, BigDecimal originalPrice, GeneratedContentSource source) {
+    }
+
+    private static ProductListingOption applied(ProductListingOption option, TargetPrice target) {
+        return option.toBuilder()
+                .sellingPrice(target.salePrice())
+                .originalPrice(target.originalPrice())
+                .priceSource(target.source())
+                .build();
+    }
+
+    /**
+     * D13: pin the value to whole won. What we send to the market and what stays in the DB must be the same
+     * number (D6), and a decimal point in the price path is a 400 from Coupang. The 10-won rounding is NOT
+     * applied — that is a rule of the automatic calculation, and a hand-set price is left as the user typed it.
+     */
+    private static BigDecimal normalize(BigDecimal input) {
+        return input.setScale(0, RoundingMode.HALF_UP).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /** (seller, platform) account for the cell — same rule as the register path (404 none, 400 inactive). */
+    private MarketplaceAccount resolveAccount(ProductListing listing) {
+        MarketplaceAccount acct = marketplaceAccountRepository
+                .findBySeller_IdAndPlatform(listing.getSeller().getId(), listing.getPlatform())
+                .orElseThrow(() -> new ResourceNotFoundException("MarketplaceAccount", listing.getSeller().getId()));
+        if (Boolean.FALSE.equals(acct.getIsActive())) {
+            throw new IllegalArgumentException("비활성 계정");
+        }
+        return acct;
     }
 
     /**

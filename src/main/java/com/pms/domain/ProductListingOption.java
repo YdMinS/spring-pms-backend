@@ -147,6 +147,22 @@ public class ProductListingOption extends BaseEntity {
     private Integer stockQuantity;
 
     /**
+     * Origin of {@link #sellingPrice} (FEATURE_2609_19 / D1). {@code AUTO} = the margin reverse-calc value
+     * (a cell [재생성] recomputes it); {@code MANUAL_OVERRIDE} = a price the user set for this channel only,
+     * which a regeneration must leave alone (D2 — the same rule the detail HTML override already follows).
+     *
+     * <p>⚠️ {@link #sellingPrice} is ALWAYS the effective price whatever this says — never write read code
+     * that reinterprets the price based on this field. It exists so the regeneration knows what to skip and
+     * so the matrix can mark the cell as manually priced.</p>
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "price_source", nullable = false, length = 20)
+    @Builder.Default
+    @Schema(description = "Origin of the selling price (AUTO = calculated, MANUAL_OVERRIDE = user-set)",
+            example = "AUTO")
+    private GeneratedContentSource priceSource = GeneratedContentSource.AUTO;
+
+    /**
      * True = this option physically exists on the marketplace: Coupang issued a vendorItemId, or it was
      * approved at some point. Such an option cannot be removed there (approved options are not deletable),
      * so 87 forbids unchecking it and 88 locks the checkbox.

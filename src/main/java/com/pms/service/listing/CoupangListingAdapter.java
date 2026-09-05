@@ -10,6 +10,7 @@ import com.pms.domain.MasterProductOption;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.repository.MasterProductOptionRepository;
+import com.pms.config.CoupangProperties;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.MasterChannelConfigService;
 import com.pms.service.MasterProductService;
@@ -29,6 +30,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -81,6 +84,9 @@ public class CoupangListingAdapter implements ListingChannel {
     private static final int MAX_ATTRIBUTE_VALUE_LENGTH = 30;
 
     private final CoupangApiClient client;
+    // 2609_19: only the per-item price path lives in config (unverified against a live account); the other
+    // paths stay class constants.
+    private final CoupangProperties properties;
     private final ObjectMapper objectMapper;
     private final ProductListingOptionRepository productListingOptionRepository;
     private final MasterProductOptionRepository masterProductOptionRepository;
@@ -147,6 +153,24 @@ public class CoupangListingAdapter implements ListingChannel {
         // TODO: confirm the exact stop-selling endpoint against a live account (docs unclear); using the
         //  documented sales/stop PUT for now.
         client.put(SELLER_PRODUCTS + "/" + cell.getPlatformProductId() + "/sales/stop", "{}", acct);
+    }
+
+    @Override
+    public void updateOptionPrice(ProductListingOption option, BigDecimal price, MarketplaceAccount acct) {
+        // The price sits in the path, so a decimal point there is a 400 from Coupang. The service already
+        // normalised the value to whole won (2609_19/D13) — this only drops the scale, and UNNECESSARY makes
+        // a would-be rounding here fail loudly instead of silently sending a different price than we store.
+        String path = properties.getVendorItemPricePath()
+                .replace("{vendorItemId}", option.getPlatformOptionId())
+                .replace("{price}", price.setScale(0, RoundingMode.UNNECESSARY).toPlainString());
+        String raw = client.put(path, "{}", acct);
+        // A 2xx can still carry a failure code in the body (same defence as the register response). Surface
+        // Coupang's own message — the service reports it per option without failing the whole request.
+        JsonNode body = readJson(raw);
+        String code = body.path("code").asText("");
+        if (!code.isBlank() && !"SUCCESS".equalsIgnoreCase(code) && !"200".equals(code)) {
+            throw new IllegalStateException("쿠팡 가격변경 실패: " + body.path("message").asText(raw));
+        }
     }
 
     @Override
