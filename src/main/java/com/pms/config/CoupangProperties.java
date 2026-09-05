@@ -93,6 +93,18 @@ public class CoupangProperties {
     /** returnRequests(반품/취소 요청 목록) 조회 경로. {vendorId} 치환. */
     private String returnrequestsPath = "/v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests";
 
+    /**
+     * 반품철회 이력 기간별 조회 경로(GET_RETURN_WITHDRAW_BY_DATE). {vendorId} 치환.
+     *
+     * 철회된 반품 접수는 returnRequests 목록에서 사라지기만 해서 로컬 미완결 건이 STALE 로 떨어질 때까지
+     * 남는다 — 이 경로가 그 건을 WITHDRAWN 으로 종결시킨다(2609_21/01).
+     * ⚠️ 조회 범위 상한이 <b>7일</b>(양끝 포함)이라 클레임 창을 그대로 넘기면 쿠팡이 거절한다 —
+     * {@code CoupangReturnSyncServiceImpl.withdrawWindow} 가 잘라서 넘긴다.
+     * ⚠️ 실계정 검증 전이라 상수가 아니라 설정으로 뺀다(ordersheet-by-order-path 와 같은 판단).
+     */
+    private String returnWithdrawPath =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/returnWithdrawRequests";
+
     /** 취소 보정 조회 기간(일). 취소는 늦게 처리되므로 ordersheets 보다 넉넉히. 쿠팡 최대 31일. */
     private int cancelSyncDays = 7;
 

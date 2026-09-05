@@ -153,6 +153,22 @@ public class ClaimUpserter {
         return true;
     }
 
+    /**
+     * 철회 이력에서 확인된 클레임을 {@code WITHDRAWN} 으로 종결한다 (2609_21/01).
+     *
+     * ⚠️ {@code platformStatus} 는 건드리지 않는다 — 그 값은 {@code receiptStatus} 원문이고 철회는 별도
+     * 사건이라, 덮으면 액션(02)이 원문으로 하는 가능 판정의 근거가 오염된다.
+     * {@code syncedAt} 은 갱신한다 — 철회는 쿠팡에서 온 신호다({@link #relink} 의 정의와 일치).
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void closeAsWithdrawn(Long claimId) {
+        orderClaimRepository.findById(claimId).ifPresent(claim ->
+                orderClaimRepository.save(claim.toBuilder()
+                        .status(ClaimStatus.WITHDRAWN)
+                        .syncedAt(LocalDateTime.now())
+                        .build()));
+    }
+
     /** 주문조회 자체가 실패해 재매칭까지 가지 못한 경우 — 시도만 기록한다(포기 조건 D13). */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void recordMatchAttempt(Long claimId) {
