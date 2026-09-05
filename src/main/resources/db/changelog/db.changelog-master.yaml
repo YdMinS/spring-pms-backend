@@ -103,3 +103,5 @@ databaseChangeLog:
       file: db/changelog/changes/051-marketplace-sync-status.yaml
   - include:
       file: db/changelog/changes/052-order-customer-name.yaml
+  - include:
+      file: db/changelog/changes/053-order-claim.yaml

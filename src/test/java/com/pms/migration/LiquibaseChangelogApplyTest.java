@@ -312,6 +312,21 @@ class LiquibaseChangelogApplyTest {
     }
 
     @Test
+    void orderClaimApplied() {
+        // changeset 053: order_claim table + its columns materialized (FEATURE_2609_18).
+        // The table starts empty — rows are written only by the return sync's claim ingest.
+        // A successful count over the new column names is what proves the table was created.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM order_claim "
+                        + "WHERE tenant_id IS NULL AND marketplace_account_id IS NULL "
+                        + "AND claim_type IS NULL AND external_claim_id IS NULL "
+                        + "AND external_item_id IS NULL AND order_item_id IS NULL "
+                        + "AND order_item_match_attempts IS NULL AND status IS NULL "
+                        + "AND platform_status IS NULL AND received_at IS NULL AND synced_at IS NULL",
+                Integer.class)).isZero();
+    }
+
+    @Test
     void tenantDimensionApplied() {
         // changeset 002: tenant table created + seeded with the default tenant (id=1).
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tenant", Integer.class)).isEqualTo(1);
