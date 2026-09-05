@@ -136,6 +136,50 @@ class ClaimUpserterTest {
         verify(orderClaimRepository, never()).save(any());
     }
 
+    @Test
+    void relink_fourKeyMatches_linksWithoutConsumingAttempt() {
+        OrderItem line = orderLine(20L);
+        given(orderClaimRepository.findById(1L)).willReturn(Optional.of(unlinked(1L)));
+        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
+                1L, "B-1", "O-1", "V-1")).willReturn(Optional.of(line));
+
+        boolean linked = upserter.relink(1L);
+
+        assertThat(linked).isTrue();
+        ArgumentCaptor<OrderClaim> captor = ArgumentCaptor.forClass(OrderClaim.class);
+        verify(orderClaimRepository).save(captor.capture());
+        assertThat(captor.getValue().getOrderItem()).isSameAs(line);
+        // 성공은 시도횟수를 소모하지 않는다 — 포기 조건(D13)은 실패에만 걸린다
+        assertThat(captor.getValue().getOrderItemMatchAttempts()).isZero();
+    }
+
+    @Test
+    void relink_ambiguousThreeKey_incrementsAttemptsAndStaysUnlinked() {
+        given(orderClaimRepository.findById(1L)).willReturn(Optional.of(unlinked(1L)));
+        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
+                1L, "B-1", "O-1", "V-1")).willReturn(Optional.empty());
+        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalOrderIdAndExternalItemId(
+                1L, "O-1", "V-1")).willReturn(List.of(orderLine(21L), orderLine(22L)));
+
+        boolean linked = upserter.relink(1L);
+
+        assertThat(linked).isFalse();
+        ArgumentCaptor<OrderClaim> captor = ArgumentCaptor.forClass(OrderClaim.class);
+        verify(orderClaimRepository).save(captor.capture());
+        assertThat(captor.getValue().getOrderItem()).isNull();
+        assertThat(captor.getValue().getOrderItemMatchAttempts()).isEqualTo(1);
+    }
+
+    /** 04 백필 대상 — 주문 라인이 아직 붙지 않은 클레임. */
+    private OrderClaim unlinked(long id) {
+        return OrderClaim.builder()
+                .id(id).marketplaceAccount(account).platform("COUPANG").claimType(ClaimType.RETURN)
+                .externalClaimId("R-1").externalOrderId("O-1").externalBoxId("B-1").externalItemId("V-1")
+                .orderItem(null).orderItemMatchAttempts(0).status(ClaimStatus.RECEIVED)
+                .receivedAt(LocalDateTime.of(2026, 9, 1, 10, 0))
+                .build();
+    }
+
     private OrderItem orderLine(Long id) {
         return OrderItem.builder()
                 .id(id).marketplaceAccount(account).platform("COUPANG")

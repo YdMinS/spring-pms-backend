@@ -96,6 +96,18 @@ public class CoupangProperties {
     /** 취소 보정 조회 기간(일). 취소는 늦게 처리되므로 ordersheets 보다 넉넉히. 쿠팡 최대 31일. */
     private int cancelSyncDays = 7;
 
+    /**
+     * 클레임 주문 백필의 회차당 단건 조회 상한(orderId 기준, D13). 0 = 백필 비활성.
+     * 건수가 아니라 호출 수의 상한이다 — 같은 orderId 의 클레임 여러 건은 1회로 합쳐진다.
+     */
+    private int claimBackfillMaxOrders = 20;
+
+    /**
+     * 한 클레임의 재매칭 시도 상한(D13). 초과하면 조회 대상에서 영구히 빠진다 —
+     * 쿠팡에도 없는 주문(삭제·타 계정)을 매 회차 다시 치지 않기 위한 포기 조건이다.
+     */
+    private int claimBackfillMaxAttempts = 3;
+
     /** 쿠팡 API connect 타임아웃(ms). 미설정 시 무제한 → 게이트웨이 지연이 요청 스레드를 무한 점유한다. */
     private int connectTimeoutMs = 10_000;
 

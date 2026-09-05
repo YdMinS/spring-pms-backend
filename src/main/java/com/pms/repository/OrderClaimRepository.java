@@ -2,6 +2,7 @@ package com.pms.repository;
 
 import com.pms.domain.ClaimType;
 import com.pms.domain.OrderClaim;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -41,6 +42,23 @@ public interface OrderClaimRepository extends JpaRepository<OrderClaim, Long> {
                                           @Param("sellerId") Long sellerId,
                                           @Param("start") LocalDateTime start,
                                           @Param("end") LocalDateTime end);
+
+    /**
+     * 아직 주문 라인이 붙지 않았고 시도 상한에 안 걸린 클레임 (04 백필 대상).
+     * 최신 접수순 — 오래된 건일수록 쿠팡에서 사라졌을 확률이 높아 우선순위가 낮다.
+     *
+     * ⚠️ {@code @EntityGraph} 를 붙이지 않는다 — 백필은 id·externalOrderId·externalBoxId·externalItemId
+     * 만 읽고 응답에 싣지 않으므로 연관을 즉시 로딩할 이유가 없다(다른 조회 메서드와 다른 점).
+     * ⚠️ {@code externalOrderId is not null} — 조회 키가 없는 건은 경로에 null 이 박혀 실패만 하고
+     * 시도횟수를 소모한다. 대상에서 아예 뺀다.
+     */
+    @Query("select c from OrderClaim c where c.marketplaceAccount.id = :accountId "
+            + "and c.orderItem is null and c.orderItemMatchAttempts < :maxAttempts "
+            + "and c.externalOrderId is not null "
+            + "order by c.receivedAt desc")
+    List<OrderClaim> findUnlinked(@Param("accountId") Long accountId,
+                                  @Param("maxAttempts") int maxAttempts,
+                                  Pageable pageable);
 
     /** 단건 상세 — GET /api/claims/{id}. */
     @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller", "orderItem"})

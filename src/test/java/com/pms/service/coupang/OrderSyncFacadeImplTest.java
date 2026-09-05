@@ -3,6 +3,7 @@ package com.pms.service.coupang;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.service.claim.ClaimOrderBackfillService;
 import com.pms.service.coupang.CoupangOrderSyncService.SyncResult;
 import com.pms.service.coupang.CoupangReturnSyncService.CancelSyncResult;
 import com.pms.service.coupang.OrderSyncFacade.OrderSyncResult;
@@ -39,6 +40,7 @@ class OrderSyncFacadeImplTest {
     @Mock private CoupangOrderSyncService coupangOrderSyncService;
     @Mock private CoupangReturnSyncService coupangReturnSyncService;
     @Mock private SyncStatusRecorder syncStatusRecorder;
+    @Mock private ClaimOrderBackfillService claimOrderBackfillService;
 
     @InjectMocks private OrderSyncFacadeImpl facade;
 
@@ -60,6 +62,23 @@ class OrderSyncFacadeImplTest {
         InOrder order = inOrder(coupangOrderSyncService, coupangReturnSyncService);
         order.verify(coupangOrderSyncService).syncAccount(acc, OrderSyncScope.FULL);   // ordersheets 먼저
         order.verify(coupangReturnSyncService).syncCancels(acc);  // 그 다음 취소 보정
+        assertThat(result.newOrders()).isEqualTo(3);
+        assertThat(result.updatedOrders()).isEqualTo(1);
+        assertThat(result.canceledUpdated()).isEqualTo(2);
+    }
+
+    @Test
+    void sync_backfillThrows_stillRecordsSuccessAndKeepsCounts() {
+        // 백필은 정확도 보정이라 실패해도 주문·취소 결과를 깨지 않는다(취소 보정과 다른 판단).
+        MarketplaceAccount acc = account(1L);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        given(coupangOrderSyncService.syncAccount(acc, OrderSyncScope.FULL)).willReturn(new SyncResult(3, 1, 1, List.of()));
+        given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(2, 1));
+        given(claimOrderBackfillService.backfill(acc)).willThrow(new RuntimeException("쿠팡 500"));
+
+        OrderSyncResult result = facade.sync(1L);
+
+        verify(syncStatusRecorder).recordSuccess(1L);
         assertThat(result.newOrders()).isEqualTo(3);
         assertThat(result.updatedOrders()).isEqualTo(1);
         assertThat(result.canceledUpdated()).isEqualTo(2);

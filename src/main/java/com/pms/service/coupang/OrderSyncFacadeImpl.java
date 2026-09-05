@@ -4,6 +4,7 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.security.TenantContext;
+import com.pms.service.claim.ClaimOrderBackfillService;
 import com.pms.service.coupang.CoupangOrderSyncService.SyncResult;
 import com.pms.service.coupang.CoupangReturnSyncService.CancelSyncResult;
 import lombok.RequiredArgsConstructor;
@@ -18,7 +19,8 @@ import java.util.stream.Collectors;
 /**
  * {@link OrderSyncFacade} 구현.
  *
- * syncOne = ordersheets(Phase2) → returnRequests 취소 보정(§A) 순서로 한 계정을 동기화한다.
+ * syncOne = ordersheets(Phase2) → returnRequests 취소 보정(§A) → 클레임 주문 백필(04) 순서로
+ * 한 계정을 동기화한다.
  * syncEach 는 계정마다 try/catch 로 격리해 한 계정 실패가 전체를 롤백하지 않게 한다.
  *
  * ⚠️ 이 파사드는 의도적으로 @Transactional 을 두지 않는다. 공유 트랜잭션을 열면 내부
@@ -39,6 +41,7 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
     private final CoupangOrderSyncService coupangOrderSyncService;
     private final CoupangReturnSyncService coupangReturnSyncService;
     private final SyncStatusRecorder syncStatusRecorder;
+    private final ClaimOrderBackfillService claimOrderBackfillService;
 
     @Override
     public OrderSyncResult sync(Long accountId) {
@@ -157,6 +160,15 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
                         + (orderPartial == null ? "" : " / " + orderPartial);
                 syncStatusRecorder.recordPartial(account.getId(), reason, orderPartial == null, false);
                 throw e;
+            }
+
+            try {
+                claimOrderBackfillService.backfill(account);
+            } catch (Exception e) {
+                // 백필은 정확도 보정이다 — 실패해도 주문·취소는 정상이므로 SUCCESS 를 깨지 않는다
+                // (취소 보정과 다른 판단: 취소된 라인은 구매 가능해 보이지만, 미연결 클레임은
+                // 화면에 "주문 미연결" 로 이미 보인다).
+                log.warn("Claim order backfill failed (isolated): account={}", account.getId(), e);
             }
 
             if (orderPartial != null) {
