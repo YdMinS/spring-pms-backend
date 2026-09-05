@@ -17,6 +17,9 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Predicate;
 
 /**
  * 쿠팡 교환 클레임 동기화 (FEATURE_2609_18 / 06 · D17 · D21).
@@ -118,11 +121,31 @@ public class CoupangClaimAdapter implements ClaimSyncAdapter {
     /**
      * 한 창을 nextToken 페이징하며 교환 클레임을 적재한다.
      *
+     * ⚠️ 이 메서드는 <b>DB 에 적재</b>하고 페이지 수만 돌려준다 — receipt 가 필요하면
+     * {@link #findExchangeReceipt} 를 쓸 것(가시성만 바꿔 부르면 클레임이 재적재된다).
+     */
+    private int collect(MarketplaceAccount account, SyncWindow window) {
+        return pageThrough(account, window, receipt -> {
+            ingest(account, receipt);
+            return true;
+        });
+    }
+
+    /**
+     * 한 창을 nextToken 페이징하며 receipt 를 방문자에게 넘긴다. 방문자가 {@code false} 를 돌려주면
+     * 즉시 멈춘다(다음 페이지를 치지 않는다).
+     *
+     * <p>창 조립·서명·페이징은 여기 <b>한 벌</b>만 존재한다 — 액션 어댑터(05 X3)가 재조회를 위해
+     * 조회 관례를 복사하면 {@code vendorId} 치환·쿼리 비인코딩·{@code nextToken} 처리가 두 벌이 되어
+     * 한쪽만 고쳐지는 날이 온다.
+     *
      * ⚠️ 쿼리를 인코딩하지 말 것 — 서명 대상과 전송 문자열이 같아야 한다({@code CoupangApiClientImpl}
      * 이 {@code URI.create} 로 그대로 보낸다).
      * ⚠️ status 를 생략해 전 상태를 받는다(PLAN §4) — 상태 루프를 만들면 호출이 배로 는다.
+     *
+     * @return 실제로 조회한 페이지 수
      */
-    private int collect(MarketplaceAccount account, SyncWindow window) {
+    int pageThrough(MarketplaceAccount account, SyncWindow window, Predicate<JsonNode> visitor) {
         String path = coupangProperties.getExchangeRequestsPath()
                 .replace("{vendorId}", account.getVendorId());
         String baseQuery = "createdAtFrom=" + window.from().atStartOfDay().format(DATE_TIME)
@@ -140,7 +163,9 @@ public class CoupangClaimAdapter implements ClaimSyncAdapter {
             pages++;
 
             for (JsonNode receipt : parsed.path("data")) {
-                ingest(account, receipt);
+                if (!visitor.test(receipt)) {
+                    return pages;               // 찾았으면 다음 페이지를 치지 않는다
+                }
             }
             String prev = nextToken;
             nextToken = parsed.path("nextToken").asText("");
@@ -150,6 +175,31 @@ public class CoupangClaimAdapter implements ClaimSyncAdapter {
         } while (!nextToken.isBlank());
 
         return pages;
+    }
+
+    /**
+     * 교환 접수 1건을 <b>적재 없이</b> 찾아 돌려준다 (FEATURE_2609_21 / 05 · D12).
+     *
+     * <p>X3(재발송 송장)의 필수 {@code shipmentBoxId} 는 입고확인 후 새로 생성된 재배송 박스라
+     * 우리가 저장한 원 배송번호와 다르다 — 전송 직전에 이 메서드로 다시 읽어 얻는다.
+     *
+     * 🔴 {@link ClaimUpserter} 를 부르지 않는다. 액션 경로가 클레임을 재적재하면 사용자가 버튼을
+     * 누를 때마다 동기화가 도는 셈이 된다.
+     */
+    Optional<JsonNode> findExchangeReceipt(MarketplaceAccount account, String exchangeId, SyncWindow window) {
+        if (exchangeId == null || exchangeId.isBlank()) {
+            return Optional.empty();
+        }
+        String wanted = exchangeId.trim();
+        AtomicReference<JsonNode> found = new AtomicReference<>();
+        pageThrough(account, window, receipt -> {
+            if (wanted.equals(receipt.path("exchangeId").asText())) {
+                found.set(receipt);
+                return false;
+            }
+            return true;
+        });
+        return Optional.ofNullable(found.get());
     }
 
     /** 교환 클레임 적재 — 한 receipt 의 실패가 나머지 페이지를 멈추지 않도록 삼키고 로그만 남긴다. */

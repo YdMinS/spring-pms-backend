@@ -57,6 +57,9 @@ public class CoupangExchangeClaimParser {
         String externalClaimId = firstText(receipt, "exchangeId");
         String externalOrderId = firstText(receipt, "orderId");
         String platformStatus = firstText(receipt, "receiptStatus", "status");
+        // 회수상태 — 교환 액션(05)의 가능 조건이다. 원문 그대로 저장한다(정규화 금지).
+        // 스키마 미검증이라 alias 로 받는다: 1순위가 없으면 2순위, 둘 다 없으면 null(= 액션 없음, D3).
+        String collectStatus = firstText(receipt, "collectStatus", "returnDeliveryStatus");
         // 회수(고객→판매자) / 재발송(판매자→고객) — 방향이 다른 두 송장이라 섞으면 안 된다.
         JsonNode collectDelivery = firstPresent(receipt, "collectDeliveryDtos", "returnDeliveryDtos").path(0);
         JsonNode reshipDelivery = firstPresent(receipt, "exchangeDeliveryDtos", "deliveryDtos").path(0);
@@ -72,6 +75,7 @@ public class CoupangExchangeClaimParser {
                     quantity(item),
                     ClaimStatus.fromCoupangExchange(platformStatus),
                     platformStatus,                             // 원문 그대로 보존 (D3)
+                    collectStatus,                              // 원문 그대로 보존 (D3)
                     firstText(receipt, "reasonCode"),
                     firstText(receipt, "reasonCodeText", "reasonCode"),
                     firstText(receipt, "faultByType"),          // 반품과 같은 키

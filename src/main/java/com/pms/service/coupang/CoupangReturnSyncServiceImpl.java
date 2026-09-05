@@ -19,9 +19,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * {@link CoupangReturnSyncService} 구현 — returnRequests 페이징 조회 후 취소수량 매칭 보정.
@@ -36,6 +41,8 @@ import java.util.Optional;
  * 같은 응답에서 반품 클레임(order_claim)도 적재한다(FEATURE_2609_18 / D15 — 쿠팡 호출 0건 추가).
  * 적재만으로는 창을 벗어난 뒤의 상태 전이를 놓치므로, {@link #trackOpenClaims} 가 미완결 건의 접수일
  * 범위를 추가로 훑는다(D7) — 계정당 호출은 5 + 슬라이스(상한 claim-tracking-max-slices)다.
+ * {@link #trackOpenClaims} 는 그 앞에 반품철회 이력을 한 번 조회해 철회 건을 {@code WITHDRAWN} 으로
+ * 종결한다(2609_21/01) — 미완결이 있는 계정만, 회차당 +1 호출.
  * ⚠️ 취소 보정과 클레임 적재는 서로 다른 관심사다(D16): 적재가 실패해도 취소 보정은 끝나야 하므로
  * 예외를 삼키고(로그만), 적재 자체는 {@link ClaimUpserter} 의 REQUIRES_NEW 트랜잭션에서 돈다.
  */
@@ -48,6 +55,8 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
     private static final int MAX_PER_PAGE = 50;
     private static final int MAX_PAGES_PER_STATUS = 20;     // nextToken 무한루프 가드
     private static final List<String> RETURN_STATUSES = List.of("RU", "UC", "CC", "PR");
+    // 반품철회 이력 조회는 범위 상한이 7일(양끝 포함)이라 클레임 창을 그대로 넘기면 쿠팡이 거절한다.
+    private static final int WITHDRAW_MAX_RANGE_DAYS = 6;
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
     private final CoupangApiClient coupangApiClient;
@@ -137,7 +146,7 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
     }
 
     /**
-     * 미완결 클레임 추적(D7) — ① STALE 스윕 → ② 남은 건의 접수일 범위를 창 단위로 조회.
+     * 미완결 클레임 추적(D7) — ① 철회 종결(2609_21/01) → ② STALE 스윕 → ③ 남은 건의 접수일 범위를 창 단위로 조회.
      *
      * 조회는 신규 조회 창과 같은 {@code collect()} 를 탄다 — {@code applyCancel} 과 클레임 upsert 가
      * 함께 돌지만 <b>둘 다 멱등</b>이라 무해하고, 신규 창에서 놓친 건을 주워 담는 이득이 있다.
@@ -153,8 +162,11 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
         List<OrderClaim> open = orderClaimRepository.findOpen(
                 account.getId(), ClaimType.RETURN, ClaimStatus.closedStatuses());
 
-        List<OrderClaim> remaining = claimStaleSweeper.sweep(account, open);
-        int staleClosed = open.size() - remaining.size();
+        // 철회 종결이 스윕보다 먼저다 — 여기서 빠진 건만큼 추적 슬라이스 대상이 준다.
+        List<OrderClaim> alive = closeWithdrawn(account, open);
+        List<OrderClaim> remaining = claimStaleSweeper.sweep(account, alive);
+        // ⚠️ open.size() 로 두면 철회 종결분이 STALE 집계에 섞인다.
+        int staleClosed = alive.size() - remaining.size();
         if (remaining.isEmpty()) {
             return new ClaimTrackingResult(0, staleClosed);      // 미완결 없음 = 쿠팡을 아예 치지 않는다
         }
@@ -173,6 +185,108 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
                     account.getId(), slice.from(), slice.to(), r.pages(), r.matchedUpdated());
         }
         return new ClaimTrackingResult(slices, staleClosed);
+    }
+
+    /**
+     * 철회된 반품 접수를 {@code WITHDRAWN} 으로 종결하고, <b>남은 건만</b> 돌려준다 (2609_21/01).
+     *
+     * 철회 건은 {@code returnRequests} 목록에서 사라지기만 해서 신호를 못 받고 30일 뒤 STALE 로 떨어진다 —
+     * 이력 조회가 그 건을 제때 종결시킨다. 종결분을 리스트에서 빼야 스윕·슬라이스 대상에서도 함께 빠진다.
+     *
+     * ⚠️ 미완결이 0건이면 쿠팡을 아예 치지 않는다(0건 계정에 매 회차 +1 호출이 붙는 것을 막는다).
+     */
+    private List<OrderClaim> closeWithdrawn(MarketplaceAccount account, List<OrderClaim> open) {
+        if (open.isEmpty()) {
+            return open;
+        }
+        Set<String> withdrawn = collectWithdrawHistory(account, withdrawWindow(account));
+        if (withdrawn.isEmpty()) {
+            return open;
+        }
+
+        List<OrderClaim> alive = new ArrayList<>();
+        int closed = 0;
+        for (OrderClaim claim : open) {
+            if (withdrawn.contains(claim.getExternalClaimId())) {
+                claimUpserter.closeAsWithdrawn(claim.getId());
+                closed++;
+            } else {
+                alive.add(claim);
+            }
+        }
+        // ClaimTrackingResult 에 철회 칸이 없다(스키마를 늘리지 않는다) — 이 로그가 유일한 검증 신호다.
+        log.info("Claim withdraw closed: account={} open={} closed={}", account.getId(), open.size(), closed);
+        return alive;
+    }
+
+    /**
+     * 철회 이력 조회 창 = 클레임 창을 쿠팡 상한(7일, 양끝 포함)으로 자른 것.
+     *
+     * 별도 창 설정을 만들지 않는다(튜닝 손잡이가 늘면 어느 값이 무엇을 덮는지 알 수 없게 된다) —
+     * 오래 쉰 계정에서 잘려나간 구간의 철회는 놓치지만, 철회 라벨은 있으면 좋은 것이지 없으면 안 되는
+     * 것이 아니다(그 건은 기존대로 STALE 로 떨어진다).
+     */
+    private SyncWindow withdrawWindow(MarketplaceAccount account) {
+        SyncWindow window = newClaimWindow(account);
+        LocalDate earliest = window.to().minusDays(WITHDRAW_MAX_RANGE_DAYS);
+        return window.from().isBefore(earliest) ? new SyncWindow(earliest, window.to()) : window;
+    }
+
+    /**
+     * 반품철회 이력에서 <b>접수번호만</b> 모은다. 사유·시각·요청자 등은 파싱조차 하지 않는다 —
+     * 철회는 "종결됐다"는 사실만 필요하고, 나머지를 저장하면 D19(PII 최소)와 부딪힌다.
+     *
+     * ⚠️ 이 조회의 실패가 동기화 회차를 깨면 안 된다 — 예외를 삼키고 빈 집합을 돌려준다(경고만).
+     * ⚠️ 페이징은 {@code nextToken} 이 아니라 {@code pageIndex}/{@code nextPageIndex} 다(이 API 만의 형태).
+     */
+    private Set<String> collectWithdrawHistory(MarketplaceAccount account, SyncWindow window) {
+        String path = coupangProperties.getReturnWithdrawPath().replace("{vendorId}", account.getVendorId());
+        String baseQuery = "dateFrom=" + window.from().format(DATE)
+                + "&dateTo=" + window.to().format(DATE)
+                + "&sizePerPage=" + MAX_PER_PAGE;
+
+        Set<String> ids = new HashSet<>();
+        try {
+            String pageIndex = "1";
+            int pages = 0;
+            do {
+                JsonNode parsed = readTree(coupangApiClient.get(path, baseQuery + "&pageIndex=" + pageIndex, account));
+                pages++;
+
+                JsonNode rows = parsed.path("data");
+                for (JsonNode row : rows) {
+                    String receiptId = row.path("cancelId").asText("");
+                    if (!receiptId.isBlank()) {
+                        ids.add(receiptId);
+                    }
+                }
+                // 실계정 미검증 경로다 — 첫 페이지에 행은 있는데 하나도 못 읽었으면 필드명이 문서와 다른 것이다.
+                if (pages == 1 && ids.isEmpty() && rows.isArray() && !rows.isEmpty()) {
+                    log.warn("Claim withdraw history: unexpected fields={} (account={})",
+                            fieldNames(rows.path(0)), account.getId());
+                    return Set.of();
+                }
+
+                String prev = pageIndex;
+                pageIndex = parsed.path("nextPageIndex").asText("");
+                if (pageIndex.equals(prev) || pages >= MAX_PAGES_PER_STATUS) {
+                    break;
+                }
+            } while (!pageIndex.isBlank());
+        } catch (Exception e) {
+            log.warn("Claim withdraw history query failed: account={}", account.getId(), e);
+            return Set.of();
+        }
+        return ids;
+    }
+
+    /** 실측용 — 값은 PII 를 포함할 수 있으므로 <b>필드 이름만</b> 찍는다(D19). */
+    private List<String> fieldNames(JsonNode node) {
+        List<String> names = new ArrayList<>();
+        for (Iterator<String> it = node.fieldNames(); it.hasNext(); ) {
+            names.add(it.next());
+        }
+        return names;
     }
 
     /** 주어진 returnRequests 쿼리를 nextToken 페이징하며 매칭 취소를 applyCancel 로 반영. */

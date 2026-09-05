@@ -51,6 +51,19 @@ public class ResponseDTO<T> {
                 .build();
     }
 
+    /**
+     * Failure carrying a payload — used where the client needs the upstream's raw error
+     * (e.g. a marketplace's code/message on a claim action, FEATURE_2609_21 D15).
+     */
+    public static <T> ResponseDTO<T> failure(String message, T data) {
+        return ResponseDTO.<T>builder()
+                .status(ResponseStatus.FAILURE)
+                .message(message)
+                .data(data)
+                .timestamp(Instant.now().toString())
+                .build();
+    }
+
     public static <T> ResponseDTO<T> failure(String message) {
         return ResponseDTO.<T>builder()
                 .status(ResponseStatus.FAILURE)

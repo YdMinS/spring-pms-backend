@@ -1,0 +1,23 @@
+# Exchange collect status on order_claim (FEATURE_2609_21 / 05 · PLAN §4).
+#   Exchange actions are gated by the COLLECT status (BeforeDirection / CompleteCollect), not by
+#   receiptStatus, so the value has to be stored: the claim LIST decides which buttons to show and
+#   cannot re-query every row.
+# ⚠️ Column name is platform-neutral ("collect status") while the value stays the raw platform code —
+#    the same posture as platform_status (2609_18 D3). Do NOT prefix it with coupang_ and do NOT
+#    normalize the values into our own enum: a normalized value would make the action whitelist run on
+#    a lossy abbreviation, which is exactly what D2 avoids.
+# ⚠️ Nullable with no backfill: existing rows stay empty until the next exchange sync fills them, and
+#    an empty value opens NO action (D3) — "unknown" is not "eligible".
+databaseChangeLog:
+
+  - changeSet:
+      id: 059-order-claim-collect-status
+      author: oclyx
+      comment: "FEATURE_2609_21: order_claim.collect_status (raw exchange collect status, nullable)."
+      changes:
+        - addColumn:
+            tableName: order_claim
+            columns:
+              - column: { name: collect_status, type: VARCHAR(30) }
+      rollback:
+        - dropColumn: { tableName: order_claim, columnName: collect_status }
