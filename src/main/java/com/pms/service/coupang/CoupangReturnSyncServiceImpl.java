@@ -3,9 +3,12 @@ package com.pms.service.coupang;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
+import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
 import com.pms.repository.OrderItemRepository;
+import com.pms.service.claim.ClaimUpserter;
+import com.pms.service.claim.CoupangReturnClaimParser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -26,6 +29,10 @@ import java.util.Optional;
  *     쿠팡에서 receiptType=RETURN 으로 기록되어 (1)의 cancelType=CANCEL 필터에 안 잡힌다 →
  *     이 경로가 status 4종 날짜창 조회로 그런 취소도 반영한다.
  * 매칭은 (orderId + shipmentBoxId + vendorItemId) 4키. 매칭 안 되면 무시(예외 없음).
+ *
+ * 같은 응답에서 반품 클레임(order_claim)도 적재한다(FEATURE_2609_18 / D15 — 쿠팡 호출 0건 추가).
+ * ⚠️ 취소 보정과 클레임 적재는 서로 다른 관심사다(D16): 적재가 실패해도 취소 보정은 끝나야 하므로
+ * 예외를 삼키고(로그만), 적재 자체는 {@link ClaimUpserter} 의 REQUIRES_NEW 트랜잭션에서 돈다.
  */
 @Slf4j
 @Service
@@ -43,6 +50,8 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
     private final OrderItemRepository orderItemRepository;
     private final CoupangProperties coupangProperties;
     private final ObjectMapper objectMapper;
+    private final CoupangReturnClaimParser coupangReturnClaimParser;
+    private final ClaimUpserter claimUpserter;
 
     @Override
     public CancelSyncResult syncCancels(MarketplaceAccount account) {
@@ -118,6 +127,7 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
                         matchedUpdated++;
                     }
                 }
+                ingestClaims(account, receipt);
             }
             String prev = nextToken;
             nextToken = parsed.path("nextToken").asText("");
@@ -127,6 +137,21 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
         } while (!nextToken.isBlank());
 
         return new CancelSyncResult(matchedUpdated, pages);
+    }
+
+    /**
+     * 반품 클레임 적재 — 취소 보정을 깨뜨리면 안 되므로 예외를 삼키고 로그만 남긴다(D16).
+     *
+     * receiptType 이 RETURN 이 아닌 건은 파서가 걸러낸다(D23) — 단순 결제취소는 cancel_count 보정만.
+     */
+    private void ingestClaims(MarketplaceAccount account, JsonNode receipt) {
+        try {
+            coupangReturnClaimParser.parse(receipt)
+                    .forEach(record -> claimUpserter.upsert(account, ClaimType.RETURN, record));
+        } catch (Exception e) {
+            log.warn("Claim ingest failed: account={} receiptId={}", account.getId(),
+                    receipt.path("receiptId").asText(), e);
+        }
     }
 
     /**
