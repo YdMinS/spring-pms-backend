@@ -54,8 +54,9 @@ import java.util.Map;
  * is produced by the {@link DetailContentGenerator} seam (stub in 3b-2).</p>
  *
  * <p>⚠️ Reuse-only: options/BOM composition and PurchaseList are untouched — only the option
- * {@code sellingPrice} is written back. {@link ThumbnailRenderer} / {@link ImageStorageService} /
- * {@link ProductImageLoader} are reused as-is.</p>
+ * {@code sellingPrice} is written back, and options whose {@code priceSource} is
+ * {@code MANUAL_OVERRIDE} are excluded from that write (2609_19/D2). {@link ThumbnailRenderer} /
+ * {@link ImageStorageService} / {@link ProductImageLoader} are reused as-is.</p>
  */
 @Slf4j
 @Service
@@ -328,13 +329,38 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                 : masterProductOptionRepository.findByMasterProductId(cell.getMasterProduct().getId()).stream()
                         .collect(Collectors.toMap(MasterProductOption::getName, Function.identity(), (a, b) -> a));
         for (ProductListingOption option : productListingOptionRepository.findByProductListingId(cell.getId())) {
+            // 2609_19/D2: a price the user set for this channel only is not touched by a regeneration
+            // (same rule as the MANUAL_OVERRIDE detail HTML above).
+            if (option.getPriceSource() == GeneratedContentSource.MANUAL_OVERRIDE) {
+                continue;
+            }
             MasterProductOption mo = masterOptionsByName.get(option.getOptionName());
-            PriceCalculator.PriceResult price = priceCalculator.calculatePrices(cell, mo, optionCostSum(option));
+            PriceCalculator.PriceResult price = quote(cell, option, mo);
             productListingOptionRepository.save(option.toBuilder()
                     .sellingPrice(price.salePrice())
                     .originalPrice(price.originalPrice())
                     .build());
         }
+    }
+
+    @Override
+    public PriceCalculator.PriceResult quoteOptionPrice(ProductListing cell, ProductListingOption option) {
+        // Single option → no name→master map (that exists in the batch above only to avoid an N+1).
+        MasterProductOption mo = cell.getMasterProduct() == null ? null
+                : masterProductOptionRepository.findByMasterProductId(cell.getMasterProduct().getId()).stream()
+                        .filter(m -> m.getName() != null && m.getName().equals(option.getOptionName()))
+                        .findFirst()
+                        .orElse(null);
+        return quote(cell, option, mo);
+    }
+
+    /**
+     * The price calculation itself, shared by the batch write path and the read-only
+     * {@link #quoteOptionPrice} seam so the formula exists in exactly one place. Persists nothing.
+     */
+    private PriceCalculator.PriceResult quote(ProductListing cell, ProductListingOption option,
+                                              MasterProductOption masterOption) {
+        return priceCalculator.calculatePrices(cell, masterOption, optionCostSum(option));
     }
 
     // ---------------------------------------------------------------- helpers
@@ -476,6 +502,9 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                         .onMarket(o.isMarketRegistered())
                         .stockQuantity(o.getStockQuantity())
                         .maxStock(ListingStockPolicy.ceiling(masterOptionsByName.get(o.getOptionName())))
+                        // 2609_19: lets the matrix mark a manually priced option (the price itself is
+                        // already the effective one in sellingPrice — this is only its origin).
+                        .priceSource(o.getPriceSource() != null ? o.getPriceSource().name() : null)
                         .build())
                 .toList();
         return GeneratedProductResponse.builder()

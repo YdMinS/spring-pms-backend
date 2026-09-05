@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ProductListing;
+import com.pms.domain.ProductListingOption;
 import com.pms.dto.response.DetailPreviewResponse;
 import com.pms.dto.response.DetailTemplateResponse;
 import com.pms.dto.response.GeneratedProductResponse;
@@ -109,6 +110,24 @@ public interface ListingAssetService {
      *
      * <p>⚠️ Runs in the caller's transaction (default {@code REQUIRED} — no new boundary), so a caller that
      * just saved BOM quantities sees them here via JPA auto-flush.</p>
+     *
+     * <p>⚠️ Options whose {@code priceSource} is {@code MANUAL_OVERRIDE} are skipped (2609_19/D2): a price
+     * the user set for that one channel survives a regeneration.</p>
      */
     void recalculateOptionPrices(ProductListing cell);
+
+    /**
+     * The auto-calculated price of ONE option — <b>nothing is persisted</b> (FEATURE_2609_19 / D3). This
+     * exists because "[기본값으로 변경]" has to know the value a manual price returns to <em>before</em>
+     * anything is saved or pushed to the market. Same formula as {@link #recalculateOptionPrices} (they
+     * share one private helper — the expression is not duplicated).
+     *
+     * <p>⚠️ Do not use {@code recalculateOptionPrices} for that: it saves inside its loop, which would
+     * persist the restored price before the market call and break "save only when the market accepted it"
+     * (D6).</p>
+     *
+     * @throws IllegalArgumentException (→400) when category / commission / delivery / box / margin are unset
+     *         (raised by {@link PriceCalculator})
+     */
+    PriceCalculator.PriceResult quoteOptionPrice(ProductListing cell, ProductListingOption option);
 }

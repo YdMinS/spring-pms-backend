@@ -3,6 +3,9 @@ package com.pms.service.listing;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.ProductListing;
+import com.pms.domain.ProductListingOption;
+
+import java.math.BigDecimal;
 
 /**
  * Per-platform channel adapter seam (FEATURE_2608_06 / 3c). The orchestration
@@ -81,4 +84,18 @@ public interface ListingChannel {
      * @param acct the marketplace account (credentials)
      */
     void delete(ProductListing cell, MarketplaceAccount acct);
+
+    /**
+     * Change the selling price of ONE option that is already on the market (FEATURE_2609_19 / D4). Unlike
+     * {@link #update} (whole object re-submitted for re-approval) this is a partial update that takes effect
+     * immediately. A platform that has no such API (NAVER) keeps this default and throws — callers only invoke
+     * it for options that carry a {@code platformOptionId} (= Coupang vendorItemId).
+     *
+     * @param option the channel option to reprice
+     * @param price  the price to send, already normalised to whole won by the caller (D13)
+     * @param acct   the marketplace account (credentials)
+     */
+    default void updateOptionPrice(ProductListingOption option, BigDecimal price, MarketplaceAccount acct) {
+        throw new UnsupportedOperationException("가격 부분수정 미지원 플랫폼: " + platform());
+    }
 }

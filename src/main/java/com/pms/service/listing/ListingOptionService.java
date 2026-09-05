@@ -1,6 +1,8 @@
 package com.pms.service.listing;
 
+import com.pms.dto.request.SetOptionPricesRequest;
 import com.pms.dto.request.SetOptionStocksRequest;
+import com.pms.dto.response.ChannelPriceUpdateResponse;
 import com.pms.dto.response.ListingOptionsResponse;
 
 import java.util.List;
@@ -11,8 +13,10 @@ import java.util.List;
  * pushes; deactivated options keep their row (re-activation + order mapping preserved) but are excluded from the
  * payload.
  *
- * <p>⚠️ This service only flips the {@code active} flag + reports whether a re-push is needed — it never auto-pushes
- * to the market (register/update are separate explicit actions).</p>
+ * <p>⚠️ The active-set and stock writes only change local values + report whether a re-push is needed — they never
+ * auto-push to the market (register/update are separate explicit actions). {@link #setOptionPrices} is the one
+ * exception (2609_19): a price change is a partial market update that needs no re-approval, so it is sent right
+ * away.</p>
  */
 public interface ListingOptionService {
 
@@ -45,4 +49,22 @@ public interface ListingOptionService {
      * send the change with [수정 요청].</p>
      */
     ListingOptionsResponse setOptionStocks(Long listingId, List<SetOptionStocksRequest.OptionStock> stocks);
+
+    /**
+     * Set the selling price of some options of a channel listing by hand and push the new price to the market
+     * (FEATURE_2609_19). Partial, like {@link #setOptionStocks}: only the listed options are touched.
+     *
+     * <p>{@code sellingPrice = null} drops the manual price and restores the calculated one (D3); a value
+     * marks the option {@code MANUAL_OVERRIDE} so a cell regeneration leaves it alone (D2). The display
+     * (strike-through) price is refreshed alongside so the market never shows "sale price &gt; original" (D7).</p>
+     *
+     * <p>⚠️ Unlike the other two writes this one <b>does</b> reach the market: Coupang changes an item's price
+     * without re-approval, so no {@code needsResync} prompt is raised. An option with no market identifier
+     * (unapproved / DRAFT cell) is saved locally and reported in {@code skipped} (D5); an option the market
+     * refuses is <b>not saved</b> and is reported in {@code failed} (D6) — the request still returns 200.</p>
+     *
+     * <p>Empty list → 400; ids not belonging to the listing → 400; an option going back to AUTO whose price
+     * cannot be computed (category/fees/delivery/box/margin unset) → 400 with nothing saved (D16).</p>
+     */
+    ChannelPriceUpdateResponse setOptionPrices(Long listingId, List<SetOptionPricesRequest.OptionPrice> prices);
 }

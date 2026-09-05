@@ -71,6 +71,11 @@ oklyx:
     ordersheet-by-order-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/{orderId}/ordersheets
     # Acknowledgement (결제완료→상품준비중). Unverified against a live account — keep it overridable.
     acknowledgement-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/ordersheets/acknowledgement
+    # Per-item (vendorItem) selling-price change. {vendorItemId}/{price} are replaced at call time; the new
+    # price takes effect immediately (no re-approval). Unverified against a live account — keep it overridable.
+    # ⚠️ Do NOT append a forceSalePriceUpdate query string: put() takes no query argument and folding one into
+    # the path breaks the HMAC signature.
+    vendor-item-price-path: /v2/providers/openapi/apis/api/v1/marketplace/vendor-items/{vendorItemId}/prices/{price}
     # Return/cancel request list query GET_RETURN_REQUEST_BY_QUERY (cancelType=CANCEL to reconcile paid-order cancellations).
     returnrequests-path: /v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests
     # Cancel reconciliation window (days): wider than ordersheets to cover delayed cancellations. Coupang max 31 days.

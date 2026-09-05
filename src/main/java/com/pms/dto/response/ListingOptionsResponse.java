@@ -71,6 +71,11 @@ public class ListingOptionsResponse {
                 + "also the effective value while stockQuantity is null", example = "50")
         private int maxStock;
 
+        @Schema(description = "Origin of the selling price (2609_19/D1): AUTO = calculated, "
+                + "MANUAL_OVERRIDE = set by hand for this channel. sellingPrice is the effective price either way.",
+                example = "AUTO")
+        private String priceSource;
+
         /** {@code master} may be null (renamed/legacy option that matches no master option) → maxStock 9999. */
         public static OptionItem from(ProductListingOption option, MasterProductOption master) {
             return OptionItem.builder()
@@ -81,6 +86,7 @@ public class ListingOptionsResponse {
                     .approvalStatus(option.getApprovalStatus() != null ? option.getApprovalStatus().name() : null)
                     .stockQuantity(option.getStockQuantity())
                     .maxStock(ListingStockPolicy.ceiling(master))
+                    .priceSource(option.getPriceSource() != null ? option.getPriceSource().name() : null)
                     .build();
         }
     }

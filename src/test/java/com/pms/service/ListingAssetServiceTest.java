@@ -515,4 +515,28 @@ class ListingAssetServiceTest {
 
         assertThat(response.getShippingReady()).isNull();
     }
+
+    // 2609_19/D2: a price the user set for this channel survives a regeneration; AUTO options still recompute.
+    @Test
+    void recalculateOptionPricesSkipsManualOption() {
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        ProductListingOption manual = ProductListingOption.builder().id(50L).optionName("수동")
+                .sellingPrice(new BigDecimal("15000"))
+                .priceSource(com.pms.domain.GeneratedContentSource.MANUAL_OVERRIDE).build();
+        ProductListingOption auto = ProductListingOption.builder().id(51L).optionName("자동")
+                .sellingPrice(new BigDecimal("6000"))
+                .priceSource(com.pms.domain.GeneratedContentSource.AUTO).build();
+        given(productListingOptionRepository.findByProductListingId(CELL_ID))
+                .willReturn(List.of(manual, auto));
+        given(priceCalculator.calculatePrices(any(), any(), any()))
+                .willReturn(new PriceCalculator.PriceResult(new BigDecimal("10670"), new BigDecimal("13340")));
+
+        service.recalculateOptionPrices(cell);
+
+        org.mockito.ArgumentCaptor<ProductListingOption> saved =
+                org.mockito.ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository, times(1)).save(saved.capture());
+        assertThat(saved.getValue().getId()).isEqualTo(51L);
+        assertThat(saved.getValue().getSellingPrice()).isEqualByComparingTo("10670");
+    }
 }
