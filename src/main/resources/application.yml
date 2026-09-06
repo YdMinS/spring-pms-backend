@@ -111,6 +111,11 @@ oklyx:
     call-center-inquiries-path: /v2/providers/openapi/apis/api/v5/vendors/{vendorId}/callCenterInquiries
     online-inquiry-page-size: 50
     call-center-inquiry-page-size: 30
+    # Replying (FEATURE_2609_23 / 04). Irreversible: Coupang has no edit/delete reply API.
+    # ⚠️ Lookups are v5 but replies are v4 - do NOT align the versions, Coupang split them that way.
+    # The call-center body additionally needs parentAnswerId as a NUMBER (a string returns 400).
+    online-inquiry-reply-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/onlineInquiries/{inquiryId}/replies
+    call-center-inquiry-reply-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/callCenterInquiries/{inquiryId}/replies
     # Slice cap per run (D10). The slice WIDTH is fixed at 7 days because that is Coupang's hard limit on the
     # query range, so a busy account cannot be covered by widening - only by more slices.
     # ⚠️ Hitting this cap regularly is not a tuning signal, it means the stale sweep below is not working.

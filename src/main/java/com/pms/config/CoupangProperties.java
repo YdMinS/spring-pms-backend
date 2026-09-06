@@ -222,6 +222,26 @@ public class CoupangProperties {
     private String callCenterInquiriesPath =
             "/v2/providers/openapi/apis/api/v5/vendors/{vendorId}/callCenterInquiries";
 
+    /**
+     * 상품문의 답변 전송 경로(POST). {vendorId}·{inquiryId} 치환. FEATURE_2609_23 / 04.
+     *
+     * 🔴 <b>되돌릴 수 없다</b>(D17) — 쿠팡에 답변 수정·삭제 API 가 없다. 호출자는 답변 서비스뿐이고
+     * 동기화 경로는 이 값을 읽지 않는다.
+     * ⚠️ 조회는 <b>v5</b>({@link #onlineInquiriesPath})지만 답변은 <b>v4</b> 다 — 조회 상수를 복사해
+     * 접두를 맞추면 404 다(반품이 겪은 "조회 v6 vs 액션 v4" 와 같은 형태).
+     */
+    private String onlineInquiryReplyPath =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/onlineInquiries/{inquiryId}/replies";
+
+    /**
+     * 고객센터 문의 답변 전송 경로(POST). {vendorId}·{inquiryId} 치환. FEATURE_2609_23 / 04.
+     *
+     * 🔴 <b>되돌릴 수 없다</b>(D17). 바디에 {@code parentAnswerId}(숫자)가 필수이며 그 값의 출처는
+     * {@code transfer_status = requestAnswer} 인 답변 행이다({@code InquiryReplyPolicy}).
+     */
+    private String callCenterInquiryReplyPath =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/callCenterInquiries/{inquiryId}/replies";
+
     /** 상품문의 페이지 크기. ⚠️ 쿠팡 상한이 50 이다(고객센터는 30) — 하나로 통일하지 말 것. */
     private int onlineInquiryPageSize = 50;
 
