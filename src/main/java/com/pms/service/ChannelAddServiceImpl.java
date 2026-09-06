@@ -128,6 +128,10 @@ public class ChannelAddServiceImpl implements ChannelAddService {
         for (MasterProductOption masterOption : masterOptions) {
             ProductListingOption listingOption = productListingOptionRepository.save(ProductListingOption.builder()
                     .productListing(cell)
+                    // 🔴 2609_22/D1: the master↔cell link is this FK, not the name. Omitting it would make every
+                    // option of a new channel "channel-only" (D2) — silently skipped by propagation, price
+                    // recalculation and the stock clamp for ever.
+                    .masterProductOption(masterOption)
                     .optionName(masterOption.getName())
                     .sellingPrice(BigDecimal.ZERO)    // placeholder; regenerate fills the real price below
                     .platformOptionId(null)           // issued by 3c

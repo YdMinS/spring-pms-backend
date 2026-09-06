@@ -1,5 +1,6 @@
 package com.pms.service.listing;
 
+import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
@@ -35,8 +36,12 @@ import static org.mockito.Mockito.verify;
 
 /**
  * Structure sync (FEATURE_2608_06 / 86): an added master option reaches every channel switched OFF, a removed
- * one is switched off (never deleted), and propagation reconciles one cell — leaving an active orphan of a
+ * one is switched off (never deleted), and propagation reconciles one cell — leaving an active leftover of a
  * market-registered cell alone.
+ *
+ * <p>Since FEATURE_2609_22/D1 every match here runs on {@code master_product_option_id}: a cell option keeps
+ * its link however the channel renames it, and an option with no link at all is a <b>channel-only</b> option
+ * (D2) that the master must never touch.</p>
  */
 @ExtendWith(MockitoExtension.class)
 class MasterOptionChannelSyncTest {
@@ -70,8 +75,16 @@ class MasterOptionChannelSyncTest {
                 .product(Product.builder().id(productId).build()).quantity(quantity).build();
     }
 
+    /** 2609_22/D2: no link = channel-only option — the master owns nothing here. */
     private ProductListingOption cellOption(Long id, ProductListing cell, String name, boolean active) {
+        return cellOption(id, cell, name, active, null);
+    }
+
+    /** 2609_22/D1: {@code linked} is the master option this cell option points at (the matching axis). */
+    private ProductListingOption cellOption(Long id, ProductListing cell, String name, boolean active,
+                                            MasterProductOption linked) {
         return ProductListingOption.builder().id(id).productListing(cell).optionName(name)
+                .masterProductOption(linked)
                 .sellingPrice(BigDecimal.TEN).active(active)
                 .approvalStatus(OptionApprovalStatus.NOT_APPROVED).build();
     }
@@ -96,6 +109,10 @@ class MasterOptionChannelSyncTest {
         assertThat(saved.getAllValues()).extracting(ProductListingOption::getOptionName).containsOnly("2개입");
         assertThat(saved.getAllValues()).extracting(ProductListingOption::getSellingPrice)
                 .containsOnly(BigDecimal.ZERO);      // placeholder, overwritten by the recalc below
+        // 🔴 2609_22/D1: without the FK every propagated option would be born channel-only and be skipped by
+        // propagation, price recalculation and the stock clamp for ever — silently.
+        assertThat(saved.getAllValues())
+                .allSatisfy(o -> assertThat(o.getMasterProductOption().getId()).isEqualTo(5L));
 
         // BOM lines copied per cell, then the real price derived once per cell.
         ArgumentCaptor<ProductListingProduct> lines = ArgumentCaptor.forClass(ProductListingProduct.class);
@@ -106,11 +123,11 @@ class MasterOptionChannelSyncTest {
     }
 
     @Test
-    void onOptionCreated_sameNameExists_rebuildsLinesOnly_keepsActiveFlag() {
+    void onOptionCreated_linkedRowExists_rebuildsLinesOnly_keepsActiveFlag() {
         // A deleted-then-re-added option: the row survived (switched off), so reuse it — but its BOM is
         // stale, and re-adding must not silently re-activate it either.
         ProductListing cell = cell(1L, null);
-        ProductListingOption existing = cellOption(50L, cell, "2개입", false);
+        ProductListingOption existing = cellOption(50L, cell, "2개입", false, option(5L, "2개입"));
         given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
         given(productListingOptionRepository.findByProductListingIdIn(anyCollection()))
                 .willReturn(List.of(existing));
@@ -135,7 +152,7 @@ class MasterOptionChannelSyncTest {
         ProductListing cell = cell(1L, "COUPANG-99");
         given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
         given(productListingOptionRepository.findByProductListingIdIn(anyCollection()))
-                .willReturn(List.of(cellOption(50L, cell, "1개입", true)));
+                .willReturn(List.of(cellOption(50L, cell, "1개입", true, option(4L, "1개입"))));
         given(masterProductOptionItemRepository.findByOptionId(5L)).willReturn(List.of(item(7L, 2)));
 
         sync.onOptionCreated(MASTER_ID, option(5L, "2개입"));
@@ -165,13 +182,14 @@ class MasterOptionChannelSyncTest {
     // ---------------------------------------------------------------- onOptionRenamed
 
     @Test
-    void onOptionRenamed_cascadesToMatchedCellOptionsOnly() {
+    void onOptionRenamed_cascadesToLinkedCellOptionsOnly() {
         ProductListing cell = cell(1L, null);
         given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
         given(productListingOptionRepository.findByProductListingIdIn(anyCollection())).willReturn(List.of(
-                cellOption(50L, cell, "2개입", true), cellOption(51L, cell, "1개입", true)));
+                cellOption(50L, cell, "2개입", true, option(5L, "2개입")),
+                cellOption(51L, cell, "1개입", true, option(4L, "1개입"))));
 
-        sync.onOptionRenamed(MASTER_ID, "2개입", "두개입");
+        sync.onOptionRenamed(MASTER_ID, 5L, "두개입");
 
         ArgumentCaptor<ProductListingOption> saved = ArgumentCaptor.forClass(ProductListingOption.class);
         verify(productListingOptionRepository).save(saved.capture());
@@ -180,23 +198,52 @@ class MasterOptionChannelSyncTest {
     }
 
     @Test
-    void onOptionRenamed_sameName_savesNothing() {
-        sync.onOptionRenamed(MASTER_ID, "2개입", "2개입");
+    void onOptionRenamed_manualOverrideCellOption_isNotRenamed() {
+        // 2609_22/D4: the channel named this option itself (the marketplace may already show that name), so a
+        // master rename leaves it alone — [옵션명 일괄 적용] is what pulls it back.
+        ProductListing cell = cell(1L, null);
+        MasterProductOption master = option(5L, "2개입");
+        given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
+        given(productListingOptionRepository.findByProductListingIdIn(anyCollection())).willReturn(List.of(
+                cellOption(50L, cell, "채널이 붙인 이름", true, master).toBuilder()
+                        .optionNameSource(GeneratedContentSource.MANUAL_OVERRIDE).build(),
+                cellOption(51L, cell, "2개입", true, master)));   // AUTO (entity default)
 
-        verify(productListingRepository, never()).findByMasterProductId(any());
-        verify(productListingOptionRepository, never()).save(any());
+        sync.onOptionRenamed(MASTER_ID, 5L, "두개입");
+
+        ArgumentCaptor<ProductListingOption> saved = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository, times(1)).save(saved.capture());
+        assertThat(saved.getValue().getId()).isEqualTo(51L);     // only the AUTO row moved
+        assertThat(saved.getValue().getOptionName()).isEqualTo("두개입");
     }
 
     @Test
-    void onOptionRenamed_newNameAlreadyPresentOnCell_leavesRowAlone() {
-        // Defensive: unreachable through the master-level uniqueness guard, but a legacy channel row may
-        // already carry the new name — renaming would create a duplicate, non-deterministic match key.
+    void onOptionRenamed_cellRenamedItself_isStillFoundByTheLink() {
+        // 2609_22/D1 in one assertion: the cell's own name matches nothing any more, yet the FK finds it.
         ProductListing cell = cell(1L, null);
         given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
         given(productListingOptionRepository.findByProductListingIdIn(anyCollection())).willReturn(List.of(
-                cellOption(50L, cell, "2개입", true), cellOption(51L, cell, "두개입", true)));
+                cellOption(50L, cell, "완전히 다른 이름", true, option(5L, "2개입"))));
 
-        sync.onOptionRenamed(MASTER_ID, "2개입", "두개입");
+        sync.onOptionRenamed(MASTER_ID, 5L, "두개입");
+
+        ArgumentCaptor<ProductListingOption> saved = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository).save(saved.capture());
+        assertThat(saved.getValue().getId()).isEqualTo(50L);
+        assertThat(saved.getValue().getOptionName()).isEqualTo("두개입");
+    }
+
+    @Test
+    void onOptionRenamed_nameAlreadyOnThatCell_leavesRowAlone() {
+        // Defensive: a MANUAL_OVERRIDE sibling (or a legacy duplicate) already carries the new name, and two
+        // options with the same name in one cell are a marketplace error (Coupang itemName).
+        ProductListing cell = cell(1L, null);
+        given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
+        given(productListingOptionRepository.findByProductListingIdIn(anyCollection())).willReturn(List.of(
+                cellOption(50L, cell, "2개입", true, option(5L, "2개입")),
+                cellOption(51L, cell, "두개입", true, option(6L, "3개입"))));
+
+        sync.onOptionRenamed(MASTER_ID, 5L, "두개입");
 
         verify(productListingOptionRepository, never()).save(any());
     }
@@ -210,11 +257,11 @@ class MasterOptionChannelSyncTest {
         given(productListingRepository.findByMasterProductId(MASTER_ID))
                 .willReturn(List.of(draft, onMarket));
         given(productListingOptionRepository.findByProductListingIdIn(anyCollection())).willReturn(List.of(
-                cellOption(50L, draft, "2개입", true),
-                cellOption(51L, draft, "1개입", true),          // other option → untouched
-                cellOption(52L, onMarket, "2개입", false)));    // already off → no re-save
+                cellOption(50L, draft, "2개입", true, option(5L, "2개입")),
+                cellOption(51L, draft, "1개입", true, option(4L, "1개입")),      // other option → untouched
+                cellOption(52L, onMarket, "2개입", false, option(5L, "2개입")))); // already off → no re-save
 
-        sync.onOptionRemoved(MASTER_ID, "2개입");
+        sync.onOptionRemoved(MASTER_ID, 5L);
 
         ArgumentCaptor<ProductListingOption> saved = ArgumentCaptor.forClass(ProductListingOption.class);
         verify(productListingOptionRepository).save(saved.capture());
@@ -231,12 +278,13 @@ class MasterOptionChannelSyncTest {
     // ---------------------------------------------------------------- syncStructure (propagation)
 
     @Test
-    void syncStructure_createsMissingOptionInactive_andDeactivatesDraftOrphan() {
+    void syncStructure_createsMissingOptionInactive_andDeactivatesStaleLink() {
         ProductListing draft = cell(1L, null);
         given(masterProductOptionRepository.findByMasterProductId(MASTER_ID))
                 .willReturn(List.of(option(5L, "2개입")));
+        // Linked to an option this master no longer has (a legacy row — the FK is normally SET NULL, D22).
         given(productListingOptionRepository.findByProductListingId(1L))
-                .willReturn(List.of(cellOption(50L, draft, "옛옵션", true)));   // orphan: master no longer has it
+                .willReturn(List.of(cellOption(50L, draft, "옛옵션", true, option(9L, "옛옵션"))));
         given(masterProductOptionItemRepository.findByOptionId(5L)).willReturn(List.of(item(7L, 2)));
 
         sync.syncStructure(draft);
@@ -246,19 +294,35 @@ class MasterOptionChannelSyncTest {
         ProductListingOption created = saved.getAllValues().get(0);
         assertThat(created.getOptionName()).isEqualTo("2개입");
         assertThat(created.getActive()).isFalse();
-        ProductListingOption orphan = saved.getAllValues().get(1);
-        assertThat(orphan.getId()).isEqualTo(50L);
-        assertThat(orphan.getActive()).isFalse();
+        assertThat(created.getMasterProductOption().getId()).isEqualTo(5L);
+        ProductListingOption stale = saved.getAllValues().get(1);
+        assertThat(stale.getId()).isEqualTo(50L);
+        assertThat(stale.getActive()).isFalse();
         verify(listingAssetService).recalculateOptionPrices(draft);
     }
 
     @Test
-    void syncStructure_activeOrphanOnMarketCell_isLeftUntouched() {
+    void syncStructure_channelOnlyOption_isLeftUntouched() {
+        // 🔴 2609_22/D2: an option with no link is deliberately absent from the master, NOT an orphan.
+        // Treating FK null as "gone from the master" would switch off every imported/channel-only option.
+        ProductListing draft = cell(1L, null);
+        given(masterProductOptionRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of());
+        given(productListingOptionRepository.findByProductListingId(1L))
+                .willReturn(List.of(cellOption(50L, draft, "채널전용", true)));
+
+        sync.syncStructure(draft);
+
+        verify(productListingOptionRepository, never()).save(any());
+        verify(listingAssetService, never()).recalculateOptionPrices(any());
+    }
+
+    @Test
+    void syncStructure_activeStaleLinkOnMarketCell_isLeftUntouched() {
         // ⚠️ It is really on sale on Coupang; switching it off locally only desynchronises screen from market.
         ProductListing onMarket = cell(2L, "COUPANG-99");
         given(masterProductOptionRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of());
         given(productListingOptionRepository.findByProductListingId(2L))
-                .willReturn(List.of(cellOption(50L, onMarket, "옛옵션", true)));
+                .willReturn(List.of(cellOption(50L, onMarket, "옛옵션", true, option(9L, "옛옵션"))));
 
         sync.syncStructure(onMarket);
 
@@ -271,8 +335,9 @@ class MasterOptionChannelSyncTest {
         ProductListing draft = cell(1L, null);
         given(masterProductOptionRepository.findByMasterProductId(MASTER_ID))
                 .willReturn(List.of(option(5L, "2개입")));
+        // Renamed by the channel — still in sync, because the link (not the name) is what is compared.
         given(productListingOptionRepository.findByProductListingId(1L))
-                .willReturn(List.of(cellOption(50L, draft, "2개입", true)));
+                .willReturn(List.of(cellOption(50L, draft, "채널이 붙인 이름", true, option(5L, "2개입"))));
 
         sync.syncStructure(draft);
 

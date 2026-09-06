@@ -157,19 +157,21 @@ class MasterPropagationServiceTest {
         given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
         hasGenerated(1L);
 
-        ProductListingOption cellOption = ProductListingOption.builder().id(5L).optionName("2세트").build();
-        ProductListingOption unmatched = ProductListingOption.builder().id(6L).optionName("없는옵션").build();
-        given(productListingOptionRepository.findByProductListingId(1L))
-                .willReturn(List.of(cellOption, unmatched));
-
         MasterProductOption masterOption = MasterProductOption.builder().id(7L).name("2세트")
                 .masterProduct(master).build();
+        // 2609_22/D1: linked by the FK — the channel may call it whatever it likes.
+        ProductListingOption cellOption = ProductListingOption.builder().id(5L).optionName("채널이 붙인 이름")
+                .masterProductOption(masterOption).build();
+        // 2609_22/D2: no link = channel-only → the master owns nothing here, so propagation must skip it.
+        ProductListingOption channelOnly = ProductListingOption.builder().id(6L).optionName("채널전용").build();
+        given(productListingOptionRepository.findByProductListingId(1L))
+                .willReturn(List.of(cellOption, channelOnly));
         given(masterProductOptionRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(masterOption));
 
         service.propagate(MASTER_ID);
 
         verify(optionQuantitySync).syncLines(cellOption, masterOption);
-        verify(optionQuantitySync, never()).syncLines(eq(unmatched), any());   // unmatched option → skip
+        verify(optionQuantitySync, never()).syncLines(eq(channelOnly), any());   // channel-only → skip (D2)
     }
 
     // 404: cross-tenant/absent master → ResourceNotFoundException (findScopedById empty).
@@ -191,10 +193,11 @@ class MasterPropagationServiceTest {
         given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
         hasGenerated(1L);
 
-        ProductListingOption cellOption = ProductListingOption.builder().id(5L).optionName("2세트").build();
-        given(productListingOptionRepository.findByProductListingId(1L)).willReturn(List.of(cellOption));
         MasterProductOption masterOption = MasterProductOption.builder().id(7L).name("2세트")
                 .masterProduct(master).build();
+        ProductListingOption cellOption = ProductListingOption.builder().id(5L).optionName("2세트")
+                .masterProductOption(masterOption).build();
+        given(productListingOptionRepository.findByProductListingId(1L)).willReturn(List.of(cellOption));
         given(masterProductOptionRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(masterOption));
 
         service.propagate(MASTER_ID);

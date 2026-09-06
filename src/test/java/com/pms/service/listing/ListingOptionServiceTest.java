@@ -1,12 +1,13 @@
 package com.pms.service.listing;
 
+import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.OptionApprovalStatus;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.GeneratedContentSource;
+import com.pms.dto.request.SetOptionNamesRequest;
 import com.pms.dto.request.SetOptionPricesRequest.OptionPrice;
 import com.pms.dto.request.SetOptionStocksRequest.OptionStock;
 import com.pms.dto.response.ChannelPriceUpdateResponse;
@@ -31,6 +32,7 @@ import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
@@ -221,8 +223,8 @@ class ListingOptionServiceTest {
                 MasterProductOption.builder().id(5L).name("opt1").build(),
                 MasterProductOption.builder().id(6L).name("opt2").build());
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(masterOptions);
-        // Only opt1 stays active → generator receives ["opt1"] → single-option name.
-        given(registrationNameGenerator.generate(eq(master), eq(List.of("opt1")), any(), any()))
+        // 2609_22/D7: the generator receives the active option ROWS (only opt1 stays active).
+        given(registrationNameGenerator.generate(eq(master), anyList(), any()))
                 .willReturn("노브랜드 생수 x 6");
 
         ListingOptionsResponse response = service.setActiveOptions(LISTING_ID, List.of(1L));
@@ -245,7 +247,7 @@ class ListingOptionServiceTest {
         OptionCheckSuffix off = new OptionCheckSuffix(false, "옵션확인");
         given(optionCheckSuffixResolver.resolve(listing)).willReturn(off);
         // Generator is called with the resolved (OFF) suffix → the "옵션확인"-less name for this channel.
-        given(registrationNameGenerator.generate(eq(master), eq(List.of("opt1", "opt2")), any(), eq(off)))
+        given(registrationNameGenerator.generate(eq(master), anyList(), eq(off)))
                 .willReturn("노브랜드 생수, 다우니 섬유유연제");
 
         ListingOptionsResponse response = service.setActiveOptions(LISTING_ID, List.of(1L, 2L));
@@ -262,9 +264,11 @@ class ListingOptionServiceTest {
     private ProductListing listingWithMasterStocks(String name1, Integer stock1, String name2, Integer stock2) {
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터").build();
         List<MasterProductOption> masterOptions = new java.util.ArrayList<>();
-        masterOptions.add(MasterProductOption.builder().name(name1).stockQuantity(stock1).build());
+        // 2609_22/D1: master options carry ids because the FK — not the name — is the matching axis
+        // (opt1 ↔ 5L, opt2 ↔ 6L; see optionWithStock).
+        masterOptions.add(MasterProductOption.builder().id(5L).name(name1).stockQuantity(stock1).build());
         if (name2 != null) {
-            masterOptions.add(MasterProductOption.builder().name(name2).stockQuantity(stock2).build());
+            masterOptions.add(MasterProductOption.builder().id(6L).name(name2).stockQuantity(stock2).build());
         }
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(masterOptions);
         ProductListing listing = ProductListing.builder().id(LISTING_ID).platform("COUPANG").name("셀")
@@ -273,8 +277,10 @@ class ListingOptionServiceTest {
         return listing;
     }
 
+    /** Linked to master option {@code 4 + id} (opt1 → 5L, opt2 → 6L) — the 2609_22/D1 matching axis. */
     private ProductListingOption optionWithStock(Long id, Integer stockQuantity) {
         return ProductListingOption.builder().id(id).optionName("opt" + id)
+                .masterProductOption(MasterProductOption.builder().id(4L + id).build())
                 .sellingPrice(new BigDecimal("6000")).active(true)
                 .approvalStatus(OptionApprovalStatus.NOT_APPROVED)
                 .stockQuantity(stockQuantity).build();
@@ -370,6 +376,107 @@ class ListingOptionServiceTest {
         assertThatThrownBy(() -> service.setOptionStocks(LISTING_ID, List.of()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("변경할 옵션이 없습니다");
+        verify(productListingOptionRepository, never()).saveAll(any());
+    }
+
+    // (m) 2609_22/D2·D6: a channel-only option has no master option behind it → ceiling stays 9999
+    //     (the pre-2609_22 behaviour for an unmatched option, unchanged on purpose).
+    @Test
+    void setOptionStocks_channelOnlyOption_ceilingIs9999() {
+        listingWithMasterStocks("opt1", 50, null, null);
+        ProductListingOption channelOnly = ProductListingOption.builder().id(9L).optionName("채널전용")
+                .sellingPrice(new BigDecimal("6000")).active(true)
+                .approvalStatus(OptionApprovalStatus.NOT_APPROVED).build();
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(channelOnly));
+
+        ListingOptionsResponse response =
+                service.setOptionStocks(LISTING_ID, List.of(new OptionStock(9L, 9999)));
+
+        assertThat(response.getOptions().get(0).getMaxStock()).isEqualTo(9999);
+        assertThat(response.getOptions().get(0).isChannelOnly()).isTrue();
+    }
+
+    // ---------------------------------------------------------------- 2609_22: per-channel option names
+
+    /** {@code linked} = the master option this cell option points at (null = channel-only, D2). */
+    private ProductListingOption namedOption(Long id, String name, MasterProductOption linked,
+                                             GeneratedContentSource nameSource) {
+        return ProductListingOption.builder().id(id).optionName(name)
+                .masterProductOption(linked).optionNameSource(nameSource)
+                .sellingPrice(new BigDecimal("6000")).active(true)
+                .approvalStatus(OptionApprovalStatus.NOT_APPROVED).build();
+    }
+
+    /** A cell whose master owns one option (id 5, "2세트"). */
+    private void givenNamingListing() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터").build();
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(
+                List.of(MasterProductOption.builder().id(5L).name("2세트").build()));
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(
+                ProductListing.builder().id(LISTING_ID).platform("COUPANG").name("셀")
+                        .status(ListingStatus.DRAFT).masterProduct(master).build()));
+    }
+
+    // 6. A name the channel typed is stored and flagged MANUAL_OVERRIDE (so a master rename skips it, D4).
+    @Test
+    void setOptionNames_savesNameAsManualOverride() {
+        givenNamingListing();
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID)).willReturn(List.of(
+                namedOption(1L, "2세트", MasterProductOption.builder().id(5L).build(),
+                        GeneratedContentSource.AUTO)));
+
+        service.setOptionNames(LISTING_ID, List.of(
+                new SetOptionNamesRequest.Item(1L, "생수 6개입")));
+
+        List<ProductListingOption> saved = captureSaved();
+        assertThat(saved).hasSize(1);
+        assertThat(saved.get(0).getOptionName()).isEqualTo("생수 6개입");
+        assertThat(saved.get(0).getOptionNameSource()).isEqualTo(GeneratedContentSource.MANUAL_OVERRIDE);
+    }
+
+    // 7. Blank = back to the linked master option's name + AUTO.
+    @Test
+    void setOptionNames_blankValue_revertsToMasterNameAndAuto() {
+        givenNamingListing();
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID)).willReturn(List.of(
+                namedOption(1L, "채널이 붙인 이름", MasterProductOption.builder().id(5L).build(),
+                        GeneratedContentSource.MANUAL_OVERRIDE)));
+
+        service.setOptionNames(LISTING_ID, List.of(new SetOptionNamesRequest.Item(1L, "  ")));
+
+        List<ProductListingOption> saved = captureSaved();
+        assertThat(saved.get(0).getOptionName()).isEqualTo("2세트");
+        assertThat(saved.get(0).getOptionNameSource()).isEqualTo(GeneratedContentSource.AUTO);
+    }
+
+    // 8. A channel-only option (D2) has no master name to go back to → 400, nothing saved.
+    @Test
+    void setOptionNames_blankOnChannelOnlyOption_throws() {
+        givenNamingListing();
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID)).willReturn(List.of(
+                namedOption(1L, "채널전용", null, GeneratedContentSource.MANUAL_OVERRIDE)));
+
+        assertThatThrownBy(() -> service.setOptionNames(LISTING_ID,
+                List.of(new SetOptionNamesRequest.Item(1L, null))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("채널 전용 옵션");
+        verify(productListingOptionRepository, never()).saveAll(any());
+    }
+
+    // 9. Two options of one cell may not share a name (Coupang itemName) → 400 before any save.
+    @Test
+    void setOptionNames_duplicateNameInCell_throwsAndDoesNotSave() {
+        givenNamingListing();
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID)).willReturn(List.of(
+                namedOption(1L, "2세트", MasterProductOption.builder().id(5L).build(),
+                        GeneratedContentSource.AUTO),
+                namedOption(2L, "3세트", null, GeneratedContentSource.MANUAL_OVERRIDE)));
+
+        assertThatThrownBy(() -> service.setOptionNames(LISTING_ID,
+                List.of(new SetOptionNamesRequest.Item(1L, "3세트"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("같은 이름의 옵션");
         verify(productListingOptionRepository, never()).saveAll(any());
     }
 

@@ -14,6 +14,7 @@ import com.pms.dto.request.MasterZoneImagesRequest;
 import com.pms.dto.request.ShippingForceApplyRequest;
 import com.pms.dto.request.ShippingOverrideRequest;
 import com.pms.dto.request.TagsRequest;
+import com.pms.dto.response.ApplyOptionNamesResponse;
 import com.pms.dto.response.CategoryMetaResponse;
 import com.pms.dto.response.ChannelSyncPreviewResponse;
 import com.pms.dto.response.ListingMatrixResponse;
@@ -177,6 +178,14 @@ public class MasterProductController {
     public ResponseEntity<ResponseDTO<MasterOptionResponse>> updateOption(
             @PathVariable Long id, @PathVariable Long optionId, @Valid @RequestBody MasterOptionRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(masterProductService.updateOption(id, optionId, request)));
+    }
+
+    @PostMapping("/{id}/options/apply-names")
+    @Operation(summary = "Reset every channel option of this master to the master option's name "
+            + "(2609_22/D4; channel-only options are skipped)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<ApplyOptionNamesResponse>> applyMasterOptionNames(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(masterProductService.applyMasterOptionNames(id)));
     }
 
     @DeleteMapping("/{id}/options/{optionId}")

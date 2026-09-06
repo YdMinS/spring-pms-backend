@@ -6,6 +6,7 @@ import com.pms.dto.request.MasterProductQuery;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
 import com.pms.dto.request.OptionCheckSuffixRequest;
+import com.pms.dto.response.ApplyOptionNamesResponse;
 import com.pms.dto.response.ChannelSyncPreviewResponse;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.MasterCategoryResponse;
@@ -127,6 +128,18 @@ public interface MasterProductService {
     MasterOptionResponse updateOption(Long masterId, Long optionId, MasterOptionRequest request);
 
     void deleteOption(Long masterId, Long optionId);
+
+    /**
+     * [옵션명 일괄 적용] (FEATURE_2609_22 / D4): walk every cell of this master and reset each option that is
+     * linked to a master option back to that option's name, with {@code optionNameSource = AUTO}.
+     *
+     * <p>Channel-only options (D2) are skipped — there is no master name to take. A cell where the reset
+     * would leave two options with the same name is skipped <b>as a whole</b> and reported in
+     * {@code warnings}: the other cells still get applied (never fail the batch over one cell).</p>
+     *
+     * <p>⚠️ Local only — nothing is pushed to the market (the new names travel with the next [수정 요청]).</p>
+     */
+    ApplyOptionNamesResponse applyMasterOptionNames(Long masterId);
 
     /** Set the master's single standard category (FEATURE_2608_06 / 44). 404 if master/category absent. */
     MasterCategoryResponse setCategory(Long masterId, MasterCategoryRequest request);

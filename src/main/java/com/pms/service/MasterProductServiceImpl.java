@@ -3,6 +3,7 @@ package com.pms.service;
 import com.pms.domain.CarrierRate;
 import com.pms.domain.Category;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductComponent;
@@ -21,6 +22,7 @@ import com.pms.dto.request.MasterProductQuery;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
 import com.pms.dto.request.OptionCheckSuffixRequest;
+import com.pms.dto.response.ApplyOptionNamesResponse;
 import com.pms.dto.response.ChannelSyncPreviewResponse;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.ListingMatrixResponse.MatrixCell;
@@ -219,12 +221,9 @@ public class MasterProductServiceImpl implements MasterProductService {
     public ListingMatrixResponse getMatrix(Long id) {
         MasterProduct master = requireScopedMaster(id);
 
-        // Master options, loaded ONCE (67): the registration name is generated per cell from that cell's active
-        // options, but the master option list feeding the single-option name lookup is shared (no per-cell re-query).
-        List<MasterProductOption> masterOptions = optionRepository.findByMasterProductId(id);
-
         // Right side: listings under this master (1 query), then their options batched (1 query) — reused for both
-        // the selling price and each listing's active option-name set (drives the per-channel registration name).
+        // the selling price and each listing's active option set (drives the per-channel registration name).
+        // 2609_22/D1: no master-option query here any more — the generator follows each option's FK.
         List<ProductListing> listings = productListingRepository.findByMasterProductId(id);
         List<Long> listingIds = listings.stream().map(ProductListing::getId).toList();
         List<ProductListingOption> allOptions = listingIds.isEmpty()
@@ -235,12 +234,14 @@ public class MasterProductServiceImpl implements MasterProductService {
                         o -> o.getProductListing().getId(),
                         o -> o.getSellingPrice(),
                         (first, dup) -> first));   // single SKU expected; keep first on dupes
-        Map<Long, Set<String>> activeNamesByListing = new LinkedHashMap<>();
+        // 2609_22/D7: the registration name generator resolves the single-option case through the option's
+        // master FK (falling back to the cell's own BOM), so it needs the option ROWS, not their names.
+        Map<Long, List<ProductListingOption>> activeOptionsByListing = new LinkedHashMap<>();
         for (ProductListingOption o : allOptions) {
             if (Boolean.TRUE.equals(o.getActive())) {
-                activeNamesByListing
-                        .computeIfAbsent(o.getProductListing().getId(), k -> new LinkedHashSet<>())
-                        .add(o.getOptionName());
+                activeOptionsByListing
+                        .computeIfAbsent(o.getProductListing().getId(), k -> new ArrayList<>())
+                        .add(o);
             }
         }
 
@@ -265,7 +266,8 @@ public class MasterProductServiceImpl implements MasterProductService {
             MatrixCell cell = null;
             if (pl != null) {
                 // 67: registration name is always auto-generated per channel from this listing's active options.
-                Set<String> activeNames = activeNamesByListing.getOrDefault(pl.getId(), Set.of());
+                List<ProductListingOption> activeOptions =
+                        activeOptionsByListing.getOrDefault(pl.getId(), List.of());
                 // 69: suffix = channel(this row's account) ?? master ?? seller ?? system. Pure overload reuses the
                 // already-loaded account (row) + seller (from the sellerNames findAllById, same session) + master
                 // — NO per-cell account re-query (resolve(cell) would be N DB calls).
@@ -275,7 +277,7 @@ public class MasterProductServiceImpl implements MasterProductService {
                         .name(pl.getName())
                         .platformProductId(pl.getPlatformProductId())
                         .sellingPrice(priceByListing.get(pl.getId()))
-                        .registrationName(registrationNameGenerator.generate(master, activeNames, masterOptions, suffix))
+                        .registrationName(registrationNameGenerator.generate(master, activeOptions, suffix))
                         .status(pl.getStatus() != null ? pl.getStatus().name() : null)
                         .build();
             }
@@ -304,10 +306,10 @@ public class MasterProductServiceImpl implements MasterProductService {
      * <ul>
      *   <li>Cells with no {@code GeneratedProductData} are dropped entirely — {@code propagate} counts them
      *       {@code skipped} and never touches them, so a difference there is permanent.</li>
-     *   <li>{@code missing}/{@code orphan} mirror {@code MasterOptionChannelSync.syncStructure} (1)/(2):
-     *       matched by {@code optionName}; an orphan counts only while {@code active=true} (rows are never
-     *       deleted, decision 42) and the cell is off-market — an on-market orphan is left alone by
-     *       propagation (WARN only), so it is reported separately and never counted.</li>
+     *   <li>{@code missing}/{@code channelOnly} mirror {@code MasterOptionChannelSync.syncStructure} (1)/(2):
+     *       matched by {@code master_product_option_id} (2609_22/D1); a channel-only option counts only while
+     *       {@code active=true} (rows are never deleted, decision 42) and the cell is off-market — an on-market
+     *       one is left alone by propagation (WARN only), so it is reported separately and never counted.</li>
      *   <li>Quantities mirror {@code OptionQuantitySync.syncLines}: matched by {@code productId}, shared
      *       products only, and <b>{@code active}-agnostic</b> (the quantity sync does not read {@code active}).</li>
      * </ul>
@@ -330,10 +332,11 @@ public class MasterProductServiceImpl implements MasterProductService {
                         .putIfAbsent(item.getProduct().getId(), item.getQuantity());
             }
         }
-        Map<String, Map<Long, Integer>> masterByName = new LinkedHashMap<>();
+        // 2609_22/D1: keyed by master option id — the single master↔channel matching axis.
+        Map<Long, Map<Long, Integer>> masterQuantitiesByOptionId = new LinkedHashMap<>();
         for (MasterProductOption option : masterOptions) {
-            masterByName.putIfAbsent(
-                    option.getName(), masterItemsByOption.getOrDefault(option.getId(), Map.of()));
+            masterQuantitiesByOptionId.putIfAbsent(
+                    option.getId(), masterItemsByOption.getOrDefault(option.getId(), Map.of()));
         }
 
         // Cell side: only cells propagation would actually process (generated assets present).
@@ -364,11 +367,20 @@ public class MasterProductServiceImpl implements MasterProductService {
                         .putIfAbsent(line.getProduct().getId(), line.getQuantity());
             }
         }
-        Map<Long, Map<String, ProductListingOption>> optionsByCell = new LinkedHashMap<>();
+        // Linked options per cell, keyed by the master option they point at (D1); duplicates: first wins.
+        Map<Long, Map<Long, ProductListingOption>> linkedByCell = new LinkedHashMap<>();
+        // Channel-only options per cell (FK null, D2) — the master has nothing to compare them against.
+        Map<Long, List<ProductListingOption>> channelOnlyByCell = new LinkedHashMap<>();
         for (ProductListingOption option : cellOptions) {
-            optionsByCell
-                    .computeIfAbsent(option.getProductListing().getId(), k -> new LinkedHashMap<>())
-                    .putIfAbsent(option.getOptionName(), option);   // same-named cell options: first wins
+            Long cellId = option.getProductListing().getId();
+            MasterProductOption linked = option.getMasterProductOption();
+            if (linked == null) {
+                channelOnlyByCell.computeIfAbsent(cellId, k -> new ArrayList<>()).add(option);
+            } else {
+                linkedByCell
+                        .computeIfAbsent(cellId, k -> new LinkedHashMap<>())
+                        .putIfAbsent(linked.getId(), option);
+            }
         }
 
         // Seller names in ONE query (seller is LAZY + open-in-view=false: cell.getSeller().getSellerName()
@@ -377,37 +389,43 @@ public class MasterProductServiceImpl implements MasterProductService {
         Map<Long, String> sellerNames = sellerRepository.findAllById(sellerIds).stream()
                 .collect(Collectors.toMap(Seller::getId, Seller::getSellerName, (first, dup) -> first));
 
+        // Master option names, for the human-readable "missing" list (the matching itself is by id).
+        Map<Long, String> masterNamesById = masterOptions.stream()
+                .collect(Collectors.toMap(MasterProductOption::getId, MasterProductOption::getName,
+                        (first, dup) -> first, LinkedHashMap::new));
+
         List<ChannelSyncPreviewResponse.Channel> channels = new ArrayList<>();
-        int affectedChannels = 0, missingTotal = 0, orphanTotal = 0, quantityTotal = 0;
+        int affectedChannels = 0, missingTotal = 0, channelOnlyTotal = 0, quantityTotal = 0;
         for (ProductListing cell : cells) {
-            Map<String, ProductListingOption> cellByName =
-                    optionsByCell.getOrDefault(cell.getId(), Map.of());
+            Map<Long, ProductListingOption> linked = linkedByCell.getOrDefault(cell.getId(), Map.of());
             boolean onMarket = cell.getPlatformProductId() != null;
 
             // (1) missing: master option with no row on this cell at all (active is irrelevant — the row's
             //     absence is what syncStructure fixes by creating it switched off).
-            List<String> missing = masterByName.keySet().stream()
-                    .filter(name -> !cellByName.containsKey(name))
+            List<String> missing = masterNamesById.entrySet().stream()
+                    .filter(entry -> !linked.containsKey(entry.getKey()))
+                    .map(Map.Entry::getValue)
                     .toList();
 
-            // (2) orphan: still active on the cell, gone from the master. An on-market cell is informational
-            //     only — propagation refuses to switch those off (screen would desync from the marketplace).
-            List<String> orphans = new ArrayList<>();
-            List<String> marketOrphans = new ArrayList<>();
-            for (ProductListingOption option : cellByName.values()) {
-                if (masterByName.containsKey(option.getOptionName())
-                        || !Boolean.TRUE.equals(option.getActive())) {
-                    continue;   // still owned by the master, or already off → propagation writes nothing
+            // (2) channel-only: an option this master does not own. Since 2609_22/D22 this is one concept —
+            //     an FK-less row (deliberate, D2) and a row whose master option was deleted (the FK is SET
+            //     NULL) are the same thing. Counted only while still active; an on-market cell is
+            //     informational only — propagation refuses to switch those off (screen would desync).
+            List<String> channelOnly = new ArrayList<>();
+            List<String> marketChannelOnly = new ArrayList<>();
+            for (ProductListingOption option : channelOnlyByCell.getOrDefault(cell.getId(), List.of())) {
+                if (!Boolean.TRUE.equals(option.getActive())) {
+                    continue;   // already off → propagation writes nothing
                 }
-                (onMarket ? marketOrphans : orphans).add(option.getOptionName());
+                (onMarket ? marketChannelOnly : channelOnly).add(option.getOptionName());
             }
 
-            // (3) quantities: matched options only, shared productIds only, active-agnostic.
+            // (3) quantities: linked options only, shared productIds only, active-agnostic.
             List<String> quantityMismatches = new ArrayList<>();
-            for (Map.Entry<String, ProductListingOption> entry : cellByName.entrySet()) {
-                Map<Long, Integer> masterQuantities = masterByName.get(entry.getKey());
+            for (Map.Entry<Long, ProductListingOption> entry : linked.entrySet()) {
+                Map<Long, Integer> masterQuantities = masterQuantitiesByOptionId.get(entry.getKey());
                 if (masterQuantities == null) {
-                    continue;   // unmatched option → syncOptionQuantities skips it
+                    continue;   // linked to an option the master no longer has → syncOptionQuantities skips it
                 }
                 Map<Long, Integer> cellQuantities =
                         cellQuantitiesByOption.getOrDefault(entry.getValue().getId(), Map.of());
@@ -416,12 +434,12 @@ public class MasterProductServiceImpl implements MasterProductService {
                     return masterQuantity != null && !masterQuantity.equals(line.getValue());
                 });
                 if (differs) {
-                    quantityMismatches.add(entry.getKey());
+                    quantityMismatches.add(entry.getValue().getOptionName());
                 }
             }
 
-            boolean fixable = !missing.isEmpty() || !orphans.isEmpty() || !quantityMismatches.isEmpty();
-            if (!fixable && marketOrphans.isEmpty()) {
+            boolean fixable = !missing.isEmpty() || !channelOnly.isEmpty() || !quantityMismatches.isEmpty();
+            if (!fixable && marketChannelOnly.isEmpty()) {
                 continue;   // nothing to show for this channel
             }
             channels.add(ChannelSyncPreviewResponse.Channel.builder()
@@ -430,16 +448,16 @@ public class MasterProductServiceImpl implements MasterProductService {
                     .platform(cell.getPlatform())
                     .onMarket(onMarket)
                     .missingOptions(missing)
-                    .orphanOptions(orphans)
-                    .marketOrphanOptions(marketOrphans)
+                    .channelOnlyOptions(channelOnly)
+                    .marketChannelOnlyOptions(marketChannelOnly)
                     .quantityMismatchOptions(quantityMismatches)
                     .build());
             if (fixable) {
-                // Market-only orphan channels are listed but never counted — counting them would leave
+                // Market-only channels are listed but never counted — counting them would leave
                 // inSync=false (and the button lit) for ever, since propagation cannot clear them.
                 affectedChannels++;
                 missingTotal += missing.size();
-                orphanTotal += orphans.size();
+                channelOnlyTotal += channelOnly.size();
                 quantityTotal += quantityMismatches.size();
             }
         }
@@ -455,7 +473,7 @@ public class MasterProductServiceImpl implements MasterProductService {
                 .totals(ChannelSyncPreviewResponse.Totals.builder()
                         .affectedChannels(affectedChannels)
                         .missingOptions(missingTotal)
-                        .orphanOptions(orphanTotal)
+                        .channelOnlyOptions(channelOnlyTotal)
                         .quantityMismatch(quantityTotal)
                         .build())
                 .channels(channels)
@@ -789,12 +807,69 @@ public class MasterProductServiceImpl implements MasterProductService {
             throw new ValidationException("옵션은 1개 이상 있어야 합니다. 모두 없애려면 마스터를 삭제하세요.");
         }
 
-        // 86: switch the option off on every channel BEFORE the master row (and its name, the only match
-        // key) is gone. Rows are kept — see MasterOptionChannelSync for why deletion is never cascaded.
-        masterOptionChannelSync.onOptionRemoved(masterId, option.getName());
+        // 86: switch the option off on every channel BEFORE the master row is gone — the FK is ON DELETE
+        // SET NULL (2609_22/D22), so afterwards nothing points at it. Rows are kept — see
+        // MasterOptionChannelSync for why deletion is never cascaded.
+        masterOptionChannelSync.onOptionRemoved(masterId, option.getId());
 
         optionItemRepository.deleteByOptionId(optionId);
         optionRepository.delete(option);
+    }
+
+    @Override
+    @Transactional
+    public ApplyOptionNamesResponse applyMasterOptionNames(Long masterId) {
+        requireScopedMaster(masterId);
+        Map<Long, String> masterNamesById = optionRepository.findByMasterProductId(masterId).stream()
+                .collect(Collectors.toMap(MasterProductOption::getId, MasterProductOption::getName,
+                        (first, dup) -> first));
+
+        int updatedCells = 0, updatedOptions = 0;
+        List<String> warnings = new ArrayList<>();
+        for (ProductListing cell : productListingRepository.findByMasterProductId(masterId)) {
+            List<ProductListingOption> options =
+                    productListingOptionRepository.findByProductListingId(cell.getId());
+
+            // Build the whole cell's post-reset view first: a channel-only option (D2) keeps its own name,
+            // a linked one takes the master's. Nothing is saved until the cell passes the name check.
+            List<ProductListingOption> toSave = new ArrayList<>();
+            Set<String> resultingNames = new LinkedHashSet<>();
+            boolean duplicate = false;
+            for (ProductListingOption option : options) {
+                MasterProductOption linked = option.getMasterProductOption();
+                String masterName = linked == null ? null : masterNamesById.get(linked.getId());
+                String resulting = masterName != null ? masterName : option.getOptionName();
+                if (!resultingNames.add(resulting)) {
+                    duplicate = true;
+                    break;
+                }
+                boolean alreadyApplied = masterName == null
+                        || (masterName.equals(option.getOptionName())
+                            && option.getOptionNameSource() == GeneratedContentSource.AUTO);
+                if (!alreadyApplied) {
+                    toSave.add(option.toBuilder()
+                            .optionName(masterName)
+                            .optionNameSource(GeneratedContentSource.AUTO)
+                            .build());
+                }
+            }
+            if (duplicate) {
+                // Skip this cell only — applying it would leave two options with the same Coupang itemName.
+                warnings.add("옵션명 중복으로 건너뜀: listingId=" + cell.getId());
+                continue;
+            }
+            if (toSave.isEmpty()) {
+                continue;   // already applied → no write, not counted
+            }
+            productListingOptionRepository.saveAll(toSave);
+            updatedCells++;
+            updatedOptions += toSave.size();
+        }
+        return ApplyOptionNamesResponse.builder()
+                .updatedCells(updatedCells)
+                .updatedOptions(updatedOptions)
+                .warnings(warnings)
+                .build();
     }
 
     // ---------------------------------------------------------------- standard category (single, 44)
@@ -936,8 +1011,11 @@ public class MasterProductServiceImpl implements MasterProductService {
 
     /**
      * 84 Step 4 — narrow channel re-sync after an unlocked option was edited: cascade a rename onto the
-     * cells, then (only when the quantity vector actually moved) push the new quantities down the matched
+     * cells, then (only when the quantity vector actually moved) push the new quantities down the linked
      * BOM lines and recompute that cell's option prices.
+     *
+     * <p>2609_22/D1: both steps match on {@code master_product_option_id}, so the order between them no
+     * longer matters for correctness (it is kept for readability).</p>
      *
      * <p>Prices are the only derived value a quantity change touches, so the thumbnail and detail HTML are
      * deliberately NOT regenerated: {@code regenerateAssets} would cost an S3 GET + Java2D render + S3 PUT
@@ -955,18 +1033,17 @@ public class MasterProductServiceImpl implements MasterProductService {
         if (renamed) {
             // 86: the cascade moved to the shared structure-sync component (one implementation, also used
             // by option create/delete and propagation).
-            masterOptionChannelSync.onOptionRenamed(masterId, oldName, updated.getName());
+            masterOptionChannelSync.onOptionRenamed(masterId, updated.getId(), updated.getName());
         }
         if (!quantitiesChanged) {
             return;
         }
-        // ⚠️ Match on the option's CURRENT name: after the cascade above the cell options already carry the
-        // new one, so looking them up by oldName would silently match nothing.
-        String currentName = renamed ? updated.getName() : oldName;
+        // 2609_22/D1: match on the FK. The rename cascade above no longer matters here (an option keeps its
+        // link whatever it is called), and a MANUAL_OVERRIDE cell name is matched just the same.
         for (ProductListing cell : productListingRepository.findByMasterProductId(masterId)) {
             List<ProductListingOption> matched = productListingOptionRepository
                     .findByProductListingId(cell.getId()).stream()
-                    .filter(cellOption -> currentName.equals(cellOption.getOptionName()))
+                    .filter(cellOption -> linkedTo(cellOption, updated.getId()))
                     .toList();
             if (matched.isEmpty()) {
                 continue;   // this channel does not carry the option → nothing to re-sync
@@ -982,16 +1059,15 @@ public class MasterProductServiceImpl implements MasterProductService {
      * option that sits above the new ceiling down to it. Returns how many channel options were lowered.
      *
      * <p>⚠️ The change is deliberately NOT pushed to the market (no auto-push rule): the count travels back in
-     * the response so the front can prompt [수정 요청]. The matching axis is the option name — the same one
-     * {@link #resyncChannels} uses; do not invent a second one.</p>
+     * the response so the front can prompt [수정 요청]. The matching axis is {@code master_product_option_id}
+     * (2609_22/D1) — the same one {@link #resyncChannels} uses; do not invent a second one.</p>
      */
     private int clampChannelStocks(Long masterId, MasterProductOption updated) {
         int ceiling = ListingStockPolicy.ceiling(updated);
-        String name = updated.getName();
         List<ProductListingOption> clamped = new ArrayList<>();
         for (ProductListing cell : productListingRepository.findByMasterProductId(masterId)) {
             productListingOptionRepository.findByProductListingId(cell.getId()).stream()
-                    .filter(cellOption -> name.equals(cellOption.getOptionName()))
+                    .filter(cellOption -> linkedTo(cellOption, updated.getId()))
                     .filter(cellOption -> cellOption.getStockQuantity() != null
                             && cellOption.getStockQuantity() > ceiling)
                     .forEach(cellOption -> clamped.add(cellOption.toBuilder().stockQuantity(ceiling).build()));
@@ -1004,6 +1080,15 @@ public class MasterProductServiceImpl implements MasterProductService {
     }
 
     // ---------------------------------------------------------------- helpers
+
+    /**
+     * Is this cell option linked to that master option (2609_22/D1)? ⚠️ Reads the FK's id only — safe on a
+     * LAZY proxy, so no extra query per option.
+     */
+    private static boolean linkedTo(ProductListingOption cellOption, Long masterOptionId) {
+        MasterProductOption linked = cellOption.getMasterProductOption();
+        return linked != null && linked.getId().equals(masterOptionId);
+    }
 
     /** Tenant-scoped fetch; a cross-tenant/absent id yields 404 (findScopedById is @TenantId-filtered). */
     private MasterProduct requireScopedMaster(Long id) {

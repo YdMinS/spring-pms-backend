@@ -5,15 +5,17 @@ import com.pms.domain.MasterProductComponent;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.Product;
+import com.pms.domain.ProductListingOption;
+import com.pms.domain.ProductListingProduct;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
+import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.service.listing.OptionCheckSuffix;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +48,8 @@ public class RegistrationNameGenerator {
     private final MasterProductOptionItemRepository optionItemRepository;
     private final MasterProductComponentRepository componentRepository;
     private final ProductRepository productRepository;
+    /** 2609_22/D7: cell BOM lines, the fallback source for a channel-only single option. */
+    private final ProductListingProductRepository productListingProductRepository;
 
     /**
      * Build the master-level registration name (34 {@code MasterProductResponse.registrationName}) — branches
@@ -68,26 +72,29 @@ public class RegistrationNameGenerator {
      * Build the per-channel (listing) registration name (67) — branches on the number of <b>active</b> options
      * of that listing, so the same master yields a different name per channel when option selections differ.
      *
-     * <p>⚠️ No repository read here (a matrix loop would N+1): the caller injects {@code masterOptions} (the
-     * master options it already batch-loaded). Because every option covers the whole component set (domain
-     * invariant, 3b-1), the "≥2" listing = the master's component listing unchanged (no union needed).</p>
+     * <p>2609_22/D1: the single option is resolved through {@code master_product_option_id}, never the name —
+     * a channel may rename its options. D7: an option that has no master option behind it (channel-only, D2)
+     * builds the same shape from the <b>cell's own BOM</b> instead of falling back to {@code master.name}.</p>
      *
-     * @param master            the listing's master (non-null; callers guard master==null before calling)
-     * @param activeOptionNames the active {@code ProductListingOption.optionName}s of this listing
-     * @param masterOptions     the master's options, pre-loaded by the caller (matching key = option name)
-     * @param suffix            the resolved "옵션확인" suffix config (69), applied only on the ≥ 2 branch
+     * <p>⚠️ Only the {@code n == 1} branch reads a repository (one query, as before); {@code n >= 2} reads the
+     * master components exactly like the master-level overload. Callers must pass the options they already
+     * loaded — never load them here (a matrix loop would N+1).</p>
+     *
+     * @param master        the listing's master (non-null; callers guard master==null before calling)
+     * @param activeOptions the <b>active</b> options of this listing (already filtered by the caller)
+     * @param suffix        the resolved "옵션확인" suffix config (69), applied only on the ≥ 2 branch
      */
-    public String generate(MasterProduct master, Collection<String> activeOptionNames,
-                           List<MasterProductOption> masterOptions, OptionCheckSuffix suffix) {
-        int n = activeOptionNames.size();
+    public String generate(MasterProduct master, List<ProductListingOption> activeOptions,
+                           OptionCheckSuffix suffix) {
+        int n = activeOptions.size();
         if (n >= 2) {
             return multiOptionName(master, suffix);  // each option covers all components → master listing is exact
         }
         if (n == 1) {
-            String only = activeOptionNames.iterator().next();
-            MasterProductOption opt = masterOptions.stream()
-                    .filter(o -> only.equals(o.getName())).findFirst().orElse(null);
-            return opt != null ? singleOptionName(opt) : master.getName();   // defensive: name-match miss
+            ProductListingOption only = activeOptions.get(0);
+            // ⚠️ id only — safe on a LAZY proxy (no extra query).
+            MasterProductOption masterOption = only.getMasterProductOption();
+            return masterOption != null ? singleOptionName(masterOption) : cellOptionName(master, only);
         }
         return master.getName();   // defensive: 0 active options
     }
@@ -120,6 +127,24 @@ public class RegistrationNameGenerator {
                 .sorted(Comparator.comparing(it -> it.getProduct().getId()))   // stable productId order
                 .map(it -> label(it.getProduct().getBrand(), it.getProduct().getProductName())
                         + " x " + it.getQuantity())
+                .collect(Collectors.joining(" + "));
+    }
+
+    /**
+     * 2609_22/D7: same shape as {@link #singleOptionName} but built from the <b>cell's</b> BOM — the only
+     * source a channel-only option has. Empty BOM → the master's name (defensive; a cell option always has
+     * lines on the normal path).
+     */
+    private String cellOptionName(MasterProduct master, ProductListingOption cellOption) {
+        List<ProductListingProduct> lines =
+                productListingProductRepository.findByProductListingOptionId(cellOption.getId());
+        if (lines.isEmpty()) {
+            return master.getName();
+        }
+        return lines.stream()
+                .sorted(Comparator.comparing(line -> line.getProduct().getId()))   // stable productId order
+                .map(line -> label(line.getProduct().getBrand(), line.getProduct().getProductName())
+                        + " x " + line.getQuantity())
                 .collect(Collectors.joining(" + "));
     }
 

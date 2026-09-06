@@ -7,6 +7,7 @@ import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.dto.request.SetOptionNamesRequest;
 import com.pms.dto.request.SetOptionPricesRequest;
 import com.pms.dto.request.SetOptionStocksRequest;
 import com.pms.dto.response.ChannelPriceUpdateResponse;
@@ -28,6 +29,7 @@ import org.springframework.util.StringUtils;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -61,10 +63,10 @@ public class ListingOptionServiceImpl implements ListingOptionService {
         ProductListing listing = productListingRepository.findScopedById(listingId)
                 .orElseThrow(() -> new ResourceNotFoundException("ProductListing", listingId));
         List<ProductListingOption> options = productListingOptionRepository.findByProductListingId(listingId);
-        Map<String, MasterProductOption> byName = masterOptionsByName(listing);
+        Map<Long, MasterProductOption> byId = masterOptionsById(listing);
         // Read is never a resync trigger → needsResync = false.
         return ListingOptionsResponse.of(listing, options, false,
-                registrationName(listing, options, byName), byName);
+                registrationName(listing, options), byId);
     }
 
     /**
@@ -123,9 +125,8 @@ public class ListingOptionServiceImpl implements ListingOptionService {
         // Listing-level needsResync (single boolean, OR aggregate): if this listing is already pushed, the
         // active-set change alone does not reach the market → the front must re-register/update. No auto-push here.
         boolean needsResync = listing.getStatus() != null && listing.getStatus() != ListingStatus.DRAFT;
-        Map<String, MasterProductOption> byName = masterOptionsByName(listing);
         return ListingOptionsResponse.of(listing, updated, needsResync,
-                registrationName(listing, updated, byName), byName);
+                registrationName(listing, updated), masterOptionsById(listing));
     }
 
     /**
@@ -155,13 +156,15 @@ public class ListingOptionServiceImpl implements ListingOptionService {
 
         // D5: a channel value may not exceed its option's ceiling (master stock ?? 9999). Validate the whole
         // batch first, then save — a rejected option must not leave the earlier ones applied.
-        Map<String, MasterProductOption> byName = masterOptionsByName(listing);
+        Map<Long, MasterProductOption> masterById = masterOptionsById(listing);
         Map<Long, ProductListingOption> toSave = new LinkedHashMap<>();
         for (SetOptionStocksRequest.OptionStock stock : stocks) {
             ProductListingOption option = byId.get(stock.getOptionId());
             Integer requested = stock.getStockQuantity();
             if (requested != null) {
-                int ceiling = ListingStockPolicy.ceiling(byName.get(option.getOptionName()));
+                // 2609_22/D1: the ceiling comes from the LINKED master option; a channel-only option (D2)
+                // resolves to null → 9999 (D6, unchanged behaviour for an option with no master).
+                int ceiling = ListingStockPolicy.ceiling(linkedMaster(option, masterById));
                 if (requested > ceiling) {
                     throw new IllegalArgumentException(option.getOptionName()
                             + ": 채널 재고는 마스터 재고(" + ceiling + ")보다 클 수 없습니다");
@@ -178,7 +181,7 @@ public class ListingOptionServiceImpl implements ListingOptionService {
                 .toList();
         boolean needsResync = listing.getStatus() != null && listing.getStatus() != ListingStatus.DRAFT;
         return ListingOptionsResponse.of(listing, merged, needsResync,
-                registrationName(listing, merged, byName), byName);
+                registrationName(listing, merged), masterById);
     }
 
     /**
@@ -265,12 +268,85 @@ public class ListingOptionServiceImpl implements ListingOptionService {
         List<ProductListingOption> merged = options.stream()
                 .map(option -> toSave.getOrDefault(option.getId(), option))
                 .toList();
-        Map<String, MasterProductOption> byName = masterOptionsByName(listing);
         // The market side of this change is already done, so there is nothing to re-send (D15) — and the
         // active option set did not move, so the registration name cannot have changed either.
         ListingOptionsResponse body = ListingOptionsResponse.of(listing, merged, false,
-                registrationName(listing, merged, byName), byName);
+                registrationName(listing, merged), masterOptionsById(listing));
         return new ChannelPriceUpdateResponse(body, pushed, skipped, failed);
+    }
+
+    /**
+     * Per-channel option naming (2609_22/D3). Same shape as {@link #setOptionStocks} — validate everything,
+     * then {@code saveAll} — with one extra rule: names must stay unique inside the cell, judged on the
+     * <b>merged</b> result (saved rows swapped in), because Coupang rejects a duplicate {@code itemName}.
+     */
+    @Override
+    @Transactional
+    public ListingOptionsResponse setOptionNames(Long listingId, List<SetOptionNamesRequest.Item> names) {
+        ProductListing listing = productListingRepository.findScopedById(listingId)
+                .orElseThrow(() -> new ResourceNotFoundException("ProductListing", listingId));
+
+        // A no-op save is a mistake, not a valid request (same rule/message as setOptionStocks).
+        if (names == null || names.isEmpty()) {
+            throw new IllegalArgumentException("변경할 옵션이 없습니다");
+        }
+
+        List<ProductListingOption> options = productListingOptionRepository.findByProductListingId(listingId);
+        Map<Long, ProductListingOption> byId = options.stream()
+                .collect(Collectors.toMap(ProductListingOption::getId, Function.identity()));
+        if (!byId.keySet().containsAll(names.stream()
+                .map(SetOptionNamesRequest.Item::getOptionId).toList())) {
+            throw new IllegalArgumentException("리스팅 옵션 아님");
+        }
+
+        Map<Long, MasterProductOption> masterById = masterOptionsById(listing);
+        Map<Long, ProductListingOption> toSave = new LinkedHashMap<>();
+        for (SetOptionNamesRequest.Item item : names) {
+            ProductListingOption option = byId.get(item.getOptionId());
+            String requested = item.getOptionName() == null ? null : item.getOptionName().trim();
+            if (StringUtils.hasText(requested)) {
+                // D3: the channel named it → a master rename must not overwrite it (D4).
+                toSave.put(option.getId(), option.toBuilder()
+                        .optionName(requested)
+                        .optionNameSource(GeneratedContentSource.MANUAL_OVERRIDE)
+                        .build());
+                continue;
+            }
+            // Blank = back to AUTO, which only exists when a master option is behind this row (D2).
+            MasterProductOption master = linkedMaster(option, masterById);
+            if (master == null) {
+                throw new IllegalArgumentException("채널 전용 옵션은 되돌릴 마스터 옵션명이 없습니다");
+            }
+            toSave.put(option.getId(), option.toBuilder()
+                    .optionName(master.getName())
+                    .optionNameSource(GeneratedContentSource.AUTO)
+                    .build());
+        }
+
+        // Return the full option set, with the saved rows swapped in (setOptionStocks' closing block) — and
+        // judge uniqueness on exactly that view, before anything is written.
+        List<ProductListingOption> merged = options.stream()
+                .map(option -> toSave.getOrDefault(option.getId(), option))
+                .toList();
+        assertNamesUnique(merged);
+        productListingOptionRepository.saveAll(List.copyOf(toSave.values()));
+
+        boolean needsResync = listing.getStatus() != null && listing.getStatus() != ListingStatus.DRAFT;
+        return ListingOptionsResponse.of(listing, merged, needsResync,
+                registrationName(listing, merged), masterById);
+    }
+
+    /**
+     * Two options of one cell may not share a name: it becomes the Coupang {@code itemName}, and a duplicate
+     * there is a marketplace error. Thrown before any save — no partially applied batch.
+     */
+    private static void assertNamesUnique(List<ProductListingOption> options) {
+        Set<String> seen = new HashSet<>();
+        for (ProductListingOption option : options) {
+            if (!seen.add(option.getOptionName())) {
+                throw new IllegalArgumentException("같은 이름의 옵션이 이미 있습니다: " + option.getOptionName());
+            }
+        }
     }
 
     /** The prices an option is about to get, held until the market has accepted them (D6). */
@@ -306,17 +382,27 @@ public class ListingOptionServiceImpl implements ListingOptionService {
     }
 
     /**
-     * This listing's master options keyed by name — the axis that resolves each option's stock ceiling (102)
-     * and feeds the registration name (67). Legacy cell without a master → empty map (every ceiling 9999).
-     * Queried once per request and shared, so the two consumers never issue the same query twice.
+     * This listing's master options keyed by <b>id</b> — the single master↔channel matching axis since
+     * 2609_22/D1 (never the option name: a channel may rename its options). Resolves each option's stock
+     * ceiling (102) and feeds the option response. Legacy cell without a master → empty map (ceiling 9999).
      */
-    private Map<String, MasterProductOption> masterOptionsByName(ProductListing listing) {
+    private Map<Long, MasterProductOption> masterOptionsById(ProductListing listing) {
         MasterProduct master = listing.getMasterProduct();
         if (master == null) {
             return Map.of();
         }
         return masterProductOptionRepository.findByMasterProductId(master.getId()).stream()
-                .collect(Collectors.toMap(MasterProductOption::getName, Function.identity(), (a, b) -> a));
+                .collect(Collectors.toMap(MasterProductOption::getId, Function.identity(), (a, b) -> a));
+    }
+
+    /**
+     * The master option a cell option is linked to, or null for a channel-only option (2609_22/D2).
+     * ⚠️ Reads the FK's id only — safe on a LAZY proxy (no extra query per option).
+     */
+    private static MasterProductOption linkedMaster(ProductListingOption option,
+                                                    Map<Long, MasterProductOption> byId) {
+        MasterProductOption linked = option.getMasterProductOption();
+        return linked == null ? null : byId.get(linked.getId());
     }
 
     /**
@@ -324,19 +410,18 @@ public class ListingOptionServiceImpl implements ListingOptionService {
      * the response so the front can patch the matrix cell in place after a toggle. master null → the listing's
      * display name (backfill transition window).
      */
-    private String registrationName(ProductListing listing, List<ProductListingOption> options,
-                                    Map<String, MasterProductOption> masterOptionsByName) {
+    private String registrationName(ProductListing listing, List<ProductListingOption> options) {
         MasterProduct master = listing.getMasterProduct();
         if (master == null) {
             return listing.getName();
         }
-        List<String> activeNames = options.stream()
+        // 2609_22/D7: the generator resolves the single-option case through the FK (and falls back to the
+        // cell's own BOM for a channel-only option), so it needs the option rows, not their names.
+        List<ProductListingOption> activeOptions = options.stream()
                 .filter(o -> Boolean.TRUE.equals(o.getActive()))
-                .map(ProductListingOption::getOptionName)
                 .toList();
         // 69: suffix = channel(this cell's account) ?? master ?? seller ?? system (single cell = one account query).
         OptionCheckSuffix suffix = optionCheckSuffixResolver.resolve(listing);
-        return registrationNameGenerator.generate(master, activeNames,
-                List.copyOf(masterOptionsByName.values()), suffix);
+        return registrationNameGenerator.generate(master, activeOptions, suffix);
     }
 }

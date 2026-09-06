@@ -47,8 +47,9 @@ public class ChannelSyncPreviewResponse {
         @Schema(description = "Total options the master has and a cell lacks", example = "3")
         private int missingOptions;
 
-        @Schema(description = "Total active orphan options a propagation would switch off", example = "1")
-        private int orphanOptions;
+        @Schema(description = "Total active channel-only options a propagation would switch off "
+                + "(2609_22/D22: the old \"orphan\" concept, renamed — same aggregation)", example = "1")
+        private int channelOnlyOptions;
 
         @Schema(description = "Total options whose BOM quantities differ from the master", example = "2")
         private int quantityMismatch;
@@ -75,12 +76,13 @@ public class ChannelSyncPreviewResponse {
         @Schema(description = "In the master, absent from this cell → propagation creates them (switched off)")
         private List<String> missingOptions;
 
-        @Schema(description = "Active on this cell, gone from the master → propagation switches them off")
-        private List<String> orphanOptions;
+        @Schema(description = "Active on this cell but not owned by the master (2609_22/D2·D22) → "
+                + "propagation switches them off")
+        private List<String> channelOnlyOptions;
 
-        @Schema(description = "Active orphans on a market-registered cell → propagation leaves them; "
-                + "the operator must stop them on the marketplace (informational only)")
-        private List<String> marketOrphanOptions;
+        @Schema(description = "Active channel-only options on a market-registered cell → propagation leaves "
+                + "them; the operator must stop them on the marketplace (informational only)")
+        private List<String> marketChannelOnlyOptions;
 
         @Schema(description = "Matched options whose shared-product BOM quantities differ from the master")
         private List<String> quantityMismatchOptions;
