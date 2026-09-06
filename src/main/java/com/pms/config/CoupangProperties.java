@@ -68,6 +68,14 @@ public class CoupangProperties {
             "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/ordersheets/acknowledgement";
 
     /**
+     * 발송 전 주문 취소 경로. {vendorId}/{orderId} 치환. ACCEPT=즉시취소, INSTRUCT=출고중지.
+     * 바디는 vendorItemIds[]/receiptCounts[] 쌍 + CANERR + middleCancelCode + userId(WING ID) 다.
+     * ⚠️ 되돌릴 수 없고 판매자 점수가 하락한다. 실계정 검증 전이라 설정으로 뺀다(PLAN 2609_25 D15).
+     */
+    private String orderCancelPath =
+            "/v2/providers/openapi/apis/api/v5/vendors/{vendorId}/orders/{orderId}/cancel";
+
+    /**
      * 아이템(vendorItem)별 판매가 변경 경로. {vendorItemId}/{price} 치환. 재심사 없이 즉시 반영된다.
      *
      * ⚠️ 네임스페이스는 <b>seller_api</b> 다 — 상품 API 라서 {@code CoupangListingAdapter.SELLER_PRODUCTS}
