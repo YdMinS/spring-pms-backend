@@ -76,7 +76,16 @@ public class ListingOptionsResponse {
                 example = "AUTO")
         private String priceSource;
 
-        /** {@code master} may be null (renamed/legacy option that matches no master option) → maxStock 9999. */
+        @Schema(description = "Origin of the option name (2609_22/D3): AUTO = follows the master option, "
+                + "MANUAL_OVERRIDE = named for this channel. optionName is the effective name either way.",
+                example = "AUTO")
+        private String optionNameSource;
+
+        @Schema(description = "Channel-only option (2609_22/D2): no master option behind it, so master "
+                + "propagation never touches it", example = "false")
+        private boolean channelOnly;
+
+        /** {@code master} may be null (channel-only option, 2609_22/D2) → maxStock 9999. */
         public static OptionItem from(ProductListingOption option, MasterProductOption master) {
             return OptionItem.builder()
                     .optionId(option.getId())
@@ -87,26 +96,40 @@ public class ListingOptionsResponse {
                     .stockQuantity(option.getStockQuantity())
                     .maxStock(ListingStockPolicy.ceiling(master))
                     .priceSource(option.getPriceSource() != null ? option.getPriceSource().name() : null)
+                    .optionNameSource(option.getOptionNameSource() != null
+                            ? option.getOptionNameSource().name() : null)
+                    .channelOnly(option.isChannelOnly())
                     .build();
         }
     }
 
     /**
-     * @param masterOptionsByName master options of this listing's master, keyed by name — the axis that
-     *        resolves each option's stock ceiling (102). Empty map on a legacy cell without a master.
-     *        Passed in (never queried here): a DTO mapper must not reach for a repository.
+     * @param masterOptionsById master options of this listing's master, keyed by <b>id</b> — the single
+     *        master↔channel matching axis since 2609_22/D1 (never the option name). Empty map on a legacy
+     *        cell without a master. Passed in (never queried here): a DTO mapper must not reach for a
+     *        repository.
      */
     public static ListingOptionsResponse of(ProductListing listing, List<ProductListingOption> options,
                                             boolean needsResync, String registrationName,
-                                            Map<String, MasterProductOption> masterOptionsByName) {
+                                            Map<Long, MasterProductOption> masterOptionsById) {
         return ListingOptionsResponse.builder()
                 .productListingId(listing.getId())
                 .status(listing.getStatus() != null ? listing.getStatus().name() : null)
                 .needsResync(needsResync)
                 .registrationName(registrationName)
                 .options(options.stream()
-                        .map(o -> OptionItem.from(o, masterOptionsByName.get(o.getOptionName())))
+                        .map(o -> OptionItem.from(o, linkedMaster(o, masterOptionsById)))
                         .toList())
                 .build();
+    }
+
+    /**
+     * The master option a cell option is linked to, or null for a channel-only option (2609_22/D2).
+     * ⚠️ Reads the FK's id only — safe on a LAZY proxy.
+     */
+    private static MasterProductOption linkedMaster(ProductListingOption option,
+                                                    Map<Long, MasterProductOption> byId) {
+        MasterProductOption linked = option.getMasterProductOption();
+        return linked == null ? null : byId.get(linked.getId());
     }
 }

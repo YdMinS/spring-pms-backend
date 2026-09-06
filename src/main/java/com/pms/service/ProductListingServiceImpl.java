@@ -128,6 +128,9 @@ public class ProductListingServiceImpl implements ProductListingService {
         // Create options and products if provided
         if (request.getOptions() != null && !request.getOptions().isEmpty()) {
             for (CreateProductListingRequest.OptionRequest optionReq : request.getOptions()) {
+                // 2609_22/D1: this legacy API knows no master, so masterProductOption stays null — every option
+                // created here is a channel-only option (D2) and master propagation will not touch it. New code
+                // creates cells through the channel-add path (ChannelAddServiceImpl), which sets the FK.
                 ProductListingOption option = ProductListingOption.builder()
                         .productListing(saved)
                         .optionName(optionReq.getOptionName())
@@ -268,6 +271,9 @@ public class ProductListingServiceImpl implements ProductListingService {
 
         if (request.getOptions() != null && !request.getOptions().isEmpty()) {
             for (CreateProductListingRequest.OptionRequest optionReq : request.getOptions()) {
+                // 2609_22/D1: this legacy API knows no master, so masterProductOption stays null — every option
+                // created here is a channel-only option (D2) and master propagation will not touch it. New code
+                // creates cells through the channel-add path (ChannelAddServiceImpl), which sets the FK.
                 ProductListingOption option = ProductListingOption.builder()
                         .productListing(saved)
                         .optionName(optionReq.getOptionName())

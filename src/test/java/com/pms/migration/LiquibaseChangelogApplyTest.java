@@ -401,6 +401,33 @@ class LiquibaseChangelogApplyTest {
     }
 
     @Test
+    void listingOptionMasterLinkApplied() {
+        // changeset 060: the master↔cell option link becomes an FK (2609_22/D1). The three new columns exist,
+        // and the link column is nullable — NULL is the meaningful value "channel-only option" (D2).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing_option WHERE master_product_option_id IS NULL "
+                        + "OR option_name_source IS NOT NULL OR category_attributes IS NULL "
+                        + "OR category_notices IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE TABLE_NAME = 'PRODUCT_LISTING_OPTION' "
+                        + "AND COLUMN_NAME = 'MASTER_PRODUCT_OPTION_ID'", String.class)).isEqualTo("YES");
+        // option_name_source is NOT NULL with default AUTO (pre-existing rows are all AUTO, like price_source).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE TABLE_NAME = 'PRODUCT_LISTING_OPTION' "
+                        + "AND COLUMN_NAME = 'OPTION_NAME_SOURCE'", String.class)).isEqualTo("NO");
+
+        // 🔴 D22: the FK deletes NOTHING — deleting a master option must leave the cell row alive (Coupang
+        // cannot remove an approved option, so the row becomes channel-only + inactive). CASCADE here would
+        // silently delete live marketplace options.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT DELETE_RULE FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS "
+                        + "WHERE CONSTRAINT_NAME = 'FK_PLO_MASTER_OPTION'", String.class))
+                .isEqualTo("SET NULL");
+    }
+
+    @Test
     void tenantDimensionApplied() {
         // changeset 002: tenant table created + seeded with the default tenant (id=1).
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tenant", Integer.class)).isEqualTo(1);

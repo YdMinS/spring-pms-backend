@@ -22,7 +22,8 @@ import java.nio.charset.StandardCharsets;
  * <ul>
  *   <li>{@code ordersheets} 포함 → {@code fixtures/coupang/ordersheets.json}</li>
  *   <li>{@code returnRequests} 포함 → {@code fixtures/coupang/returnRequests.json}</li>
- *   <li>{@code seller-products} 포함(GET) → 승인완료 상태 + 옵션 id 인라인 fixture (3c fetchStatus)</li>
+ *   <li>{@code seller-products} 포함(GET) → id 가 register fixture(123456789)면 승인완료 + 옵션 id
+ *       인라인 fixture (3c fetchStatus), 그 외 id 는 가져오기 fixture (2609_22)</li>
  *   <li>{@code seller-products} 포함(POST) → sellerProductId 인라인 fixture (3c register)</li>
  *   <li>{@code display-categories/} 포함(GET) → 카테고리 트리 자식 fixture (45 browse)</li>
  *   <li>{@code category-related-metas} 포함(GET) → 필수속성/고시 meta fixture (47)</li>
@@ -59,6 +60,23 @@ public class MockCoupangApiClient implements CoupangApiClient {
             "{\"code\":\"SUCCESS\",\"data\":{\"sellerProductId\":123456789,\"statusName\":\"승인완료\","
                     + "\"items\":[{\"itemName\":\"1세트\",\"vendorItemId\":987654321,"
                     + "\"sellerProductItemId\":555666777}]}}";
+    /** register fixture 가 쓰는 sellerProductId — 이 id 의 조회만 3c 용 {@link #SELLER_PRODUCT_FETCH} 로 간다. */
+    private static final String REGISTER_FIXTURE_PRODUCT_ID = "123456789";
+    /**
+     * 2609_22 가져오기 fixture: 옵션 2건 + 상품명·카테고리·태그·가격까지 실린 조회 응답.
+     * ⚠️ {@link #SELLER_PRODUCT_FETCH} 를 확장하지 말 것 — 3c 의 local {@code fetchStatus} 흐름이 그
+     * 옵션 1개짜리 응답에 의존한다. 그래서 상품 id 로 분기한다.
+     */
+    private static final String SELLER_PRODUCT_IMPORT =
+            "{\"code\":\"SUCCESS\",\"data\":{\"sellerProductId\":222333444,"
+                    + "\"sellerProductName\":\"노브랜드 생수 2L 6입\",\"displayCategoryCode\":\"72882\","
+                    + "\"statusName\":\"승인완료\",\"items\":["
+                    + "{\"itemName\":\"6입\",\"vendorItemId\":8123,\"sellerProductItemId\":9123,"
+                    + "\"salePrice\":12900,\"originalPrice\":15900,\"maximumBuyCount\":50,"
+                    + "\"searchTags\":[\"생수\",\"2L\"]},"
+                    + "{\"itemName\":\"12입\",\"vendorItemId\":8124,\"sellerProductItemId\":9124,"
+                    + "\"salePrice\":23900,\"originalPrice\":29900,\"maximumBuyCount\":30,"
+                    + "\"searchTags\":[\"생수\",\"2L\"]}]}}";
 
     // 45 category lookup fixtures (inline). Tree = data.child[] (displayCategoryCode/name/child/last):
     // 1001 has a nested child + last=false → non-leaf, 1002 has empty child → leaf.
@@ -135,7 +153,8 @@ public class MockCoupangApiClient implements CoupangApiClient {
             return load(RETURN_REQUESTS_FIXTURE);
         }
         if (path.contains("seller-products")) {
-            return SELLER_PRODUCT_FETCH;
+            // 3c fetchStatus keeps the single-option fixture; every other id is an import (2609_22).
+            return path.endsWith(REGISTER_FIXTURE_PRODUCT_ID) ? SELLER_PRODUCT_FETCH : SELLER_PRODUCT_IMPORT;
         }
         if (path.contains("display-categories/")) {
             return DISPLAY_CATEGORIES_FIXTURE;

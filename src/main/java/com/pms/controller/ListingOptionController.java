@@ -2,6 +2,7 @@ package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.SetActiveOptionsRequest;
+import com.pms.dto.request.SetOptionNamesRequest;
 import com.pms.dto.request.SetOptionPricesRequest;
 import com.pms.dto.request.SetOptionStocksRequest;
 import com.pms.dto.response.ChannelPriceUpdateResponse;
@@ -54,6 +55,16 @@ public class ListingOptionController {
             @PathVariable Long id, @Valid @RequestBody SetOptionStocksRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(
                 listingOptionService.setOptionStocks(id, request.getStocks())));
+    }
+
+    @PutMapping("/product-listings/{id}/options/name")
+    @Operation(summary = "Set the name of some options for this channel "
+            + "(partial; null/blank restores the master option's name)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<ListingOptionsResponse>> setOptionNames(
+            @PathVariable Long id, @Valid @RequestBody SetOptionNamesRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                listingOptionService.setOptionNames(id, request.getNames())));
     }
 
     @PutMapping("/product-listings/{id}/options/price")

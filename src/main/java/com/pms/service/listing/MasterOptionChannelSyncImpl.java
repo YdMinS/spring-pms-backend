@@ -1,5 +1,6 @@
 package com.pms.service.listing;
 
+import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
@@ -66,12 +67,11 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
         List<MasterProductOptionItem> items = masterProductOptionItemRepository.findByOptionId(option.getId());
 
         for (ProductListing cell : cells) {
-            ProductListingOption existing =
-                    match(optionsByCell.get(cell.getId()), option.getName());
+            ProductListingOption existing = match(optionsByCell.get(cell.getId()), option.getId());
             if (existing != null) {
                 rebuildLines(existing, items);      // re-added option: reuse the row, `active` untouched
             } else {
-                createCellOption(cell, option.getName(), items);
+                createCellOption(cell, option, items);
             }
             // Both branches changed the cell's composition → the placeholder/stale price must be re-derived.
             listingAssetService.recalculateOptionPrices(cell);
@@ -79,9 +79,9 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
     }
 
     @Override
-    public void onOptionRenamed(Long masterId, String oldName, String newName) {
-        if (Objects.equals(oldName, newName)) {
-            return;     // nothing moved → no writes
+    public void onOptionRenamed(Long masterId, Long masterOptionId, String newName) {
+        if (masterOptionId == null) {
+            return;
         }
         List<ProductListing> cells = productListingRepository.findByMasterProductId(masterId);
         if (cells.isEmpty()) {
@@ -89,16 +89,24 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
         }
         for (List<ProductListingOption> cellOptions : optionsByCell(cells).values()) {
             boolean newNameTaken = cellOptions.stream()
+                    .filter(cellOption -> !masterOptionId.equals(masterOptionId(cellOption)))
                     .anyMatch(cellOption -> Objects.equals(newName, cellOption.getOptionName()));
             for (ProductListingOption cellOption : cellOptions) {
-                if (!Objects.equals(oldName, cellOption.getOptionName())) {
+                if (!masterOptionId.equals(masterOptionId(cellOption))) {
+                    continue;   // 2609_22/D1: the FK is the match key — the cell's own name is irrelevant here
+                }
+                // 2609_22/D4: 채널에서 직접 정한 이름은 마스터 rename 이 덮어쓰지 않는다([옵션명 일괄 적용]이 되돌린다).
+                if (cellOption.getOptionNameSource() == GeneratedContentSource.MANUAL_OVERRIDE) {
                     continue;
                 }
+                if (Objects.equals(newName, cellOption.getOptionName())) {
+                    continue;   // already there → no write
+                }
                 if (newNameTaken) {
-                    // Legacy channel rows may already hold both names; renaming would create a duplicate
-                    // match key, and every master↔channel match is "first wins" (non-deterministic).
-                    log.warn("[OPTION-SYNC] cellId={} rename '{}'->'{}' skipped: name already present",
-                            cellOption.getProductListing().getId(), oldName, newName);
+                    // A MANUAL_OVERRIDE sibling (or a legacy duplicate) already carries that name; two options
+                    // with the same name in one cell are a marketplace error (Coupang itemName).
+                    log.warn("[OPTION-SYNC] cellId={} rename to '{}' skipped: name already present",
+                            cellOption.getProductListing().getId(), newName);
                     continue;
                 }
                 productListingOptionRepository.save(cellOption.toBuilder().optionName(newName).build());
@@ -107,14 +115,17 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
     }
 
     @Override
-    public void onOptionRemoved(Long masterId, String optionName) {
+    public void onOptionRemoved(Long masterId, Long masterOptionId) {
+        if (masterOptionId == null) {
+            return;
+        }
         List<ProductListing> cells = productListingRepository.findByMasterProductId(masterId);
         if (cells.isEmpty()) {
             return;
         }
         for (List<ProductListingOption> cellOptions : optionsByCell(cells).values()) {
             for (ProductListingOption cellOption : cellOptions) {
-                if (Objects.equals(optionName, cellOption.getOptionName())) {
+                if (masterOptionId.equals(masterOptionId(cellOption))) {
                     deactivate(cellOption);
                 }
             }
@@ -137,18 +148,24 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
 
         // (1) missing: in the master, not on this cell → create, switched off (see the interface rules).
         for (MasterProductOption masterOption : masterOptions) {
-            if (match(cellOptions, masterOption.getName()) == null) {
-                createCellOption(cell, masterOption.getName(),
+            if (match(cellOptions, masterOption.getId()) == null) {
+                createCellOption(cell, masterOption,
                         masterProductOptionItemRepository.findByOptionId(masterOption.getId()));
                 changed = true;
             }
         }
 
-        // (2) orphan: on this cell, no longer in the master → switch off (row kept).
-        Set<String> masterNames = masterOptions.stream()
-                .map(MasterProductOption::getName).collect(Collectors.toCollection(LinkedHashSet::new));
+        // (2) orphan: linked to a master option this master no longer has → switch off (row kept).
+        // 🔴 2609_22/D2: FK null is NOT an orphan — it is a channel-only option and must survive untouched.
+        // With the FK's ON DELETE SET NULL (D22) a real orphan is nearly unreachable (a deleted master option
+        // nulls the FK), so this loop is effectively a no-op today. Kept for legacy rows and cross-master data.
+        Set<Long> masterOptionIds = masterOptions.stream()
+                .map(MasterProductOption::getId).collect(Collectors.toCollection(LinkedHashSet::new));
         for (ProductListingOption cellOption : cellOptions) {
-            if (masterNames.contains(cellOption.getOptionName())
+            if (cellOption.getMasterProductOption() == null) {
+                continue;   // 채널 전용 옵션 → 마스터 전파 대상 아님(D2)
+            }
+            if (masterOptionIds.contains(masterOptionId(cellOption))
                     || !Boolean.TRUE.equals(cellOption.getActive())) {
                 continue;   // still owned by the master, or already off → no write
             }
@@ -185,14 +202,26 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
         return grouped;
     }
 
-    /** {@code optionName} is the master↔channel match key; first match wins (names are unique per master). */
-    private static ProductListingOption match(List<ProductListingOption> cellOptions, String optionName) {
-        if (cellOptions == null) {
+    /**
+     * 2609_22/D1: {@code master_product_option_id} is the master↔channel match key (never the name); first
+     * match wins (one cell carries at most one row per master option).
+     */
+    private static ProductListingOption match(List<ProductListingOption> cellOptions, Long masterOptionId) {
+        if (cellOptions == null || masterOptionId == null) {
             return null;
         }
         return cellOptions.stream()
-                .filter(cellOption -> Objects.equals(optionName, cellOption.getOptionName()))
+                .filter(cellOption -> masterOptionId.equals(masterOptionId(cellOption)))
                 .findFirst().orElse(null);
+    }
+
+    /**
+     * The linked master option's id, or null for a channel-only option (D2). ⚠️ Only the id is read so a LAZY
+     * proxy never has to be initialised (no extra query per option).
+     */
+    private static Long masterOptionId(ProductListingOption cellOption) {
+        MasterProductOption masterOption = cellOption.getMasterProductOption();
+        return masterOption == null ? null : masterOption.getId();
     }
 
     /**
@@ -200,11 +229,14 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
      * {@code active} is set to {@code false} explicitly — the entity default is {@code true}, which is the
      * channel-creation default and must not be inherited here.
      */
-    private void createCellOption(ProductListing cell, String optionName,
+    private void createCellOption(ProductListing cell, MasterProductOption masterOption,
                                   List<MasterProductOptionItem> items) {
         ProductListingOption created = productListingOptionRepository.save(ProductListingOption.builder()
                 .productListing(cell)
-                .optionName(optionName)
+                // 🔴 2609_22/D1: without this FK the new row would be born channel-only and be skipped by
+                // propagation, price recalculation and the stock clamp for ever (D2) — silently.
+                .masterProductOption(masterOption)
+                .optionName(masterOption.getName())
                 .sellingPrice(BigDecimal.ZERO)          // placeholder; recalculateOptionPrices fills the real one
                 .active(false)                          // ⚠️ never auto-sell a newly propagated option
                 .platformOptionId(null)                 // issued by the 3c push

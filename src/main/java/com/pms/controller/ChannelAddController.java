@@ -3,9 +3,13 @@ package com.pms.controller;
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.BatchChannelAddRequest;
 import com.pms.dto.request.ChannelAddRequest;
+import com.pms.dto.request.ListingImportPreviewRequest;
+import com.pms.dto.request.ListingImportRequest;
 import com.pms.dto.response.BatchChannelAddResponse;
 import com.pms.dto.response.ChannelAddResponse;
+import com.pms.dto.response.ListingImportPreviewResponse;
 import com.pms.service.ChannelAddService;
+import com.pms.service.listing.CoupangListingImportService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -16,7 +20,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 /**
- * Channel add (FEATURE_2608_06 / 3b'): create a DRAFT channel-cell listing under a master product.
+ * Channel add (FEATURE_2608_06 / 3b'): create a DRAFT channel-cell listing under a master product, and
+ * (FEATURE_2609_22) import a product that already exists on the marketplace as such a cell.
  *
  * <p>ADMIN-only via the global {@code POST /api/admin/**} rule (SecurityConfig) — no per-method
  * {@code @PreAuthorize}. Tenant scoping + duplicate/validation are enforced in the service (a cross-tenant
@@ -29,6 +34,7 @@ import org.springframework.web.bind.annotation.*;
 public class ChannelAddController {
 
     private final ChannelAddService channelAddService;
+    private final CoupangListingImportService coupangListingImportService;
 
     @PostMapping("/{masterProductId}/listings")
     @Operation(summary = "Add a channel: copy master options → new DRAFT listing + generate assets")
@@ -46,6 +52,25 @@ public class ChannelAddController {
             @PathVariable Long masterProductId, @Valid @RequestBody BatchChannelAddRequest request) {
         // Always 200 — partial failure is reported in the body (succeeded/failed counts), not as an error status.
         BatchChannelAddResponse response = channelAddService.addChannelsBatch(masterProductId, request);
+        return ResponseEntity.ok(ResponseDTO.success(response));
+    }
+
+    @PostMapping("/{masterProductId}/listings/import/preview")
+    @Operation(summary = "Preview an existing marketplace product before importing it (read-only, no writes)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<ListingImportPreviewResponse>> previewImport(
+            @PathVariable Long masterProductId, @Valid @RequestBody ListingImportPreviewRequest request) {
+        // 200, not 201 — nothing is created here (one marketplace GET, zero writes).
+        ListingImportPreviewResponse response = coupangListingImportService.preview(masterProductId, request);
+        return ResponseEntity.ok(ResponseDTO.success(response));
+    }
+
+    @PostMapping("/{masterProductId}/listings/import")
+    @Operation(summary = "Import an existing marketplace product as a channel cell of this master")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<ChannelAddResponse>> importListing(
+            @PathVariable Long masterProductId, @Valid @RequestBody ListingImportRequest request) {
+        ChannelAddResponse response = coupangListingImportService.importListing(masterProductId, request);
         return ResponseEntity.ok(ResponseDTO.success(response));
     }
 }

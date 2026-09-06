@@ -1,10 +1,12 @@
 package com.pms.domain;
 
+import com.pms.domain.converter.MapStringConverter;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.persistence.*;
 import lombok.*;
 
 import java.math.BigDecimal;
+import java.util.Map;
 
 /**
  * ProductListingOption entity representing an option variant of a platform listing.
@@ -161,6 +163,51 @@ public class ProductListingOption extends BaseEntity {
     @Schema(description = "Origin of the selling price (AUTO = calculated, MANUAL_OVERRIDE = user-set)",
             example = "AUTO")
     private GeneratedContentSource priceSource = GeneratedContentSource.AUTO;
+
+    /**
+     * 이 셀 옵션이 가리키는 마스터 옵션(2609_22/D1). null = 채널 전용 옵션 — 마스터 전파가 건드리지 않는다(D2).
+     * ⚠️ 마스터↔셀 매칭은 이 FK 가 유일한 축이다. optionName 으로 다시 매칭하는 코드를 만들지 말 것.
+     *
+     * <p>FK is {@code ON DELETE SET NULL} (changeset 060/D22): deleting the master option leaves this row
+     * alive as a channel-only (inactive) option — an approved Coupang option cannot be deleted there.</p>
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "master_product_option_id", nullable = true)
+    @Schema(description = "Linked master option; null = channel-only option")
+    private MasterProductOption masterProductOption;
+
+    /**
+     * 옵션명의 출처(2609_22/D3). AUTO = 마스터 옵션명을 따름, MANUAL_OVERRIDE = 이 채널에서 정한 이름.
+     *
+     * <p>⚠️ {@link #optionName} is ALWAYS the effective name whatever this says — the same contract as
+     * {@link #priceSource} / {@link #sellingPrice}. It exists so a master rename knows what to skip (D4).</p>
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "option_name_source", nullable = false, length = 20)
+    @Builder.Default
+    @Schema(description = "Origin of the option name (AUTO = follows the master, MANUAL_OVERRIDE = channel-set)",
+            example = "AUTO")
+    private GeneratedContentSource optionNameSource = GeneratedContentSource.AUTO;
+
+    /**
+     * 이 셀 옵션만의 카테고리 속성 override(2609_22/D5). 병합 = 셀옵션 ?? 마스터옵션 ?? 마스터.
+     * A channel-only option has no master option, so this is its only place to carry a required attribute.
+     */
+    @Convert(converter = MapStringConverter.class)
+    @Column(name = "category_attributes", columnDefinition = "TEXT")
+    @Schema(description = "Per-cell-option category attribute override")
+    private Map<String, String> categoryAttributes;
+
+    /** 이 셀 옵션만의 고시 override(2609_22/D5). 병합 규칙은 위와 동일. */
+    @Convert(converter = MapStringConverter.class)
+    @Column(name = "category_notices", columnDefinition = "TEXT")
+    @Schema(description = "Per-cell-option category notice override")
+    private Map<String, String> categoryNotices;
+
+    /** 채널 전용 옵션 = 마스터에 대응 옵션이 없다(2609_22/D2). */
+    public boolean isChannelOnly() {
+        return masterProductOption == null;
+    }
 
     /**
      * True = this option physically exists on the marketplace: Coupang issued a vendorItemId, or it was

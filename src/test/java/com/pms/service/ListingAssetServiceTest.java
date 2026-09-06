@@ -7,6 +7,7 @@ import com.pms.domain.GeneratedProductData;
 import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductImage;
+import com.pms.domain.MasterProductOption;
 import com.pms.domain.ProductImage;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
@@ -41,6 +42,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -539,6 +541,31 @@ class ListingAssetServiceTest {
         verify(productListingOptionRepository, times(1)).save(saved.capture());
         assertThat(saved.getValue().getId()).isEqualTo(51L);
         assertThat(saved.getValue().getSellingPrice()).isEqualByComparingTo("10670");
+    }
+
+    // 2609_22/D1: the master option behind a price is resolved through the FK, so an option the channel
+    // renamed still gets its master defaults — under the old name matching it silently got none.
+    @Test
+    void recalculateOptionPricesResolvesMasterByFkNotName() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀")
+                .masterProduct(master).build();
+        MasterProductOption masterOption = MasterProductOption.builder().id(7L).name("2세트").build();
+        ProductListingOption renamed = ProductListingOption.builder().id(50L).optionName("채널이 붙인 이름")
+                .masterProductOption(masterOption)
+                .sellingPrice(new BigDecimal("6000"))
+                .priceSource(com.pms.domain.GeneratedContentSource.AUTO).build();
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of(masterOption));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(renamed));
+        given(priceCalculator.calculatePrices(any(), any(), any()))
+                .willReturn(new PriceCalculator.PriceResult(new BigDecimal("10670"), new BigDecimal("13340")));
+
+        service.recalculateOptionPrices(cell);
+
+        org.mockito.ArgumentCaptor<MasterProductOption> passed =
+                org.mockito.ArgumentCaptor.forClass(MasterProductOption.class);
+        verify(priceCalculator).calculatePrices(eq(cell), passed.capture(), any());
+        assertThat(passed.getValue()).isSameAs(masterOption);
     }
 
     // ---- detail-template preview + pin (2609_20) ----

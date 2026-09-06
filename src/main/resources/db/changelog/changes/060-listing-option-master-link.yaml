@@ -1,0 +1,88 @@
+# Master ↔ cell option link promoted from the option NAME to a real FK (FEATURE_2609_22 / D1).
+# Until now every master↔channel match went through `option_name`, so a channel could neither rename an
+# option nor carry one the master does not have. `master_product_option_id` becomes the single matching axis:
+#   - NULL              = channel-only option (D2) — master propagation skips it entirely.
+#   - option_name_source = AUTO | MANUAL_OVERRIDE (D3), the same pattern as price_source (054):
+#                          option_name stays the EFFECTIVE name whatever this says.
+#   - category_attributes / category_notices (D5) = per-cell-option override; merge = cell ?? master option ?? master.
+# Structured tags for portability; only the backfill is raw SQL guarded by dbms:mysql (H2 apply-check skips
+# it, and the empty test DB has nothing to backfill anyway).
+databaseChangeLog:
+
+  # ---- 1. the four additive columns ----
+  - changeSet:
+      id: 060-listing-option-master-link
+      author: oclyx
+      comment: "2609_22: product_listing_option.master_product_option_id + option_name_source + per-option category override."
+      changes:
+        - addColumn:
+            tableName: product_listing_option
+            columns:
+              - column: { name: master_product_option_id, type: BIGINT }        # null = 채널 전용(D2)
+              - column:
+                  name: option_name_source
+                  type: VARCHAR(20)
+                  defaultValue: AUTO
+                  constraints: { nullable: false }
+              - column: { name: category_attributes, type: TEXT }
+              - column: { name: category_notices, type: TEXT }
+      rollback:
+        - dropColumn: { tableName: product_listing_option, columnName: master_product_option_id }
+        - dropColumn: { tableName: product_listing_option, columnName: option_name_source }
+        - dropColumn: { tableName: product_listing_option, columnName: category_attributes }
+        - dropColumn: { tableName: product_listing_option, columnName: category_notices }
+
+  # ---- 2. one-off backfill: every existing row was linked by name (MySQL only) ----
+  # Option names are unique within a master, so the join is deterministic. Rows whose name matches nothing
+  # were ALREADY orphans (the name match failed before this changeset too) → they stay NULL = channel-only.
+  # Idempotent: MARK_RAN once any row is linked (re-run safe).
+  #
+  # ⚠️ Post-backfill check to run BY HAND — legacy cells may hold two rows with the same name, which is
+  # exactly what MasterOptionChannelSyncImpl's `newNameTaken` guard exists for. Any result → STOP and ask; no
+  # automatic cleanup, because the code cannot tell which row is the one that actually reached the marketplace:
+  #   SELECT product_listing_id, master_product_option_id, COUNT(*) FROM product_listing_option
+  #    WHERE master_product_option_id IS NOT NULL GROUP BY 1, 2 HAVING COUNT(*) > 1;
+  - changeSet:
+      id: 060-backfill-listing-option-master-link
+      author: oclyx
+      dbms: mysql
+      comment: "기존 행의 연결을 이름 기준으로 1회 채운다(마스터 내 옵션명은 유일)."
+      preConditions:
+        - onFail: MARK_RAN
+        - sqlCheck:
+            expectedResult: 0
+            sql: "SELECT count(*) FROM product_listing_option WHERE master_product_option_id IS NOT NULL"
+      changes:
+        - sql:
+            sql: >
+              UPDATE product_listing_option plo
+              JOIN product_listing pl ON pl.id = plo.product_listing_id
+              JOIN master_product_option mpo
+                ON mpo.master_product_id = pl.master_product_id
+               AND mpo.name = plo.option_name
+              SET plo.master_product_option_id = mpo.id
+              WHERE pl.master_product_id IS NOT NULL
+      rollback:
+        - sql:
+            sql: "UPDATE product_listing_option SET master_product_option_id = NULL"
+
+  # ---- 3. the FK itself ----
+  # ⚠️ onDelete SET NULL, never CASCADE (D22): deleting a master option must leave the cell row alive —
+  # Coupang cannot physically delete an approved option, so the row becomes "channel-only (inactive)", which
+  # is the truth. The current onOptionRemoved hook only deactivates such rows; it never removes them.
+  - changeSet:
+      id: 060-listing-option-master-link-fk
+      author: oclyx
+      comment: "2609_22/D22: fk_plo_master_option ON DELETE SET NULL (CASCADE would delete live channel rows)."
+      changes:
+        - addForeignKeyConstraint:
+            constraintName: fk_plo_master_option
+            baseTableName: product_listing_option
+            baseColumnNames: master_product_option_id
+            referencedTableName: master_product_option
+            referencedColumnNames: id
+            onDelete: SET NULL
+      rollback:
+        - dropForeignKeyConstraint:
+            baseTableName: product_listing_option
+            constraintName: fk_plo_master_option

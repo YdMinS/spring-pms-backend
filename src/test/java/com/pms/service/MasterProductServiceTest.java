@@ -6,6 +6,7 @@ import com.pms.domain.GeneratedProductData;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.ListingStatus;
+import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductComponent;
 import com.pms.domain.MasterProductOption;
@@ -22,6 +23,7 @@ import com.pms.dto.request.MasterOptionRequest;
 import com.pms.dto.request.MasterProductQuery;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
+import com.pms.dto.response.ApplyOptionNamesResponse;
 import com.pms.dto.response.ChannelSyncPreviewResponse;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.MasterCategoryResponse;
@@ -228,20 +230,15 @@ class MasterProductServiceTest {
         ProductListingOption b2 = ProductListingOption.builder().id(3L).productListing(listingB)
                 .optionName("2세트").sellingPrice(new BigDecimal("12000")).active(true).build();
 
-        List<MasterProductOption> masterOptions = List.of(
-                MasterProductOption.builder().id(5L).name("1세트").build(),
-                MasterProductOption.builder().id(6L).name("2세트").build());
-
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
-        given(optionRepository.findByMasterProductId(1L)).willReturn(masterOptions);
         given(marketplaceAccountRepository.findAll()).willReturn(List.of(acc1, acc2));
         given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(listingA, listingB));
         given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of(a1, b1, b2));
         given(sellerRepository.findAllById(any())).willReturn(List.of(seller1, seller2));
-        // Generator is driven by each listing's active option-name set (A={1세트}, B={1세트,2세트}).
-        given(registrationNameGenerator.generate(eq(master), eq(java.util.Set.of("1세트")), any(), any()))
+        // 2609_22/D7: the generator now takes each listing's active option ROWS (A=[a1], B=[b1,b2]).
+        given(registrationNameGenerator.generate(eq(master), eq(List.of(a1)), any()))
                 .willReturn("노브랜드 생수 x 6");
-        given(registrationNameGenerator.generate(eq(master), eq(java.util.Set.of("1세트", "2세트")), any(), any()))
+        given(registrationNameGenerator.generate(eq(master), eq(List.of(b1, b2)), any()))
                 .willReturn("노브랜드 생수, 다우니 섬유유연제 - 옵션확인");
 
         ListingMatrixResponse matrix = service.getMatrix(1L);
@@ -250,8 +247,9 @@ class MasterProductServiceTest {
         assertThat(matrix.getRows().get(1).getCell().getRegistrationName())
                 .isEqualTo("노브랜드 생수, 다우니 섬유유연제 - 옵션확인");
 
-        // Master options loaded once (N+1 guard) — the generator re-reads no options from the repo.
-        verify(optionRepository, times(1)).findByMasterProductId(1L);
+        // 2609_22/D1: the matrix no longer queries the master options at all — the FK on each cell option is
+        // the matching axis, so this query (the old N+1 guard subject) has simply disappeared.
+        verify(optionRepository, never()).findByMasterProductId(1L);
     }
 
     @Test
@@ -476,17 +474,14 @@ class MasterProductServiceTest {
         OptionCheckSuffix on = new OptionCheckSuffix(true, "옵션확인");
 
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
-        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(
-                MasterProductOption.builder().id(5L).name("1세트").build(),
-                MasterProductOption.builder().id(6L).name("2세트").build()));
         given(marketplaceAccountRepository.findAll()).willReturn(List.of(acc1, acc2));
         given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(listingA, listingB));
         given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of(a1, a2, b1, b2));
         given(sellerRepository.findAllById(any())).willReturn(List.of(seller1, seller2));
         given(optionCheckSuffixResolver.resolve(eq(acc1), eq(master), any())).willReturn(off);
         given(optionCheckSuffixResolver.resolve(eq(acc2), eq(master), any())).willReturn(on);
-        given(registrationNameGenerator.generate(eq(master), any(), any(), eq(off))).willReturn("구성A");
-        given(registrationNameGenerator.generate(eq(master), any(), any(), eq(on))).willReturn("구성A - 옵션확인");
+        given(registrationNameGenerator.generate(eq(master), any(), eq(off))).willReturn("구성A");
+        given(registrationNameGenerator.generate(eq(master), any(), eq(on))).willReturn("구성A - 옵션확인");
 
         ListingMatrixResponse matrix = service.getMatrix(1L);
 
@@ -1309,8 +1304,11 @@ class MasterProductServiceTest {
         given(productRepository.findAllById(any())).willReturn(List.of(product(1L, "상품1")));
 
         ProductListing cell = draftCell(200L);
+        // 2609_22/D1: the cell option is LINKED to master option 10 — that FK, not the name, is what the
+        // quantity re-sync and the stock clamp match on.
         ProductListingOption channelOption =
-                cellOption(50L, cell, "2세트", true, null, OptionApprovalStatus.NOT_APPROVED);
+                cellOption(50L, cell, "2세트", true, null, OptionApprovalStatus.NOT_APPROVED)
+                        .toBuilder().masterProductOption(option).build();
         // lenient: only read when something downstream actually changed (rename / quantity)
         lenient().when(productListingRepository.findByMasterProductId(1L)).thenReturn(List.of(cell));
         return channelOption;
@@ -1356,7 +1354,7 @@ class MasterProductServiceTest {
         // optionName is the master↔channel match key — leaving it stale would orphan the channel option.
         // 86: the cascade itself lives in MasterOptionChannelSync (asserted in its own test); here we only
         // pin that updateOption hands it the old and new name.
-        verify(masterOptionChannelSync).onOptionRenamed(1L, "2세트", "두세트");
+        verify(masterOptionChannelSync).onOptionRenamed(1L, 10L, "두세트");
         // quantities unchanged → no quantity re-sync
         verify(optionQuantitySync, never()).syncLines(any(), any());
     }
@@ -1375,7 +1373,7 @@ class MasterProductServiceTest {
         service.updateOption(1L, 10L, MasterOptionRequest.builder()
                 .name("두세트").items(List.of(item(1L, 3))).build());
 
-        verify(masterOptionChannelSync).onOptionRenamed(1L, "2세트", "두세트");
+        verify(masterOptionChannelSync).onOptionRenamed(1L, 10L, "두세트");
         verify(optionQuantitySync).syncLines(eq(renamed), any(MasterProductOption.class));
         verify(listingAssetService).recalculateOptionPrices(any());
         verify(listingAssetService, never()).regenerateAssets(any());
@@ -1412,8 +1410,9 @@ class MasterProductServiceTest {
 
         service.deleteOption(1L, 10L);
 
-        // Name-keyed, and issued while the master option still exists (its name is the only match key).
-        verify(masterOptionChannelSync).onOptionRemoved(1L, "2세트");
+        // 2609_22/D1: keyed by the master option id, and issued while the row still exists (the FK is
+        // ON DELETE SET NULL, so afterwards nothing points at it).
+        verify(masterOptionChannelSync).onOptionRemoved(1L, 10L);
     }
 
     @Test
@@ -1447,9 +1446,16 @@ class MasterProductServiceTest {
                 .platformProductId(platformProductId).name("리스팅" + id).build();
     }
 
+    /** 2609_22/D2: no FK = a channel-only option — the master owns nothing here. */
     private ProductListingOption cellOption(Long id, ProductListing cell, String name, boolean active) {
+        return cellOption(id, cell, name, active, null);
+    }
+
+    /** 2609_22/D1: {@code linked} is the master option this cell option points at (the matching axis). */
+    private ProductListingOption cellOption(Long id, ProductListing cell, String name, boolean active,
+                                            MasterProductOption linked) {
         return ProductListingOption.builder().id(id).productListing(cell).optionName(name)
-                .active(active).sellingPrice(new BigDecimal("1000")).build();
+                .masterProductOption(linked).active(active).sellingPrice(new BigDecimal("1000")).build();
     }
 
     private GeneratedProductData generated(ProductListing cell) {
@@ -1474,7 +1480,7 @@ class MasterProductServiceTest {
         MasterProductOption m2 = MasterProductOption.builder().id(6L).name("2세트").build();
 
         ProductListing cell = previewCell(100L, seller, "COUPANG", null);
-        ProductListingOption o1 = cellOption(1L, cell, "1세트", true);
+        ProductListingOption o1 = cellOption(1L, cell, "1세트", true, m1);
 
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
         given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1, m2));
@@ -1498,23 +1504,24 @@ class MasterProductServiceTest {
         assertThat(channel.getPlatform()).isEqualTo("COUPANG");
         assertThat(channel.isOnMarket()).isFalse();
         assertThat(channel.getMissingOptions()).containsExactly("2세트");
-        assertThat(channel.getOrphanOptions()).isEmpty();
+        assertThat(channel.getChannelOnlyOptions()).isEmpty();
         assertThat(channel.getQuantityMismatchOptions()).isEmpty();
         assertThat(preview.getTotals().getMissingOptions()).isEqualTo(1);
         assertThat(preview.getTotals().getAffectedChannels()).isEqualTo(1);
     }
 
     @Test
-    void previewChannelSync_activeOrphanOnDraftCell_isOrphan() {
-        // DRAFT cell (no platformProductId) → syncStructure (2) switches this option off, so it counts.
+    void previewChannelSync_activeChannelOnlyOnDraftCell_isChannelOnly() {
+        // 2609_22/D22: an option the master does not own (FK null) on a DRAFT cell → syncStructure (2) would
+        // switch it off, so it counts. The old "orphan" concept is this same case, renamed.
         Seller seller = seller(1L, "행복상회");
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
         Product p1 = product(11L, "상품1");
         MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
 
         ProductListing cell = previewCell(100L, seller, "COUPANG", null);
-        ProductListingOption kept = cellOption(1L, cell, "1세트", true);
-        ProductListingOption orphan = cellOption(2L, cell, "삭제된옵션", true);
+        ProductListingOption kept = cellOption(1L, cell, "1세트", true, m1);
+        ProductListingOption channelOnly = cellOption(2L, cell, "채널전용옵션", true);
 
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
         given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1));
@@ -1523,7 +1530,7 @@ class MasterProductServiceTest {
         given(generatedProductDataRepository.findByProductListingIdIn(any()))
                 .willReturn(List.of(generated(cell)));
         given(productListingOptionRepository.findByProductListingIdIn(any()))
-                .willReturn(List.of(kept, orphan));
+                .willReturn(List.of(kept, channelOnly));
         given(productListingProductRepository.findByProductListingOptionIdIn(any()))
                 .willReturn(List.of(cellLine(kept, p1, 1)));
         given(sellerRepository.findAllById(any())).willReturn(List.of(seller));
@@ -1531,9 +1538,9 @@ class MasterProductServiceTest {
         ChannelSyncPreviewResponse preview = service.previewChannelSync(1L);
 
         assertThat(preview.isInSync()).isFalse();
-        assertThat(preview.getChannels().get(0).getOrphanOptions()).containsExactly("삭제된옵션");
-        assertThat(preview.getChannels().get(0).getMarketOrphanOptions()).isEmpty();
-        assertThat(preview.getTotals().getOrphanOptions()).isEqualTo(1);
+        assertThat(preview.getChannels().get(0).getChannelOnlyOptions()).containsExactly("채널전용옵션");
+        assertThat(preview.getChannels().get(0).getMarketChannelOnlyOptions()).isEmpty();
+        assertThat(preview.getTotals().getChannelOnlyOptions()).isEqualTo(1);
         assertThat(preview.getTotals().getAffectedChannels()).isEqualTo(1);
     }
 
@@ -1550,8 +1557,8 @@ class MasterProductServiceTest {
         MasterProductOption m2 = MasterProductOption.builder().id(6L).name("2세트").build();
 
         ProductListing cell = previewCell(100L, seller, "COUPANG", null);
-        ProductListingOption o1 = cellOption(1L, cell, "1세트", true);
-        ProductListingOption o2 = cellOption(2L, cell, "2세트", false);
+        ProductListingOption o1 = cellOption(1L, cell, "1세트", true, m1);
+        ProductListingOption o2 = cellOption(2L, cell, "2세트", false, m2);
 
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
         given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1, m2));
@@ -1572,21 +1579,21 @@ class MasterProductServiceTest {
         assertThat(preview.isInSync()).isFalse();
         assertThat(preview.getChannels().get(0).getQuantityMismatchOptions()).containsExactly("2세트");
         assertThat(preview.getChannels().get(0).getMissingOptions()).isEmpty();
-        assertThat(preview.getChannels().get(0).getOrphanOptions()).isEmpty();
+        assertThat(preview.getChannels().get(0).getChannelOnlyOptions()).isEmpty();
         assertThat(preview.getTotals().getQuantityMismatch()).isEqualTo(1);
     }
 
     @Test
-    void previewChannelSync_inactiveOrphan_isNotCounted() {
-        // Rows are never deleted (decision 42) — an already-off orphan stays off, so propagation writes nothing.
+    void previewChannelSync_inactiveChannelOnly_isNotCounted() {
+        // Rows are never deleted (decision 42) — an already-off option stays off, so propagation writes nothing.
         Seller seller = seller(1L, "행복상회");
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
         Product p1 = product(11L, "상품1");
         MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
 
         ProductListing cell = previewCell(100L, seller, "COUPANG", null);
-        ProductListingOption kept = cellOption(1L, cell, "1세트", true);
-        ProductListingOption offOrphan = cellOption(2L, cell, "이미꺼진옵션", false);
+        ProductListingOption kept = cellOption(1L, cell, "1세트", true, m1);
+        ProductListingOption offChannelOnly = cellOption(2L, cell, "이미꺼진옵션", false);
 
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
         given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1));
@@ -1595,7 +1602,7 @@ class MasterProductServiceTest {
         given(generatedProductDataRepository.findByProductListingIdIn(any()))
                 .willReturn(List.of(generated(cell)));
         given(productListingOptionRepository.findByProductListingIdIn(any()))
-                .willReturn(List.of(kept, offOrphan));
+                .willReturn(List.of(kept, offChannelOnly));
         given(productListingProductRepository.findByProductListingOptionIdIn(any()))
                 .willReturn(List.of(cellLine(kept, p1, 1)));
         given(sellerRepository.findAllById(any())).willReturn(List.of(seller));
@@ -1604,12 +1611,12 @@ class MasterProductServiceTest {
 
         assertThat(preview.isInSync()).isTrue();
         assertThat(preview.getChannels()).isEmpty();
-        assertThat(preview.getTotals().getOrphanOptions()).isZero();
+        assertThat(preview.getTotals().getChannelOnlyOptions()).isZero();
     }
 
     @Test
-    void previewChannelSync_activeOrphanOnMarketCell_isInformationalOnly() {
-        // syncStructure leaves an on-market orphan alone (WARN) → reported, but never counted or it would
+    void previewChannelSync_activeChannelOnlyOnMarketCell_isInformationalOnly() {
+        // syncStructure leaves an on-market channel-only option alone (WARN) → reported, never counted or it would
         // keep inSync=false for ever. The operator stops it in WING.
         Seller seller = seller(1L, "행복상회");
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
@@ -1617,8 +1624,8 @@ class MasterProductServiceTest {
         MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
 
         ProductListing cell = previewCell(100L, seller, "COUPANG", "X");   // on market
-        ProductListingOption kept = cellOption(1L, cell, "1세트", true);
-        ProductListingOption orphan = cellOption(2L, cell, "삭제된옵션", true);
+        ProductListingOption kept = cellOption(1L, cell, "1세트", true, m1);
+        ProductListingOption channelOnly = cellOption(2L, cell, "채널전용옵션", true);
 
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
         given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1));
@@ -1627,7 +1634,7 @@ class MasterProductServiceTest {
         given(generatedProductDataRepository.findByProductListingIdIn(any()))
                 .willReturn(List.of(generated(cell)));
         given(productListingOptionRepository.findByProductListingIdIn(any()))
-                .willReturn(List.of(kept, orphan));
+                .willReturn(List.of(kept, channelOnly));
         given(productListingProductRepository.findByProductListingOptionIdIn(any()))
                 .willReturn(List.of(cellLine(kept, p1, 1)));
         given(sellerRepository.findAllById(any())).willReturn(List.of(seller));
@@ -1637,9 +1644,9 @@ class MasterProductServiceTest {
         assertThat(preview.isInSync()).isTrue();
         assertThat(preview.getChannels()).hasSize(1);
         assertThat(preview.getChannels().get(0).isOnMarket()).isTrue();
-        assertThat(preview.getChannels().get(0).getMarketOrphanOptions()).containsExactly("삭제된옵션");
-        assertThat(preview.getChannels().get(0).getOrphanOptions()).isEmpty();
-        assertThat(preview.getTotals().getOrphanOptions()).isZero();
+        assertThat(preview.getChannels().get(0).getMarketChannelOnlyOptions()).containsExactly("채널전용옵션");
+        assertThat(preview.getChannels().get(0).getChannelOnlyOptions()).isEmpty();
+        assertThat(preview.getTotals().getChannelOnlyOptions()).isZero();
         assertThat(preview.getTotals().getAffectedChannels()).isZero();
     }
 
@@ -1675,7 +1682,7 @@ class MasterProductServiceTest {
         MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
 
         ProductListing cell = previewCell(100L, seller, "COUPANG", "X");
-        ProductListingOption o1 = cellOption(1L, cell, "1세트", true);
+        ProductListingOption o1 = cellOption(1L, cell, "1세트", true, m1);
 
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
         given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1));
@@ -1728,13 +1735,13 @@ class MasterProductServiceTest {
         ProductListing cell1 = previewCell(100L, sellerB, "COUPANG", null);
         ProductListing cell2 = previewCell(101L, sellerA, "NAVER", null);
         ProductListing cell3 = previewCell(102L, sellerA, "COUPANG", null);
-        // Two options per cell: the matched "1세트" + one orphan → every cell has a difference.
-        ProductListingOption o11 = cellOption(1L, cell1, "1세트", true);
-        ProductListingOption o12 = cellOption(2L, cell1, "고아1", true);
-        ProductListingOption o21 = cellOption(3L, cell2, "1세트", true);
-        ProductListingOption o22 = cellOption(4L, cell2, "고아2", true);
-        ProductListingOption o31 = cellOption(5L, cell3, "1세트", true);
-        ProductListingOption o32 = cellOption(6L, cell3, "고아3", true);
+        // Two options per cell: the linked "1세트" + one channel-only option → every cell has a difference.
+        ProductListingOption o11 = cellOption(1L, cell1, "1세트", true, m1);
+        ProductListingOption o12 = cellOption(2L, cell1, "채널전용1", true);
+        ProductListingOption o21 = cellOption(3L, cell2, "1세트", true, m1);
+        ProductListingOption o22 = cellOption(4L, cell2, "채널전용2", true);
+        ProductListingOption o31 = cellOption(5L, cell3, "1세트", true, m1);
+        ProductListingOption o32 = cellOption(6L, cell3, "채널전용3", true);
 
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
         given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1));
@@ -1751,7 +1758,7 @@ class MasterProductServiceTest {
         ChannelSyncPreviewResponse preview = service.previewChannelSync(1L);
 
         assertThat(preview.getTotals().getAffectedChannels()).isEqualTo(3);
-        assertThat(preview.getTotals().getOrphanOptions()).isEqualTo(3);
+        assertThat(preview.getTotals().getChannelOnlyOptions()).isEqualTo(3);
         // 가판매자/COUPANG → 가판매자/NAVER → 나판매자/COUPANG
         assertThat(preview.getChannels()).extracting(ChannelSyncPreviewResponse.Channel::getListingId)
                 .containsExactly(102L, 101L, 100L);
@@ -1762,6 +1769,78 @@ class MasterProductServiceTest {
         verify(productListingProductRepository, times(1)).findByProductListingOptionIdIn(any());
         verify(optionItemRepository, times(1)).findByOptionIdIn(any());
         verify(sellerRepository, times(1)).findAllById(any());
+    }
+
+    // ------------------------------------------------------- 2609_22/D4: [옵션명 일괄 적용]
+
+    @Test
+    void applyMasterOptionNames_revertsOverridesAndLeavesChannelOnlyAlone() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
+        MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
+        MasterProductOption m2 = MasterProductOption.builder().id(6L).name("2세트").build();
+        ProductListing cell = previewCell(100L, seller(1L, "행복상회"), "COUPANG", null);
+
+        ProductListingOption overridden1 = cellOption(1L, cell, "채널이 붙인 이름", true, m1).toBuilder()
+                .optionNameSource(GeneratedContentSource.MANUAL_OVERRIDE).build();
+        ProductListingOption overridden2 = cellOption(2L, cell, "채널이 붙인 다른 이름", true, m2).toBuilder()
+                .optionNameSource(GeneratedContentSource.MANUAL_OVERRIDE).build();
+        ProductListingOption channelOnly = cellOption(3L, cell, "채널전용", true);
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1, m2));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cell));
+        given(productListingOptionRepository.findByProductListingId(100L))
+                .willReturn(List.of(overridden1, overridden2, channelOnly));
+
+        ApplyOptionNamesResponse response = service.applyMasterOptionNames(1L);
+
+        assertThat(response.getUpdatedCells()).isEqualTo(1);
+        assertThat(response.getUpdatedOptions()).isEqualTo(2);
+        assertThat(response.getWarnings()).isEmpty();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ProductListingOption>> saved = ArgumentCaptor.forClass(List.class);
+        verify(productListingOptionRepository).saveAll(saved.capture());
+        // The channel-only option (D2) is untouched — there is no master name for it to take.
+        assertThat(saved.getValue()).extracting(ProductListingOption::getId).containsExactly(1L, 2L);
+        assertThat(saved.getValue()).extracting(ProductListingOption::getOptionName)
+                .containsExactly("1세트", "2세트");
+        assertThat(saved.getValue()).extracting(ProductListingOption::getOptionNameSource)
+                .containsOnly(GeneratedContentSource.AUTO);
+    }
+
+    @Test
+    void applyMasterOptionNames_cellWhereResetWouldDuplicate_isSkippedWithWarning() {
+        // The reset would give both options of cell 100 the name "1세트" (a duplicate Coupang itemName), so
+        // that cell is skipped as a whole — the other cell is still applied (never fail the batch).
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
+        MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
+        ProductListing clash = previewCell(100L, seller(1L, "행복상회"), "COUPANG", null);
+        ProductListing ok = previewCell(101L, seller(2L, "기쁨상회"), "COUPANG", null);
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(clash, ok));
+        // A channel-only option already holds "1세트" → resetting the linked one would collide.
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                cellOption(1L, clash, "채널이 붙인 이름", true, m1).toBuilder()
+                        .optionNameSource(GeneratedContentSource.MANUAL_OVERRIDE).build(),
+                cellOption(2L, clash, "1세트", true)));
+        given(productListingOptionRepository.findByProductListingId(101L)).willReturn(List.of(
+                cellOption(3L, ok, "다른 이름", true, m1).toBuilder()
+                        .optionNameSource(GeneratedContentSource.MANUAL_OVERRIDE).build()));
+
+        ApplyOptionNamesResponse response = service.applyMasterOptionNames(1L);
+
+        assertThat(response.getUpdatedCells()).isEqualTo(1);
+        assertThat(response.getUpdatedOptions()).isEqualTo(1);
+        assertThat(response.getWarnings()).hasSize(1);
+        assertThat(response.getWarnings().get(0)).contains("100");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ProductListingOption>> saved = ArgumentCaptor.forClass(List.class);
+        verify(productListingOptionRepository, times(1)).saveAll(saved.capture());
+        assertThat(saved.getValue()).extracting(ProductListingOption::getId).containsExactly(3L);
     }
 
     // ------------------------------------------------------------- 102: option stock quantity
@@ -1784,11 +1863,12 @@ class MasterProductServiceTest {
         given(productRepository.findAllById(any())).willReturn(List.of(product(1L, "상품1")));
         // Unlocked: no cell reached the market → the lock query returns nothing.
         given(productListingRepository.findByMasterProductIdIn(List.of(1L))).willReturn(List.of());
-        // Clamp axis: this master's cells → same-named channel options.
+        // Clamp axis (2609_22/D1): this master's cells → the options LINKED to this master option.
         ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀").build();
         given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cell));
         given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
                 ProductListingOption.builder().id(5L).productListing(cell).optionName("2세트")
+                        .masterProductOption(option)
                         .active(true).approvalStatus(OptionApprovalStatus.NOT_APPROVED)
                         .stockQuantity(channelStock).build()));
         return option;

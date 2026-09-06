@@ -359,19 +359,16 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     @Override
     @Transactional
     public void recalculateOptionPrices(ProductListing cell) {
-        // Match each listing option to its master option by optionName (one query, outside the loop — no
-        // N+1); an unmatched option means "no override" → the price engine falls back to the master defaults.
-        Map<String, MasterProductOption> masterOptionsByName = cell.getMasterProduct() == null
-                ? Map.of()
-                : masterProductOptionRepository.findByMasterProductId(cell.getMasterProduct().getId()).stream()
-                        .collect(Collectors.toMap(MasterProductOption::getName, Function.identity(), (a, b) -> a));
+        // 2609_22/D1: match each listing option to its master option by the FK (one query, outside the loop —
+        // no N+1); a channel-only option (FK null) means "no master defaults" → the price engine falls back.
+        Map<Long, MasterProductOption> masterOptionsById = masterOptionsById(cell);
         for (ProductListingOption option : productListingOptionRepository.findByProductListingId(cell.getId())) {
             // 2609_19/D2: a price the user set for this channel only is not touched by a regeneration
             // (same rule as the MANUAL_OVERRIDE detail HTML above).
             if (option.getPriceSource() == GeneratedContentSource.MANUAL_OVERRIDE) {
                 continue;
             }
-            MasterProductOption mo = masterOptionsByName.get(option.getOptionName());
+            MasterProductOption mo = linkedMaster(option, masterOptionsById);
             PriceCalculator.PriceResult price = quote(cell, option, mo);
             productListingOptionRepository.save(option.toBuilder()
                     .sellingPrice(price.salePrice())
@@ -382,10 +379,12 @@ public class ListingAssetServiceImpl implements ListingAssetService {
 
     @Override
     public PriceCalculator.PriceResult quoteOptionPrice(ProductListing cell, ProductListingOption option) {
-        // Single option → no name→master map (that exists in the batch above only to avoid an N+1).
-        MasterProductOption mo = cell.getMasterProduct() == null ? null
+        // Single option → no id→master map (that exists in the batch above only to avoid an N+1).
+        // 2609_22/D1: the FK is the only matching axis; a channel-only option resolves to null (D2).
+        Long masterOptionId = linkedMasterOptionId(option);
+        MasterProductOption mo = masterOptionId == null || cell.getMasterProduct() == null ? null
                 : masterProductOptionRepository.findByMasterProductId(cell.getMasterProduct().getId()).stream()
-                        .filter(m -> m.getName() != null && m.getName().equals(option.getOptionName()))
+                        .filter(m -> masterOptionId.equals(m.getId()))
                         .findFirst()
                         .orElse(null);
         return quote(cell, option, mo);
@@ -398,6 +397,31 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     private PriceCalculator.PriceResult quote(ProductListing cell, ProductListingOption option,
                                               MasterProductOption masterOption) {
         return priceCalculator.calculatePrices(cell, masterOption, optionCostSum(option));
+    }
+
+    /**
+     * The cell's master options keyed by id — the single matching axis since 2609_22/D1. Built once per cell,
+     * always OUTSIDE an option loop. A legacy cell without a master yields an empty map (every option resolves
+     * to null = master defaults / ceiling 9999).
+     */
+    private Map<Long, MasterProductOption> masterOptionsById(ProductListing cell) {
+        return cell.getMasterProduct() == null
+                ? Map.of()
+                : masterProductOptionRepository.findByMasterProductId(cell.getMasterProduct().getId()).stream()
+                        .collect(Collectors.toMap(MasterProductOption::getId, Function.identity(), (a, b) -> a));
+    }
+
+    /** The master option this cell option is linked to, or null for a channel-only option (2609_22/D2). */
+    private static MasterProductOption linkedMaster(ProductListingOption option,
+                                                    Map<Long, MasterProductOption> byId) {
+        Long masterOptionId = linkedMasterOptionId(option);
+        return masterOptionId == null ? null : byId.get(masterOptionId);
+    }
+
+    /** ⚠️ Reads the id only — safe on a LAZY proxy, so no extra query per option. */
+    private static Long linkedMasterOptionId(ProductListingOption option) {
+        MasterProductOption masterOption = option.getMasterProductOption();
+        return masterOption == null ? null : masterOption.getId();
     }
 
     // ---------------------------------------------------------------- helpers
@@ -533,12 +557,9 @@ public class ListingAssetServiceImpl implements ListingAssetService {
 
     /** Cell view; {@code data} may be null (e.g. the tags endpoint on a not-yet-generated cell → asset fields null). */
     private GeneratedProductResponse toResponse(ProductListing cell, GeneratedProductData data) {
-        // 102: master options keyed by name resolve each option's stock ceiling. One query per cell, built
-        // OUTSIDE the option loop — inside it this would be an N+1 (the matrix calls getGenerated per cell).
-        Map<String, MasterProductOption> masterOptionsByName = cell.getMasterProduct() == null
-                ? Map.of()
-                : masterProductOptionRepository.findByMasterProductId(cell.getMasterProduct().getId()).stream()
-                        .collect(Collectors.toMap(MasterProductOption::getName, Function.identity(), (a, b) -> a));
+        // 102: master options keyed by id (2609_22/D1) resolve each option's stock ceiling. One query per cell,
+        // built OUTSIDE the option loop — inside it this would be an N+1 (the matrix calls getGenerated per cell).
+        Map<Long, MasterProductOption> masterOptionsById = masterOptionsById(cell);
         List<GeneratedProductResponse.OptionPrice> optionPrices = productListingOptionRepository
                 .findByProductListingId(cell.getId()).stream()
                 .map(o -> GeneratedProductResponse.OptionPrice.builder()
@@ -550,7 +571,11 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                         // (platformOptionId/approvalStatus are only filled by fetchStatus after a push anyway).
                         .onMarket(o.isMarketRegistered())
                         .stockQuantity(o.getStockQuantity())
-                        .maxStock(ListingStockPolicy.ceiling(masterOptionsByName.get(o.getOptionName())))
+                        .maxStock(ListingStockPolicy.ceiling(linkedMaster(o, masterOptionsById)))
+                        // 2609_22/D2·D3: channel-only = no master option behind it; the name's origin lets the
+                        // UI mark an option the channel named itself.
+                        .channelOnly(o.isChannelOnly())
+                        .optionNameSource(o.getOptionNameSource() != null ? o.getOptionNameSource().name() : null)
                         // 2609_19: lets the matrix mark a manually priced option (the price itself is
                         // already the effective one in sellingPrice — this is only its origin).
                         .priceSource(o.getPriceSource() != null ? o.getPriceSource().name() : null)

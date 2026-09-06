@@ -669,6 +669,39 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
+    // ------------------------------------------------- 2609_22/D4: [옵션명 일괄 적용]
+
+    @Test
+    void applyOptionNames_noToken_returns401() throws Exception {
+        mockMvc.perform(post(PATH + "/" + masterId + "/options/apply-names"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void applyOptionNames_userToken_returns403() throws Exception {
+        mockMvc.perform(post(PATH + "/" + masterId + "/options/apply-names")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void applyOptionNames_adminToken_returns200WithCounts() throws Exception {
+        mockMvc.perform(post(PATH + "/" + masterId + "/options/apply-names")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.updatedCells").exists())
+                .andExpect(jsonPath("$.data.updatedOptions").exists())
+                .andExpect(jsonPath("$.data.warnings").isArray());
+    }
+
+    @Test
+    void applyOptionNames_missingMaster_returns404() throws Exception {
+        mockMvc.perform(post(PATH + "/999999/options/apply-names")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound());
+    }
+
     private String attributesBody() {
         return "{\"attributes\":{\"원산지\":\"국내산\"},\"notices\":{},\"noticeGroup\":\"가공식품\"}";
     }
