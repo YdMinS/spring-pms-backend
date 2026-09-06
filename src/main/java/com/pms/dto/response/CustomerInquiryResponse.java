@@ -16,8 +16,9 @@ import java.util.List;
  * <p>{@code replies}·{@code relatedOrder}·{@code relatedListing} 은 <b>단건 조회에서만</b> 채워진다 —
  * 목록에서 스레드를 fetch 하면 화면 하나가 답변 수만큼 쿼리를 끈다(PLAN §3).
  *
- * <p>⚠️ {@code replyCapability}(PLAN §5)는 <b>04 에서 추가</b>한다. 여기에 빈 껍데기를 만들지 말 것 —
- * 판정 근거({@code vendor_user_id}·{@code transfer_status})를 dev 실데이터로 본 뒤 확정한다.
+ * <p>{@code replyCapability}(PLAN §5·D5)도 <b>단건 조회와 답변 전송 성공 응답에서만</b> 채워진다 —
+ * 목록에서 채우려면 행마다 계정을 들여다봐야 하고 목록에서는 쓰지 않는다. 판정은 서버 한 곳
+ * ({@code InquiryReplyPolicy})에만 있고, 클라이언트는 {@code canReply}·{@code reason} 을 렌더만 한다.
  *
  * <p>🔴 구매자 연락처·이메일을 담지 않는다(D13).
  */
@@ -45,5 +46,6 @@ public record CustomerInquiryResponse(
         boolean linked,
         List<CustomerInquiryReplyResponse> replies,
         InquiryRelatedOrderResponse relatedOrder,
-        InquiryRelatedListingResponse relatedListing) {
+        InquiryRelatedListingResponse relatedListing,
+        ReplyCapability replyCapability) {
 }

@@ -13,6 +13,7 @@ import com.pms.dto.response.CustomerInquiryResponse;
 import com.pms.dto.response.InquiryRelatedListingResponse;
 import com.pms.dto.response.InquiryRelatedOrderResponse;
 import com.pms.dto.response.InquiryTypeCatalogResponse;
+import com.pms.dto.response.ReplyCapability;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CustomerInquiryReplyRepository;
 import com.pms.repository.CustomerInquiryRepository;
@@ -37,6 +38,10 @@ import java.util.List;
  * <p>단건은 우측 패널까지 한 번에 실어 보낸다(PLAN §6) — 프론트가 {@code externalOrderId} 로 주문
  * 목록을 다시 뒤지면 기간 필터에 걸려 못 찾는 건이 생긴다.
  *
+ * <p>단건에는 {@code replyCapability}(D5)도 함께 싣는다 — 목록에는 넣지 않는다(행마다 계정을 들여다봐야
+ * 하고 목록에서는 쓰지 않는다). 답변 전송({@code InquiryReplyService})도 <b>이 단건 조회를 그대로 호출</b>해
+ * 응답을 조립하므로 조립 경로가 한 벌뿐이다.
+ *
  * <p>🔴 연락처·주소를 응답에 담지 않는다(D13). 이름만 실린다.
  */
 @Service
@@ -53,6 +58,7 @@ public class InquiryQueryServiceImpl implements InquiryQueryService {
     private final ProductListingOptionRepository productListingOptionRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final InquiryTypeCatalog inquiryTypeCatalog;
+    private final InquiryReplyPolicy inquiryReplyPolicy;
 
     @Override
     public List<CustomerInquiryResponse> getInquiries(InquiryType type, InquiryStatus status, Long accountId,
@@ -86,12 +92,15 @@ public class InquiryQueryServiceImpl implements InquiryQueryService {
         CustomerInquiry inquiry = customerInquiryRepository.findWithAccountById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Inquiry", id));
 
-        List<CustomerInquiryReplyResponse> replies = customerInquiryReplyRepository
-                .findByInquiry_IdOrderByRepliedAtAsc(inquiry.getId()).stream()
+        List<CustomerInquiryReply> thread =
+                customerInquiryReplyRepository.findByInquiry_IdOrderByRepliedAtAsc(inquiry.getId());
+        List<CustomerInquiryReplyResponse> replies = thread.stream()
                 .map(this::toReplyResponse)
                 .toList();
 
-        return toResponse(inquiry, replies, relatedOrder(inquiry), relatedListing(inquiry));
+        // 답변 가능 여부는 단건에서만 채운다(D5) — 판정은 정책 한 곳이고, 답변 전송 응답도 같은 경로를 탄다.
+        ReplyCapability capability = inquiryReplyPolicy.evaluate(inquiry, thread);
+        return toResponse(inquiry, replies, relatedOrder(inquiry), relatedListing(inquiry), capability);
     }
 
     @Override
@@ -153,13 +162,14 @@ public class InquiryQueryServiceImpl implements InquiryQueryService {
 
     /** 목록 응답 — 스레드·우측 패널은 담지 않는다(PLAN §3). */
     private CustomerInquiryResponse toListResponse(CustomerInquiry inquiry) {
-        return toResponse(inquiry, null, null, null);
+        return toResponse(inquiry, null, null, null, null);
     }
 
     private CustomerInquiryResponse toResponse(CustomerInquiry inquiry,
                                                List<CustomerInquiryReplyResponse> replies,
                                                InquiryRelatedOrderResponse relatedOrder,
-                                               InquiryRelatedListingResponse relatedListing) {
+                                               InquiryRelatedListingResponse relatedListing,
+                                               ReplyCapability replyCapability) {
         MarketplaceAccount account = inquiry.getMarketplaceAccount();
         Seller seller = (account != null) ? account.getSeller() : null;
         return new CustomerInquiryResponse(
@@ -186,7 +196,8 @@ public class InquiryQueryServiceImpl implements InquiryQueryService {
                 inquiry.isLinked(),
                 replies,
                 relatedOrder,
-                relatedListing);
+                relatedListing,
+                replyCapability);
     }
 
     private CustomerInquiryReplyResponse toReplyResponse(CustomerInquiryReply reply) {

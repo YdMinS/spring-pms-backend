@@ -78,6 +78,20 @@ public class GlobalExceptionHandler {
                 .body(ResponseDTO.failure("쿠팡 처리에 실패했습니다", e.getResult()));
     }
 
+    /**
+     * 플랫폼이 고객문의 답변을 거절한 경우 → 400 + 원문 메시지 (FEATURE_2609_23 / 04).
+     *
+     * ⚠️ 클레임 액션(502)과 상태코드가 다르다 — 여기서는 사용자가 <b>본문을 고쳐 재시도</b>할 수 있다.
+     * 전송 결과를 알 수 없는 타임아웃·네트워크 오류는 {@link BusinessException}(502)으로 따로 온다.
+     */
+    @ExceptionHandler(com.pms.service.inquiry.InquiryReplyFailedException.class)
+    public ResponseEntity<ResponseDTO<Void>> handleInquiryReplyFailedException(
+            com.pms.service.inquiry.InquiryReplyFailedException e) {
+        log.warn("InquiryReplyFailedException: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ResponseDTO.failure(e.getMessage()));
+    }
+
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ResponseDTO<Void>> handleBusinessException(BusinessException e) {
         log.warn("BusinessException: {}", e.getMessage());
