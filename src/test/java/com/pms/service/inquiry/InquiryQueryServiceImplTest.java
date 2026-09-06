@@ -57,9 +57,11 @@ class InquiryQueryServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        // 정책은 목이 아니라 실제 구현을 넣는다 — 어댑터 목록이 비면 단건 응답의 capability 가
+        // "지원하지 않는 채널" 로 내려오는 것까지 함께 고정된다(04).
         service = new InquiryQueryServiceImpl(customerInquiryRepository, customerInquiryReplyRepository,
                 orderItemRepository, productListingOptionRepository, marketplaceAccountRepository,
-                new InquiryTypeCatalog());
+                new InquiryTypeCatalog(), new InquiryReplyPolicy(List.of()));
     }
 
     @Test

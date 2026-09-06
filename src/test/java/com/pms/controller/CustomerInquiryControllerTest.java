@@ -94,6 +94,6 @@ class CustomerInquiryControllerTest extends BaseIntegrationTest {
         return new CustomerInquiryResponse(1L, "COUPANG", 7L, "쿠팡-메인", 5L, "테스트셀러",
                 InquiryType.PRODUCT_QNA, InquiryStatus.UNANSWERED, "NOANSWER",
                 "I-1", null, "V-1", "P-1", null, null, "양말", "재입고 문의", null,
-                LocalDateTime.of(2026, 9, 1, 10, 0), null, false, null, null, null);
+                LocalDateTime.of(2026, 9, 1, 10, 0), null, false, null, null, null, null);
     }
 }
