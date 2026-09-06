@@ -30,6 +30,25 @@ public interface ProductListingRepository extends JpaRepository<ProductListing, 
     Page<ProductListing> findByPlatform(String platform, Pageable pageable);
 
     /**
+     * Master-link filter for the listing screen (FEATURE_2609_22 / 04): the "마스터 미연결" tab lists exactly
+     * the cells the 04 flow can act on (legacy `판매상품 등록` cells that know no master).
+     *
+     * @param platform Platform identifier (e.g., "COUPANG")
+     * @param pageable Pagination information
+     * @return Page of cells with no master link
+     */
+    Page<ProductListing> findByPlatformAndMasterProductIsNull(String platform, Pageable pageable);
+
+    /**
+     * Counterpart of {@link #findByPlatformAndMasterProductIsNull} — cells already grouped under a master.
+     *
+     * @param platform Platform identifier (e.g., "COUPANG")
+     * @param pageable Pagination information
+     * @return Page of cells that are linked to a master
+     */
+    Page<ProductListing> findByPlatformAndMasterProductIsNotNull(String platform, Pageable pageable);
+
+    /**
      * Find a product listing by platform product ID.
      *
      * @param platformProductId Platform's product ID

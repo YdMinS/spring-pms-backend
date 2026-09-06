@@ -52,6 +52,14 @@ public class ProductListingResponse {
     @Schema(description = "Package type", example = "Box_Standard")
     private String packageType;
 
+    /**
+     * 이 셀이 속한 마스터 프로덕트 id — null = 마스터 미연결(legacy `판매상품 등록` 으로 만든 셀, 2609_22/04).
+     * 목록 화면의 배지·[마스터 만들기] 버튼 분기가 이 필드를 본다.
+     */
+    @Schema(description = "Linked master product ID; null = not linked to any master", example = "88",
+            nullable = true)
+    private Long masterProductId;
+
     @Schema(description = "Product listing options")
     private List<ProductListingOptionResponse> options;
 
@@ -70,6 +78,8 @@ public class ProductListingResponse {
                         ? listing.getDelivery().getCarrier().getName() : null)
                 .packageId(listing.getPackage_() != null ? listing.getPackage_().getId() : null)
                 .packageType(listing.getPackage_() != null ? listing.getPackage_().getType() : null)
+                // LAZY proxy — reading the FK id alone does not trigger a load.
+                .masterProductId(listing.getMasterProduct() != null ? listing.getMasterProduct().getId() : null)
                 .build();
     }
 
@@ -88,6 +98,8 @@ public class ProductListingResponse {
                         ? listing.getDelivery().getCarrier().getName() : null)
                 .packageId(listing.getPackage_() != null ? listing.getPackage_().getId() : null)
                 .packageType(listing.getPackage_() != null ? listing.getPackage_().getType() : null)
+                // LAZY proxy — reading the FK id alone does not trigger a load.
+                .masterProductId(listing.getMasterProduct() != null ? listing.getMasterProduct().getId() : null)
                 .options(options)
                 .build();
     }
