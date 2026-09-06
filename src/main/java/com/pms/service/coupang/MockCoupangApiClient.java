@@ -31,6 +31,7 @@ import java.nio.charset.StandardCharsets;
  *   <li>{@code shipping-place/outbound} 포함(GET) → 출고지 목록 fixture (72)</li>
  *   <li>{@code returnShippingCenters} 포함(GET) → 반품지 목록 fixture (72)</li>
  *   <li>{@code return-exchange-invoices} 포함(POST) → 액션 성공 응답 (2609_21 R3)</li>
+ *   <li>{@code /cancel} 포함(POST) → 취소 성공 응답 (2609_25, receiptMap 은 비어 있다)</li>
  *   <li>PATCH 전부 → 액션 성공 응답 (2609_21 R1·R2 — PATCH 는 클레임 액션 전용이다)</li>
  *   <li>그 외 → {@code {"code":200,"data":[]}}</li>
  * </ul>
@@ -52,6 +53,14 @@ public class MockCoupangApiClient implements CoupangApiClient {
      * 조용히 성공으로 떨어진다. 액션 전용으로 message 까지 채운 응답을 준다.
      */
     private static final String ACTION_OK = "{\"code\":200,\"message\":\"OK\"}";
+    /**
+     * 발송 전 주문 취소(FEATURE_2609_25)의 응답. {@link #EMPTY} 는 {@code data} 가 배열이라 파서가
+     * 매번 실패한다 — 취소 전용으로 {@code data} 객체를 준다.
+     * ⚠️ {@code receiptMap} 은 <b>일부러 비워 둔다</b>: 실계정 스키마가 미검증이라 지어내지 않는다.
+     *    덕분에 receiptType 미확인 → holdCount 보수 처리 경로가 로컬에서 그대로 돌아간다.
+     */
+    private static final String CANCEL_OK =
+            "{\"code\":200,\"data\":{\"failedVendorItemIds\":[],\"receiptMap\":{}}}";
 
     // 3c fixtures (inline): register → sellerProductId, fetchStatus → 승인완료 + option ids.
     private static final String SELLER_PRODUCT_REGISTER =
@@ -127,6 +136,10 @@ public class MockCoupangApiClient implements CoupangApiClient {
         if (path.contains("return-exchange-invoices")) {
             log.info("[COUPANG-MOCK] POST {} → claim action ok", path);
             return ACTION_OK;                                       // 2609_21 R3 회수 송장 등록
+        }
+        if (path.contains("/cancel")) {
+            log.info("[COUPANG-MOCK] POST {} → cancel ok(receiptMap 비어 있음)", path);
+            return CANCEL_OK;                                       // 2609_25 발송 전 주문 취소
         }
         log.info("[COUPANG-MOCK] POST {} → default empty", path);
         return EMPTY;

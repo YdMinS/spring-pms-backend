@@ -125,3 +125,5 @@ databaseChangeLog:
       file: db/changelog/changes/062-customer-inquiry.yaml
   - include:
       file: db/changelog/changes/063-marketplace-inquiry-sync.yaml
+  - include:
+      file: db/changelog/changes/064-order-cancel-action.yaml

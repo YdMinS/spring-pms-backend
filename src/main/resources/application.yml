@@ -71,6 +71,8 @@ oklyx:
     ordersheet-by-order-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/{orderId}/ordersheets
     # Acknowledgement (결제완료→상품준비중). Unverified against a live account — keep it overridable.
     acknowledgement-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/ordersheets/acknowledgement
+    # Pre-shipment cancel (ACCEPT=immediate, INSTRUCT=stop shipment). Unverified against a live account.
+    order-cancel-path: /v2/providers/openapi/apis/api/v5/vendors/{vendorId}/orders/{orderId}/cancel
     # Per-item (vendorItem) selling-price change. {vendorItemId}/{price} are replaced at call time; the new
     # price takes effect immediately (no re-approval).
     # ⚠️ seller_api, not openapi: this is a product API, so it lives in the same group as seller-products.
