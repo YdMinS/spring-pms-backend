@@ -218,6 +218,18 @@ public class ProductListing extends BaseEntity {
     private List<String> tags;
 
     /**
+     * 가져오기 시점의 마켓 원본 카테고리 코드(2609_22/D16). **표시·비교 전용**이다.
+     * ⚠️ 등록·수정 payload 의 displayCategoryCode 는 계속 마스터 카테고리에서 해석한다
+     * (MasterChannelConfigService.resolvePlatformCategoryCode). 이 값을 payload 에 쓰지 말 것.
+     *
+     * <p>{@code null} = 가져오기로 만들어진 셀이 아니다(채널추가·legacy 생성 경로는 채우지 않는다). See changeset 061.</p>
+     */
+    @Column(name = "platform_category_code", length = 50)
+    @Schema(description = "Marketplace category code captured at import time (display/compare only)",
+            example = "72882")
+    private String platformCategoryCode;
+
+    /**
      * Per-channel shipping overrides (FEATURE_2608_06 / 75): key = an override field name (whitelist =
      * {@code ShippingOverrideKeys.LISTING_KEYS} — the full set, including the outbound place / return center
      * that are channel-level only), value = a string. Resolution = channel (this) ?? master ?? account

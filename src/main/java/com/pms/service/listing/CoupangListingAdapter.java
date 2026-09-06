@@ -122,18 +122,57 @@ public class CoupangListingAdapter implements ListingChannel {
 
     @Override
     public FetchResult fetchStatus(ProductListing cell, MarketplaceAccount acct) {
-        String raw = client.get(SELLER_PRODUCTS + "/" + cell.getPlatformProductId(), "", acct);
-        JsonNode data = readJson(raw).path("data");
-        ListingStatus status = mapStatus(data.path("statusName").asText(""));
-
+        // 2609_22: same GET, one parser. fetchStatus keeps its old contract and just projects the status +
+        // option ids out of the fuller read — so the two paths can never drift on what a Coupang key means.
+        ImportedProduct product = fetchProduct(cell.getPlatformProductId(), acct);
         List<FetchResult.OptionId> options = new ArrayList<>();
-        for (JsonNode item : data.path("items")) {
+        for (ImportedProduct.Option option : product.options()) {
             options.add(new FetchResult.OptionId(
-                    item.path("itemName").asText(null),
-                    asTextOrNull(item, "vendorItemId"),
-                    asTextOrNull(item, "sellerProductItemId")));
+                    option.itemName(), option.vendorItemId(), option.sellerProductItemId()));
         }
-        return new FetchResult(status, options);
+        return new FetchResult(product.status(), options);
+    }
+
+    /**
+     * 2609_22/D8: read the product as it currently exists on Coupang (import preview + commit).
+     *
+     * <p>⚠️ Only {@code statusName}/{@code items[]}/{@code itemName}/{@code vendorItemId}/
+     * {@code sellerProductItemId} are confirmed against a live account (fetchStatus already read them). The
+     * rest ({@code sellerProductName}·{@code displayCategoryCode}·{@code searchTags}·{@code salePrice}·
+     * {@code originalPrice}·{@code maximumBuyCount}) are inferred from the register payload schema — every
+     * one of them parses to {@code null} when absent rather than throwing, and the import service decides
+     * what is fatal.</p>
+     */
+    @Override
+    public ImportedProduct fetchProduct(String platformProductId, MarketplaceAccount acct) {
+        String raw = client.get(SELLER_PRODUCTS + "/" + platformProductId, "", acct);
+        JsonNode data = readJson(raw).path("data");
+
+        List<ImportedProduct.Option> options = new ArrayList<>();
+        for (JsonNode item : data.path("items")) {
+            options.add(new ImportedProduct.Option(
+                    asTextOrNull(item, "itemName"),
+                    asTextOrNull(item, "vendorItemId"),
+                    asTextOrNull(item, "sellerProductItemId"),
+                    asDecimalOrNull(item, "salePrice"),
+                    asDecimalOrNull(item, "originalPrice"),
+                    asIntOrNull(item, "maximumBuyCount")));
+        }
+        // 73: searchTags lives at the ITEM level on Coupang → read the first item's set (every item carries
+        // the same merged list when we push). No items = no tags, not an error.
+        List<String> tags = new ArrayList<>();
+        for (JsonNode tag : data.path("items").path(0).path("searchTags")) {
+            String value = tag.asText(null);
+            if (value != null && !value.isBlank()) {
+                tags.add(value);
+            }
+        }
+        return new ImportedProduct(
+                asTextOrNull(data, "sellerProductName"),
+                asTextOrNull(data, "displayCategoryCode"),
+                mapStatus(data.path("statusName").asText("")),
+                tags,
+                options);
     }
 
     @Override
@@ -672,6 +711,26 @@ public class CoupangListingAdapter implements ListingChannel {
     private static String asTextOrNull(JsonNode node, String field) {
         JsonNode v = node.path(field);
         return v.isMissingNode() || v.isNull() ? null : v.asText();
+    }
+
+    /** 2609_22: absent / null / non-numeric → null (the import service decides what a missing price means). */
+    private static BigDecimal asDecimalOrNull(JsonNode node, String field) {
+        JsonNode v = node.path(field);
+        if (v.isMissingNode() || v.isNull()) {
+            return null;
+        }
+        try {
+            return new BigDecimal(v.asText().trim());
+        } catch (NumberFormatException e) {
+            log.warn("[COUPANG-ADAPTER] {} 숫자 변환 실패: {}", field, v.asText());
+            return null;
+        }
+    }
+
+    /** 2609_22: absent / null / non-numeric → null (stock then falls back through ListingStockPolicy). */
+    private static Integer asIntOrNull(JsonNode node, String field) {
+        BigDecimal value = asDecimalOrNull(node, field);
+        return value == null ? null : value.intValue();
     }
 
     private String writeJson(Object value) {
