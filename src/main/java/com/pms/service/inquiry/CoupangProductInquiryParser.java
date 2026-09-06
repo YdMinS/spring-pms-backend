@@ -4,11 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.pms.domain.InquiryAuthorRole;
 import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
+import com.pms.service.coupang.CoupangTimestamps;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -17,7 +17,7 @@ import java.util.List;
  * (FEATURE_2609_23 / D3).
  *
  * {@link CoupangCallCenterInquiryParser} 의 형제다 — HTTP·DB 를 모르는 순수 클래스이고 같은 정규화
- * 규칙(빈 문자열은 null · 타임스탬프 후보 2개)을 따르지만, 두 응답은 <b>한 필드도 겹치지 않으므로
+ * 규칙(빈 문자열은 null · 타임스탬프는 {@code CoupangTimestamps})을 따르지만, 두 응답은 <b>한 필드도 겹치지 않으므로
  * 공통 파서로 묶지 않는다</b>(D3). 한쪽 스키마가 바뀌어도 다른 쪽이 흔들리지 않는 것이 목적이다.
  *
  * <p>상품문의는 구매 전 질문이 다수라 <b>주문이 없는 것이 정상</b>이다(D14·D15).
@@ -26,11 +26,6 @@ import java.util.List;
 @Slf4j
 @Component
 public class CoupangProductInquiryParser {
-
-    /** 쿠팡 inquiryAt 은 ISO-8601 이지만 공백 구분 포맷도 함께 받아 둔다(클레임 파서와 같은 자세). */
-    private static final List<DateTimeFormatter> TIMESTAMP_FORMATS = List.of(
-            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"),
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
 
     private static final String STATUS_ANSWERED = "ANSWERED";
     private static final String STATUS_NO_ANSWER = "NOANSWER";
@@ -42,7 +37,7 @@ public class CoupangProductInquiryParser {
      *         {@code inquired_at} 은 nullable=false 이고 슬라이스(D8)의 기준이라 채울 수 없으면 저장할 수 없다
      */
     public InquiryRecord parse(JsonNode inquiry) {
-        LocalDateTime inquiredAt = parseTimestamp(text(inquiry, "inquiryAt"));
+        LocalDateTime inquiredAt = CoupangTimestamps.parse(text(inquiry, "inquiryAt"));
         if (inquiredAt == null) {
             log.warn("Skipping product inquiry with unparsable inquiryAt: inquiryId={} inquiryAt={}",
                     text(inquiry, "inquiryId"), text(inquiry, "inquiryAt"));
@@ -95,7 +90,7 @@ public class CoupangProductInquiryParser {
                     null,                               // 작성자 이름이 응답에 없다
                     text(comment, "content"),
                     null,                               // partnerTransferStatus 는 고객센터 전용
-                    parseTimestamp(text(comment, "inquiryCommentAt"))));
+                    CoupangTimestamps.parse(text(comment, "inquiryCommentAt"))));
         }
         return replies;
     }
@@ -120,20 +115,5 @@ public class CoupangProductInquiryParser {
 
     private String blankToNull(String raw) {
         return (raw == null || raw.isBlank()) ? null : raw;
-    }
-
-    /** 포맷 후보를 순서대로 시도한다. 전부 실패하면 null. */
-    private LocalDateTime parseTimestamp(String raw) {
-        if (raw == null) {
-            return null;
-        }
-        for (DateTimeFormatter format : TIMESTAMP_FORMATS) {
-            try {
-                return LocalDateTime.parse(raw, format);
-            } catch (Exception ignored) {
-                // 다음 후보로
-            }
-        }
-        return null;
     }
 }

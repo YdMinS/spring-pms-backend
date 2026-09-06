@@ -2,11 +2,11 @@ package com.pms.service.claim;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.pms.domain.ClaimStatus;
+import com.pms.service.coupang.CoupangTimestamps;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -28,11 +28,6 @@ public class CoupangReturnClaimParser {
 
     private static final String RETURN_RECEIPT_TYPE = "RETURN";
 
-    /** 쿠팡 createdAt 실측 포맷 미확정 — 순서대로 시도한다(실응답 확인 전까지 하나로 확정하지 않는다). */
-    private static final List<DateTimeFormatter> TIMESTAMP_FORMATS = List.of(
-            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"),
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-
     /**
      * receipt 1건을 returnItems 개수만큼의 {@link ClaimRecord} 로 편다(receipt 레벨 값은 전부 복제).
      *
@@ -46,7 +41,7 @@ public class CoupangReturnClaimParser {
             return List.of();
         }
 
-        LocalDateTime receivedAt = parseTimestamp(text(receipt, "createdAt"));
+        LocalDateTime receivedAt = CoupangTimestamps.parse(text(receipt, "createdAt"));
         if (receivedAt == null) {
             log.warn("Skipping claim with unparsable createdAt: receiptId={} createdAt={}",
                     text(receipt, "receiptId"), text(receipt, "createdAt"));
@@ -80,7 +75,7 @@ public class CoupangReturnClaimParser {
                     null,                                      // reshipCarrierCode — 교환 전용
                     text(receipt, "requesterName"),            // D19 — 이름만
                     receivedAt,
-                    parseTimestamp(text(receipt, "modifiedAt"))));
+                    CoupangTimestamps.parse(text(receipt, "modifiedAt"))));
         }
         return records;
     }
@@ -110,20 +105,5 @@ public class CoupangReturnClaimParser {
         return (value.isMissingNode() || value.isNull() || !value.canConvertToInt())
                 ? null
                 : value.asInt();
-    }
-
-    /** 실측 포맷 확정 전까지 후보를 순서대로 시도한다. 전부 실패하면 null(호출자가 건너뛴다). */
-    private LocalDateTime parseTimestamp(String raw) {
-        if (raw == null) {
-            return null;
-        }
-        for (DateTimeFormatter format : TIMESTAMP_FORMATS) {
-            try {
-                return LocalDateTime.parse(raw, format);
-            } catch (Exception ignored) {
-                // 다음 후보로
-            }
-        }
-        return null;
     }
 }
