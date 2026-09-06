@@ -106,6 +106,13 @@ public class MarketplaceAccount extends BaseEntity {
     @Column(name = "last_claim_sync_at")
     private LocalDateTime lastClaimSyncAt;         // 클레임 적재+추적이 모두 끝난 회차의 시각 (추적 실패 시 미갱신, D18)
 
+    // Customer-inquiry sync anchor (FEATURE_2609_23 / changeset 063, PLAN §3 · D8). Same semantics as
+    // lastClaimSyncAt: the time an inquiry run COMPLETED. A failed inquiry stage leaves it untouched so the
+    // next run's anchor automatically widens to cover whatever was missed. NULL = never completed a run
+    // (the first run falls back to a 7-day window).
+    @Column(name = "last_inquiry_sync_at")
+    private LocalDateTime lastInquirySyncAt;
+
     @Column(name = "last_sync_error", length = 500)
     private String lastSyncError;                  // 실패 사유 요약 (응답 바디 미포함 — PII·자격증명)
 }

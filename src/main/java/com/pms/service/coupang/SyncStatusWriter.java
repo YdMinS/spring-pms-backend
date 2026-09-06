@@ -78,6 +78,20 @@ class SyncStatusWriter {
                         .build()));
     }
 
+    /**
+     * 문의 적재가 모두 끝난 회차에만 호출한다 (FEATURE_2609_23 / PLAN §3 · D8).
+     *
+     * {@link #writeClaimSyncAt} 과 동형이다 — 상태·사유는 건드리지 않는다. 이 시각은 다음 회차의 조회
+     * 앵커를 정하는 데만 쓰이고, 문의 단계 실패 시 미갱신이어야 놓친 구간을 다음 회차가 덮는다.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    void writeInquirySyncAt(Long accountId) {
+        find(accountId).ifPresent(account ->
+                marketplaceAccountRepository.save(account.toBuilder()
+                        .lastInquirySyncAt(LocalDateTime.now())
+                        .build()));
+    }
+
     /** 주문 조회 단계 전체 실패 — 두 "마지막 성공" 시각은 미변경. */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     void writeFailure(Long accountId, String summary) {

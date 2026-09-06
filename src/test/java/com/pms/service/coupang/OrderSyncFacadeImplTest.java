@@ -5,6 +5,7 @@ import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.service.claim.ClaimOrderBackfillService;
 import com.pms.service.claim.ClaimSyncAdapter;
+import com.pms.service.inquiry.InquirySyncAdapter;
 import com.pms.service.coupang.CoupangOrderSyncService.SyncResult;
 import com.pms.service.coupang.CoupangReturnSyncService.CancelSyncResult;
 import com.pms.service.coupang.OrderSyncFacade.OrderSyncResult;
@@ -54,12 +55,15 @@ class OrderSyncFacadeImplTest {
      */
     private final List<ClaimSyncAdapter> claimSyncAdapters = new ArrayList<>();
 
+    /** 문의 어댑터도 같은 이유로 빈 리스트가 기본이다(2609_23 D12). */
+    private final List<InquirySyncAdapter> inquirySyncAdapters = new ArrayList<>();
+
     private OrderSyncFacadeImpl facade;
 
     @BeforeEach
     void setUp() {
         facade = new OrderSyncFacadeImpl(marketplaceAccountRepository, coupangOrderSyncService,
-                coupangReturnSyncService, syncStatusRecorder, claimOrderBackfillService, claimSyncAdapters);
+                coupangReturnSyncService, syncStatusRecorder, claimOrderBackfillService, claimSyncAdapters, inquirySyncAdapters);
     }
 
     private MarketplaceAccount account(Long id) {
