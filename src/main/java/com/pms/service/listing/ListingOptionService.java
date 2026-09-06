@@ -1,5 +1,6 @@
 package com.pms.service.listing;
 
+import com.pms.dto.request.SetOptionNamesRequest;
 import com.pms.dto.request.SetOptionPricesRequest;
 import com.pms.dto.request.SetOptionStocksRequest;
 import com.pms.dto.response.ChannelPriceUpdateResponse;
@@ -67,4 +68,21 @@ public interface ListingOptionService {
      * cannot be computed (category/fees/delivery/box/margin unset) → 400 with nothing saved (D16).</p>
      */
     ChannelPriceUpdateResponse setOptionPrices(Long listingId, List<SetOptionPricesRequest.OptionPrice> prices);
+
+    /**
+     * Name some options of a channel listing by hand (FEATURE_2609_22 / D3). Partial, like
+     * {@link #setOptionStocks}: only the listed options are touched.
+     *
+     * <p>A value marks the option {@code MANUAL_OVERRIDE}, so a master rename leaves it alone (D4) — the
+     * master detail's [옵션명 일괄 적용] is what pulls it back. A null/blank value restores the linked master
+     * option's name and {@code AUTO}; a <b>channel-only</b> option (D2) has no name to go back to → 400.</p>
+     *
+     * <p>Empty list → 400; ids not belonging to the listing → 400; duplicate names within the cell → 400
+     * (Coupang rejects a duplicate {@code itemName}). Every check runs before {@code saveAll}, so a rejected
+     * request saves nothing.</p>
+     *
+     * <p>⚠️ Local only — stock/price/BOM are untouched and nothing is pushed to the market; the new name
+     * reaches it with the next [수정 요청].</p>
+     */
+    ListingOptionsResponse setOptionNames(Long listingId, List<SetOptionNamesRequest.Item> names);
 }

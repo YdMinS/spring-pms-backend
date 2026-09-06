@@ -128,6 +128,12 @@ class ChannelAddServiceTest {
         assertThat(optionCaptor.getAllValues()).extracting(ProductListingOption::getOptionName)
                 .containsExactly("1세트", "2세트");
         assertThat(optionCaptor.getAllValues()).allSatisfy(o -> assertThat(o.getPlatformOptionId()).isNull());
+        // 🔴 2609_22/D1: each copied option must carry the FK to its master option. Without it every option of
+        // a new channel is born channel-only (D2) and is skipped by propagation, price recalculation and the
+        // stock clamp for ever — while the screen still looks correct.
+        assertThat(optionCaptor.getAllValues())
+                .extracting(o -> o.getMasterProductOption().getId())
+                .containsExactly(10L, 20L);
 
         // BOM: one row per master item, quantities preserved.
         ArgumentCaptor<ProductListingProduct> bomCaptor = ArgumentCaptor.forClass(ProductListingProduct.class);

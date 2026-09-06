@@ -117,3 +117,5 @@ databaseChangeLog:
       file: db/changelog/changes/058-order-claim-action.yaml
   - include:
       file: db/changelog/changes/059-order-claim-collect-status.yaml
+  - include:
+      file: db/changelog/changes/060-listing-option-master-link.yaml

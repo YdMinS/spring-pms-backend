@@ -190,9 +190,10 @@ public class CoupangListingAdapter implements ListingChannel {
 
         Map<String, String> masterAttributes = master != null ? master.getCategoryAttributes() : null;
         Map<String, String> masterNotices = master != null ? master.getCategoryNotices() : null;
-        Map<String, MasterProductOption> byName = master == null ? Map.of()
+        // 2609_22/D1: master options keyed by id — the single master↔channel matching axis (never the name).
+        Map<Long, MasterProductOption> byMasterOptionId = master == null ? Map.of()
                 : masterProductOptionRepository.findByMasterProductId(master.getId()).stream()
-                        .collect(Collectors.toMap(MasterProductOption::getName, o -> o, (a, b) -> a));
+                        .collect(Collectors.toMap(MasterProductOption::getId, o -> o, (a, b) -> a));
         // 96 ⑨: the required 고시 of the picked 품목군 (same group rule as the payload, ⑩). A legacy master with
         // no stored group is left alone — we cannot tell which group's required set applies, and demanding
         // every group's would make those masters un-registrable.
@@ -204,14 +205,13 @@ public class CoupangListingAdapter implements ListingChannel {
             if (!Boolean.TRUE.equals(option.getActive())) {
                 continue;   // only active options are pushed → only they need required values
             }
-            MasterProductOption mo = byName.get(option.getOptionName());
+            MasterProductOption mo = linkedMaster(option, byMasterOptionId);
             // 47/59: every required category attribute must have a non-blank value on each ACTIVE option
             // (master shared default ++ per-option override). Categories whose schema defines no attribute have
             // nothing to send → skipped here rather than at the top of the method, so the notice check below
             // still runs for a notices-only category (96 ⑨).
             if (!bundle && !schema.attributes().isEmpty()) {
-                Map<String, String> values = OptionCategoryMeta.merge(
-                        masterAttributes, mo != null ? mo.getCategoryAttributes() : null);
+                Map<String, String> values = mergedAttributes(masterAttributes, mo, option);
                 // 93: Coupang requires at least one attribute per item. This only fires when values COULD have
                 // been filled (a schema with attributes).
                 if (values.isEmpty()) {
@@ -253,8 +253,7 @@ public class CoupangListingAdapter implements ListingChannel {
             // and the option gate only looked at attributes. Coupang answered with an opaque
             // "'1 번 옵션 의 고시정보' 다시 확인해 주세요". Checked for SINGLE and AB alike.
             if (!requiredNotices.isEmpty()) {
-                Map<String, String> notices = OptionCategoryMeta.merge(
-                        masterNotices, mo != null ? mo.getCategoryNotices() : null);
+                Map<String, String> notices = mergedNotices(masterNotices, mo, option);
                 for (CategoryNotice notice : requiredNotices) {
                     String value = notices.get(notice.key());
                     if (value == null || value.isBlank()) {
@@ -319,27 +318,29 @@ public class CoupangListingAdapter implements ListingChannel {
         payload.put("requested", DEFAULT_REQUESTED);
 
         // Category required-attributes + product-info disclosure (47/59) are per-vendorItem in Coupang's model.
-        // Master carries the shared default values; each option overrides only the keys it provides (59). Fetch
-        // the master options in ONE query (N+1 guard); matching axis = ProductListingOption.optionName ↔
-        // MasterProductOption.name. master==null (backfill transition) → master values only / empty.
+        // Master carries the shared default values; each option overrides only the keys it provides (59, and
+        // since 2609_22/D5 the cell option may override on top). Fetch the master options in ONE query (N+1
+        // guard); matching axis = ProductListingOption.masterProductOption (2609_22/D1, never the name).
+        // master==null (backfill transition) → master values only / empty.
         MasterProduct master = cell.getMasterProduct();
         List<MasterProductOption> masterOptions = master == null ? List.of()
                 : masterProductOptionRepository.findByMasterProductId(master.getId());
-        Map<String, MasterProductOption> byName = masterOptions.stream()
-                .collect(Collectors.toMap(MasterProductOption::getName, Function.identity(), (a, b) -> a));
+        Map<Long, MasterProductOption> byMasterOptionId = masterOptions.stream()
+                .collect(Collectors.toMap(MasterProductOption::getId, Function.identity(), (a, b) -> a));
 
         // Listing options, queried ONCE and reused for the active-name set (registration name) and items[] below.
         List<ProductListingOption> listingOptions =
                 productListingOptionRepository.findByProductListingId(cell.getId());
-        List<String> activeOptionNames = listingOptions.stream()
+        // 2609_22/D7: the generator resolves the single-option case through each option's master FK (falling
+        // back to the cell's own BOM for a channel-only option) → it takes the rows, not their names.
+        List<ProductListingOption> activeOptions = listingOptions.stream()
                 .filter(o -> Boolean.TRUE.equals(o.getActive()))
-                .map(ProductListingOption::getOptionName)
                 .toList();
         // Registration name (67): always auto-generated per channel from this cell's active options (32 rule).
         // master null fallback = cell.getName() (backfill transition window). 69: the "옵션확인" suffix is resolved
         // per cell (channel ?? master ?? seller ?? system) — single cell = one account query allowed.
         payload.put("sellerProductName", limitName(master != null
-                ? registrationNameGenerator.generate(master, activeOptionNames, masterOptions,
+                ? registrationNameGenerator.generate(master, activeOptions,
                         optionCheckSuffixResolver.resolve(cell))
                 : cell.getName()));
         // 108/D2: 노출상품명 (the name shown on the Coupang sales page) — optional, ≤100 chars, same cap as
@@ -414,7 +415,7 @@ public class CoupangListingAdapter implements ListingChannel {
             item.put("unitCount", 1);   // 63: unit quantity (SINGLE = 1; AB unitCount is a live-account follow-up)
             // 102: stock = this channel's override ?? the master option's ?? 9999 (unset on both).
             item.put("maximumBuyCount",
-                    ListingStockPolicy.resolve(option, byName.get(option.getOptionName())));
+                    ListingStockPolicy.resolve(option, linkedMaster(option, byMasterOptionId)));
             // 73: fixed item defaults (standard tax/adult/import flags).
             item.put("maximumBuyForPerson", 0);
             item.put("maximumBuyForPersonPeriod", 1);
@@ -429,18 +430,16 @@ public class CoupangListingAdapter implements ListingChannel {
             item.put("searchTags", searchTags);
             item.put("contents", itemContents);
 
-            MasterProductOption mo = byName.get(option.getOptionName());
+            MasterProductOption mo = linkedMaster(option, byMasterOptionId);
             // 63: AB forbids attributes ("혼합 구성 상품 등록할 때, 속성 입력할 수 없습니다") → skip the whole block for AB.
             // SINGLE keeps per-item merged category attributes (47/59). notices are NOT forbidden → unchanged below.
             if (!bundle) {
-                Map<String, String> attrs = OptionCategoryMeta.merge(
-                        masterAttributes, mo != null ? mo.getCategoryAttributes() : null);
+                Map<String, String> attrs = mergedAttributes(masterAttributes, mo, option);
                 if (!attrs.isEmpty()) {
                     item.put("attributes", toAttributes(attrs, unitByAttr));
                 }
             }
-            Map<String, String> notices = OptionCategoryMeta.merge(
-                    masterNotices, mo != null ? mo.getCategoryNotices() : null);
+            Map<String, String> notices = mergedNotices(masterNotices, mo, option);
             if (!notices.isEmpty()) {
                 List<Map<String, Object>> noticeItems = toNotices(notices, groupByDetail);
                 if (!noticeItems.isEmpty()) {
@@ -454,7 +453,43 @@ public class CoupangListingAdapter implements ListingChannel {
         return payload;
     }
 
-    /** Representation image (imageOrder 0) = the S3 public thumbnail URL Coupang ingests into its CDN. */
+    /**
+     * The master option a cell option is linked to, or null for a channel-only option (2609_22/D2).
+     * ⚠️ Reads the FK's id only — safe on a LAZY proxy, so no extra query per option.
+     */
+    private static MasterProductOption linkedMaster(ProductListingOption option,
+                                                    Map<Long, MasterProductOption> byMasterOptionId) {
+        MasterProductOption linked = option.getMasterProductOption();
+        return linked == null ? null : byMasterOptionId.get(linked.getId());
+    }
+
+    /**
+     * 2609_22/D5: 셀옵션 ?? 마스터옵션 ?? 마스터. A channel-only option has no master option, so the cell's own
+     * values are its only source.
+     *
+     * <p>⚠️ Nested calls of the SAME two-argument {@code merge} — never add a three-argument overload: the
+     * rule "the later argument wins" must live in exactly one place.</p>
+     */
+    private static Map<String, String> mergedAttributes(Map<String, String> masterAttributes,
+                                                        MasterProductOption masterOption,
+                                                        ProductListingOption cellOption) {
+        return OptionCategoryMeta.merge(
+                OptionCategoryMeta.merge(masterAttributes,
+                        masterOption != null ? masterOption.getCategoryAttributes() : null),
+                cellOption.getCategoryAttributes());
+    }
+
+    /** 2609_22/D5: same three-tier merge for the product-info disclosure values. */
+    private static Map<String, String> mergedNotices(Map<String, String> masterNotices,
+                                                     MasterProductOption masterOption,
+                                                     ProductListingOption cellOption) {
+        return OptionCategoryMeta.merge(
+                OptionCategoryMeta.merge(masterNotices,
+                        masterOption != null ? masterOption.getCategoryNotices() : null),
+                cellOption.getCategoryNotices());
+    }
+
+    /** Representation image (imageOrder 0) = the S3 public thumbnail URL Coupang ingests into its CDN. */    /** Representation image (imageOrder 0) = the S3 public thumbnail URL Coupang ingests into its CDN. */
     private static Map<String, Object> representationImage(GeneratedProductData gen) {
         Map<String, Object> image = new LinkedHashMap<>();
         image.put("imageOrder", 0);

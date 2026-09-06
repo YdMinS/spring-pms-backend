@@ -39,8 +39,8 @@ import com.pms.domain.ProductListing;
  * <pre>{@code
  * // createOption: after the master option is persisted
  * masterOptionChannelSync.onOptionCreated(masterId, option);
- * // deleteOption: after the 84 guards pass, BEFORE the master option row goes away (the name is needed)
- * masterOptionChannelSync.onOptionRemoved(masterId, option.getName());
+ * // deleteOption: after the 84 guards pass, BEFORE the master option row goes away (the FK is SET NULL then)
+ * masterOptionChannelSync.onOptionRemoved(masterId, option.getId());
  * }</pre>
  *
  * <p>❌ Do not call the master-scoped hooks from a per-cell loop — see {@link #syncStructure(ProductListing)}.</p>
@@ -61,28 +61,40 @@ public interface MasterOptionChannelSync {
     void onOptionCreated(Long masterId, MasterProductOption option);
 
     /**
-     * A master option was renamed → cascade {@code oldName → newName} onto every cell option still carrying
-     * the old name. {@code optionName} is the master↔channel match key, so skipping this would strand the
-     * channel copies permanently unmatched with stale prices.
+     * A master option was renamed → push {@code newName} onto every cell option <b>linked to it</b>
+     * (2609_22/D1: the match key is {@code master_product_option_id}, never the name).
      *
-     * <p>Defensive: a cell that already has a row under {@code newName} is left alone with a WARN — the
-     * master-level uniqueness guard makes that unreachable on the normal path, but legacy channel rows may
-     * carry duplicates.</p>
+     * <p>⚠️ 2609_22/D4: a cell option whose {@code optionNameSource} is {@code MANUAL_OVERRIDE} keeps its own
+     * name — the channel named it deliberately (it may be the name the marketplace already shows). The master
+     * detail's [옵션명 일괄 적용] is what pulls those back to the master name.</p>
+     *
+     * <p>Defensive: a cell that already has a row under {@code newName} is left alone with a WARN — a
+     * MANUAL_OVERRIDE sibling may legitimately hold that name, and duplicate names within one cell are a
+     * marketplace error (Coupang {@code itemName}).</p>
+     *
+     * @param masterOptionId the renamed master option's id (the match key)
      */
-    void onOptionRenamed(Long masterId, String oldName, String newName);
+    void onOptionRenamed(Long masterId, Long masterOptionId, String newName);
 
     /**
-     * A master option is about to be deleted → switch the same-named option off ({@code active=false}) on
-     * every cell. Rows and BOM lines are kept (see the class note); prices of the remaining options do not
-     * move, so no price recalculation is triggered.
+     * A master option is about to be deleted → switch every cell option <b>linked to it</b> off
+     * ({@code active=false}). Rows and BOM lines are kept (see the class note); prices of the remaining
+     * options do not move, so no price recalculation is triggered.
      *
-     * <p>⚠️ Call this <b>before</b> deleting the master option row — only the name matches the channel copies.</p>
+     * <p>⚠️ Call this <b>before</b> deleting the master option row: the FK is {@code ON DELETE SET NULL}
+     * (changeset 060), so afterwards nothing points at it any more. After the delete those rows are
+     * channel-only + inactive (D22) — which is the truth: the marketplace still carries them.</p>
+     *
+     * @param masterOptionId the master option about to go away (the match key)
      */
-    void onOptionRemoved(Long masterId, String optionName);
+    void onOptionRemoved(Long masterId, Long masterOptionId);
 
     /**
      * Propagation entry point — reconcile ONE cell against its master's current option set: create what is
      * missing ({@code active=false}), switch off orphans that the master no longer has.
+     *
+     * <p>⚠️ 2609_22/D2: a <b>channel-only</b> option ({@code masterProductOption == null}) is never an orphan —
+     * it is deliberately absent from the master and is left completely alone.</p>
      *
      * <p>⚠️ An active orphan on a market-registered cell ({@code platformProductId != null}) is left untouched
      * with a WARN: it is really on sale on the market, and switching it off locally only desynchronises the

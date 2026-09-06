@@ -156,9 +156,17 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
 
         productListingRepository.save(cell.toBuilder().status(result.status()).build());
 
-        // On SELLING, sync matched options (by option name) → market ids + APPROVED. Unmatched options keep
-        // NOT_APPROVED (부분승인완료: some options may still be pending — option truth is approvalStatus).
-        Map<String, FetchResult.OptionId> byName = result.status() == ListingStatus.SELLING
+        // On SELLING, sync matched options → market ids + APPROVED. Unmatched options keep NOT_APPROVED
+        // (부분승인완료: some options may still be pending — option truth is approvalStatus).
+        boolean selling = result.status() == ListingStatus.SELLING;
+        // 2609_22/D21: an option that already carries a vendorItemId is matched by THAT id — the name is only
+        // the axis for the very first fetch (before any id exists), because a channel may rename its options.
+        Map<String, FetchResult.OptionId> byVendorItemId = selling
+                ? result.options().stream()
+                        .filter(o -> o.vendorItemId() != null)
+                        .collect(Collectors.toMap(FetchResult.OptionId::vendorItemId, o -> o, (a, b) -> a))
+                : Map.of();
+        Map<String, FetchResult.OptionId> byName = selling
                 ? result.options().stream()
                         .filter(o -> o.optionName() != null)
                         .collect(Collectors.toMap(FetchResult.OptionId::optionName, o -> o, (a, b) -> a))
@@ -167,7 +175,9 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
         List<ProductListingOption> options = productListingOptionRepository.findByProductListingId(listingId);
         List<ListingStatusResponse.OptionStatus> optionStatuses = new ArrayList<>();
         for (ProductListingOption option : options) {
-            FetchResult.OptionId match = byName.get(option.getOptionName());
+            FetchResult.OptionId match = option.getPlatformOptionId() != null
+                    ? byVendorItemId.get(option.getPlatformOptionId())
+                    : byName.get(option.getOptionName());
             if (match != null) {
                 ProductListingOption updated = option.toBuilder()
                         .platformOptionId(match.vendorItemId())

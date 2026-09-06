@@ -110,6 +110,10 @@ class ListingOptionControllerTest extends BaseIntegrationTest {
         return "/api/admin/product-listings/" + id + "/options/price";
     }
 
+    private String namePath(Long id) {
+        return "/api/admin/product-listings/" + id + "/options/name";
+    }
+
     // ---- authority (MUST-KEEP) ----
 
     @Test
@@ -270,5 +274,49 @@ class ListingOptionControllerTest extends BaseIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"prices\":[{\"optionId\":" + opt1Id + ",\"sellingPrice\":15000}]}"))
                 .andExpect(status().isNotFound());
+    }
+
+    // ---- 2609_22: per-channel option names ----
+
+    @Test
+    void setOptionNames_noToken_returns401() throws Exception {
+        mockMvc.perform(put(namePath(listingId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"names\":[{\"optionId\":" + opt1Id + ",\"optionName\":\"새 이름\"}]}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void setOptionNames_userToken_returns403() throws Exception {
+        mockMvc.perform(put(namePath(listingId)).header("Authorization", "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"names\":[{\"optionId\":" + opt1Id + ",\"optionName\":\"새 이름\"}]}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void setOptionNames_adminToken_savesNameAndMarksManualOverride() throws Exception {
+        mockMvc.perform(put(namePath(listingId)).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"names\":[{\"optionId\":" + opt1Id + ",\"optionName\":\"생수 6개입\"}]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.options.length()").value(3))
+                .andExpect(jsonPath("$.data.options[0].optionNameSource").value("MANUAL_OVERRIDE"))
+                .andExpect(jsonPath("$.data.options[0].channelOnly").value(true));
+
+        ProductListingOption saved = productListingOptionRepository.findById(opt1Id).orElseThrow();
+        assertThat(saved.getOptionName()).isEqualTo("생수 6개입");
+        assertThat(saved.getOptionNameSource()).isEqualTo(GeneratedContentSource.MANUAL_OVERRIDE);
+        // Untouched options keep AUTO (the write is partial).
+        assertThat(productListingOptionRepository.findById(opt2Id).orElseThrow().getOptionNameSource())
+                .isEqualTo(GeneratedContentSource.AUTO);
+    }
+
+    @Test
+    void setOptionNames_emptyBody_returns400() throws Exception {
+        mockMvc.perform(put(namePath(listingId)).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"names\":[]}"))
+                .andExpect(status().isBadRequest());
     }
 }

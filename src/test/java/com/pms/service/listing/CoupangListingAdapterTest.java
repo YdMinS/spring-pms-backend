@@ -38,6 +38,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
@@ -133,8 +134,9 @@ class CoupangListingAdapterTest {
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
         given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
-        // Generator receives the cell's active option names ("1세트") + the master options.
-        given(registrationNameGenerator.generate(eq(master), eq(List.of("1세트")), any(), any()))
+        // 2609_22/D7: the generator receives the cell's active option ROWS (it resolves the master option
+        // through each row's FK, and falls back to the cell BOM for a channel-only option).
+        given(registrationNameGenerator.generate(eq(master), anyList(), any()))
                 .willReturn("노브랜드 생수 x 6");
 
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
@@ -154,14 +156,16 @@ class CoupangListingAdapterTest {
                 .categoryNotices(Map.of("제품소재", "면 100%")).build();
         ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
                 .platformProductId("123456789").masterProduct(master).build();
+        // 2609_22/D1: option A is LINKED to master option 5; option B carries no link (channel-only, D2) →
+        // it has no master option override, so it falls back to the master's shared value.
+        MasterProductOption moA = MasterProductOption.builder().id(5L).name("A")
+                .categoryAttributes(Map.of("원산지", "수입산")).build();
         ProductListingOption optA = ProductListingOption.builder().id(1L).optionName("A")
+                .masterProductOption(moA)
                 .sellingPrice(new BigDecimal("6000")).active(true).build();
         ProductListingOption optB = ProductListingOption.builder().id(2L).optionName("B")
                 .sellingPrice(new BigDecimal("6000")).active(true).build();
         given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(optA, optB));
-        // master option A overrides 원산지=수입산; option B not present in the master map → master value only.
-        MasterProductOption moA = MasterProductOption.builder().name("A")
-                .categoryAttributes(Map.of("원산지", "수입산")).build();
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of(moA));
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
@@ -662,7 +666,7 @@ class CoupangListingAdapterTest {
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
         given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
         String longName = "가".repeat(120);
-        given(registrationNameGenerator.generate(eq(master), eq(List.of("1세트")), any(), any()))
+        given(registrationNameGenerator.generate(eq(master), anyList(), any()))
                 .willReturn(longName);
 
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
@@ -956,18 +960,21 @@ class CoupangListingAdapterTest {
 
     /**
      * Registers one option with the given channel/master stock and returns the item's maximumBuyCount.
-     * The master option is matched by name ("1세트"), the same axis the adapter's byName map uses.
+     * 2609_22/D1: the master option is matched through {@code master_product_option_id}, the same axis the
+     * adapter's byMasterOptionId map uses — the option name plays no part.
      */
     private int registeredMaxBuyCount(Integer channelStock, Integer masterStock) throws Exception {
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터").build();
         ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
                 .platformProductId("123456789").masterProduct(master).build();
+        MasterProductOption masterOption = MasterProductOption.builder().id(5L).name("1세트")
+                .stockQuantity(masterStock).build();
         given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
                 ProductListingOption.builder().id(1L).optionName("1세트")
+                        .masterProductOption(masterOption)
                         .sellingPrice(new BigDecimal("10000")).active(true)
                         .stockQuantity(channelStock).build()));
-        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of(
-                MasterProductOption.builder().name("1세트").stockQuantity(masterStock).build()));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of(masterOption));
         given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();

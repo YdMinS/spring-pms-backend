@@ -61,5 +61,10 @@ public class GeneratedProductResponse {
         /** 2609_19/D1: origin of sellingPrice — "AUTO" (calculated) or "MANUAL_OVERRIDE" (user-set for this
          *  channel). The price in {@code sellingPrice} is the effective one either way. */
         private String priceSource;
+        /** 2609_22/D3: origin of optionName — "AUTO" (follows the master option) or "MANUAL_OVERRIDE"
+         *  (named for this channel). {@code optionName} is the effective name either way. */
+        private String optionNameSource;
+        /** 2609_22/D2: no master option behind this option → master propagation never touches it. */
+        private Boolean channelOnly;
     }
 }

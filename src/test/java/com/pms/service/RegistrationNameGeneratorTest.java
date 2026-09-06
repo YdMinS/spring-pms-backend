@@ -5,9 +5,12 @@ import com.pms.domain.MasterProductComponent;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.Product;
+import com.pms.domain.ProductListingOption;
+import com.pms.domain.ProductListingProduct;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
+import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.service.listing.OptionCheckSuffix;
 import org.junit.jupiter.api.Test;
@@ -33,6 +36,7 @@ class RegistrationNameGeneratorTest {
     @Mock private MasterProductOptionItemRepository optionItemRepository;
     @Mock private MasterProductComponentRepository componentRepository;
     @Mock private ProductRepository productRepository;
+    @Mock private ProductListingProductRepository productListingProductRepository;
     @InjectMocks private RegistrationNameGenerator generator;
 
     /** An explicit ON suffix (enabled=true, "옵션확인") — the value some level would set to append it. */
@@ -48,6 +52,11 @@ class RegistrationNameGeneratorTest {
 
     private MasterProductOptionItem item(Product product, int quantity) {
         return MasterProductOptionItem.builder().product(product).quantity(quantity).build();
+    }
+
+    /** A cell option linked to a master option (2609_22/D1 — the FK is the matching axis). */
+    private ProductListingOption cellOption(Long id, String name, MasterProductOption master) {
+        return ProductListingOption.builder().id(id).optionName(name).masterProductOption(master).build();
     }
 
     private void givenTwoComponents() {
@@ -130,11 +139,12 @@ class RegistrationNameGeneratorTest {
     @Test
     void 채널_활성옵션1개_단일수량표기() {
         // 67: name is generated from the LISTING's active options (injected), not the master's full option count.
+        // 2609_22/D1: the single option is resolved through its master FK, whatever the cell calls it.
         MasterProductOption only = MasterProductOption.builder().id(5L).name("1세트").build();
         given(optionItemRepository.findByOptionId(5L))
                 .willReturn(List.of(item(product(10L, "노브랜드", "생수"), 6)));
 
-        String name = generator.generate(master(), List.of("1세트"), List.of(only), DEFAULT_SUFFIX);
+        String name = generator.generate(master(), List.of(cellOption(100L, "채널이 붙인 이름", only)), DEFAULT_SUFFIX);
 
         assertThat(name).isEqualTo("노브랜드 생수 x 6");
     }
@@ -143,9 +153,10 @@ class RegistrationNameGeneratorTest {
     void 채널_활성옵션2개_구성상품콤마나열_옵션확인() {
         givenTwoComponents();
 
-        String name = generator.generate(master(), List.of("1세트", "2세트"), List.of(
-                MasterProductOption.builder().id(5L).name("1세트").build(),
-                MasterProductOption.builder().id(6L).name("2세트").build()), DEFAULT_SUFFIX);
+        String name = generator.generate(master(), List.of(
+                cellOption(100L, "1세트", MasterProductOption.builder().id(5L).name("1세트").build()),
+                cellOption(101L, "2세트", MasterProductOption.builder().id(6L).name("2세트").build())),
+                DEFAULT_SUFFIX);
 
         assertThat(name).isEqualTo("노브랜드 생수, 다우니 섬유유연제 - 옵션확인");
     }
@@ -154,9 +165,9 @@ class RegistrationNameGeneratorTest {
     void 채널_활성옵션2개_커스텀문구() {
         givenTwoComponents();
 
-        String name = generator.generate(master(), List.of("1세트", "2세트"), List.of(
-                MasterProductOption.builder().id(5L).name("1세트").build(),
-                MasterProductOption.builder().id(6L).name("2세트").build()),
+        String name = generator.generate(master(), List.of(
+                cellOption(100L, "1세트", MasterProductOption.builder().id(5L).name("1세트").build()),
+                cellOption(101L, "2세트", MasterProductOption.builder().id(6L).name("2세트").build())),
                 new OptionCheckSuffix(true, "옵션참고"));
 
         assertThat(name).isEqualTo("노브랜드 생수, 다우니 섬유유연제 - 옵션참고");
@@ -166,21 +177,40 @@ class RegistrationNameGeneratorTest {
     void 채널_활성옵션2개_접미사OFF() {
         givenTwoComponents();
 
-        String name = generator.generate(master(), List.of("1세트", "2세트"), List.of(
-                MasterProductOption.builder().id(5L).name("1세트").build(),
-                MasterProductOption.builder().id(6L).name("2세트").build()),
+        String name = generator.generate(master(), List.of(
+                cellOption(100L, "1세트", MasterProductOption.builder().id(5L).name("1세트").build()),
+                cellOption(101L, "2세트", MasterProductOption.builder().id(6L).name("2세트").build())),
                 new OptionCheckSuffix(false, "옵션확인"));
 
         assertThat(name).isEqualTo("노브랜드 생수, 다우니 섬유유연제");
     }
 
     @Test
-    void 채널_활성옵션0개_또는_이름미매칭_마스터이름폴백() {
-        MasterProductOption only = MasterProductOption.builder().id(5L).name("1세트").build();
-
+    void 채널_활성옵션0개_마스터이름폴백() {
         // 0 active options → master name fallback (suffix irrelevant on this branch).
-        assertThat(generator.generate(master(), List.of(), List.of(only), DEFAULT_SUFFIX)).isEqualTo("마스터A");
-        // 1 active option whose name matches nothing in masterOptions → master name fallback (defensive).
-        assertThat(generator.generate(master(), List.of("없는옵션"), List.of(only), DEFAULT_SUFFIX)).isEqualTo("마스터A");
+        assertThat(generator.generate(master(), List.of(), DEFAULT_SUFFIX)).isEqualTo("마스터A");
+    }
+
+    // ---------------------------------------------------------------- channel-only single option (2609_22/D7)
+
+    @Test
+    void 채널전용옵션1개_셀BOM으로_생성() {
+        // FK null = channel-only (D2): the master has no option to read, so the CELL's own BOM builds the name
+        // in the same shape — without D7 this would fall back to the master's internal label.
+        ProductListingOption channelOnly = ProductListingOption.builder().id(100L).optionName("6개입").build();
+        given(productListingProductRepository.findByProductListingOptionId(100L)).willReturn(List.of(
+                ProductListingProduct.builder().product(product(10L, null, "생수")).quantity(6).build()));
+
+        String name = generator.generate(master(), List.of(channelOnly), DEFAULT_SUFFIX);
+
+        assertThat(name).isEqualTo("생수 x 6");
+    }
+
+    @Test
+    void 채널전용옵션1개_셀BOM_비어있으면_마스터이름폴백() {
+        ProductListingOption channelOnly = ProductListingOption.builder().id(100L).optionName("6개입").build();
+        given(productListingProductRepository.findByProductListingOptionId(100L)).willReturn(List.of());
+
+        assertThat(generator.generate(master(), List.of(channelOnly), DEFAULT_SUFFIX)).isEqualTo("마스터A");
     }
 }

@@ -98,10 +98,13 @@ public class MasterPropagationServiceImpl implements MasterPropagationService {
     }
 
     /**
-     * Sync BOM line quantities from the master to matched cell options. Match cell option ↔ master option by
-     * {@code optionName}; within a matched option, match BOM lines to master items by {@code productId} and
-     * update the quantity only where both sides have that product. A cell-only product is left as-is; a
-     * master-only product is skipped; an unmatched cell option (no same-named master option) is skipped.
+     * Sync BOM line quantities from the master to linked cell options. Match cell option ↔ master option by
+     * {@code master_product_option_id} (2609_22/D1); within a matched option, match BOM lines to master items
+     * by {@code productId} and update the quantity only where both sides have that product. A cell-only
+     * product is left as-is; a master-only product is skipped.
+     *
+     * <p>⚠️ 2609_22/D2: a <b>channel-only</b> option (FK null) is skipped entirely — it exists on this channel
+     * alone, so the master has no quantities to push down.</p>
      *
      * <p>⚠️ Quantities only — <b>option structure</b> (missing options, orphans) is reconciled one step
      * earlier by {@link MasterOptionChannelSync#syncStructure} (86), not here.</p>
@@ -111,14 +114,19 @@ public class MasterPropagationServiceImpl implements MasterPropagationService {
         if (master == null) {
             return;
         }
-        Map<String, MasterProductOption> masterOptionsByName = masterProductOptionRepository
+        Map<Long, MasterProductOption> masterOptionsById = masterProductOptionRepository
                 .findByMasterProductId(master.getId()).stream()
-                .collect(Collectors.toMap(MasterProductOption::getName, o -> o, (first, dup) -> first));
+                .collect(Collectors.toMap(MasterProductOption::getId, o -> o, (first, dup) -> first));
 
         for (ProductListingOption cellOption : productListingOptionRepository.findByProductListingId(cell.getId())) {
-            MasterProductOption masterOption = masterOptionsByName.get(cellOption.getOptionName());
+            // ⚠️ id only — safe on a LAZY proxy (no extra query per option).
+            MasterProductOption linked = cellOption.getMasterProductOption();
+            if (linked == null) {
+                continue;   // channel-only option → the master owns nothing here (D2)
+            }
+            MasterProductOption masterOption = masterOptionsById.get(linked.getId());
             if (masterOption == null) {
-                continue;   // unmatched option → skip
+                continue;   // linked to an option this master no longer has → skip
             }
             // Shared line rule (84): quantities only, matched by productId. Never re-implement here.
             optionQuantitySync.syncLines(cellOption, masterOption);
