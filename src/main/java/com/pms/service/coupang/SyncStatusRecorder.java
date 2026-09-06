@@ -66,6 +66,20 @@ public class SyncStatusRecorder {
         }
     }
 
+    /**
+     * 고객문의 동기화 완료 기록 (FEATURE_2609_23 / D8). 기록 실패는 로그만 남기고 삼킨다(동기화는 계속).
+     *
+     * ⚠️ 문의 단계가 <b>성공한 회차에만</b> 호출한다 — 실패한 회차에 갱신하면 그 회차가 놓친 구간이
+     * 다음 창에서 빠져 영구히 사라진다.
+     */
+    public void recordInquirySyncCompleted(Long accountId) {
+        try {
+            writer.writeInquirySyncAt(accountId);
+        } catch (Exception e) {
+            log.warn("Inquiry sync record failed: account={}", accountId, e);
+        }
+    }
+
     /** 주문 조회 단계 전체 실패. */
     public void recordFailure(Long accountId, Throwable error) {
         try {

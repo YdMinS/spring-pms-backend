@@ -1,0 +1,21 @@
+# Inquiry sync anchor (FEATURE_2609_23 / PLAN §3 · D8). The inquiry query window starts at
+# min(last_inquiry_sync_at, oldest UNANSWERED inquiry) so a still-unanswered inquiry keeps pulling itself back
+# into the window without a separate tracking batch.
+# ⚠️ Nullable with NO default and NO backfill on purpose: NULL means "never completed an inquiry run yet", and
+#    the first run then falls back to a 7-day window (Coupang caps the query range at 7 days — it cannot widen).
+# ⚠️ This is the last time the stage COMPLETED — a failed inquiry run leaves it untouched so the next run's
+#    anchor automatically covers whatever was missed (same semantics as last_claim_sync_at, 055).
+# No boolean column here -> the 006 MySQL BIT follow-up changeset is deliberately NOT needed.
+databaseChangeLog:
+
+  - changeSet:
+      id: 063-marketplace-inquiry-sync
+      author: oclyx
+      comment: "FEATURE_2609_23: last_inquiry_sync_at on marketplace_account (query anchor, D8)."
+      changes:
+        - addColumn:
+            tableName: marketplace_account
+            columns:
+              - column: { name: last_inquiry_sync_at, type: TIMESTAMP }
+      rollback:
+        - dropColumn: { tableName: marketplace_account, columnName: last_inquiry_sync_at }

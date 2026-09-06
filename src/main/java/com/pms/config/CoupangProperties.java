@@ -205,6 +205,39 @@ public class CoupangProperties {
     private String exchangeInvoicePath =
             "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/exchangeRequests/{exchangeId}/invoices";
 
+    /**
+     * 상품문의(온라인 문의) 목록 조회 경로. {vendorId} 치환. FEATURE_2609_23.
+     *
+     * ⚠️ {@code answeredType} 파라미터가 <b>필수</b>다 — 생략하면 400.
+     * ⚠️ 실계정 미검증이라 상수가 아니라 설정으로 뺀다(ordersheet-by-order-path 와 같은 판단).
+     */
+    private String onlineInquiriesPath =
+            "/v2/providers/openapi/apis/api/v5/vendors/{vendorId}/onlineInquiries";
+
+    /**
+     * 고객센터 문의 목록 조회 경로. {vendorId} 치환. FEATURE_2609_23.
+     *
+     * ⚠️ {@code partnerCounselingStatus} 파라미터가 <b>필수</b>다 — 생략하면 400.
+     */
+    private String callCenterInquiriesPath =
+            "/v2/providers/openapi/apis/api/v5/vendors/{vendorId}/callCenterInquiries";
+
+    /** 상품문의 페이지 크기. ⚠️ 쿠팡 상한이 50 이다(고객센터는 30) — 하나로 통일하지 말 것. */
+    private int onlineInquiryPageSize = 50;
+
+    /** 고객센터 문의 페이지 크기. ⚠️ 쿠팡 상한이 30 이다(상품문의는 50). */
+    private int callCenterInquiryPageSize = 30;
+
+    /**
+     * 회차당 문의 조회 슬라이스 상한(D10) = 호출 폭주 안전망. 0 = 문의 조회 비활성.
+     * 슬라이스 폭은 <b>7일 고정</b>이다 — 두 문의 API 모두 쿠팡 상한이 7일이라 넓힐 수 없다.
+     * ⚠️ 상한이 상시로 걸리면 튜닝 대상이 아니라 {@link #inquiryStaleDays} 스윕 미작동 신호다.
+     */
+    private int inquiryTrackingMaxSlices = 6;
+
+    /** 이 일수를 넘긴 미답변 문의는 STALE 로 강제 종결한다(D9). 조회 앵커의 하한을 실질적으로 결정한다. */
+    private int inquiryStaleDays = 30;
+
     /** 쿠팡 API connect 타임아웃(ms). 미설정 시 무제한 → 게이트웨이 지연이 요청 스레드를 무한 점유한다. */
     private int connectTimeoutMs = 10_000;
 

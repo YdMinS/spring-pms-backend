@@ -121,3 +121,7 @@ databaseChangeLog:
       file: db/changelog/changes/060-listing-option-master-link.yaml
   - include:
       file: db/changelog/changes/061-listing-platform-category-code.yaml
+  - include:
+      file: db/changelog/changes/062-customer-inquiry.yaml
+  - include:
+      file: db/changelog/changes/063-marketplace-inquiry-sync.yaml
