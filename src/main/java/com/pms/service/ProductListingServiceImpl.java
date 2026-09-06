@@ -182,16 +182,25 @@ public class ProductListingServiceImpl implements ProductListingService {
      * @param platform Platform identifier
      * @param page Page number (0-indexed)
      * @param size Page size
+     * @param masterLinked 마스터 연결 여부 필터(2609_22/04); null = 기존 동작(전체)
      * @return Page of ProductListingResponse with options
      */
     @Override
-    public Page<ProductListingResponse> getByPlatform(String platform, int page, int size) {
+    public Page<ProductListingResponse> getByPlatform(String platform, int page, int size, Boolean masterLinked) {
         if (size <= 0) {
             size = DEFAULT_PAGE_SIZE;
         }
 
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "id"));
-        Page<ProductListing> listingPage = productListingRepository.findByPlatform(platform, pageable);
+        // 2609_22/04: 3값 분기 — 미지정(null)은 기존 쿼리 그대로여야 한다(동작 무변경).
+        Page<ProductListing> listingPage;
+        if (masterLinked == null) {
+            listingPage = productListingRepository.findByPlatform(platform, pageable);
+        } else if (masterLinked) {
+            listingPage = productListingRepository.findByPlatformAndMasterProductIsNotNull(platform, pageable);
+        } else {
+            listingPage = productListingRepository.findByPlatformAndMasterProductIsNull(platform, pageable);
+        }
         return listingPage.map(this::loadProductListingWithOptions);
     }
 
@@ -215,6 +224,13 @@ public class ProductListingServiceImpl implements ProductListingService {
     public ProductListingResponse update(Long id, CreateProductListingRequest request) {
         ProductListing listing = productListingRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("ProductListing", id));
+
+        // 2609_22/D32: 마스터에 연결된 셀은 legacy 경로로 수정할 수 없다. 이 update 는 옵션을 전부
+        // delete + recreate 하므로 FK·platformOptionId·approvalStatus·priceSource 가 통째로 사라진다.
+        // 마스터 미연결 셀은 계속 허용한다(마켓 상품 ID 오타를 고칠 유일한 창구, D29).
+        if (listing.getMasterProduct() != null) {
+            throw new IllegalArgumentException("마스터에 연결된 판매상품은 마스터 상세에서 수정하세요");
+        }
 
         // Check uniqueness of new platformProductId if changed
         if (!listing.getPlatformProductId().equals(request.getPlatformProductId())) {
@@ -317,6 +333,11 @@ public class ProductListingServiceImpl implements ProductListingService {
     public void delete(Long id) {
         ProductListing listing = productListingRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("ProductListing", id));
+
+        // 2609_22/D32: 위 update 와 같은 이유 — 마스터에 연결된 셀은 마스터 상세에서만 다룬다.
+        if (listing.getMasterProduct() != null) {
+            throw new IllegalArgumentException("마스터에 연결된 판매상품은 삭제할 수 없습니다");
+        }
 
         // Delete in FK order: composition rows -> options -> listing
         // (Product master is untouched - composition rows are the child of Product)
