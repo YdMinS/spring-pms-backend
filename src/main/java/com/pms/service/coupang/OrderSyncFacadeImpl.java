@@ -6,6 +6,7 @@ import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.security.TenantContext;
 import com.pms.service.claim.ClaimOrderBackfillService;
 import com.pms.service.claim.ClaimSyncAdapter;
+import com.pms.service.inquiry.InquirySyncAdapter;
 import com.pms.service.coupang.CoupangOrderSyncService.SyncResult;
 import com.pms.service.coupang.CoupangReturnSyncService.CancelSyncResult;
 import lombok.RequiredArgsConstructor;
@@ -21,7 +22,8 @@ import java.util.stream.Collectors;
  * {@link OrderSyncFacade} 구현.
  *
  * syncOne = ordersheets(Phase2) → returnRequests 취소 보정(§A) → 미완결 추적(05) → 교환 적재(06) →
- * 클레임 주문 백필(04) 순서로 한 계정을 동기화한다.
+ * 클레임 주문 백필(04) →
+ * 고객문의 적재(2609_23 D12) 순서로 한 계정을 동기화한다.
  * syncEach 는 계정마다 try/catch 로 격리해 한 계정 실패가 전체를 롤백하지 않게 한다.
  *
  * ⚠️ 이 파사드는 의도적으로 @Transactional 을 두지 않는다. 공유 트랜잭션을 열면 내부
@@ -45,6 +47,8 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
     private final ClaimOrderBackfillService claimOrderBackfillService;
     /** 교환 클레임 동기화 어댑터(D21). 플랫폼 미지원(네이버)·빈 리스트(local/test)면 조용히 건너뛴다. */
     private final List<ClaimSyncAdapter> claimSyncAdapters;
+    /** 고객문의 동기화 어댑터(2609_23 D12·D19). 클레임 어댑터와 같은 자세로 조용히 건너뛴다. */
+    private final List<InquirySyncAdapter> inquirySyncAdapters;
 
     @Override
     public OrderSyncResult sync(Long accountId) {
@@ -194,6 +198,23 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
                 // (취소 보정과 다른 판단: 취소된 라인은 구매 가능해 보이지만, 미연결 클레임은
                 // 화면에 "주문 미연결" 로 이미 보인다).
                 log.warn("Claim order backfill failed (isolated): account={}", account.getId(), e);
+            }
+
+            // 문의 적재는 클레임 단계 뒤다(2609_23 D12) — 별도 스케줄러·별도 버튼을 만들지 않고 여기 합류한다.
+            try {
+                inquirySyncAdapters.stream()
+                        .filter(a -> a.platform().equals(account.getPlatform()))
+                        .findFirst()
+                        .ifPresent(a -> {
+                            a.syncInquiries(account);
+                            // 성공 회차에만 갱신한다. 엔티티에 직접 setter 를 쓰면 이 파사드는 트랜잭션
+                            // 밖이라 조용히 유실된다 — 클레임과 같은 기록기를 지난다.
+                            syncStatusRecorder.recordInquirySyncCompleted(account.getId());
+                        });
+            } catch (Exception e) {
+                // 문의는 조회 기능이다 — 실패해도 주문·취소·클레임 결과를 되돌리지 않는다.
+                // lastInquirySyncAt 미갱신 → 다음 회차 앵커가 자동으로 넓어져 놓친 구간을 덮는다.
+                log.warn("Inquiry sync failed (isolated): account={}", account.getId(), e);
             }
 
             if (orderPartial != null) {
