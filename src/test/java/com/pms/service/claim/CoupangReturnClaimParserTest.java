@@ -113,6 +113,29 @@ class CoupangReturnClaimParserTest {
     }
 
     @Test
+    void parse_offsetCreatedAt_isParsedAsKst() {
+        // 🔴 회귀 고정: 쿠팡 v6 실응답의 createdAt 은 오프셋을 달고 온다(2026-09-06 운영에서
+        // 반품이 전건 스킵됐다). 이 케이스가 깨지면 반품 화면이 다시 빈다.
+        JsonNode receipt = read("""
+                {
+                  "receiptId": 5005,
+                  "orderId": "O-5",
+                  "receiptType": "RETURN",
+                  "receiptStatus": "UC",
+                  "createdAt": "2026-09-02T15:31:25+09:00",
+                  "modifiedAt": "2026-09-03T09:00:00+09:00",
+                  "returnItems": [{"vendorItemId": "V-5", "cancelCount": 1}]
+                }
+                """);
+
+        List<ClaimRecord> records = parser.parse(receipt);
+
+        assertThat(records).hasSize(1);
+        assertThat(records.get(0).receivedAt()).isEqualTo(LocalDateTime.of(2026, 9, 2, 15, 31, 25));
+        assertThat(records.get(0).platformModifiedAt()).isEqualTo(LocalDateTime.of(2026, 9, 3, 9, 0, 0));
+    }
+
+    @Test
     void parse_unparsableCreatedAt_skipsReceiptWithoutThrowing() {
         // receivedAt 은 nullable=false 라 저장할 수 없다 → 그 건만 건너뛴다(예외 없음)
         JsonNode receipt = read("""

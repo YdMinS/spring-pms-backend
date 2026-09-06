@@ -2,11 +2,11 @@ package com.pms.service.claim;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.pms.domain.ClaimStatus;
+import com.pms.service.coupang.CoupangTimestamps;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -15,7 +15,7 @@ import java.util.List;
  * 쿠팡 exchangeRequests 응답의 receipt 1건 → {@link ClaimRecord} 목록 (FEATURE_2609_18 / PLAN D2).
  *
  * {@link CoupangReturnClaimParser} 의 형제다 — HTTP·DB 를 모르는 순수 클래스이고 같은 정규화 규칙
- * (빈 문자열은 null · 타임스탬프 후보 2개)을 따르지만, 응답 스키마가 겹치지 않으므로 <b>공통 파서로
+ * (빈 문자열은 null · 타임스탬프는 {@code CoupangTimestamps})을 따르지만, 응답 스키마가 겹치지 않으므로 <b>공통 파서로
  * 묶지 않는다</b>(D2). 한쪽 스키마가 바뀌어도 다른 쪽이 흔들리지 않는 것이 목적이다.
  *
  * <p>⚠️ 교환 응답 스키마는 <b>실계정 미검증</b>이다(문서만 확인). 불확실한 경로는 alias 후보 목록으로
@@ -32,11 +32,6 @@ public class CoupangExchangeClaimParser {
     /** 교환은 최소 1개다 — 수량을 못 읽었을 때 0 을 넣으면 화면 수량이 무의미해진다. */
     private static final int DEFAULT_QUANTITY = 1;
 
-    /** 쿠팡 createdAt 실측 포맷 미확정 — 반품 파서와 같은 후보를 같은 순서로 시도한다. */
-    private static final List<DateTimeFormatter> TIMESTAMP_FORMATS = List.of(
-            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"),
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-
     /**
      * receipt 1건을 교환 아이템 개수만큼의 {@link ClaimRecord} 로 편다(receipt 레벨 값은 전부 복제).
      *
@@ -46,7 +41,7 @@ public class CoupangExchangeClaimParser {
         JsonNode items = firstPresent(receipt, "exchangeItemDtoV1s");
         logFieldNames(receipt, items.path(0));
 
-        LocalDateTime receivedAt = parseTimestamp(firstText(receipt, "createdAt"));
+        LocalDateTime receivedAt = CoupangTimestamps.parse(firstText(receipt, "createdAt"));
         if (receivedAt == null) {
             // receivedAt 은 nullable=false 라 채울 수 없으면 저장할 수 없다 — 반품과 같은 판단.
             log.warn("Skipping exchange claim with unparsable createdAt: exchangeId={} createdAt={}",
@@ -86,7 +81,7 @@ public class CoupangExchangeClaimParser {
                     firstText(reshipDelivery, "deliveryCompanyCode"),
                     firstText(receipt, "requesterName"),        // D19 — 이름만
                     receivedAt,
-                    parseTimestamp(firstText(receipt, "modifiedAt"))));
+                    CoupangTimestamps.parse(firstText(receipt, "modifiedAt"))));
         }
         return records;
     }
@@ -144,21 +139,6 @@ public class CoupangExchangeClaimParser {
             String raw = value.asText();
             if (!raw.isBlank()) {
                 return raw;
-            }
-        }
-        return null;
-    }
-
-    /** 실측 포맷 확정 전까지 후보를 순서대로 시도한다. 전부 실패하면 null(호출자가 건너뛴다). */
-    private LocalDateTime parseTimestamp(String raw) {
-        if (raw == null) {
-            return null;
-        }
-        for (DateTimeFormatter format : TIMESTAMP_FORMATS) {
-            try {
-                return LocalDateTime.parse(raw, format);
-            } catch (Exception ignored) {
-                // 다음 후보로
             }
         }
         return null;

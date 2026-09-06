@@ -4,11 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.pms.domain.InquiryAuthorRole;
 import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
+import com.pms.service.coupang.CoupangTimestamps;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -27,10 +27,6 @@ import java.util.List;
 @Component
 public class CoupangCallCenterInquiryParser {
 
-    private static final List<DateTimeFormatter> TIMESTAMP_FORMATS = List.of(
-            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"),
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-
     private static final String INQUIRY_STATUS_COMPLETE = "complete";
     private static final String INQUIRY_STATUS_PROGRESS = "progress";
     private static final String COUNSELING_STATUS_ANSWERED = "answered";
@@ -43,7 +39,7 @@ public class CoupangCallCenterInquiryParser {
      * @return {@code inquiryAt} 을 파싱할 수 없으면 {@code null}(호출자가 건너뛴다)
      */
     public InquiryRecord parse(JsonNode inquiry) {
-        LocalDateTime inquiredAt = parseTimestamp(text(inquiry, "inquiryAt"));
+        LocalDateTime inquiredAt = CoupangTimestamps.parse(text(inquiry, "inquiryAt"));
         if (inquiredAt == null) {
             log.warn("Skipping call-center inquiry with unparsable inquiryAt: inquiryId={} inquiryAt={}",
                     text(inquiry, "inquiryId"), text(inquiry, "inquiryAt"));
@@ -66,7 +62,7 @@ public class CoupangCallCenterInquiryParser {
                 status(inquiryStatus, counselingStatus, replies, inquiry),
                 platformStatus(inquiryStatus, counselingStatus),   // 원문 이원 저장 (D7)
                 inquiredAt,
-                parseTimestamp(text(inquiry, "answeredAt")),
+                CoupangTimestamps.parse(text(inquiry, "answeredAt")),
                 replies);
     }
 
@@ -127,7 +123,7 @@ public class CoupangCallCenterInquiryParser {
                     text(reply, "receptionistName"),    // 상담사 이름 (고객 PII 아님)
                     text(reply, "content"),
                     text(reply, "partnerTransferStatus"),
-                    parseTimestamp(text(reply, "replyAt"))));
+                    CoupangTimestamps.parse(text(reply, "replyAt"))));
         }
         return parsed;
     }
@@ -150,19 +146,5 @@ public class CoupangCallCenterInquiryParser {
 
     private String blankToNull(String raw) {
         return (raw == null || raw.isBlank()) ? null : raw;
-    }
-
-    private LocalDateTime parseTimestamp(String raw) {
-        if (raw == null) {
-            return null;
-        }
-        for (DateTimeFormatter format : TIMESTAMP_FORMATS) {
-            try {
-                return LocalDateTime.parse(raw, format);
-            } catch (Exception ignored) {
-                // 다음 후보로
-            }
-        }
-        return null;
     }
 }
