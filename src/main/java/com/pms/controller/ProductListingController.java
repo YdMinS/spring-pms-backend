@@ -124,6 +124,7 @@ public class ProductListingController {
      * @param platform Platform identifier (e.g., "COUPANG", "AMAZON") - required
      * @param page Page number (0-indexed, default 0)
      * @param size Page size (default 20, max typically 100)
+     * @param masterLinked 마스터 연결 여부 필터(2609_22/04); 미지정 = 전체(기존 동작)
      * @return HTTP 200 OK with paginated ProductListingResponse list
      */
     @GetMapping
@@ -139,8 +140,11 @@ public class ProductListingController {
     public ResponseEntity<ResponseDTO<Page<ProductListingResponse>>> getByPlatform(
             @RequestParam String platform,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
-        Page<ProductListingResponse> response = productListingService.getByPlatform(platform, page, size);
+            @RequestParam(defaultValue = "20") int size,
+            // 3값(미지정/true/false)이라 boolean 으로 받지 말 것 — 미지정이 곧 "필터 없음"이다.
+            @RequestParam(required = false) Boolean masterLinked) {
+        Page<ProductListingResponse> response =
+                productListingService.getByPlatform(platform, page, size, masterLinked);
         return ResponseEntity.ok(ResponseDTO.success(response));
     }
 

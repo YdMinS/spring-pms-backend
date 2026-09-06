@@ -58,9 +58,12 @@ public interface ProductListingService {
      * @param platform Platform identifier (e.g., "COUPANG", "AMAZON")
      * @param page Page number (0-indexed)
      * @param size Page size (items per page)
+     * @param masterLinked 마스터 연결 여부 필터(2609_22/04). {@code null} = 필터 없음(기존 동작),
+     *                     {@code false} = 마스터 미연결 셀만, {@code true} = 연결된 셀만. 3값이라
+     *                     {@code boolean} 이 아니라 {@code Boolean} 이다.
      * @return Page of ProductListingResponse objects
      */
-    Page<ProductListingResponse> getByPlatform(String platform, int page, int size);
+    Page<ProductListingResponse> getByPlatform(String platform, int page, int size, Boolean masterLinked);
 
     /**
      * Update an existing product listing.
@@ -71,10 +74,14 @@ public interface ProductListingService {
      *
      * Uses immutable pattern: creates new instance with updated fields.
      *
+     * <p>⚠️ 2609_22/D32: 마스터에 연결된 셀은 이 경로로 수정할 수 없다(400). 이 update 는 옵션을 전부
+     * delete + recreate 하므로 마스터 FK·platformOptionId·approvalStatus·priceSource 가 통째로 사라진다.</p>
+     *
      * @param id Product listing ID to update
      * @param request CreateProductListingRequest with updated field values
      * @return Updated ProductListingResponse
-     * @throws IllegalArgumentException if new platformProductId already exists
+     * @throws IllegalArgumentException if new platformProductId already exists, or the listing is
+     *                                  linked to a master product
      * @throws ResourceNotFoundException if listing not found, or referenced entities not found
      */
     ProductListingResponse update(Long id, CreateProductListingRequest request);
@@ -85,7 +92,10 @@ public interface ProductListingService {
      * Removes the listing from the database.
      * Note: Cascade behavior for related options/products handled by database FK constraints.
      *
+     * <p>⚠️ 2609_22/D32: 마스터에 연결된 셀은 이 경로로 삭제할 수 없다(400).</p>
+     *
      * @param id Product listing ID to delete
+     * @throws IllegalArgumentException if the listing is linked to a master product
      * @throws ResourceNotFoundException if listing not found
      */
     void delete(Long id);
