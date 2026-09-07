@@ -3,14 +3,15 @@ package com.pms.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.OrderItem;
+import com.pms.domain.Order;
+import com.pms.domain.OrderLine;
 import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.dto.response.ShippingLabelPreviewRow;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.OrderItemRepository;
+import com.pms.repository.OrderLineRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.OrderUpserter;
 import org.apache.poi.ss.usermodel.Row;
@@ -51,7 +52,7 @@ class ShippingLabelServiceImplTest {
     @Mock
     private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock
-    private OrderItemRepository orderItemRepository;
+    private OrderLineRepository orderLineRepository;
     @Mock
     private OrderUpserter orderUpserter;
 
@@ -70,7 +71,7 @@ class ShippingLabelServiceImplTest {
 
         service = new ShippingLabelServiceImpl(
                 coupangApiClient, props, marketplaceAccountRepository, new ObjectMapper(),
-                orderItemRepository, orderUpserter);
+                orderLineRepository, orderUpserter);
     }
 
     @Test
@@ -257,7 +258,7 @@ class ShippingLabelServiceImplTest {
 
     @Test
     void previewRowsByOrder_throwsWhenOrderMissing() {
-        given(orderItemRepository.findWithAccountAndSellerById(9L)).willReturn(Optional.empty());
+        given(orderLineRepository.findWithAccountAndSellerById(9L)).willReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.previewRowsByOrder(9L))
                 .isInstanceOf(ResourceNotFoundException.class);
@@ -270,9 +271,11 @@ class ShippingLabelServiceImplTest {
         MarketplaceAccount naver = MarketplaceAccountFixture.coupangStubBuilder("N001", null)
                 .id(2L).seller(seller).platform(Platform.NAVER)
                 .isActive(true).build();
-        OrderItem order = OrderItem.builder().id(1L).externalOrderId("4000019469460")
-                .marketplaceAccount(naver).platform(Platform.NAVER).build();
-        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(order));
+        OrderLine line = OrderLine.builder().id(1L)
+                .order(Order.builder().id(10L).externalOrderId("4000019469460")
+                        .marketplaceAccount(naver).platform(Platform.NAVER).build())
+                .build();
+        given(orderLineRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(line));
 
         assertThatThrownBy(() -> service.previewRowsByOrder(1L))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -291,9 +294,11 @@ class ShippingLabelServiceImplTest {
 
     /** 쿠팡 계정에 묶인 주문 라인 1건 스텁 (by-order 테스트 공통 given). */
     private void givenCoupangOrder() {
-        OrderItem order = OrderItem.builder().id(1L).externalOrderId("4000019469460")
-                .marketplaceAccount(coupangAccount).platform(Platform.COUPANG).build();
-        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(order));
+        OrderLine line = OrderLine.builder().id(1L)
+                .order(Order.builder().id(10L).externalOrderId("4000019469460")
+                        .marketplaceAccount(coupangAccount).platform(Platform.COUPANG).build())
+                .build();
+        given(orderLineRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(line));
     }
 
     // --- canned JSON ---

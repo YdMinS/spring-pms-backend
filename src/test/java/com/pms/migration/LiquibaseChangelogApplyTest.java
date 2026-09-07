@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *
  * This is deliberately ddl-auto=none, NOT validate: entity<->baseline fidelity (§8-6) was verified against
  * this same Hibernate-derived baseline and is documented in DECISIONS. The two large-text columns
- * (products.description, order_item.raw) legitimately diverge H2(VARCHAR/CLOB) vs MySQL(TEXT/JSON), so a
+ * (products.description, coupang_order_line.raw) legitimately diverge H2(VARCHAR/CLOB) vs MySQL(TEXT/JSON), so a
  * portable CLOB baseline cannot pass H2 validate on those columns — hence apply-check here.
  *
  * Base config keeps liquibase disabled (create-drop everywhere else), so this test overrides it locally.
@@ -50,8 +50,8 @@ class LiquibaseChangelogApplyTest {
         assertThat(applied).isNotNull().isGreaterThanOrEqualTo(1);
 
         // ...and that baseline tables actually materialized (querying proves existence).
+        // ⚠️ order_item is gone (changeset 068) — the order tables are asserted in orderModelApplied().
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM seller", Integer.class)).isZero();
-        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM order_item", Integer.class)).isZero();
 
         // changeset 008: thumbnail_asset table + its columns materialized (a successful count proves both).
         assertThat(jdbcTemplate.queryForObject(
@@ -304,11 +304,10 @@ class LiquibaseChangelogApplyTest {
                         + "AND last_sync_error IS NULL",
                 Integer.class)).isNotNull();
 
-        // changeset 052: the two customer-name columns exist on order_item (FEATURE_2609_06).
-        // Nullable with no backfill on purpose — the next sync's upsert fills orders inside the sync
-        // window — so a successful count over the new names is what proves they were added.
+        // changeset 052: the two customer-name columns (FEATURE_2609_06). They moved to the order header
+        // with 066 (order_item is dropped by 068), so the assertion follows them to `orders`.
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM order_item "
+                "SELECT COUNT(*) FROM orders "
                         + "WHERE orderer_name IS NULL AND receiver_name IS NULL",
                 Integer.class)).isNotNull();
     }
@@ -322,7 +321,7 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM order_claim "
                         + "WHERE tenant_id IS NULL AND marketplace_account_id IS NULL "
                         + "AND claim_type IS NULL AND external_claim_id IS NULL "
-                        + "AND external_item_id IS NULL AND order_item_id IS NULL "
+                        + "AND external_item_id IS NULL AND order_line_id IS NULL "
                         + "AND order_item_match_attempts IS NULL AND status IS NULL "
                         + "AND platform_status IS NULL AND received_at IS NULL AND synced_at IS NULL",
                 Integer.class)).isZero();
@@ -504,8 +503,28 @@ class LiquibaseChangelogApplyTest {
                 "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
                         + "WHERE TABLE_NAME = 'ORDER_SHIPMENT'", String.class)).contains("UQ_ORDER_SHIPMENT");
 
-        // order_item survives this changeset — the read paths still use it until 04.
-        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM order_item", Integer.class)).isZero();
+        // changeset 067: the four FK tables now carry order_line_id (a successful count proves the rename;
+        // the old order_item_id column is gone with it).
+        for (String table : new String[]{
+                "order_claim", "customer_inquiry", "shopping_list_item", "order_cancel_action"}) {
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM " + table + " WHERE order_line_id IS NULL", Integer.class))
+                    .as("order_line_id present on %s", table)
+                    .isZero();
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '"
+                            + table.toUpperCase() + "' AND COLUMN_NAME = 'ORDER_ITEM_ID'", Integer.class))
+                    .as("order_item_id gone from %s", table)
+                    .isZero();
+        }
+        // 🔴 the claim backfill counter keeps its old column name on purpose (2609_18 runs on it unchanged).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ORDER_CLAIM' "
+                        + "AND COLUMN_NAME = 'ORDER_ITEM_MATCH_ATTEMPTS'", Integer.class)).isEqualTo(1);
+
+        // changeset 068: order_item is dropped — querying it must fail.
+        assertThatThrownBy(() -> jdbcTemplate.queryForObject("SELECT COUNT(*) FROM order_item", Integer.class))
+                .isInstanceOf(DataAccessException.class);
     }
 
     @Test
@@ -517,7 +536,7 @@ class LiquibaseChangelogApplyTest {
         // No rows yet, but WHERE tenant_id IS NULL also proves backfill left nothing null.
         for (String table : new String[]{
                 "products", "seller", "product_listing", "marketplace_account", "member",
-                "order_item", "shopping_list_item", "purchase_record", "carrier_rate", "package"}) {
+                "order_line", "shopping_list_item", "purchase_record", "carrier_rate", "package"}) {
             assertThat(jdbcTemplate.queryForObject(
                     "SELECT COUNT(*) FROM " + table + " WHERE tenant_id IS NULL", Integer.class))
                     .as("tenant_id column present and non-null on %s", table)

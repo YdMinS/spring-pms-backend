@@ -1,6 +1,10 @@
 package com.pms.service;
 
-import com.pms.domain.OrderItem;
+import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Order;
+import com.pms.domain.OrderLine;
+import com.pms.domain.OrderStatus;
 import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListingOption;
@@ -10,7 +14,8 @@ import com.pms.config.CoupangProperties;
 import com.pms.domain.ShoppingListItem;
 import com.pms.dto.request.ManualItemRequest;
 import com.pms.dto.response.PurchaseListResponse;
-import com.pms.repository.OrderItemRepository;
+import com.pms.repository.CoupangOrderLineRepository;
+import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductRepository;
@@ -46,7 +51,8 @@ class PurchaseListServiceTest {
 
     @Mock private ShoppingListItemRepository shoppingListItemRepository;
     @Mock private PurchaseRecordRepository purchaseRecordRepository;
-    @Mock private OrderItemRepository orderItemRepository;
+    @Mock private OrderLineRepository orderLineRepository;
+    @Mock private CoupangOrderLineRepository coupangOrderLineRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private ProductListingProductRepository productListingProductRepository;
     @Mock private ProductRepository productRepository;
@@ -58,27 +64,41 @@ class PurchaseListServiceTest {
         return Product.builder().id(id).productName(name).build();
     }
 
-    private OrderItem acceptOrder(Long id, String optionId, int orderCount) {
-        return OrderItem.builder()
-                .id(id).platform(Platform.COUPANG).externalOrderId("O" + id).externalItemId(optionId)
-                .itemName("주문" + id).orderCount(orderCount).cancelCount(0).holdCount(0)
-                .status("ACCEPT").build();
+    private static final MarketplaceAccount ACCOUNT =
+            MarketplaceAccount.builder().id(1L).platform(Platform.COUPANG).build();
+
+    private OrderLine paidLine(Long id, int orderQty) {
+        return OrderLine.builder()
+                .id(id)
+                .order(Order.builder().id(1000L + id).marketplaceAccount(ACCOUNT).platform(Platform.COUPANG)
+                        .externalOrderId("O" + id).build())
+                .itemName("주문" + id).orderQty(orderQty).cancelQty(0).holdQty(0)
+                .status(OrderStatus.PAID).build();
+    }
+
+    /** 옵션 매칭키(vendorItemId)는 core 가 아니라 쿠팡 거울에 있다(2609_26 / 04 §3-3). */
+    private CoupangOrderLine mirror(OrderLine line, String optionId) {
+        return CoupangOrderLine.builder()
+                .id(2000L + line.getId()).orderLine(line).marketplaceAccount(ACCOUNT)
+                .shipmentBoxId("B1").orderIdRaw(line.getOrder().getExternalOrderId())
+                .vendorItemId(optionId).platformStatus("ACCEPT").build();
     }
 
     @Test
     void extract_BOM전개_옵션당구성수량만큼_autoQty계산() {
-        OrderItem oi = acceptOrder(10L, "OPT1", 3);          // 발주가능 3
+        OrderLine line = paidLine(10L, 3);                   // 발주가능 3
         Product a = product(100L, "A");
         Product b = product(200L, "B");
         ProductListingOption option = ProductListingOption.builder().id(1L).platformOptionId("OPT1").build();
 
-        given(orderItemRepository.findRecentByStatus(eq("ACCEPT"), any(LocalDateTime.class))).willReturn(List.of(oi));
+        given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of(line));
+        given(coupangOrderLineRepository.findByOrderLine_IdIn(List.of(10L))).willReturn(List.of(mirror(line, "OPT1")));
         given(productListingOptionRepository.findByPlatformOptionId("OPT1")).willReturn(Optional.of(option));
         given(productListingProductRepository.findByProductListingOptionId(1L)).willReturn(List.of(
                 ProductListingProduct.builder().id(1L).product(a).quantity(2).build(),   // A×2 → 6
                 ProductListingProduct.builder().id(2L).product(b).quantity(1).build()    // B×1 → 3
         ));
-        given(shoppingListItemRepository.findByOrderItem_IdAndProduct_Id(anyLong(), anyLong()))
+        given(shoppingListItemRepository.findByOrderLine_IdAndProduct_Id(anyLong(), anyLong()))
                 .willReturn(Optional.empty());
 
         service.extract(null);
@@ -92,18 +112,19 @@ class PurchaseListServiceTest {
 
     @Test
     void extract_기존라인_manualQty보존_auto만갱신() {
-        OrderItem oi = acceptOrder(10L, "OPT1", 3);          // 발주가능 3
+        OrderLine line = paidLine(10L, 3);                   // 발주가능 3
         Product a = product(100L, "A");
         ProductListingOption option = ProductListingOption.builder().id(1L).platformOptionId("OPT1").build();
         ShoppingListItem existing = ShoppingListItem.builder()
-                .id(5L).orderItem(oi).product(a).autoQty(0).manualQty(4).build();
+                .id(5L).orderLine(line).product(a).autoQty(0).manualQty(4).build();
 
-        given(orderItemRepository.findRecentByStatus(eq("ACCEPT"), any(LocalDateTime.class))).willReturn(List.of(oi));
+        given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of(line));
+        given(coupangOrderLineRepository.findByOrderLine_IdIn(List.of(10L))).willReturn(List.of(mirror(line, "OPT1")));
         given(productListingOptionRepository.findByPlatformOptionId("OPT1")).willReturn(Optional.of(option));
         given(productListingProductRepository.findByProductListingOptionId(1L)).willReturn(List.of(
                 ProductListingProduct.builder().id(1L).product(a).quantity(2).build()    // 3×2 = 6
         ));
-        given(shoppingListItemRepository.findByOrderItem_IdAndProduct_Id(10L, 100L))
+        given(shoppingListItemRepository.findByOrderLine_IdAndProduct_Id(10L, 100L))
                 .willReturn(Optional.of(existing));
 
         service.extract(null);
@@ -116,8 +137,9 @@ class PurchaseListServiceTest {
 
     @Test
     void extract_옵션미매핑_save호출안함() {
-        OrderItem oi = acceptOrder(10L, "UNKNOWN", 3);
-        given(orderItemRepository.findRecentByStatus(eq("ACCEPT"), any(LocalDateTime.class))).willReturn(List.of(oi));
+        OrderLine line = paidLine(10L, 3);
+        given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of(line));
+        given(coupangOrderLineRepository.findByOrderLine_IdIn(List.of(10L))).willReturn(List.of(mirror(line, "UNKNOWN")));
         given(productListingOptionRepository.findByPlatformOptionId("UNKNOWN")).willReturn(Optional.empty());
 
         service.extract(null);
@@ -130,13 +152,13 @@ class PurchaseListServiceTest {
     void getList_잔여계산_잔여있으면그룹포함() {
         Product a = product(100L, "A");
         ShoppingListItem sli = ShoppingListItem.builder()
-                .id(1L).orderItem(acceptOrder(10L, "OPT1", 8)).product(a).autoQty(8).manualQty(0).build();
+                .id(1L).orderLine(paidLine(10L, 8)).product(a).autoQty(8).manualQty(0).build();
 
         given(shoppingListItemRepository.findAll()).willReturn(List.of(sli));
         given(purchaseRecordRepository.findByItem_IdIn(List.of(1L))).willReturn(List.of(
                 PurchaseRecord.builder().id(1L).item(sli).purchasedOn(LocalDate.now()).quantity(5).build()
         ));
-        given(orderItemRepository.findRecentByStatus(eq("ACCEPT"), any(LocalDateTime.class))).willReturn(List.of());
+        given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of());
 
         PurchaseListResponse res = service.getList(null);
 
@@ -150,13 +172,13 @@ class PurchaseListServiceTest {
     void getList_잔여0이면그룹제외() {
         Product a = product(100L, "A");
         ShoppingListItem sli = ShoppingListItem.builder()
-                .id(1L).orderItem(acceptOrder(10L, "OPT1", 5)).product(a).autoQty(5).manualQty(0).build();
+                .id(1L).orderLine(paidLine(10L, 5)).product(a).autoQty(5).manualQty(0).build();
 
         given(shoppingListItemRepository.findAll()).willReturn(List.of(sli));
         given(purchaseRecordRepository.findByItem_IdIn(List.of(1L))).willReturn(List.of(
                 PurchaseRecord.builder().id(1L).item(sli).purchasedOn(LocalDate.now()).quantity(5).build()
         ));
-        given(orderItemRepository.findRecentByStatus(eq("ACCEPT"), any(LocalDateTime.class))).willReturn(List.of());
+        given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of());
 
         PurchaseListResponse res = service.getList(null);
 
@@ -164,10 +186,11 @@ class PurchaseListServiceTest {
     }
 
     @Test
-    void getList_ACCEPT인데옵션미매핑_unmappedOrders집계() {
-        OrderItem oi = acceptOrder(10L, "X", 5);
+    void getList_결제완료인데옵션미매핑_unmappedOrders집계() {
+        OrderLine line = paidLine(10L, 5);
         given(shoppingListItemRepository.findAll()).willReturn(List.of());
-        given(orderItemRepository.findRecentByStatus(eq("ACCEPT"), any(LocalDateTime.class))).willReturn(List.of(oi));
+        given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of(line));
+        given(coupangOrderLineRepository.findByOrderLine_IdIn(List.of(10L))).willReturn(List.of(mirror(line, "X")));
         given(productListingOptionRepository.findByPlatformOptionId("X")).willReturn(Optional.empty());
 
         PurchaseListResponse res = service.getList(null);
@@ -183,8 +206,8 @@ class PurchaseListServiceTest {
     void addManual_기존수동라인존재_manualQty누적_새행안만듦() {
         Product a = product(100L, "A");
         ShoppingListItem existing = ShoppingListItem.builder()
-                .id(7L).orderItem(null).product(a).autoQty(0).manualQty(4).build();
-        given(shoppingListItemRepository.findByOrderItemIsNullAndProduct_Id(100L))
+                .id(7L).orderLine(null).product(a).autoQty(0).manualQty(4).build();
+        given(shoppingListItemRepository.findByOrderLineIsNullAndProduct_Id(100L))
                 .willReturn(Optional.of(existing));
 
         service.addManual(new ManualItemRequest(100L, 3));

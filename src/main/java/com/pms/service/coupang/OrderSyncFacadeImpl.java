@@ -128,7 +128,7 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
      * 그대로 돈다(PLAN 2609_16 D5·D6).
      */
     private OrderSyncResult syncOne(MarketplaceAccount account, OrderSyncScope scope) {
-        // Drive the tenant from the account being synced so saved order_item/shopping_list_item
+        // Drive the tenant from the account being synced so saved order_line/shopping_list_item
         // (@TenantId) land in the account's tenant regardless of trigger (web admin or a future
         // batch/@Scheduled with no SecurityContext). Save/restore the previous value instead of
         // blindly clearing, so a web request's TenantContext survives across the account loop.

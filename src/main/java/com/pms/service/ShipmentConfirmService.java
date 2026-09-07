@@ -4,7 +4,7 @@ import com.pms.dto.request.ManualShipmentRequest;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
- * 발송처리 레그: order_item 전개 → 쿠팡 송장업로드(상품준비중→배송지시) 전송.
+ * 발송처리 레그: order_line 전개 → 쿠팡 송장업로드(상품준비중→배송지시) 전송.
  *
  * <p>경로는 <b>둘</b>이다:
  * <ul>

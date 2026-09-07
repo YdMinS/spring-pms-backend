@@ -4,15 +4,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.OrderItem;
+import com.pms.domain.OrderLine;
+import com.pms.domain.OrderStatus;
 import com.pms.domain.Platform;
 import com.pms.dto.request.OrderAcknowledgeRequest;
-import com.pms.repository.OrderItemRepository;
+import com.pms.repository.OrderLineRepository;
 import com.pms.service.ShipmentConfirmResult.FailedBox;
 import com.pms.service.ShipmentConfirmResult.SkippedOrder;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangCredentials;
-import com.pms.service.coupang.CoupangOrderStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -29,12 +29,12 @@ import java.util.Set;
  *
  * 흐름: 라인 id dedupe → {@code findWithAccountByIdIn} 전개 → 라인 분류(비-쿠팡·박스 없음=unsupported,
  * 결제완료 아님=skipped) → 계정별 박스 dedupe → 계정별·청크별 1 PUT → responseList 집계 →
- * 성공 박스의 로컬 status 를 INSTRUCT 로 write-back(PLAN 2609_17 D3).
+ * 성공 박스의 로컬 상태를 PREPARING 으로 write-back(PLAN 2609_17 D3).
  *
  * ⚠️ 청크 단위 try/catch 로 전송 실패를 격리한다 — 실패한 청크의 박스만 failed 로 담고
  *    같은 계정의 다음 청크와 다른 계정 배치는 계속 보낸다.
  * ⚠️ 이 서비스에 {@code @Transactional} 을 붙이면 안 된다 — 외부 HTTP 를 도는 경로다.
- *    {@code OrderItem} 조회는 {@code @EntityGraph} finder 로만 한다(open-in-view=false).
+ *    {@code OrderLine} 조회는 {@code @EntityGraph} finder 로만 한다(open-in-view=false).
  * ⚠️ 발주처리는 되돌릴 수 없다 — 자동 호출 금지(D4). 호출자는 컨트롤러 하나뿐이다.
  */
 @Slf4j
@@ -43,26 +43,27 @@ import java.util.Set;
 public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
 
     /**
-     * 전송 대상 상태 — 결제완료만.
+     * 전송 대상 상태 — 결제완료(PAID)만.
      * ⚠️ 발송처리(PLAN 2609_07 D1)의 블랙리스트와 <b>방향이 반대</b>다. 거기는 "모르는 상태면 보낸다"
      *    (안 보내면 발송 누락), 여기는 "모르는 상태면 안 보낸다"(잘못 보내면 되돌릴 수 없다).
      *    상태는 되돌아오지 않으므로(단조성) 스킵으로 누락될 주문이 구조적으로 없다. PLAN 2609_17 D2.
      */
-    private static final String STATUS_ACCEPT = CoupangOrderStatus.ACCEPT.name();
-    private static final String STATUS_INSTRUCT = CoupangOrderStatus.INSTRUCT.name();
+    private static final OrderStatus STATUS_PAID = OrderStatus.PAID;
+    /** 발주처리 성공 라인의 로컬 상태 — 화이트리스트와 <b>다른 지점</b>이다(PLAN 2609_17 D3). */
+    private static final OrderStatus STATUS_PREPARING = OrderStatus.PREPARING;
 
     /** 한 번에 보낼 박스 수 상한. 쿠팡 배열 상한 미확인분에 대한 보수적 기본값(PLAN 2609_17 D12). */
     private static final int CHUNK_SIZE = 50;
 
     private final CoupangApiClient coupangApiClient;
     private final CoupangProperties coupangProperties;
-    private final OrderItemRepository orderItemRepository;
+    private final OrderLineRepository orderLineRepository;
     private final ObjectMapper objectMapper;
 
     @Override
     public OrderAcknowledgeResult acknowledge(OrderAcknowledgeRequest request) {
         List<Long> ids = request.orderItemIds().stream().distinct().toList();
-        List<OrderItem> lines = orderItemRepository.findWithAccountByIdIn(ids);
+        List<OrderLine> lines = orderLineRepository.findWithAccountByIdIn(ids);
         if (lines.isEmpty()) {
             throw new IllegalArgumentException("주문 라인을 찾을 수 없습니다");
         }
@@ -75,23 +76,25 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
         Map<Long, MarketplaceAccount> accountById = new LinkedHashMap<>();
         Map<Long, Set<String>> boxIdsByAccount = new LinkedHashMap<>();
         // 성공 시 status 를 갱신할 DB 라인(박스 단위).
-        Map<String, List<OrderItem>> linesByBoxId = new LinkedHashMap<>();
+        Map<String, List<OrderLine>> linesByBoxId = new LinkedHashMap<>();
 
-        for (OrderItem line : lines) {
-            MarketplaceAccount account = line.getMarketplaceAccount();
-            String orderId = line.getExternalOrderId();
-            String boxId = line.getExternalBoxId();
+        for (OrderLine line : lines) {
+            MarketplaceAccount account = line.getOrder().getMarketplaceAccount();
+            String orderId = line.getOrder().getExternalOrderId();
+            String boxId = (line.getOrderShipment() == null)
+                    ? null : line.getOrderShipment().getExternalShipmentId();
             // 플랫폼 판정은 계정 기준 — ShipmentConfirmServiceImpl 과 같은 기준이어야 두 레그가 갈라지지 않는다
-            // (OrderItem 에도 platform 컬럼이 있지만 쓰지 않는다).
+            // (orders 에도 platform 컬럼이 있지만 쓰지 않는다).
             if (!Platform.COUPANG.equals(account.getPlatform()) || boxId == null || boxId.isBlank()) {
                 if (reportedOrders.add(orderId)) {
                     unsupported.add(orderId);
                 }
                 continue;
             }
-            if (!STATUS_ACCEPT.equals(line.getStatus())) {
+            if (line.getStatus() != STATUS_PAID) {
                 if (reportedOrders.add(orderId)) {
-                    skipped.add(new SkippedOrder(orderId, line.getStatus()));
+                    skipped.add(new SkippedOrder(orderId,
+                            line.getStatus() == null ? null : line.getStatus().name()));
                 }
                 continue;
             }
@@ -180,7 +183,10 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
     }
 
     /**
-     * 발주처리에 성공한 박스의 로컬 status 를 INSTRUCT 로 맞춘다(PLAN 2609_17 D3).
+     * 발주처리에 성공한 박스의 로컬 상태를 {@code PREPARING} 로 맞춘다(PLAN 2609_17 D3).
+     *
+     * <p>🔴 화이트리스트({@code PAID})와 <b>다른 지점</b>이다 — 빠뜨리면 발주 성공 라인이 구 어휘로
+     * 남아 송장 접수시트 대상에서 사라진다.
      *
      * <p>동기화를 기다리지 않고 송장 접수시트(status=INSTRUCT 고정 조회) 대상이 되어야 한다.
      * 다음 동기화가 쿠팡 값으로 덮어써도 같은 값이라 충돌하지 않는다.</p>
@@ -189,16 +195,16 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
      *    failed 로 보고돼 사용자가 재전송한다(2609_07 D5 와 같은 이유). 본문 전체를 try 로 감싼다.
      */
     private void markInstructed(List<String> succeededBoxIds,
-                                Map<String, List<OrderItem>> linesByBoxId) {
+                                Map<String, List<OrderLine>> linesByBoxId) {
         try {
-            List<OrderItem> updated = new ArrayList<>();
+            List<OrderLine> updated = new ArrayList<>();
             for (String boxId : succeededBoxIds) {
-                for (OrderItem line : linesByBoxId.getOrDefault(boxId, List.of())) {
-                    updated.add(line.toBuilder().status(STATUS_INSTRUCT).build());
+                for (OrderLine line : linesByBoxId.getOrDefault(boxId, List.of())) {
+                    updated.add(line.toBuilder().status(STATUS_PREPARING).build());
                 }
             }
             if (!updated.isEmpty()) {
-                orderItemRepository.saveAll(updated);
+                orderLineRepository.saveAll(updated);
             }
         } catch (Exception e) {
             log.warn("발주처리 write-back 실패 (쿠팡 전송은 성공): {}", e.getMessage());

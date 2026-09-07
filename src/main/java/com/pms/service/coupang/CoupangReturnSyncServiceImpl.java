@@ -7,9 +7,11 @@ import com.pms.domain.ClaimStatus;
 import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
-import com.pms.domain.OrderItem;
+import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.OrderLine;
 import com.pms.repository.OrderClaimRepository;
-import com.pms.repository.OrderItemRepository;
+import com.pms.repository.CoupangOrderLineRepository;
+import com.pms.repository.OrderLineRepository;
 import com.pms.service.claim.ClaimStaleSweeper;
 import com.pms.service.claim.ClaimTrackingSlicer;
 import com.pms.service.claim.ClaimUpserter;
@@ -60,7 +62,8 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
     private final CoupangApiClient coupangApiClient;
-    private final OrderItemRepository orderItemRepository;
+    private final CoupangOrderLineRepository coupangOrderLineRepository;
+    private final OrderLineRepository orderLineRepository;
     private final CoupangProperties coupangProperties;
     private final ObjectMapper objectMapper;
     private final CoupangReturnClaimParser coupangReturnClaimParser;
@@ -340,7 +343,7 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
     }
 
     /**
-     * returnItem 1건을 order_item 4키로 매칭해 cancel_count 보정.
+     * returnItem 1건을 쿠팡 자연키 4키({@code coupang_order_line})로 매칭해 {@code order_line.cancel_qty} 보정.
      * 다중 취소 접수 합산 여부는 실데이터로 확인 전까지 max 로 단순화(설계 §4). 매칭 없으면 무시.
      *
      * @return 실제로 갱신했으면 true
@@ -350,20 +353,20 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
         String vendorItemId = item.path("vendorItemId").asText();
         int cancelCount = item.path("cancelCount").asInt(0);
 
-        Optional<OrderItem> match = orderItemRepository
-                .findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
+        Optional<CoupangOrderLine> match = coupangOrderLineRepository
+                .findByMarketplaceAccount_IdAndShipmentBoxIdAndOrderIdRawAndVendorItemId(
                         account.getId(), boxId, orderId, vendorItemId);
         if (match.isEmpty()) {
             return false;
         }
 
-        OrderItem existing = match.get();
-        int newCancel = Math.max(existing.getCancelCount(), cancelCount);
-        if (newCancel == existing.getCancelCount()) {
+        OrderLine existing = match.get().getOrderLine();
+        int newCancel = Math.max(existing.getCancelQty(), cancelCount);
+        if (newCancel == existing.getCancelQty()) {
             return false;
         }
 
-        orderItemRepository.save(existing.toBuilder().cancelCount(newCancel).build());
+        orderLineRepository.save(existing.toBuilder().cancelQty(newCancel).build());
         return true;
     }
 

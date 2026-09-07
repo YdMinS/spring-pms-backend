@@ -2,13 +2,20 @@ package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.OrderItem;
+import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.Order;
+import com.pms.domain.OrderLine;
+import com.pms.domain.OrderShipment;
+import com.pms.domain.OrderStatus;
 import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.OrderItemRepository;
+import com.pms.repository.CoupangOrderLineRepository;
+import com.pms.repository.OrderLineRepository;
+import com.pms.repository.OrderRepository;
+import com.pms.repository.OrderShipmentRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,7 +45,10 @@ class OrderControllerTest extends BaseIntegrationTest {
     @Autowired private SellerRepository sellerRepository;
     @Autowired private MarketplaceAccountRepository marketplaceAccountRepository;
     @Autowired private CoupangAccountCredentialRepository credentialRepository;
-    @Autowired private OrderItemRepository orderItemRepository;
+    @Autowired private OrderRepository orderRepository;
+    @Autowired private OrderShipmentRepository orderShipmentRepository;
+    @Autowired private OrderLineRepository orderLineRepository;
+    @Autowired private CoupangOrderLineRepository coupangOrderLineRepository;
 
     @MockBean private CoupangApiClient coupangApiClient;   // 동기화 시 빈 데이터 반환
 
@@ -54,12 +64,21 @@ class OrderControllerTest extends BaseIntegrationTest {
                 .isActive(true).build());
         // 자격증명은 별도 행이다(2609_26) — 동기화 경로가 vendorId 를 읽으므로 함께 시드한다.
         MarketplaceAccountFixture.saveCredential(credentialRepository, account, "A00012345", null);
-        orderItemRepository.save(OrderItem.builder()
+        // 주문 3층 + 쿠팡 거울 (2609_26) — 조회 윈도우(syncDays) 안에 들도록 ordered_at 은 지금.
+        Order order = orderRepository.save(Order.builder()
                 .marketplaceAccount(account).platform(Platform.COUPANG)
-                .externalOrderId("O1").externalBoxId("B1").externalItemId("I1")
-                .itemName("양말").ordererName("홍길동").receiverName("김철수")
-                .orderCount(10).cancelCount(2).holdCount(1)
-                .status("ACCEPT").paidAt(LocalDateTime.now())   // 조회 윈도우(syncDays) 안에 들도록
+                .externalOrderId("O1").orderedAt(LocalDateTime.now())
+                .ordererName("홍길동").receiverName("김철수").build());
+        OrderShipment shipment = orderShipmentRepository.save(OrderShipment.builder()
+                .order(order).externalShipmentId("B1").build());
+        OrderLine line = orderLineRepository.save(OrderLine.builder()
+                .order(order).orderShipment(shipment)
+                .status(OrderStatus.PAID).itemName("양말")
+                .orderQty(10).cancelQty(2).holdQty(1).build());
+        coupangOrderLineRepository.save(CoupangOrderLine.builder()
+                .orderLine(line).marketplaceAccount(account)
+                .shipmentBoxId("B1").orderIdRaw("O1").vendorItemId("I1")
+                .platformStatus("ACCEPT")
                 .raw("{\"secret\":\"should-not-leak\"}").build());
     }
 

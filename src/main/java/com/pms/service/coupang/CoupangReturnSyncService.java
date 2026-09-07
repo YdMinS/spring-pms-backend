@@ -3,11 +3,11 @@ package com.pms.service.coupang;
 import com.pms.domain.MarketplaceAccount;
 
 /**
- * 쿠팡 returnRequests(반품/취소 요청 목록) 조회 → order_item 취소수량 보정.
+ * 쿠팡 returnRequests(반품/취소 요청 목록) 조회 → order_line 취소수량 보정.
  *
  * ordersheets 만으로는 조회창(최근 N일)을 벗어난 옛 주문의 취소를 못 잡으므로,
- * cancelType=CANCEL 으로 결제완료 단계 취소를 별도 조회해 매칭되는 order_item 의 cancel_count 를 보정한다.
- * (orderId + shipmentBoxId + vendorItemId) 로 order_item 4키 매칭. 매칭 안 되면 무시(예외 없음).
+ * cancelType=CANCEL 으로 결제완료 단계 취소를 별도 조회해 매칭되는 order_line 의 cancel_qty 를 보정한다.
+ * (orderId + shipmentBoxId + vendorItemId) 로 coupang_order_line 4키 매칭. 매칭 안 되면 무시(예외 없음).
  */
 public interface CoupangReturnSyncService {
 

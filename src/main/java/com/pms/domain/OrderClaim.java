@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
 /**
  * 클레임(반품·교환) 라인 (FEATURE_2609_18 / PLAN §3).
  *
- * {@link OrderItem} 과 같은 입도 = 라인 단위 1행이며, 한 라인에 클레임이 여러 건 붙을 수 있다
+ * {@link OrderLine} 과 같은 입도 = 라인 단위 1행이며, 한 라인에 클레임이 여러 건 붙을 수 있다
  * (부분 반품 2회, 반품 후 교환). UNIQUE(marketplace_account_id, claim_type, external_claim_id,
  * external_item_id) 로 멱등 upsert 된다 — {@code claim_type} 이 키에 있어야 반품 {@code receiptId} 와
  * 교환 {@code exchangeId} 가 겹쳐도 서로를 덮어쓰지 않는다(D24).
@@ -17,8 +17,8 @@ import java.time.LocalDateTime;
  * <p>쓰기 주체는 동기화뿐이다 — 반품은 {@link com.pms.service.coupang.CoupangReturnSyncServiceImpl}
  * 이 이미 도는 returnRequests 5배치 응답을 재사용해 적재한다(D15, 쿠팡 호출 0건 추가).
  *
- * <p>참조는 <b>claim → order_item 단방향</b>이다(D14) — {@code OrderItem} 에 역참조 컬렉션을 두면
- * 주문 조회마다 딸려온다. 주문 매칭에 실패해도 claim 은 저장하고 {@code orderItem} 만 null 로 둔다(D12).
+ * <p>참조는 <b>claim → order_line 단방향</b>이다(D14) — {@code OrderLine} 에 역참조 컬렉션을 두면
+ * 주문 조회마다 딸려온다. 주문 매칭에 실패해도 claim 은 저장하고 {@code orderLine} 만 null 로 둔다(D12).
  *
  * <p>⚠️ PII 는 <b>이름만</b> 저장한다(D19) — 연락처·회수 주소·raw 응답 컬럼을 추가하지 말 것.
  */
@@ -48,7 +48,7 @@ public class OrderClaim extends BaseEntity {
 
     @Column(nullable = false, length = 50)
     @Enumerated(EnumType.STRING)
-    private Platform platform;                      // order_item 관례를 따라 둔다
+    private Platform platform;                      // orders 관례를 따라 둔다
 
     @Enumerated(EnumType.STRING)
     @Column(name = "claim_type", nullable = false, length = 20)
@@ -67,9 +67,11 @@ public class OrderClaim extends BaseEntity {
     private String externalItemId;                  // 쿠팡 vendorItemId = 옵션ID
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "order_item_id")
-    private OrderItem orderItem;                    // 매칭 실패 시 null (D12·D22)
+    @JoinColumn(name = "order_line_id")
+    private OrderLine orderLine;                    // 매칭 실패 시 null (D12·D22)
 
+    // ⚠️ 컬럼명은 order_item_match_attempts 로 <b>유지</b>한다(FEATURE_2609_26 / 04) — 2609_18 백필 로직이
+    //    그대로 도는 값이라, 어휘 통일만을 위해 그 조각을 다시 열지 않는다.
     @Column(name = "order_item_match_attempts", nullable = false)
     private Integer orderItemMatchAttempts;         // 단건 주문조회 백필 시도 횟수 (04 가 증가시킨다)
 
@@ -135,6 +137,6 @@ public class OrderClaim extends BaseEntity {
 
     /** 주문 라인 연결 여부 — 화면이 "주문 미연결" 배지를 띄우는 근거. */
     public boolean isLinked() {
-        return orderItem != null;
+        return orderLine != null;
     }
 }

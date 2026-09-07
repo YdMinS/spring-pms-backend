@@ -6,7 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 쿠팡 ordersheets 조회 → order_item 멱등 upsert 동기화.
+ * 쿠팡 ordersheets 조회 → 주문 3층 + 쿠팡 extension 멱등 upsert 동기화.
  *
  * 멱등성 보장: 같은 기간을 여러 번 동기화해도 UNIQUE(account, box, order, item) 키로
  * 신규는 insert, 기존은 가변 필드(status·cancel·hold·count·raw)만 갱신한다 → 중복이 쌓이지 않는다.

@@ -131,3 +131,7 @@ databaseChangeLog:
       file: db/changelog/changes/065-coupang-account-credential.yaml
   - include:
       file: db/changelog/changes/066-order-model.yaml
+  - include:
+      file: db/changelog/changes/067-order-line-fk.yaml
+  - include:
+      file: db/changelog/changes/068-drop-order-item.yaml

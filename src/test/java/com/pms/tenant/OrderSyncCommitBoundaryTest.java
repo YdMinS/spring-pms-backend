@@ -75,7 +75,6 @@ class OrderSyncCommitBoundaryTest {
         jdbcTemplate.execute("delete from order_line");
         jdbcTemplate.execute("delete from order_shipment");
         jdbcTemplate.execute("delete from orders");
-        jdbcTemplate.execute("delete from order_item");
         jdbcTemplate.execute("delete from coupang_account_credential");
         jdbcTemplate.execute("delete from marketplace_account");
         jdbcTemplate.execute("delete from seller");

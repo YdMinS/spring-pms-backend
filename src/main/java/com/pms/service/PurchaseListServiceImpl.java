@@ -1,6 +1,8 @@
 package com.pms.service;
 
-import com.pms.domain.OrderItem;
+import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.OrderLine;
+import com.pms.domain.OrderStatus;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
@@ -16,7 +18,8 @@ import com.pms.dto.response.PurchaseRecordView;
 import com.pms.dto.response.UnmappedOrder;
 import com.pms.config.CoupangProperties;
 import com.pms.exception.ResourceNotFoundException;
-import com.pms.repository.OrderItemRepository;
+import com.pms.repository.CoupangOrderLineRepository;
+import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductRepository;
@@ -47,11 +50,13 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class PurchaseListServiceImpl implements PurchaseListService {
 
-    private static final String STATUS_ACCEPT = "ACCEPT";
+    /** 사입 대상 = 결제완료. 중립 상태로 판정한다(FEATURE_2609_26 / PLAN D4). */
+    private static final OrderStatus PURCHASE_TARGET_STATUS = OrderStatus.PAID;
 
     private final ShoppingListItemRepository shoppingListItemRepository;
     private final PurchaseRecordRepository purchaseRecordRepository;
-    private final OrderItemRepository orderItemRepository;
+    private final OrderLineRepository orderLineRepository;
+    private final CoupangOrderLineRepository coupangOrderLineRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
     private final ProductListingProductRepository productListingProductRepository;
     private final ProductRepository productRepository;
@@ -61,15 +66,21 @@ public class PurchaseListServiceImpl implements PurchaseListService {
     @Transactional
     public void extract(Long sellerId) {
         // 1) 주문 연결 라인 autoQty 전체 리셋 → 출고/취소된 주문 라인은 아래 재적재에서 제외돼 자연히 빠짐.
+        //    ⚠️ 수동 추가 라인(order_line_id IS NULL)은 건드리지 않는다.
         shoppingListItemRepository.resetAllAutoQty();
 
-        // 2) ACCEPT 주문을 옵션→BOM 전개해 (order_item, product) 라인 upsert.
-        for (OrderItem oi : acceptOrders(sellerId)) {
-            int q = oi.purchasableQty();
+        // 2) 결제완료 주문을 옵션→BOM 전개해 (order_line, product) 라인 upsert.
+        List<OrderLine> lines = purchaseTargetLines(sellerId);
+        Map<Long, String> vendorItemIds = vendorItemIdsByLine(lines);
+        for (OrderLine line : lines) {
+            int q = line.purchasableQty();
             if (q <= 0) continue;
 
+            String vendorItemId = vendorItemIds.get(line.getId());
+            if (vendorItemId == null) continue;  // 거울 행 없음 = 옵션 매칭 키가 없다
+
             Optional<ProductListingOption> optionOpt =
-                    productListingOptionRepository.findByPlatformOptionId(oi.getExternalItemId());
+                    productListingOptionRepository.findByPlatformOptionId(vendorItemId);
             if (optionOpt.isEmpty()) continue;   // 미매핑 → 조회에서 unmapped 로 노출
 
             List<ProductListingProduct> boms =
@@ -77,10 +88,10 @@ public class PurchaseListServiceImpl implements PurchaseListService {
             for (ProductListingProduct bom : boms) {
                 int lineQty = q * bom.getQuantity();
                 ShoppingListItem item = shoppingListItemRepository
-                        .findByOrderItem_IdAndProduct_Id(oi.getId(), bom.getProduct().getId())
+                        .findByOrderLine_IdAndProduct_Id(line.getId(), bom.getProduct().getId())
                         .map(existing -> existing.toBuilder().autoQty(lineQty).build())  // auto 만 교체, manual 보존
                         .orElseGet(() -> ShoppingListItem.builder()
-                                .orderItem(oi)
+                                .orderLine(line)
                                 .product(bom.getProduct())
                                 .autoQty(lineQty)
                                 .manualQty(0)
@@ -102,9 +113,9 @@ public class PurchaseListServiceImpl implements PurchaseListService {
         // 판매자 필터: 주문 라인의 판매자가 일치하는 라인만(수동 라인은 판매자 없으므로 제외).
         Predicate<ShoppingListItem> itemFilter = sellerId == null
                 ? i -> true
-                : i -> i.getOrderItem() != null
-                        && i.getOrderItem().getMarketplaceAccount() != null
-                        && sellerId.equals(i.getOrderItem().getMarketplaceAccount().getSeller().getId());
+                : i -> i.getOrderLine() != null
+                        && i.getOrderLine().getOrder().getMarketplaceAccount() != null
+                        && sellerId.equals(i.getOrderLine().getOrder().getMarketplaceAccount().getSeller().getId());
 
         // 구매 완료: 잔여 <= 0 이면서 실제 구매가 있었던 것만. (필요=0 & 구매=0 유령 라인 제외.)
         // 기간 필터: 그룹 안에 구매일이 [from, to] 에 드는 구매 기록이 하나라도 있으면 포함.
@@ -186,7 +197,7 @@ public class PurchaseListServiceImpl implements PurchaseListService {
     @Transactional
     public void addManual(ManualItemRequest request) {
         ShoppingListItem item = shoppingListItemRepository
-                .findByOrderItemIsNullAndProduct_Id(request.productId())
+                .findByOrderLineIsNullAndProduct_Id(request.productId())
                 .map(existing -> existing.toBuilder()
                         .manualQty(existing.getManualQty() + request.quantity())   // 누적
                         .build())
@@ -194,7 +205,7 @@ public class PurchaseListServiceImpl implements PurchaseListService {
                     Product product = productRepository.findById(request.productId())
                             .orElseThrow(() -> new ResourceNotFoundException("Product", request.productId()));
                     return ShoppingListItem.builder()
-                            .orderItem(null)
+                            .orderLine(null)
                             .product(product)
                             .autoQty(0)
                             .manualQty(request.quantity())
@@ -215,49 +226,67 @@ public class PurchaseListServiceImpl implements PurchaseListService {
 
     // --- helpers ---
 
-    private List<OrderItem> acceptOrders(Long sellerId) {
-        // 동기화 윈도우(syncDays) 밖 주문은 status 가 갱신되지 않아 stale ACCEPT 로 남을 수 있으므로,
-        // 구매목록 추출도 같은 윈도우(paidAt 기준)로 제한한다.
+    private List<OrderLine> purchaseTargetLines(Long sellerId) {
+        // 동기화 윈도우(syncDays) 밖 주문은 상태가 갱신되지 않아 stale 결제완료로 남을 수 있으므로,
+        // 구매목록 추출도 같은 윈도우(orders.ordered_at 기준)로 제한한다.
         LocalDateTime from = LocalDate.now().minusDays(coupangProperties.getSyncDays()).atStartOfDay();
         return sellerId == null
-                ? orderItemRepository.findRecentByStatus(STATUS_ACCEPT, from)
-                : orderItemRepository.findRecentByStatusAndSeller(STATUS_ACCEPT, sellerId, from);
+                ? orderLineRepository.findRecentByStatus(PURCHASE_TARGET_STATUS, from)
+                : orderLineRepository.findRecentByStatusAndSeller(PURCHASE_TARGET_STATUS, sellerId, from);
+    }
+
+    /**
+     * 라인 id → 옵션 매칭키(vendorItemId). 거울 행을 라인마다 다시 읽지 않고 한 번에 가져온다
+     * (FEATURE_2609_26 / 04 §3-3).
+     */
+    private Map<Long, String> vendorItemIdsByLine(List<OrderLine> lines) {
+        if (lines.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> ids = lines.stream().map(OrderLine::getId).toList();
+        return coupangOrderLineRepository.findByOrderLine_IdIn(ids).stream()
+                .collect(Collectors.toMap(m -> m.getOrderLine().getId(), CoupangOrderLine::getVendorItemId,
+                        (a, b) -> a));
     }
 
     private PurchaseLine toLine(ShoppingListItem li, int linePurchased, List<PurchaseRecord> recs) {
-        OrderItem oi = li.getOrderItem();
+        OrderLine line = li.getOrderLine();
         List<PurchaseRecordView> recordViews = recs.stream()
                 .map(r -> new PurchaseRecordView(r.getId(), r.getPurchasedOn(), r.getQuantity()))
                 .toList();
         return new PurchaseLine(
                 li.getId(),
-                oi != null ? oi.getId() : null,
-                oi != null ? "ORDER" : "MANUAL",
-                oi != null ? oi.getExternalOrderId() : null,
+                line != null ? line.getId() : null,
+                line != null ? "ORDER" : "MANUAL",
+                line != null ? line.getOrder().getExternalOrderId() : null,
                 li.getAutoQty(),
                 li.getManualQty(),
                 linePurchased,
                 recordViews);
     }
 
-    /** ACCEPT 인데 옵션 미매핑이거나 BOM 빈 주문을 external_item_id 단위로 집계. */
+    /** 결제완료인데 옵션 미매핑이거나 BOM 이 빈 주문을 vendorItemId 단위로 집계. */
     private List<UnmappedOrder> buildUnmapped(Long sellerId) {
-        Map<String, List<OrderItem>> byItem = new LinkedHashMap<>();
-        for (OrderItem oi : acceptOrders(sellerId)) {
-            if (oi.purchasableQty() <= 0) continue;
+        List<OrderLine> lines = purchaseTargetLines(sellerId);
+        Map<Long, String> vendorItemIds = vendorItemIdsByLine(lines);
+        Map<String, List<OrderLine>> byItem = new LinkedHashMap<>();
+        for (OrderLine line : lines) {
+            if (line.purchasableQty() <= 0) continue;
+            String vendorItemId = vendorItemIds.get(line.getId());
+            if (vendorItemId == null) continue;
             Optional<ProductListingOption> optionOpt =
-                    productListingOptionRepository.findByPlatformOptionId(oi.getExternalItemId());
+                    productListingOptionRepository.findByPlatformOptionId(vendorItemId);
             boolean mapped = optionOpt.isPresent()
                     && !productListingProductRepository.findByProductListingOptionId(optionOpt.get().getId()).isEmpty();
             if (!mapped) {
-                byItem.computeIfAbsent(oi.getExternalItemId(), k -> new ArrayList<>()).add(oi);
+                byItem.computeIfAbsent(vendorItemId, k -> new ArrayList<>()).add(line);
             }
         }
         return byItem.entrySet().stream()
                 .map(e -> {
-                    List<OrderItem> ois = e.getValue();
-                    int qty = ois.stream().mapToInt(OrderItem::purchasableQty).sum();
-                    return new UnmappedOrder(e.getKey(), ois.get(0).getItemName(), qty, ois.size());
+                    List<OrderLine> group = e.getValue();
+                    int qty = group.stream().mapToInt(OrderLine::purchasableQty).sum();
+                    return new UnmappedOrder(e.getKey(), group.get(0).getItemName(), qty, group.size());
                 })
                 .toList();
     }

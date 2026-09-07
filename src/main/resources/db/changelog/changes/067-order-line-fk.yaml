@@ -1,0 +1,116 @@
+# Rewire the four FKs that pointed at order_item so they point at order_line (FEATURE_2609_26 / PLAN D18).
+#
+# 🔴 No value conversion is needed: changeset 066 carried order_item.id over as order_line.id
+#    (shared-id backfill, the changeset 009 trick). This file is a pure column rename + FK swap.
+#
+# 🔴 ALL FOUR must be done. MySQL refuses to DROP a table that is still referenced by a foreign key,
+#    so leaving even one behind makes 068 (drop order_item) fail.
+#
+# ⚠️ The dependent UNIQUE/index are NOT dropped and recreated: MySQL's CHANGE COLUMN carries them over to
+#    the new column name. Only their names keep the old vocabulary (uq_shopping_list_item /
+#    idx_ordercancelaction_item_succeeded) — a cosmetic leftover, values and behaviour are unchanged.
+#
+# ⚠️ order_claim.external_box_id stays — it is the raw Coupang box id used for claim matching (PLAN D18).
+# ⚠️ order_claim.order_item_match_attempts is NOT renamed — the 2609_18 backfill runs on it unchanged.
+databaseChangeLog:
+
+  - changeSet:
+      id: 067-order-line-fk
+      author: oclyx
+      comment: "FEATURE_2609_26: order_item_id -> order_line_id on order_claim / customer_inquiry / shopping_list_item / order_cancel_action."
+      changes:
+        # 1. drop the old constraints first — a column cannot be renamed while a FK still names it.
+        - dropForeignKeyConstraint:
+            baseTableName: order_claim
+            constraintName: fk_orderclaim_orderitem
+        - dropForeignKeyConstraint:
+            baseTableName: customer_inquiry
+            constraintName: fk_inquiry_orderitem
+        - dropForeignKeyConstraint:
+            baseTableName: shopping_list_item
+            constraintName: fk_sli_order_item
+        - dropForeignKeyConstraint:
+            baseTableName: order_cancel_action
+            constraintName: fk_ordercancelaction_item
+
+        # 2. rename the columns (nullability stays exactly as it was — order_cancel_action is NOT NULL,
+        #    shopping_list_item is nullable because NULL means "manually added line").
+        - renameColumn:
+            tableName: order_claim
+            oldColumnName: order_item_id
+            newColumnName: order_line_id
+            columnDataType: BIGINT
+        - renameColumn:
+            tableName: customer_inquiry
+            oldColumnName: order_item_id
+            newColumnName: order_line_id
+            columnDataType: BIGINT
+        - renameColumn:
+            tableName: shopping_list_item
+            oldColumnName: order_item_id
+            newColumnName: order_line_id
+            columnDataType: BIGINT
+        - renameColumn:
+            tableName: order_cancel_action
+            oldColumnName: order_item_id
+            newColumnName: order_line_id
+            columnDataType: BIGINT
+
+        # 3. point them at the neutral core.
+        - addForeignKeyConstraint:
+            constraintName: fk_orderclaim_orderline
+            baseTableName: order_claim
+            baseColumnNames: order_line_id
+            referencedTableName: order_line
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_inquiry_orderline
+            baseTableName: customer_inquiry
+            baseColumnNames: order_line_id
+            referencedTableName: order_line
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_sli_order_line
+            baseTableName: shopping_list_item
+            baseColumnNames: order_line_id
+            referencedTableName: order_line
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_ordercancelaction_orderline
+            baseTableName: order_cancel_action
+            baseColumnNames: order_line_id
+            referencedTableName: order_line
+            referencedColumnNames: id
+      rollback:
+        - dropForeignKeyConstraint: { baseTableName: order_claim,         constraintName: fk_orderclaim_orderline }
+        - dropForeignKeyConstraint: { baseTableName: customer_inquiry,    constraintName: fk_inquiry_orderline }
+        - dropForeignKeyConstraint: { baseTableName: shopping_list_item,  constraintName: fk_sli_order_line }
+        - dropForeignKeyConstraint: { baseTableName: order_cancel_action, constraintName: fk_ordercancelaction_orderline }
+        - renameColumn: { tableName: order_claim,         oldColumnName: order_line_id, newColumnName: order_item_id, columnDataType: BIGINT }
+        - renameColumn: { tableName: customer_inquiry,    oldColumnName: order_line_id, newColumnName: order_item_id, columnDataType: BIGINT }
+        - renameColumn: { tableName: shopping_list_item,  oldColumnName: order_line_id, newColumnName: order_item_id, columnDataType: BIGINT }
+        - renameColumn: { tableName: order_cancel_action, oldColumnName: order_line_id, newColumnName: order_item_id, columnDataType: BIGINT }
+        - addForeignKeyConstraint:
+            constraintName: fk_orderclaim_orderitem
+            baseTableName: order_claim
+            baseColumnNames: order_item_id
+            referencedTableName: order_item
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_inquiry_orderitem
+            baseTableName: customer_inquiry
+            baseColumnNames: order_item_id
+            referencedTableName: order_item
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_sli_order_item
+            baseTableName: shopping_list_item
+            baseColumnNames: order_item_id
+            referencedTableName: order_item
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_ordercancelaction_item
+            baseTableName: order_cancel_action
+            baseColumnNames: order_item_id
+            referencedTableName: order_item
+            referencedColumnNames: id

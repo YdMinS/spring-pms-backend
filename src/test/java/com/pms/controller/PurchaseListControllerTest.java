@@ -2,7 +2,11 @@ package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.OrderItem;
+import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.Order;
+import com.pms.domain.OrderLine;
+import com.pms.domain.OrderShipment;
+import com.pms.domain.OrderStatus;
 import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
@@ -12,7 +16,10 @@ import com.pms.domain.Seller;
 import com.pms.domain.ShoppingListItem;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.OrderItemRepository;
+import com.pms.repository.CoupangOrderLineRepository;
+import com.pms.repository.OrderLineRepository;
+import com.pms.repository.OrderRepository;
+import com.pms.repository.OrderShipmentRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
@@ -41,7 +48,10 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
 
     @Autowired private SellerRepository sellerRepository;
     @Autowired private MarketplaceAccountRepository marketplaceAccountRepository;
-    @Autowired private OrderItemRepository orderItemRepository;
+    @Autowired private OrderRepository orderRepository;
+    @Autowired private OrderShipmentRepository orderShipmentRepository;
+    @Autowired private OrderLineRepository orderLineRepository;
+    @Autowired private CoupangOrderLineRepository coupangOrderLineRepository;
     @Autowired private ProductRepository productRepository;
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
@@ -68,12 +78,21 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
         productListingProductRepository.save(ProductListingProduct.builder()
                 .productListingOption(option).product(product).quantity(2).build());   // BOM: A×2
 
-        orderItemRepository.save(OrderItem.builder()
+        // 주문 3층 + 쿠팡 거울 (2609_26). 추출 윈도우(syncDays) 안에 들도록 ordered_at 은 지금.
+        Order order = orderRepository.save(Order.builder()
                 .marketplaceAccount(account).platform(Platform.COUPANG)
-                .externalOrderId("O1").externalBoxId("B1").externalItemId("OPT1")
-                .itemName("양말세트").orderCount(3).cancelCount(0).holdCount(0)
-                .status("ACCEPT").paidAt(LocalDateTime.now())   // 추출 윈도우(syncDays) 안에 들도록
-                .build());   // 발주가능 3 × BOM 2 = autoQty 6
+                .externalOrderId("O1").orderedAt(LocalDateTime.now()).build());
+        OrderShipment shipment = orderShipmentRepository.save(OrderShipment.builder()
+                .order(order).externalShipmentId("B1").build());
+        OrderLine line = orderLineRepository.save(OrderLine.builder()
+                .order(order).orderShipment(shipment)
+                .status(OrderStatus.PAID).itemName("양말세트")
+                .orderQty(3).cancelQty(0).holdQty(0).build());
+        // 옵션 매칭키(vendorItemId)는 거울에 있다 — 여기 값이 platformOptionId 와 맞아야 BOM 이 전개된다.
+        coupangOrderLineRepository.save(CoupangOrderLine.builder()
+                .orderLine(line).marketplaceAccount(account)
+                .shipmentBoxId("B1").orderIdRaw("O1").vendorItemId("OPT1")
+                .platformStatus("ACCEPT").build());   // 발주가능 3 × BOM 2 = autoQty 6
     }
 
     @Test

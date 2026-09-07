@@ -3,17 +3,19 @@ package com.pms.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
+import com.pms.domain.CoupangOrderLine;
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.OrderItem;
+import com.pms.domain.OrderLine;
+import com.pms.domain.OrderStatus;
 import com.pms.domain.Platform;
 import com.pms.dto.request.ManualShipmentRequest;
+import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.OrderItemRepository;
+import com.pms.repository.OrderLineRepository;
 import com.pms.service.ShipmentConfirmResult.FailedBox;
 import com.pms.service.ShipmentConfirmResult.SkippedOrder;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangCredentials;
-import com.pms.service.coupang.CoupangOrderStatus;
 import com.pms.service.coupang.OrderUpserter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,27 +34,28 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * {@link ShipmentConfirmService} 구현 — COUPANG 전용 발송처리 레그.
  *
- * 흐름: xlsx 파싱 → {@code findByExternalOrderId} 로 order_item 전개 →
+ * 흐름: xlsx 파싱 → {@code findByExternalOrderId} 로 order_line 전개 →
  * 라인(박스) 상태 필터(배송지시 이상은 전송하지 않고 skipped 로 분류, PLAN 2609_07 D1·D2) →
  * (DB 미매칭분은 쿠팡 단건 조회 폴백 — 응답 박스 상태에도 같은 필터, D6) →
  * 계정(id) 그룹핑 → 계정별 1 POST(합포장은 같은 shipmentBoxId·invoiceNumber, vendorItemId 만 다름) →
- * responseList 집계 → 성공 박스의 로컬 status 를 DEPARTURE 로 write-back(D4).
+ * responseList 집계 → 성공 박스의 로컬 상태를 SHIPPED 로 write-back(D4).
  *
  * ⚠️ 계정 단위 try/catch 로 한 계정 실패(택배사코드 미설정 IllegalStateException·전송·파싱 오류 포함)를 격리한다
  *    — 다른 계정 배치는 계속. 네이버 등 비-COUPANG 은 unmatched 로 리포트(후속 어댑터 스코프).
- * ⚠️ 폴백(PLAN 송장시트 D16)은 동기화가 실패해 order_item 이 비어도 시트로 발송처리가 되게 하는 안전망이다
+ * ⚠️ 폴백(PLAN 송장시트 D16)은 동기화가 실패해 주문 라인이 비어도 시트로 발송처리가 되게 하는 안전망이다
  *    — 정상 경로(DB 매칭)에서는 쿠팡을 한 번도 호출하지 않는다.
- * ⚠️ 폴백으로 조회한 박스는 {@code order_item} 에 적재된다(PLAN 2609_13 D1·D9) — best-effort 라
+ * ⚠️ 폴백으로 조회한 박스는 {@code order_line} 에 적재된다(PLAN 2609_13 D1·D9) — best-effort 라
  *    저장이 실패해도 송장은 그대로 전송된다(D6). 이 서비스에 @Transactional 을 붙이면 안 된다(D3).
  *
  * <p>{@code confirmManual}(단건 수동, PLAN 2609_11)은 같은 전송 헬퍼({@code postInvoices})만 공유하고 판정은 따로 한다:
  * 앵커 라인이 속한 <b>박스 1개</b>만 전개하고(같은 주문의 다른 박스는 손대지 않는다, D1),
  * 앵커 상태가 배송지시 이상이면 송장수정(updateInvoices)·아니면 신규 업로드로 모드를 서버가 정하며(D3),
- * write-back(DEPARTURE)은 <b>신규 업로드 성공</b>일 때만 한다(수정 모드는 상태를 바꾸지 않는다, D4).
+ * write-back(SHIPPED)은 <b>신규 업로드 성공</b>일 때만 한다(수정 모드는 상태를 바꾸지 않는다, D4).
  */
 @Slf4j
 @Service
@@ -69,26 +72,26 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
 
     /**
      * 전송하지 않을 상태 — 이 상태는 되돌아오지 않으므로(상태 단조성) 조회 없이 제외해도 누락이 불가능하다.
-     * ⚠️ 화이트리스트가 아니라 블랙리스트다: 모르는 상태값은 <b>전송</b>한다
+     * ⚠️ 화이트리스트가 아니라 블랙리스트다: 모르는 상태값(매핑 실패·null)은 <b>전송</b>한다
      *    (조용한 스킵 = 발송 누락, 전송 = 쿠팡이 판단). PLAN 2609_07 D1.
+     * ⚠️ {@code CANCELLED} 는 넣지 않는다 — 전량취소 라인은 지금도 라인 수 0 으로 걸러진다(판정 두 겹 금지).
      */
-    private static final Set<String> SKIP_STATUSES = Set.of(
-            CoupangOrderStatus.DEPARTURE.name(),
-            CoupangOrderStatus.DELIVERING.name(),
-            CoupangOrderStatus.FINAL_DELIVERY.name(),
-            CoupangOrderStatus.NONE_TRACKING.name());
-    private static final String STATUS_DEPARTURE = CoupangOrderStatus.DEPARTURE.name();
+    private static final Set<OrderStatus> SKIP_STATUSES = Set.of(
+            OrderStatus.SHIPPED, OrderStatus.DELIVERING, OrderStatus.DELIVERED);
+    /** 신규 업로드 성공 시 로컬 라인이 갖는 상태(PLAN 2609_07 D4). */
+    private static final OrderStatus STATUS_SHIPPED = OrderStatus.SHIPPED;
 
     /**
      * 송장수정(UPDATE) 모드로 보낼 상태 — "배송지시 이상"이라는 뜻이 {@link #SKIP_STATUSES} 와 같으므로 같은 집합을 가리킨다.
      * ⚠️ 이름을 갈라 두는 이유: 일괄 경로의 "전송 스킵"과 단건 경로의 "모드 판정"은 서로 다른 관심사다.
      *    스킵 목록에 상태를 더할 일이 생기면 단건 모드가 조용히 UPDATE 로 뒤집히지 않게 여기서 분리할 것(PLAN 2609_11 D3).
      */
-    private static final Set<String> UPDATE_MODE_STATUSES = SKIP_STATUSES;
+    private static final Set<OrderStatus> UPDATE_MODE_STATUSES = SKIP_STATUSES;
 
     private final CoupangApiClient coupangApiClient;
     private final CoupangProperties coupangProperties;
-    private final OrderItemRepository orderItemRepository;
+    private final OrderLineRepository orderLineRepository;
+    private final CoupangOrderLineRepository coupangOrderLineRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final CarrierCodeService carrierCodeService;
     private final ObjectMapper objectMapper;
@@ -118,28 +121,28 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
         Map<Long, List<InvoiceLine>> linesByAccount = new LinkedHashMap<>();
         // 송장업로드 성공 시 status 를 갱신할 DB 라인(박스 단위).
         // 폴백으로 확정된 주문도 조회 시점에 적재되므로(PLAN 2609_13 D9) 여기 편입된다.
-        Map<String, List<OrderItem>> dbLinesByBoxId = new LinkedHashMap<>();
+        Map<String, List<OrderLine>> dbLinesByBoxId = new LinkedHashMap<>();
         int matchedOrders = 0;
 
         for (String orderId : invoiceByOrderId.keySet()) {
-            List<OrderItem> lines = orderItemRepository.findByExternalOrderId(orderId);
+            List<OrderLine> lines = orderLineRepository.findByExternalOrderId(orderId);
             if (lines.isEmpty()) {
                 fallbackCandidates.add(orderId);
                 continue;
             }
             // 1주문=1박스 → 라인들은 같은 계정. 비-COUPANG 은 unmatched 로 스킵(resolve/post 미호출).
-            MarketplaceAccount account = lines.get(0).getMarketplaceAccount();
+            MarketplaceAccount account = lines.get(0).getOrder().getMarketplaceAccount();
             if (!Platform.COUPANG.equals(account.getPlatform())) {
                 unmatched.add(orderId);
                 continue;
             }
-            // 한 주문에 박스가 여러 개면 박스마다 status 가 다를 수 있다(order_item.status = box.status).
-            List<OrderItem> sendable = lines.stream()
-                    .filter(l -> !SKIP_STATUSES.contains(l.getStatus()))
+            // 한 주문에 박스가 여러 개면 박스마다 상태가 다를 수 있다(order_line.status = box.status 의 거울).
+            List<OrderLine> sendable = lines.stream()
+                    .filter(this::sendable)
                     .toList();
             if (sendable.isEmpty()) {
-                // 전량 발송 완료 — 쿠팡 호출 0회. unmatched 가 아니다(계정도 order_item 도 확정돼 있다).
-                skipped.add(new SkippedOrder(orderId, lines.get(0).getStatus()));
+                // 전량 발송 완료 — 쿠팡 호출 0회. unmatched 가 아니다(계정도 라인도 확정돼 있다).
+                skipped.add(new SkippedOrder(orderId, statusName(lines.get(0))));
                 continue;
             }
             matchedOrders++;
@@ -192,27 +195,28 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
     public ManualShipmentResult confirmManual(ManualShipmentRequest request) {
         String invoiceNumber = request.invoiceNumber().trim();          // D15
         // 1) 앵커 라인 — account 를 eager 로 읽는 finder 만 사용(open-in-view=false)
-        OrderItem anchor = orderItemRepository.findWithAccountAndSellerById(request.orderItemId())
+        OrderLine anchor = orderLineRepository.findWithAccountAndSellerById(request.orderItemId())
                 .orElseThrow(() -> new IllegalArgumentException("주문 라인을 찾을 수 없습니다"));
-        MarketplaceAccount account = anchor.getMarketplaceAccount();
+        MarketplaceAccount account = anchor.getOrder().getMarketplaceAccount();
         if (!Platform.COUPANG.equals(account.getPlatform())) {
             throw new IllegalArgumentException("쿠팡 주문만 발송처리할 수 있습니다");     // D7
         }
-        String boxId = anchor.getExternalBoxId();
+        String boxId = boxIdOf(anchor);
         if (boxId == null || boxId.isBlank()) {
             throw new IllegalArgumentException("박스 ID가 없습니다. 주문동기화 후 다시 시도하세요");   // D7
         }
+        String externalOrderId = anchor.getOrder().getExternalOrderId();
         // 2) 박스 전개 — 같은 주문 + 같은 계정 + 같은 박스 라인 전부(D1). 취소 라인은 거르지 않는다(D8).
-        List<OrderItem> boxLines = orderItemRepository.findByExternalOrderId(anchor.getExternalOrderId())
+        List<OrderLine> boxLines = orderLineRepository.findByExternalOrderId(externalOrderId)
                 .stream()
-                .filter(l -> l.getMarketplaceAccount().getId().equals(account.getId()))
-                .filter(l -> boxId.equals(l.getExternalBoxId()))
+                .filter(l -> l.getOrder().getMarketplaceAccount().getId().equals(account.getId()))
+                .filter(l -> boxId.equals(boxIdOf(l)))
                 .toList();
         if (boxLines.isEmpty()) {
             boxLines = List.of(anchor);      // 방어적: 앵커는 항상 그 박스의 라인이다
         }
         // 3) 모드 판정 = 앵커 상태(박스 상태의 거울). 클라이언트는 관여하지 않는다(D3).
-        boolean update = UPDATE_MODE_STATUSES.contains(anchor.getStatus());
+        boolean update = anchor.getStatus() != null && UPDATE_MODE_STATUSES.contains(anchor.getStatus());
         String mode = update ? "UPDATE" : "CREATE";
         // 택배사 코드를 먼저 해석한다 — 미등록이면 400 이므로 설정(경로)을 읽기 전에 끝낸다.
         String deliveryCompanyCode = carrierCodeService
@@ -228,28 +232,28 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
             // 일괄 경로의 계정 격리와 같은 형태로 실패 1건을 만든다(예외를 500 으로 새게 두지 않는다).
             log.warn("단건 발송처리 전송 실패: orderItemId={} box={} mode={}",
                     request.orderItemId(), boxId, mode, e);
-            return new ManualShipmentResult(anchor.getExternalOrderId(), boxId, mode,
+            return new ManualShipmentResult(externalOrderId, boxId, mode,
                     lines.size(), 0, List.of(new FailedBox(boxId, "ERROR", e.getMessage())), null);
         }
         // 4) 신규 업로드 성공만 write-back(D4·D5). 수정 모드는 상태를 바꾸지 않는다.
-        //    ⚠️ resultStatus 는 write-back 성공 여부와 무관하게 DEPARTURE 다 — markDeparted 는 실패해도 삼킨다.
+        //    ⚠️ resultStatus 는 write-back 성공 여부와 무관하게 SHIPPED 다 — markDeparted 는 실패해도 삼킨다.
         //       클라이언트 표시가 다음 동기화로 수렴하는 쪽이, 성공을 실패로 보이게 하는 것보다 낫다.
         String resultStatus = null;
         if (!update && result.succeeded() > 0) {
-            Map<String, List<OrderItem>> byBox = new LinkedHashMap<>();
+            Map<String, List<OrderLine>> byBox = new LinkedHashMap<>();
             registerWriteBack(boxLines, byBox);
             markDeparted(result.succeededBoxIds(), byBox);
-            resultStatus = STATUS_DEPARTURE;
+            resultStatus = STATUS_SHIPPED.name();
         }
         log.info("단건 발송처리: orderId={} box={} mode={} lines={} succeeded={} failed={}",
-                anchor.getExternalOrderId(), boxId, mode,
+                externalOrderId, boxId, mode,
                 lines.size(), result.succeeded(), result.failed().size());
-        return new ManualShipmentResult(anchor.getExternalOrderId(), boxId, mode,
+        return new ManualShipmentResult(externalOrderId, boxId, mode,
                 lines.size(), result.succeeded(), result.failed(), resultStatus);
     }
 
     /**
-     * 송장업로드에 성공한 박스의 로컬 status 를 DEPARTURE 로 맞춘다(PLAN 2609_07 D4).
+     * 송장업로드에 성공한 박스의 로컬 상태를 {@code SHIPPED} 로 맞춘다(PLAN 2609_07 D4).
      *
      * <p>재업로드 시 상태 필터가 즉시 걸러내고, 주문목록도 동기화 없이 바로 "배송지시"로 보인다.
      * 다음 주문동기화가 쿠팡 값으로 덮어써도 같은 값이라 충돌하지 않는다.</p>
@@ -258,18 +262,18 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
      *    성공한 박스가 failed 로 보고돼 사용자가 재업로드(중복 전송)하게 된다(PLAN 2609_07 D5).
      *    → saveAll 뿐 아니라 <b>본문 전체</b>를 try 로 감싼다(엔티티 조립 중 예외도 새어나가면 안 된다).
      */
-    private void markDeparted(List<String> succeededBoxIds, Map<String, List<OrderItem>> dbLinesByBoxId) {
+    private void markDeparted(List<String> succeededBoxIds, Map<String, List<OrderLine>> dbLinesByBoxId) {
         try {
-            List<OrderItem> updated = new ArrayList<>();
+            List<OrderLine> updated = new ArrayList<>();
             for (String boxId : succeededBoxIds) {
-                for (OrderItem line : dbLinesByBoxId.getOrDefault(boxId, List.of())) {
-                    updated.add(line.toBuilder().status(STATUS_DEPARTURE).build());   // 동기화 upsert 와 같은 패턴
+                for (OrderLine line : dbLinesByBoxId.getOrDefault(boxId, List.of())) {
+                    updated.add(line.toBuilder().status(STATUS_SHIPPED).build());   // 동기화 upsert 와 같은 패턴
                 }
             }
             if (updated.isEmpty()) {
                 return;                               // 폴백으로만 전송된 주문 = DB 행 없음
             }
-            orderItemRepository.saveAll(updated);
+            orderLineRepository.saveAll(updated);
         } catch (Exception e) {
             log.warn("발송처리 로컬 상태 갱신 실패(쿠팡 전송은 성공): boxes={}", succeededBoxIds, e);
         }
@@ -278,13 +282,13 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
     /**
      * 성공 시 write-back 할 DB 라인을 박스 id 로 색인한다.
      *
-     * <p>{@code externalBoxId} 는 nullable 이므로 널/공백 키는 담지 않는다. DB 값과 응답 {@code shipmentBoxId} 는
+     * <p>배송 묶음은 nullable 이므로 널/공백 키는 담지 않는다. DB 값과 응답 {@code shipmentBoxId} 는
      * 같은 쿠팡 id 의 문자열이므로(동기화가 {@code box.path("shipmentBoxId").asText()} 로 넣은 값)
      * 숫자 변환·패딩 없이 문자열 그대로 비교한다.</p>
      */
-    private void registerWriteBack(List<OrderItem> lines, Map<String, List<OrderItem>> target) {
-        for (OrderItem line : lines) {
-            String boxId = line.getExternalBoxId();
+    private void registerWriteBack(List<OrderLine> lines, Map<String, List<OrderLine>> target) {
+        for (OrderLine line : lines) {
+            String boxId = boxIdOf(line);
             if (boxId == null || boxId.isBlank()) {
                 continue;
             }
@@ -295,14 +299,14 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
     /**
      * DB 미매칭 주문을 쿠팡 단건 발주서 조회로 확정한다(PLAN 송장시트 D16).
      *
-     * <p>동기화가 실패해 order_item 이 비어도 시트만 있으면 발송처리가 되게 하는 안전망이다.
+     * <p>동기화가 실패해 주문 라인이 비어도 시트만 있으면 발송처리가 되게 하는 안전망이다.
      * 후보 계정(활성 COUPANG)을 순회해 박스가 나오는 첫 계정을 그 주문의 계정으로 확정하고,
      * 그 계정을 다음 주문의 후보 맨 앞으로 옮긴다(한 파일은 대개 같은 계정).</p>
      *
      * <p>응답 {@code box.status} 가 배송지시 이상이면 그 박스를 제외하고, 남는 라인이 없으면
      * {@code skipped} 로 보고한다(PLAN 2609_07 D6).</p>
      *
-     * <p>조회로 받아온 박스는 전송 여부와 무관하게 {@code order_item} 에 적재되고(PLAN 2609_13 D9),
+     * <p>조회로 받아온 박스는 전송 여부와 무관하게 {@code order_line} 에 적재되고(PLAN 2609_13 D9),
      * 확정된 주문의 DB 라인은 {@code dbLinesByBoxId} 에 편입돼 성공 시 write-back 대상이 된다.</p>
      *
      * @return 폴백으로 확정된 주문 수(스킵분 제외). 실패한 주문은 {@code unmatched} 에 추가된다.
@@ -310,7 +314,7 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
     private int fallback(List<String> candidates, List<String> unmatched, List<SkippedOrder> skipped,
                          Map<Long, MarketplaceAccount> accountById,
                          Map<Long, List<InvoiceLine>> linesByAccount,
-                         Map<String, List<OrderItem>> dbLinesByBoxId) {
+                         Map<String, List<OrderLine>> dbLinesByBoxId) {
         if (candidates.isEmpty()) {
             return 0;                       // 정상 경로: 쿠팡 호출 0회
         }
@@ -367,7 +371,7 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
             // upsertBox 가 자기 트랜잭션에서 커밋한 뒤라 여기서 읽으면 방금 저장한 라인이 보인다.
             // 전송에서 빠진 박스(DEPARTURE 이상)가 섞여도 무해하다 — markDeparted 는 쿠팡이 성공을
             // 돌려준 박스 id 만 갱신한다. 여기서 다시 거르면 폴백 경로에만 필터 규칙이 하나 더 생긴다.
-            registerWriteBack(orderItemRepository.findByExternalOrderId(orderId), dbLinesByBoxId);
+            registerWriteBack(orderLineRepository.findByExternalOrderId(orderId), dbLinesByBoxId);
             promoteToFront(coupangAccounts, account);
             log.info("발송처리 폴백 확정: orderId={} account={} boxes={}",
                     orderId, account.getId(), distinctBoxIds(hit.lines()).size());
@@ -416,7 +420,7 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
      * 규칙은 시트 생성 {@code flattenBox} 와 동일: {@code shippingCount - cancelCount <= 0} 이면 제외.</p>
      * <p>⚠️ 배송지시 이상 박스는 제외하고 그 상태를 {@code skippedStatus} 로 남긴다(PLAN 2609_07 D6) —
      * 전량취소로 0행이 된 경우와 반드시 구분된다.</p>
-     * <p>⚠️ 받아온 박스는 <b>skip 여부와 무관하게</b> {@code order_item} 에 적재한다(PLAN 2609_13 D9) —
+     * <p>⚠️ 받아온 박스는 <b>skip 여부와 무관하게</b> {@code order_line} 에 적재한다(PLAN 2609_13 D9) —
      * 다음 발송처리가 폴백을 타지 않게 하는 것이 이 저장의 목적이다. 추가 API 호출은 없다.</p>
      */
     private OrderLookup fetchOrderLines(MarketplaceAccount account, String orderId) {
@@ -443,9 +447,11 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
                 log.warn("발송처리 폴백 주문 적재 실패(전송은 계속): orderId={} account={}",
                         orderId, account.getId(), e);
             }
-            if (SKIP_STATUSES.contains(boxStatus)) {
+            // 원문 → 중립 상태로 옮겨 같은 블랙리스트로 판정한다. 매핑 실패(모르는 코드)는 전송한다.
+            OrderStatus mapped = OrderStatus.fromCoupang(boxStatus).orElse(null);
+            if (mapped != null && SKIP_STATUSES.contains(mapped)) {
                 if (skippedStatus == null) {
-                    skippedStatus = boxStatus;                  // 첫 번째로 걸러진 박스의 상태만 기억
+                    skippedStatus = mapped.name();              // 첫 번째로 걸러진 박스의 상태만 기억
                 }
                 continue;                                       // 이미 발송된 박스는 전송하지 않는다
             }
@@ -566,11 +572,51 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
         return formatter.formatCellValue(cell).trim();
     }
 
-    /** DB 라인(order_item) → 송장업로드 라인. */
-    private List<InvoiceLine> toInvoiceLines(List<OrderItem> lines) {
-        return lines.stream()
-                .map(l -> new InvoiceLine(l.getExternalBoxId(), l.getExternalOrderId(), l.getExternalItemId()))
-                .toList();
+    /**
+     * DB 라인(order_line) → 송장업로드 라인.
+     *
+     * <p>{@code vendorItemId} 는 core 가 아니라 쿠팡 거울({@code coupang_order_line})에 있으므로
+     * 라인 id 묶음으로 <b>한 번에</b> 읽는다(FEATURE_2609_26 / 04 §3-3).
+     * 거울 행이 없는 라인은 전송 식별자를 만들 수 없어 제외한다(쿠팡 주문에는 항상 있다).
+     */
+    private List<InvoiceLine> toInvoiceLines(List<OrderLine> lines) {
+        Map<Long, CoupangOrderLine> mirrors = mirrorsOf(lines);
+        List<InvoiceLine> invoiceLines = new ArrayList<>();
+        for (OrderLine line : lines) {
+            CoupangOrderLine mirror = mirrors.get(line.getId());
+            if (mirror == null) {
+                log.warn("발송처리 라인 제외 — 쿠팡 거울 행 없음: line={}", line.getId());
+                continue;
+            }
+            invoiceLines.add(new InvoiceLine(boxIdOf(line),
+                    line.getOrder().getExternalOrderId(), mirror.getVendorItemId()));
+        }
+        return invoiceLines;
+    }
+
+    /** 라인 id → 쿠팡 거울 행. 빈 목록으로 IN 을 날리지 않는다. */
+    private Map<Long, CoupangOrderLine> mirrorsOf(List<OrderLine> lines) {
+        if (lines.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> ids = lines.stream().map(OrderLine::getId).toList();
+        return coupangOrderLineRepository.findByOrderLine_IdIn(ids).stream()
+                .collect(Collectors.toMap(m -> m.getOrderLine().getId(), Function.identity(), (a, b) -> a));
+    }
+
+    /** 배송 묶음 식별자(쿠팡 shipmentBoxId). 묶음이 없으면 null. */
+    private String boxIdOf(OrderLine line) {
+        return (line.getOrderShipment() == null) ? null : line.getOrderShipment().getExternalShipmentId();
+    }
+
+    /** 블랙리스트 판정 — 상태를 모르면(null) 전송한다(D1). */
+    private boolean sendable(OrderLine line) {
+        return line.getStatus() == null || !SKIP_STATUSES.contains(line.getStatus());
+    }
+
+    /** 스킵 보고용 상태 이름 — 중립 상태다(원문 라벨 변환은 클라이언트 몫, D9). */
+    private String statusName(OrderLine line) {
+        return (line.getStatus() == null) ? null : line.getStatus().name();
     }
 
     private List<String> distinctBoxIds(List<InvoiceLine> lines) {

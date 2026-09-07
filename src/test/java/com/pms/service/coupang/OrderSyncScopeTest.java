@@ -25,7 +25,9 @@ class OrderSyncScopeTest {
 
     @Test
     void ACTIVE에_종결상태가_하나도_없다() {
-        // D2: ACTIVE 는 isTerminal() 의 여집합이다. 상태 목록을 복제하면 이 테스트가 깨진다.
-        assertThat(OrderSyncScope.ACTIVE.statuses()).noneMatch(CoupangOrderStatus::isTerminal);
+        // D2: ACTIVE 는 OrderStatus.isTerminal() 의 여집합이다(판정의 소유자는 중립 상태 하나뿐이다).
+        // 상태 목록을 복제하면 이 테스트가 깨진다.
+        assertThat(OrderSyncScope.ACTIVE.statuses())
+                .noneMatch(status -> status.toOrderStatus().isTerminal());
     }
 }

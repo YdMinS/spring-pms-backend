@@ -3,7 +3,7 @@ package com.pms.domain;
 /**
  * 판매 채널(마켓플레이스) 식별자 (FEATURE_2609_26 / PLAN D16).
  *
- * <p><b>공통 타입 — 새로 String 을 만들지 말 것.</b> 11개 테이블(`order_item`·`order_claim`·
+ * <p><b>공통 타입 — 새로 String 을 만들지 말 것.</b> 11개 테이블(`orders`·`order_claim`·
  * `customer_inquiry`·`marketplace_account`·`product_listing`·`category`·`category_mapping`·
  * `platform_category`·`commission_rate`·`margin_policy`·`platform_carrier_code`)이 이 타입을 공유한다.
  *

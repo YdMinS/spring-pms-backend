@@ -4,13 +4,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.OrderItem;
+import com.pms.domain.OrderLine;
 import com.pms.domain.Platform;
 import com.pms.dto.request.ShippingLabelExportRequest.ExportRow;
 import com.pms.dto.response.ShippingLabelPreviewRow;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.OrderItemRepository;
+import com.pms.repository.OrderLineRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangCredentials;
 import com.pms.service.coupang.OrderUpserter;
@@ -32,6 +32,8 @@ import java.util.List;
  * {@link ShippingLabelService} 구현 — 쿠팡 ordersheets(INSTRUCT) 조회 → 행 펼침 → xlsx.
  *
  * 쿼리 빌드는 {@code CoupangOrderSyncServiceImpl} 패턴을 따른다(status=INSTRUCT 고정).
+ * 🔴 여기서 {@code INSTRUCT} 는 <b>쿠팡 조회 파라미터</b>지 우리 상태가 아니다 — DB 를 상태로 조회하지
+ * 않으므로 {@code OrderStatus} 로 바꾸지 않는다(FEATURE_2609_26 / 04 §3-2).
  * 조회분은 {@code OrderUpserter} 로 주문 3층에 upsert 한다(PLAN 2609_13 D1) — best-effort 라
  * 저장이 실패해도 시트는 그대로 나간다(D6). 이 서비스에 @Transactional 을 붙이면 안 된다(D3).
  * 계정·seller 는 리포지토리에서 {@code @EntityGraph} 로 eager fetch 하므로, 외부 HTTP 루프를
@@ -60,7 +62,7 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
     private final CoupangProperties coupangProperties;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final ObjectMapper objectMapper;
-    private final OrderItemRepository orderItemRepository;
+    private final OrderLineRepository orderLineRepository;
     private final OrderUpserter orderUpserter;
 
     public List<ShippingLabelRow> collectRows(Long sellerId) {
@@ -100,17 +102,18 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
 
     @Override
     public List<ShippingLabelPreviewRow> previewRowsByOrder(Long orderItemId) {
-        OrderItem order = orderItemRepository.findWithAccountAndSellerById(orderItemId)
+        OrderLine line = orderLineRepository.findWithAccountAndSellerById(orderItemId)
                 .orElseThrow(() -> new ResourceNotFoundException("Order", orderItemId));
 
-        MarketplaceAccount account = order.getMarketplaceAccount();
+        String externalOrderId = line.getOrder().getExternalOrderId();
+        MarketplaceAccount account = line.getOrder().getMarketplaceAccount();
         if (!Platform.COUPANG.equals(account.getPlatform())) {
             throw new IllegalArgumentException("쿠팡 주문만 송장시트를 만들 수 있습니다: " + account.getPlatform());
         }
 
         String path = coupangProperties.getOrdersheetByOrderPath()
                 .replace("{vendorId}", CoupangCredentials.of(account).getVendorId())
-                .replace("{orderId}", order.getExternalOrderId());
+                .replace("{orderId}", externalOrderId);
 
         List<ShippingLabelRow> rows = new ArrayList<>();
         try {
@@ -127,7 +130,7 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
         } catch (Exception e) {
             // 목록 다운로드와 같은 정책: 조회 실패를 빈 시트로 감추지 않는다.
             log.warn("주문 단건 송장시트 조회 실패: orderItemId={} orderId={}",
-                    orderItemId, order.getExternalOrderId(), e);
+                    orderItemId, externalOrderId, e);
             // 위 봉투 검사가 던진 IllegalStateException 도 이 catch 에 걸린다. 그대로 다시 감싸면
             // "code=..." 진단 메시지가 cause 로 묻히므로 재던진다.
             if (e instanceof IllegalStateException ise) {

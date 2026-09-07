@@ -29,4 +29,15 @@ public interface CoupangOrderLineRepository extends JpaRepository<CoupangOrderLi
 
     /** core 라인 id 로 거울 행 조회 — 금액 백필이 raw JSON 을 읽는 경로. */
     Optional<CoupangOrderLine> findByOrderLine_Id(Long orderLineId);
+
+    /**
+     * core 라인 id 묶음으로 거울 행을 <b>한 번에</b> 읽는다 — {@code vendorItemId}·{@code platformStatus}
+     * 가 필요한 서비스(주문조회·구매목록·발송처리·주문취소)가 {@code Map<orderLineId, CoupangOrderLine>}
+     * 로 쓴다 (FEATURE_2609_26 / 04 §3-3).
+     *
+     * <p>❌ {@code OrderLine} 에 역참조({@code @OneToOne(mappedBy=...)})를 두지 말 것 — core 가 플랫폼을
+     * 알게 되고(PLAN D11), 트랜잭션 밖(open-in-view=false) 지연로딩과 N+1 이 같이 따라온다.
+     * <p>⚠️ 빈 목록으로 부르지 말 것({@code IN ()} 은 DB 마다 다르게 동작한다) — 호출자가 먼저 거른다.
+     */
+    List<CoupangOrderLine> findByOrderLine_IdIn(List<Long> orderLineIds);
 }
