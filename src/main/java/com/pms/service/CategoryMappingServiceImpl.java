@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.Category;
 import com.pms.domain.CategoryMapping;
+import com.pms.domain.Platform;
 import com.pms.dto.request.CategoryMappingRequest;
 import com.pms.dto.response.CategoryMappingResponse;
 import com.pms.exception.BusinessException;
@@ -42,8 +43,9 @@ public class CategoryMappingServiceImpl implements CategoryMappingService {
         Category category = categoryRepository.findById(categoryId)
                 .orElseThrow(() -> new ResourceNotFoundException("Category", categoryId));
 
+        Platform platform = Platform.from(request.getPlatform());
         CategoryMapping existing = categoryMappingRepository
-                .findByCategoryIdAndPlatform(categoryId, request.getPlatform()).orElse(null);
+                .findByCategoryIdAndPlatform(categoryId, platform).orElse(null);
         CategoryMapping toSave = existing != null
                 ? existing.toBuilder()
                         .platformCategoryId(request.getPlatformCategoryId())
@@ -51,7 +53,7 @@ public class CategoryMappingServiceImpl implements CategoryMappingService {
                         .build()
                 : CategoryMapping.builder()
                         .category(category)
-                        .platform(request.getPlatform())
+                        .platform(platform)
                         .platformCategoryId(request.getPlatformCategoryId())
                         .platformCategoryName(request.getPlatformCategoryName())
                         .build();
@@ -61,10 +63,10 @@ public class CategoryMappingServiceImpl implements CategoryMappingService {
         // REQUIRES_NEW transaction; swallow any failure so the mapping upsert still succeeds.
         try {
             commissionPrefillService.prefillIfAbsent(
-                    categoryId, request.getPlatform(), request.getPlatformCategoryName());
+                    categoryId, platform, request.getPlatformCategoryName());
         } catch (Exception e) {
             log.warn("Commission prefill failed for category {} platform {} (mapping saved anyway): {}",
-                    categoryId, request.getPlatform(), e.getMessage());
+                    categoryId, platform, e.getMessage());
         }
 
         return toResponse(saved);
@@ -72,7 +74,7 @@ public class CategoryMappingServiceImpl implements CategoryMappingService {
 
     @Override
     @Transactional
-    public void deleteMapping(Long categoryId, String platform) {
+    public void deleteMapping(Long categoryId, Platform platform) {
         CategoryMapping existing = categoryMappingRepository
                 .findByCategoryIdAndPlatform(categoryId, platform)
                 .orElseThrow(() -> new BusinessException(
@@ -82,7 +84,7 @@ public class CategoryMappingServiceImpl implements CategoryMappingService {
 
     private CategoryMappingResponse toResponse(CategoryMapping mapping) {
         return CategoryMappingResponse.builder()
-                .platform(mapping.getPlatform())
+                .platform(mapping.getPlatform().name())
                 .platformCategoryId(mapping.getPlatformCategoryId())
                 .platformCategoryName(mapping.getPlatformCategoryName())
                 .build();

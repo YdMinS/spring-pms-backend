@@ -13,6 +13,7 @@ import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.OptionApprovalStatus;
 import com.pms.domain.Package;
+import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -116,7 +117,7 @@ class MasterProductServiceTest {
         return Seller.builder().id(id).sellerName(name).businessRegistration(id + "-x").build();
     }
 
-    private MarketplaceAccount account(Long id, Seller seller, String platform, String alias) {
+    private MarketplaceAccount account(Long id, Seller seller, Platform platform, String alias) {
         return MarketplaceAccount.builder()
                 .id(id).seller(seller).platform(platform).accountAlias(alias).build();
     }
@@ -145,10 +146,10 @@ class MasterProductServiceTest {
     void getMatrix_exposesCellStatus() {
         Seller seller1 = seller(1L, "판매자1");
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
-        MarketplaceAccount acc1 = account(10L, seller1, "COUPANG", "메인");
+        MarketplaceAccount acc1 = account(10L, seller1, Platform.COUPANG, "메인");
 
         ProductListing listing = ProductListing.builder()
-                .id(100L).seller(seller1).platform("COUPANG").platformProductId("X").name("리스팅")
+                .id(100L).seller(seller1).platform(Platform.COUPANG).platformProductId("X").name("리스팅")
                 .status(ListingStatus.SELLING).build();
 
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
@@ -169,12 +170,12 @@ class MasterProductServiceTest {
         Seller seller2 = seller(2L, "판매자2");
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
 
-        MarketplaceAccount acc1 = account(10L, seller1, "COUPANG", "메인");
-        MarketplaceAccount acc2 = account(11L, seller1, "NAVER", null);
-        MarketplaceAccount acc3 = account(12L, seller2, "COUPANG", "서브");
+        MarketplaceAccount acc1 = account(10L, seller1, Platform.COUPANG, "메인");
+        MarketplaceAccount acc2 = account(11L, seller1, Platform.NAVER, null);
+        MarketplaceAccount acc3 = account(12L, seller2, Platform.COUPANG, "서브");
 
         ProductListing listing = ProductListing.builder()
-                .id(100L).seller(seller1).platform("COUPANG").platformProductId("X").name("리스팅").build();
+                .id(100L).seller(seller1).platform(Platform.COUPANG).platformProductId("X").name("리스팅").build();
         ProductListingOption option = ProductListingOption.builder()
                 .productListing(listing).optionName("SKU").sellingPrice(new BigDecimal("1000")).build();
 
@@ -215,13 +216,13 @@ class MasterProductServiceTest {
         Seller seller2 = seller(2L, "판매자2");
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
 
-        MarketplaceAccount acc1 = account(10L, seller1, "COUPANG", "메인");   // listing A: 1 active option
-        MarketplaceAccount acc2 = account(12L, seller2, "COUPANG", "서브");   // listing B: 2 active options
+        MarketplaceAccount acc1 = account(10L, seller1, Platform.COUPANG, "메인");   // listing A: 1 active option
+        MarketplaceAccount acc2 = account(12L, seller2, Platform.COUPANG, "서브");   // listing B: 2 active options
 
         ProductListing listingA = ProductListing.builder()
-                .id(100L).seller(seller1).platform("COUPANG").platformProductId("X").name("리스팅1").build();
+                .id(100L).seller(seller1).platform(Platform.COUPANG).platformProductId("X").name("리스팅1").build();
         ProductListing listingB = ProductListing.builder()
-                .id(101L).seller(seller2).platform("COUPANG").platformProductId("Y").name("리스팅2").build();
+                .id(101L).seller(seller2).platform(Platform.COUPANG).platformProductId("Y").name("리스팅2").build();
 
         ProductListingOption a1 = ProductListingOption.builder().id(1L).productListing(listingA)
                 .optionName("1세트").sellingPrice(new BigDecimal("6000")).active(true).build();
@@ -454,13 +455,13 @@ class MasterProductServiceTest {
         Seller seller2 = seller(2L, "판매자2");
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
 
-        MarketplaceAccount acc1 = account(10L, seller1, "COUPANG", "메인");   // channel override: suffix OFF
-        MarketplaceAccount acc2 = account(12L, seller2, "COUPANG", "서브");   // default: suffix ON
+        MarketplaceAccount acc1 = account(10L, seller1, Platform.COUPANG, "메인");   // channel override: suffix OFF
+        MarketplaceAccount acc2 = account(12L, seller2, Platform.COUPANG, "서브");   // default: suffix ON
 
         ProductListing listingA = ProductListing.builder()
-                .id(100L).seller(seller1).platform("COUPANG").platformProductId("X").name("리스팅1").build();
+                .id(100L).seller(seller1).platform(Platform.COUPANG).platformProductId("X").name("리스팅1").build();
         ProductListing listingB = ProductListing.builder()
-                .id(101L).seller(seller2).platform("COUPANG").platformProductId("Y").name("리스팅2").build();
+                .id(101L).seller(seller2).platform(Platform.COUPANG).platformProductId("Y").name("리스팅2").build();
         ProductListingOption a1 = ProductListingOption.builder().id(1L).productListing(listingA)
                 .optionName("1세트").sellingPrice(new BigDecimal("6000")).active(true).build();
         ProductListingOption a2 = ProductListingOption.builder().id(2L).productListing(listingA)
@@ -515,7 +516,7 @@ class MasterProductServiceTest {
                 .willReturn(Optional.of(MasterProduct.builder().id(1L).name("마스터A").active(true).build()));
         // Only a DRAFT (off-market, platformProductId == null) cell → delete allowed.
         given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(
-                ProductListing.builder().id(100L).platform("COUPANG").platformProductId(null).build()));
+                ProductListing.builder().id(100L).platform(Platform.COUPANG).platformProductId(null).build()));
 
         service.deleteMasterProduct(1L);
 
@@ -530,7 +531,7 @@ class MasterProductServiceTest {
                 .willReturn(Optional.of(MasterProduct.builder().id(1L).name("마스터A").active(true).build()));
         // An on-market cell (platformProductId != null) blocks deletion.
         given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(
-                ProductListing.builder().id(100L).platform("COUPANG").platformProductId("CP-1").build()));
+                ProductListing.builder().id(100L).platform(Platform.COUPANG).platformProductId("CP-1").build()));
 
         assertThatThrownBy(() -> service.deleteMasterProduct(1L))
                 .isInstanceOf(MasterProductInUseException.class);
@@ -842,7 +843,7 @@ class MasterProductServiceTest {
         given(categoryRepository.findById(3L))
                 .willReturn(Optional.of(Category.builder().id(3L).name("신발").build()));
         given(categoryRepository.existsByParentId(3L)).willReturn(false);            // leaf
-        given(categoryMappingRepository.existsByCategoryIdAndPlatform(3L, "COUPANG")).willReturn(true);
+        given(categoryMappingRepository.existsByCategoryIdAndPlatform(3L, Platform.COUPANG)).willReturn(true);
         given(masterProductRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
 
         MasterCategoryResponse resp = service.setCategory(1L,
@@ -876,7 +877,7 @@ class MasterProductServiceTest {
         given(categoryRepository.findById(3L))
                 .willReturn(Optional.of(Category.builder().id(3L).name("신발").build()));
         given(categoryRepository.existsByParentId(3L)).willReturn(false);            // leaf
-        given(categoryMappingRepository.existsByCategoryIdAndPlatform(3L, "COUPANG")).willReturn(false);
+        given(categoryMappingRepository.existsByCategoryIdAndPlatform(3L, Platform.COUPANG)).willReturn(false);
 
         assertThatThrownBy(() -> service.setCategory(1L, MasterCategoryRequest.builder().categoryId(3L).build()))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -1027,12 +1028,12 @@ class MasterProductServiceTest {
 
     /** A cell that reached the market (platformProductId != null) — the precondition for any lock. */
     private ProductListing onMarketCell(Long id) {
-        return ProductListing.builder().id(id).platform("COUPANG").name("셀")
+        return ProductListing.builder().id(id).platform(Platform.COUPANG).name("셀")
                 .platformProductId("SP-" + id).masterProduct(LOCK_MASTER).build();
     }
 
     private ProductListing draftCell(Long id) {
-        return ProductListing.builder().id(id).platform("COUPANG").name("셀")
+        return ProductListing.builder().id(id).platform(Platform.COUPANG).name("셀")
                 .masterProduct(LOCK_MASTER).build();
     }
 
@@ -1125,7 +1126,7 @@ class MasterProductServiceTest {
                 MasterProduct.builder().id(1L).name("A").active(true).build(),
                 MasterProduct.builder().id(2L).name("B").active(true).build(),
                 MasterProduct.builder().id(3L).name("C").active(true).build());
-        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .platformProductId("SP-1")
                 .masterProduct(MasterProduct.builder().id(2L).name("B").build()).build();
         given(productListingRepository.findByMasterProductIdIn(List.of(1L, 2L, 3L))).willReturn(List.of(cell));
@@ -1441,7 +1442,7 @@ class MasterProductServiceTest {
     // The preview must count ONLY what a propagation run actually removes. Every "not counted" case below is
     // a regression guard: counting it would leave inSync=false for ever (banner never clears, button always lit).
 
-    private ProductListing previewCell(Long id, Seller seller, String platform, String platformProductId) {
+    private ProductListing previewCell(Long id, Seller seller, Platform platform, String platformProductId) {
         return ProductListing.builder().id(id).seller(seller).platform(platform)
                 .platformProductId(platformProductId).name("리스팅" + id).build();
     }
@@ -1479,7 +1480,7 @@ class MasterProductServiceTest {
         MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
         MasterProductOption m2 = MasterProductOption.builder().id(6L).name("2세트").build();
 
-        ProductListing cell = previewCell(100L, seller, "COUPANG", null);
+        ProductListing cell = previewCell(100L, seller, Platform.COUPANG, null);
         ProductListingOption o1 = cellOption(1L, cell, "1세트", true, m1);
 
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
@@ -1519,7 +1520,7 @@ class MasterProductServiceTest {
         Product p1 = product(11L, "상품1");
         MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
 
-        ProductListing cell = previewCell(100L, seller, "COUPANG", null);
+        ProductListing cell = previewCell(100L, seller, Platform.COUPANG, null);
         ProductListingOption kept = cellOption(1L, cell, "1세트", true, m1);
         ProductListingOption channelOnly = cellOption(2L, cell, "채널전용옵션", true);
 
@@ -1556,7 +1557,7 @@ class MasterProductServiceTest {
         MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
         MasterProductOption m2 = MasterProductOption.builder().id(6L).name("2세트").build();
 
-        ProductListing cell = previewCell(100L, seller, "COUPANG", null);
+        ProductListing cell = previewCell(100L, seller, Platform.COUPANG, null);
         ProductListingOption o1 = cellOption(1L, cell, "1세트", true, m1);
         ProductListingOption o2 = cellOption(2L, cell, "2세트", false, m2);
 
@@ -1591,7 +1592,7 @@ class MasterProductServiceTest {
         Product p1 = product(11L, "상품1");
         MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
 
-        ProductListing cell = previewCell(100L, seller, "COUPANG", null);
+        ProductListing cell = previewCell(100L, seller, Platform.COUPANG, null);
         ProductListingOption kept = cellOption(1L, cell, "1세트", true, m1);
         ProductListingOption offChannelOnly = cellOption(2L, cell, "이미꺼진옵션", false);
 
@@ -1623,7 +1624,7 @@ class MasterProductServiceTest {
         Product p1 = product(11L, "상품1");
         MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
 
-        ProductListing cell = previewCell(100L, seller, "COUPANG", "X");   // on market
+        ProductListing cell = previewCell(100L, seller, Platform.COUPANG, "X");   // on market
         ProductListingOption kept = cellOption(1L, cell, "1세트", true, m1);
         ProductListingOption channelOnly = cellOption(2L, cell, "채널전용옵션", true);
 
@@ -1658,7 +1659,7 @@ class MasterProductServiceTest {
         Product p1 = product(11L, "상품1");
         MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
 
-        ProductListing cell = previewCell(100L, seller, "COUPANG", null);   // has NO GeneratedProductData
+        ProductListing cell = previewCell(100L, seller, Platform.COUPANG, null);   // has NO GeneratedProductData
 
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
         given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1));
@@ -1681,7 +1682,7 @@ class MasterProductServiceTest {
         Product p1 = product(11L, "상품1");
         MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
 
-        ProductListing cell = previewCell(100L, seller, "COUPANG", "X");
+        ProductListing cell = previewCell(100L, seller, Platform.COUPANG, "X");
         ProductListingOption o1 = cellOption(1L, cell, "1세트", true, m1);
 
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
@@ -1732,9 +1733,9 @@ class MasterProductServiceTest {
         Product p1 = product(11L, "상품1");
         MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
 
-        ProductListing cell1 = previewCell(100L, sellerB, "COUPANG", null);
-        ProductListing cell2 = previewCell(101L, sellerA, "NAVER", null);
-        ProductListing cell3 = previewCell(102L, sellerA, "COUPANG", null);
+        ProductListing cell1 = previewCell(100L, sellerB, Platform.COUPANG, null);
+        ProductListing cell2 = previewCell(101L, sellerA, Platform.NAVER, null);
+        ProductListing cell3 = previewCell(102L, sellerA, Platform.COUPANG, null);
         // Two options per cell: the linked "1세트" + one channel-only option → every cell has a difference.
         ProductListingOption o11 = cellOption(1L, cell1, "1세트", true, m1);
         ProductListingOption o12 = cellOption(2L, cell1, "채널전용1", true);
@@ -1778,7 +1779,7 @@ class MasterProductServiceTest {
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
         MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
         MasterProductOption m2 = MasterProductOption.builder().id(6L).name("2세트").build();
-        ProductListing cell = previewCell(100L, seller(1L, "행복상회"), "COUPANG", null);
+        ProductListing cell = previewCell(100L, seller(1L, "행복상회"), Platform.COUPANG, null);
 
         ProductListingOption overridden1 = cellOption(1L, cell, "채널이 붙인 이름", true, m1).toBuilder()
                 .optionNameSource(GeneratedContentSource.MANUAL_OVERRIDE).build();
@@ -1815,8 +1816,8 @@ class MasterProductServiceTest {
         // that cell is skipped as a whole — the other cell is still applied (never fail the batch).
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
         MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
-        ProductListing clash = previewCell(100L, seller(1L, "행복상회"), "COUPANG", null);
-        ProductListing ok = previewCell(101L, seller(2L, "기쁨상회"), "COUPANG", null);
+        ProductListing clash = previewCell(100L, seller(1L, "행복상회"), Platform.COUPANG, null);
+        ProductListing ok = previewCell(101L, seller(2L, "기쁨상회"), Platform.COUPANG, null);
 
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
         given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1));
@@ -1864,7 +1865,7 @@ class MasterProductServiceTest {
         // Unlocked: no cell reached the market → the lock query returns nothing.
         given(productListingRepository.findByMasterProductIdIn(List.of(1L))).willReturn(List.of());
         // Clamp axis (2609_22/D1): this master's cells → the options LINKED to this master option.
-        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀").build();
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀").build();
         given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cell));
         given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
                 ProductListingOption.builder().id(5L).productListing(cell).optionName("2세트")

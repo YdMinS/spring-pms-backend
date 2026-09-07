@@ -18,7 +18,7 @@ public interface OrderAcknowledgeService {
     /**
      * 선택한 라인들이 속한 박스를 계정별로 묶어 쿠팡 발주처리 API 로 보내고 결과를 집계한다.
      *
-     * @param request 사용자가 체크한 order_item id 목록(1~500)
+     * @param request 사용자가 체크한 order_line id 목록(1~500)
      * @return 전개/전송/집계 결과
      * @throws IllegalArgumentException 유효한 라인이 하나도 없을 때(→ 400)
      */

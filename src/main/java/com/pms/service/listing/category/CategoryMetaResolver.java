@@ -1,5 +1,6 @@
 package com.pms.service.listing.category;
 
+import com.pms.domain.Platform;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -15,7 +16,7 @@ import java.util.stream.Collectors;
 @Component
 public class CategoryMetaResolver {
 
-    private final Map<String, CategoryMetaAdapter> byPlatform;
+    private final Map<Platform, CategoryMetaAdapter> byPlatform;
 
     public CategoryMetaResolver(List<CategoryMetaAdapter> adapters) {
         this.byPlatform = adapters.stream()
@@ -27,7 +28,7 @@ public class CategoryMetaResolver {
      * @return the matching meta adapter
      * @throws IllegalArgumentException (→ 400) if no adapter handles the platform
      */
-    public CategoryMetaAdapter resolve(String platform) {
+    public CategoryMetaAdapter resolve(Platform platform) {
         CategoryMetaAdapter adapter = byPlatform.get(platform);
         if (adapter == null) {
             throw new IllegalArgumentException("미지원 플랫폼: " + platform);

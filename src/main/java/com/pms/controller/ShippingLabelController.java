@@ -70,7 +70,7 @@ public class ShippingLabelController {
     @ApiResponse(responseCode = "500", description = "Coupang ordersheet fetch/parse failed")
     public ResponseEntity<ResponseDTO<List<ShippingLabelPreviewRow>>> previewByOrder(
             @RequestParam
-            @Parameter(description = "order_item PK (not the Coupang orderId)")
+            @Parameter(description = "order_line PK (not the Coupang orderId)")
             Long orderItemId) {
         return ResponseEntity.ok(ResponseDTO.success(shippingLabelService.previewRowsByOrder(orderItemId)));
     }

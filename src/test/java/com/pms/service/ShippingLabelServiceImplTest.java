@@ -3,14 +3,17 @@ package com.pms.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.OrderItem;
+import com.pms.domain.Order;
+import com.pms.domain.OrderLine;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.dto.response.ShippingLabelPreviewRow;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.OrderItemRepository;
+import com.pms.repository.OrderLineRepository;
 import com.pms.service.coupang.CoupangApiClient;
-import com.pms.service.coupang.OrderItemUpserter;
+import com.pms.service.coupang.OrderUpserter;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -49,9 +52,9 @@ class ShippingLabelServiceImplTest {
     @Mock
     private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock
-    private OrderItemRepository orderItemRepository;
+    private OrderLineRepository orderLineRepository;
     @Mock
-    private OrderItemUpserter orderItemUpserter;
+    private OrderUpserter orderUpserter;
 
     private ShippingLabelServiceImpl service;
     private MarketplaceAccount coupangAccount;
@@ -59,16 +62,16 @@ class ShippingLabelServiceImplTest {
     @BeforeEach
     void setUp() {
         Seller seller = Seller.builder().id(1L).sellerName("셀러A").businessRegistration("123-45-67890").build();
-        coupangAccount = MarketplaceAccount.builder()
-                .id(1L).seller(seller).platform("COUPANG").vendorId("A00012345")
-                .accessKey("ak").secretKey("sk").isActive(true).build();
+        coupangAccount = MarketplaceAccountFixture.coupangStubBuilder("A00012345", null)
+                .id(1L).seller(seller).platform(Platform.COUPANG)
+                .isActive(true).build();
 
         CoupangProperties props = new CoupangProperties();
         props.setInstructDays(14);
 
         service = new ShippingLabelServiceImpl(
                 coupangApiClient, props, marketplaceAccountRepository, new ObjectMapper(),
-                orderItemRepository, orderItemUpserter);
+                orderLineRepository, orderUpserter);
     }
 
     @Test
@@ -102,14 +105,14 @@ class ShippingLabelServiceImplTest {
         service.collectRows(null);
 
         // 시트에 실린 주문은 DB 에도 남는다 — 발송처리가 폴백에 기대지 않게 한다(PLAN 2609_13 D1).
-        verify(orderItemUpserter).upsertBoxes(eq(coupangAccount), any());
+        verify(orderUpserter).upsertBoxes(eq(coupangAccount), any());
     }
 
     @Test
     void 적재실패해도시트생성은계속된다() {
         given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(coupangAccount));
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(oneBoxThreeLines());
-        willThrow(new RuntimeException("boom")).given(orderItemUpserter).upsertBoxes(any(), any());
+        willThrow(new RuntimeException("boom")).given(orderUpserter).upsertBoxes(any(), any());
 
         List<ShippingLabelRow> rows = service.collectRows(null);
 
@@ -158,9 +161,9 @@ class ShippingLabelServiceImplTest {
     @Test
     void collectRows_queriesCoupangAccountsOnly() {
         Seller seller = Seller.builder().id(2L).sellerName("셀러B").businessRegistration("999-88-77777").build();
-        MarketplaceAccount naver = MarketplaceAccount.builder()
-                .id(2L).seller(seller).platform("NAVER").vendorId("N001")
-                .accessKey("ak").secretKey("sk").isActive(true).build();
+        MarketplaceAccount naver = MarketplaceAccountFixture.coupangStubBuilder("N001", null)
+                .id(2L).seller(seller).platform(Platform.NAVER)
+                .isActive(true).build();
         given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(naver, coupangAccount));
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(oneBoxThreeLines());
 
@@ -255,7 +258,7 @@ class ShippingLabelServiceImplTest {
 
     @Test
     void previewRowsByOrder_throwsWhenOrderMissing() {
-        given(orderItemRepository.findWithAccountAndSellerById(9L)).willReturn(Optional.empty());
+        given(orderLineRepository.findWithAccountAndSellerById(9L)).willReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.previewRowsByOrder(9L))
                 .isInstanceOf(ResourceNotFoundException.class);
@@ -265,12 +268,14 @@ class ShippingLabelServiceImplTest {
     @Test
     void previewRowsByOrder_rejectsNonCoupangOrder() {
         Seller seller = Seller.builder().id(2L).sellerName("셀러B").businessRegistration("999-88-77777").build();
-        MarketplaceAccount naver = MarketplaceAccount.builder()
-                .id(2L).seller(seller).platform("NAVER").vendorId("N001")
-                .accessKey("ak").secretKey("sk").isActive(true).build();
-        OrderItem order = OrderItem.builder().id(1L).externalOrderId("4000019469460")
-                .marketplaceAccount(naver).platform("NAVER").build();
-        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(order));
+        MarketplaceAccount naver = MarketplaceAccountFixture.coupangStubBuilder("N001", null)
+                .id(2L).seller(seller).platform(Platform.NAVER)
+                .isActive(true).build();
+        OrderLine line = OrderLine.builder().id(1L)
+                .order(Order.builder().id(10L).externalOrderId("4000019469460")
+                        .marketplaceAccount(naver).platform(Platform.NAVER).build())
+                .build();
+        given(orderLineRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(line));
 
         assertThatThrownBy(() -> service.previewRowsByOrder(1L))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -289,9 +294,11 @@ class ShippingLabelServiceImplTest {
 
     /** 쿠팡 계정에 묶인 주문 라인 1건 스텁 (by-order 테스트 공통 given). */
     private void givenCoupangOrder() {
-        OrderItem order = OrderItem.builder().id(1L).externalOrderId("4000019469460")
-                .marketplaceAccount(coupangAccount).platform("COUPANG").build();
-        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(order));
+        OrderLine line = OrderLine.builder().id(1L)
+                .order(Order.builder().id(10L).externalOrderId("4000019469460")
+                        .marketplaceAccount(coupangAccount).platform(Platform.COUPANG).build())
+                .build();
+        given(orderLineRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(line));
     }
 
     // --- canned JSON ---

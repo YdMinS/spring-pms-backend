@@ -1,11 +1,14 @@
 package com.pms.service.inquiry;
 
+import com.pms.domain.CoupangAccountCredential;
 import com.pms.domain.CustomerInquiry;
 import com.pms.domain.CustomerInquiryReply;
 import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.dto.response.ReplyCapability;
+import com.pms.service.coupang.CoupangCredentials;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -67,6 +70,20 @@ public class InquiryReplyPolicy {
         return new ReplyCapability(true, null, minLength, MAX_LENGTH, ONCE, parentReplyId);
     }
 
+    /**
+     * 계정의 WING 사용자 ID({@code replyBy} 원천, 2609_26 이후 {@link CoupangAccountCredential} 소유).
+     *
+     * <p>차단 사유 판정은 예외를 던지면 안 되므로 계정·자격증명 부재를 null 로 접는다 —
+     * null = "원천 없음" = 답변 차단이며, 전송 경로의 400 과 결과가 같다.
+     */
+    private static String wingUserId(MarketplaceAccount account) {
+        if (account == null || account.getPlatform() != Platform.COUPANG
+                || account.getCoupangCredential() == null) {
+            return null;
+        }
+        return CoupangCredentials.of(account).getVendorUserId();
+    }
+
     /** 차단 사유 — 위에서부터 먼저 맞는 것 하나만. 가능하면 null. */
     private String blockReason(CustomerInquiry inquiry, List<CustomerInquiryReply> replies) {
         MarketplaceAccount account = inquiry.getMarketplaceAccount();
@@ -78,7 +95,8 @@ public class InquiryReplyPolicy {
             return alias + " 채널은 아직 답변 전송을 지원하지 않습니다.";
         }
         // 2) replyBy 원천이 비어 있음 (D18). 전송 시점이 아니라 조회 시점에 잠근다.
-        if (account == null || account.getVendorUserId() == null || account.getVendorUserId().isBlank()) {
+        String wingUserId = wingUserId(account);
+        if (wingUserId == null || wingUserId.isBlank()) {
             return "채널에 WING 사용자 ID가 없습니다. 판매자 > 채널 수정에서 입력해 주세요.";
         }
         // 3)·4) 상태. 답변은 미답변 건에서만 열린다.
@@ -135,7 +153,7 @@ public class InquiryReplyPolicy {
     }
 
     /** 플랫폼이 맞는 어댑터 1개 — {@code ClaimActionServiceImpl.resolve()} 와 동형. */
-    Optional<InquiryReplyAdapter> resolve(String platform) {
+    Optional<InquiryReplyAdapter> resolve(Platform platform) {
         if (platform == null) {
             return Optional.empty();
         }

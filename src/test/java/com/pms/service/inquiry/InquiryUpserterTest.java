@@ -6,10 +6,13 @@ import com.pms.domain.InquiryAuthorRole;
 import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.OrderItem;
+import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.OrderLine;
+import com.pms.domain.Platform;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CustomerInquiryReplyRepository;
 import com.pms.repository.CustomerInquiryRepository;
-import com.pms.repository.OrderItemRepository;
+import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -44,18 +47,18 @@ class InquiryUpserterTest {
 
     @Mock private CustomerInquiryRepository customerInquiryRepository;
     @Mock private CustomerInquiryReplyRepository customerInquiryReplyRepository;
-    @Mock private OrderItemRepository orderItemRepository;
+    @Mock private CoupangOrderLineRepository coupangOrderLineRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @InjectMocks private InquiryUpserter upserter;
 
-    private final MarketplaceAccount account = MarketplaceAccount.builder()
-            .id(7L).platform("COUPANG").vendorId("A0001").build();
+    private final MarketplaceAccount account = MarketplaceAccountFixture.coupangStubBuilder("A0001", null)
+            .id(7L).platform(Platform.COUPANG).build();
 
     @Test
     void upsert_newInquiry_insertsWithMatchedOrderLine() {
-        OrderItem line = OrderItem.builder().id(11L).externalOrderId("O-1").externalItemId("V-1").build();
-        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalOrderIdAndExternalItemId(
-                7L, "O-1", "V-1")).willReturn(List.of(line));
+        OrderLine line = OrderLine.builder().id(11L).build();
+        given(coupangOrderLineRepository.findByMarketplaceAccount_IdAndOrderIdRawAndVendorItemId(
+                7L, "O-1", "V-1")).willReturn(List.of(mirror(line)));
         given(customerInquiryRepository.findByMarketplaceAccount_IdAndInquiryTypeAndExternalInquiryId(
                 any(), any(), any())).willReturn(Optional.empty());
 
@@ -65,7 +68,7 @@ class InquiryUpserterTest {
         verify(customerInquiryRepository).save(saved.capture());
         assertThat(saved.getValue().getExternalInquiryId()).isEqualTo("I-1");
         assertThat(saved.getValue().getInquiryType()).isEqualTo(InquiryType.PRODUCT_QNA);
-        assertThat(saved.getValue().getOrderItem()).isEqualTo(line);
+        assertThat(saved.getValue().getOrderLine()).isEqualTo(line);
         assertThat(saved.getValue().isLinked()).isTrue();
     }
 
@@ -85,32 +88,33 @@ class InquiryUpserterTest {
     void upsert_withoutOrderMatch_stillStoresInquiryUnlinked() {
         given(customerInquiryRepository.findByMarketplaceAccount_IdAndInquiryTypeAndExternalInquiryId(
                 any(), any(), any())).willReturn(Optional.empty());
-        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalOrderIdAndExternalItemId(
+        given(coupangOrderLineRepository.findByMarketplaceAccount_IdAndOrderIdRawAndVendorItemId(
                 7L, "O-9", "V-1")).willReturn(List.of());
 
         upserter.upsert(account, record(InquiryStatus.UNANSWERED, "O-9", List.of()));
 
         ArgumentCaptor<CustomerInquiry> saved = ArgumentCaptor.forClass(CustomerInquiry.class);
         verify(customerInquiryRepository).save(saved.capture());
-        assertThat(saved.getValue().getOrderItem()).isNull();
+        assertThat(saved.getValue().getOrderLine()).isNull();
         assertThat(saved.getValue().isLinked()).isFalse();
         assertThat(saved.getValue().getExternalOrderId()).isEqualTo("O-9");   // 주문번호 자체는 보존
     }
 
     @Test
-    void upsert_ambiguousOrderMatch_leavesOrderItemNull() {
+    void upsert_ambiguousOrderMatch_leavesOrderLineNull() {
         // 합포장으로 3키가 2건이면 틀린 라인에 붙이느니 미연결로 둔다.
         given(customerInquiryRepository.findByMarketplaceAccount_IdAndInquiryTypeAndExternalInquiryId(
                 any(), any(), any())).willReturn(Optional.empty());
-        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalOrderIdAndExternalItemId(
+        given(coupangOrderLineRepository.findByMarketplaceAccount_IdAndOrderIdRawAndVendorItemId(
                 7L, "O-1", "V-1")).willReturn(List.of(
-                        OrderItem.builder().id(11L).build(), OrderItem.builder().id(12L).build()));
+                        mirror(OrderLine.builder().id(11L).build()),
+                        mirror(OrderLine.builder().id(12L).build())));
 
         upserter.upsert(account, record(InquiryStatus.UNANSWERED, "O-1", List.of()));
 
         ArgumentCaptor<CustomerInquiry> saved = ArgumentCaptor.forClass(CustomerInquiry.class);
         verify(customerInquiryRepository).save(saved.capture());
-        assertThat(saved.getValue().getOrderItem()).isNull();
+        assertThat(saved.getValue().getOrderLine()).isNull();
     }
 
     @Test
@@ -146,22 +150,29 @@ class InquiryUpserterTest {
                 .build();
     }
 
-    private CustomerInquiry existing(InquiryStatus status, String externalOrderId, OrderItem orderItem) {
+    private CustomerInquiry existing(InquiryStatus status, String externalOrderId, OrderLine orderLine) {
         return CustomerInquiry.builder()
                 .id(3L)
                 .marketplaceAccount(account)
-                .platform("COUPANG")
+                .platform(Platform.COUPANG)
                 .inquiryType(InquiryType.PRODUCT_QNA)
                 .externalInquiryId("I-1")
                 .externalItemId("V-1")
                 .externalOrderId(externalOrderId)
-                .orderItem(orderItem)
+                .orderLine(orderLine)
                 .content("재입고 예정이 있나요?")
                 .status(status)
                 .platformStatus(status == InquiryStatus.ANSWERED ? "ANSWERED" : "NOANSWER")
                 .inquiredAt(INQUIRED_AT)
                 .lastSyncedAt(INQUIRED_AT)
                 .build();
+    }
+
+    /** 3키 매칭이 돌려주는 것은 쿠팡 거울이다 — 자연키를 extension 이 소유한다(2609_26 D3). */
+    private CoupangOrderLine mirror(OrderLine line) {
+        return CoupangOrderLine.builder()
+                .id(2000L + line.getId()).orderLine(line).marketplaceAccount(account)
+                .shipmentBoxId("B-1").orderIdRaw("O-1").vendorItemId("V-1").build();
     }
 
     private InquiryRecord record(InquiryStatus status, String externalOrderId,

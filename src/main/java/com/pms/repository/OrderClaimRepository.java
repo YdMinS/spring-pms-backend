@@ -33,7 +33,7 @@ public interface OrderClaimRepository extends JpaRepository<OrderClaim, Long> {
             Long accountId, ClaimType claimType, String externalClaimId, String externalItemId);
 
     /** 종류 + 접수일 창 [start, end) 의 클레임, 최신 접수순 — GET /api/claims. */
-    @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller", "orderItem"})
+    @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller", "orderLine"})
     @Query("select c from OrderClaim c where c.claimType = :type "
             + "and c.receivedAt >= :start and c.receivedAt < :end order by c.receivedAt desc")
     List<OrderClaim> findInPeriod(@Param("type") ClaimType type,
@@ -41,7 +41,7 @@ public interface OrderClaimRepository extends JpaRepository<OrderClaim, Long> {
                                   @Param("end") LocalDateTime end);
 
     /** 셀러 필터 버전 — GET /api/claims?sellerId=. */
-    @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller", "orderItem"})
+    @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller", "orderLine"})
     @Query("select c from OrderClaim c where c.claimType = :type "
             + "and c.marketplaceAccount.seller.id = :sellerId "
             + "and c.receivedAt >= :start and c.receivedAt < :end order by c.receivedAt desc")
@@ -60,7 +60,7 @@ public interface OrderClaimRepository extends JpaRepository<OrderClaim, Long> {
      * 시도횟수를 소모한다. 대상에서 아예 뺀다.
      */
     @Query("select c from OrderClaim c where c.marketplaceAccount.id = :accountId "
-            + "and c.orderItem is null and c.orderItemMatchAttempts < :maxAttempts "
+            + "and c.orderLine is null and c.orderItemMatchAttempts < :maxAttempts "
             + "and c.externalOrderId is not null "
             + "and c.status <> com.pms.domain.ClaimStatus.STALE "
             + "order by c.receivedAt desc")
@@ -110,6 +110,6 @@ public interface OrderClaimRepository extends JpaRepository<OrderClaim, Long> {
                                       @Param("claimIds") List<String> claimIds);
 
     /** 단건 상세 — GET /api/claims/{id}. */
-    @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller", "orderItem"})
+    @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller", "orderLine"})
     Optional<OrderClaim> findWithAccountById(Long id);
 }

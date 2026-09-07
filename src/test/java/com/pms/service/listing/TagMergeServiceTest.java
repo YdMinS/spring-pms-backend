@@ -1,6 +1,7 @@
 package com.pms.service.listing;
 
 import com.pms.domain.MasterProduct;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingTagRevision;
 import com.pms.repository.ProductListingTagRevisionRepository;
@@ -33,7 +34,7 @@ class TagMergeServiceTest {
     @InjectMocks
     private TagMergeServiceImpl service;
 
-    private ProductListing cell(String platform, List<String> channelTags, List<String> masterTags) {
+    private ProductListing cell(Platform platform, List<String> channelTags, List<String> masterTags) {
         MasterProduct master = masterTags == null ? null
                 : MasterProduct.builder().tags(masterTags).build();
         return ProductListing.builder()
@@ -44,7 +45,7 @@ class TagMergeServiceTest {
     @Test
     void resolve_채널먼저_마스터append_중복제외() {
         List<String> merged = service.resolveTags(
-                cell("COUPANG", List.of("a", "b"), List.of("b", "c")));
+                cell(Platform.COUPANG, List.of("a", "b"), List.of("b", "c")));
 
         assertThat(merged).containsExactly("a", "b", "c");
     }
@@ -53,7 +54,7 @@ class TagMergeServiceTest {
     void resolve_쿠팡상한20_초과절단() {
         List<String> twentyFive = IntStream.range(0, 25).mapToObj(i -> "t" + i).toList();
 
-        List<String> merged = service.resolveTags(cell("COUPANG", twentyFive, null));
+        List<String> merged = service.resolveTags(cell(Platform.COUPANG, twentyFive, null));
 
         assertThat(merged).hasSize(20);
     }
@@ -63,7 +64,7 @@ class TagMergeServiceTest {
         given(revisionRepository.findTopByProductListing_IdOrderByIdDesc(1L))
                 .willReturn(Optional.of(ProductListingTagRevision.builder().tags(List.of("old")).build()));
 
-        service.recordRevisionIfChanged(cell("COUPANG", null, null), List.of("a", "b"));
+        service.recordRevisionIfChanged(cell(Platform.COUPANG, null, null), List.of("a", "b"));
 
         verify(revisionRepository).save(any(ProductListingTagRevision.class));
     }
@@ -73,7 +74,7 @@ class TagMergeServiceTest {
         given(revisionRepository.findTopByProductListing_IdOrderByIdDesc(1L))
                 .willReturn(Optional.of(ProductListingTagRevision.builder().tags(List.of("a", "b")).build()));
 
-        service.recordRevisionIfChanged(cell("COUPANG", null, null), List.of("a", "b"));
+        service.recordRevisionIfChanged(cell(Platform.COUPANG, null, null), List.of("a", "b"));
 
         verify(revisionRepository, never()).save(any());
     }

@@ -1,5 +1,6 @@
 package com.pms.service.listing.shipping;
 
+import com.pms.domain.Platform;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -20,7 +21,7 @@ import java.util.stream.Collectors;
 @Component
 public class ShippingPlaceProviderResolver {
 
-    private final Map<String, ShippingPlaceProvider> byPlatform;
+    private final Map<Platform, ShippingPlaceProvider> byPlatform;
 
     public ShippingPlaceProviderResolver(List<ShippingPlaceProvider> providers) {
         this.byPlatform = providers.stream()
@@ -31,7 +32,7 @@ public class ShippingPlaceProviderResolver {
      * @param platform platform key (e.g. "COUPANG")
      * @return the matching provider, or empty when the platform has no lookup (→ manual entry)
      */
-    public Optional<ShippingPlaceProvider> resolve(String platform) {
+    public Optional<ShippingPlaceProvider> resolve(Platform platform) {
         return Optional.ofNullable(byPlatform.get(platform));
     }
 }

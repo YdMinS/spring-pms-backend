@@ -11,6 +11,7 @@ import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.OptionApprovalStatus;
 import com.pms.domain.Package;
+import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -284,7 +285,7 @@ public class MasterProductServiceImpl implements MasterProductService {
             return MatrixRow.builder()
                     .sellerId(sellerId)
                     .sellerName(sellerNames.get(sellerId))
-                    .platform(acc.getPlatform())
+                    .platform(acc.getPlatform().name())
                     .accountId(acc.getId())
                     .accountLabel(acc.getAccountAlias())
                     .registered(pl != null)
@@ -445,7 +446,7 @@ public class MasterProductServiceImpl implements MasterProductService {
             channels.add(ChannelSyncPreviewResponse.Channel.builder()
                     .listingId(cell.getId())
                     .sellerName(sellerNames.get(cell.getSeller().getId()))
-                    .platform(cell.getPlatform())
+                    .platform(cell.getPlatform().name())
                     .onMarket(onMarket)
                     .missingOptions(missing)
                     .channelOnlyOptions(channelOnly)
@@ -884,7 +885,7 @@ public class MasterProductServiceImpl implements MasterProductService {
         if (categoryRepository.existsByParentId(request.getCategoryId())) {
             throw new IllegalArgumentException("세부(leaf) 카테고리만 지정할 수 있습니다.");
         }
-        if (!categoryMappingRepository.existsByCategoryIdAndPlatform(request.getCategoryId(), "COUPANG")) {
+        if (!categoryMappingRepository.existsByCategoryIdAndPlatform(request.getCategoryId(), Platform.COUPANG)) {
             throw new IllegalArgumentException("쿠팡 카테고리 매핑이 없습니다.");
         }
         masterProductRepository.save(master.toBuilder().category(category).build());
@@ -1307,7 +1308,7 @@ public class MasterProductServiceImpl implements MasterProductService {
                 .build();
     }
 
-    private static String matchKey(Long sellerId, String platform) {
+    private static String matchKey(Long sellerId, Platform platform) {
         return sellerId + "|" + platform;
     }
 }

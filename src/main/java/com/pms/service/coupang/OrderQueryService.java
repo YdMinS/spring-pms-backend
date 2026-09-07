@@ -7,7 +7,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 /**
- * 동기화된 order_item 조회 (GET /api/orders, 화면 표시/검증용 read).
+ * 동기화된 주문 라인 조회 (GET /api/orders, 화면 표시/검증용 read).
  */
 public interface OrderQueryService {
 

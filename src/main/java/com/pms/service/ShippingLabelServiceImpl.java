@@ -4,14 +4,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.OrderItem;
+import com.pms.domain.OrderLine;
+import com.pms.domain.Platform;
 import com.pms.dto.request.ShippingLabelExportRequest.ExportRow;
 import com.pms.dto.response.ShippingLabelPreviewRow;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.OrderItemRepository;
+import com.pms.repository.OrderLineRepository;
 import com.pms.service.coupang.CoupangApiClient;
-import com.pms.service.coupang.OrderItemUpserter;
+import com.pms.service.coupang.CoupangCredentials;
+import com.pms.service.coupang.OrderUpserter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.Row;
@@ -30,7 +32,9 @@ import java.util.List;
  * {@link ShippingLabelService} 구현 — 쿠팡 ordersheets(INSTRUCT) 조회 → 행 펼침 → xlsx.
  *
  * 쿼리 빌드는 {@code CoupangOrderSyncServiceImpl} 패턴을 따른다(status=INSTRUCT 고정).
- * 조회분은 {@code OrderItemUpserter} 로 order_item 에 upsert 한다(PLAN 2609_13 D1) — best-effort 라
+ * 🔴 여기서 {@code INSTRUCT} 는 <b>쿠팡 조회 파라미터</b>지 우리 상태가 아니다 — DB 를 상태로 조회하지
+ * 않으므로 {@code OrderStatus} 로 바꾸지 않는다(FEATURE_2609_26 / 04 §3-2).
+ * 조회분은 {@code OrderUpserter} 로 주문 3층에 upsert 한다(PLAN 2609_13 D1) — best-effort 라
  * 저장이 실패해도 시트는 그대로 나간다(D6). 이 서비스에 @Transactional 을 붙이면 안 된다(D3).
  * 계정·seller 는 리포지토리에서 {@code @EntityGraph} 로 eager fetch 하므로, 외부 HTTP 루프를
  * 도는 이 서비스는 @Transactional 없이도 seller.sellerName 접근이 안전하다(open-in-view=false).
@@ -40,7 +44,6 @@ import java.util.List;
 @RequiredArgsConstructor
 public class ShippingLabelServiceImpl implements ShippingLabelService {
 
-    private static final String PLATFORM_COUPANG = "COUPANG";
     private static final int MAX_PER_PAGE = 50;
     private static final int MAX_PAGES = 100;                    // 무한루프 가드
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
@@ -59,8 +62,8 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
     private final CoupangProperties coupangProperties;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final ObjectMapper objectMapper;
-    private final OrderItemRepository orderItemRepository;
-    private final OrderItemUpserter orderItemUpserter;
+    private final OrderLineRepository orderLineRepository;
+    private final OrderUpserter orderUpserter;
 
     public List<ShippingLabelRow> collectRows(Long sellerId) {
         List<MarketplaceAccount> accounts = (sellerId == null)
@@ -71,7 +74,7 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
         int targetAccounts = 0;
         int failedAccounts = 0;
         for (MarketplaceAccount account : accounts) {
-            if (!PLATFORM_COUPANG.equals(account.getPlatform())) {
+            if (!Platform.COUPANG.equals(account.getPlatform())) {
                 continue;
             }
             targetAccounts++;
@@ -99,17 +102,18 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
 
     @Override
     public List<ShippingLabelPreviewRow> previewRowsByOrder(Long orderItemId) {
-        OrderItem order = orderItemRepository.findWithAccountAndSellerById(orderItemId)
+        OrderLine line = orderLineRepository.findWithAccountAndSellerById(orderItemId)
                 .orElseThrow(() -> new ResourceNotFoundException("Order", orderItemId));
 
-        MarketplaceAccount account = order.getMarketplaceAccount();
-        if (!PLATFORM_COUPANG.equals(account.getPlatform())) {
+        String externalOrderId = line.getOrder().getExternalOrderId();
+        MarketplaceAccount account = line.getOrder().getMarketplaceAccount();
+        if (!Platform.COUPANG.equals(account.getPlatform())) {
             throw new IllegalArgumentException("쿠팡 주문만 송장시트를 만들 수 있습니다: " + account.getPlatform());
         }
 
         String path = coupangProperties.getOrdersheetByOrderPath()
-                .replace("{vendorId}", account.getVendorId())
-                .replace("{orderId}", order.getExternalOrderId());
+                .replace("{vendorId}", CoupangCredentials.of(account).getVendorId())
+                .replace("{orderId}", externalOrderId);
 
         List<ShippingLabelRow> rows = new ArrayList<>();
         try {
@@ -126,7 +130,7 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
         } catch (Exception e) {
             // 목록 다운로드와 같은 정책: 조회 실패를 빈 시트로 감추지 않는다.
             log.warn("주문 단건 송장시트 조회 실패: orderItemId={} orderId={}",
-                    orderItemId, order.getExternalOrderId(), e);
+                    orderItemId, externalOrderId, e);
             // 위 봉투 검사가 던진 IllegalStateException 도 이 catch 에 걸린다. 그대로 다시 감싸면
             // "code=..." 진단 메시지가 cause 로 묻히므로 재던진다.
             if (e instanceof IllegalStateException ise) {
@@ -158,7 +162,8 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
 
     /** 단일 쿠팡 계정의 INSTRUCT ordersheets 를 페이징 조회하며 행으로 펼친다. */
     private List<ShippingLabelRow> collectAccountRows(MarketplaceAccount account) {
-        String path = coupangProperties.getOrdersheetsPath().replace("{vendorId}", account.getVendorId());
+        String path = coupangProperties.getOrdersheetsPath()
+                .replace("{vendorId}", CoupangCredentials.of(account).getVendorId());
         String baseQuery = baseQuery();
 
         List<ShippingLabelRow> rows = new ArrayList<>();
@@ -179,7 +184,7 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
             // 시트에 실린 주문은 정의상 DB 에 있어야 한다 — 발송처리 매칭이 폴백에 기대지 않게 한다(PLAN 2609_13 D1).
             // ⚠️ 다운로드가 우선이다(D6). 저장 실패가 시트를 막으면 안 되므로 페이지 단위로 삼킨다(D4·D5).
             try {
-                orderItemUpserter.upsertBoxes(account, parsed.path("data"));
+                orderUpserter.upsertBoxes(account, parsed.path("data"));
             } catch (Exception e) {
                 log.warn("송장시트 주문 적재 실패(시트는 계속 생성): account={} page={}", account.getId(), pages, e);
             }
@@ -219,7 +224,8 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
         String shipmentBoxId = box.path("shipmentBoxId").asText("");
         String deliveryMessage = box.path("parcelPrintMessage").asText("");  // nullable → ""
         String sellerName = account.getSeller().getSellerName();
-        String platform = account.getPlatform();
+        // 시트/미리보기 출력용 표시값 — 엑셀 셀·응답 DTO 로만 흘러간다.
+        String platform = account.getPlatform().name();
 
         for (JsonNode item : box.path("orderItems")) {
             int shipping = item.path("shippingCount").asInt(0);

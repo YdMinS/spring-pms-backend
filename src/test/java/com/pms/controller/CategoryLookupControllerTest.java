@@ -4,10 +4,13 @@ import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.Category;
 import com.pms.domain.CategoryMapping;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.Seller;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.CategoryRepository;
+import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.SellerRepository;
@@ -36,6 +39,7 @@ class CategoryLookupControllerTest extends BaseIntegrationTest {
 
     @Autowired private SellerRepository sellerRepository;
     @Autowired private MarketplaceAccountRepository marketplaceAccountRepository;
+    @Autowired private CoupangAccountCredentialRepository credentialRepository;
     @Autowired private CategoryRepository categoryRepository;
     @Autowired private CategoryMappingRepository categoryMappingRepository;
     @Autowired private PlatformCategoryRepository platformCategoryRepository;
@@ -59,6 +63,7 @@ class CategoryLookupControllerTest extends BaseIntegrationTest {
 
     @AfterEach
     void cleanup() {
+        credentialRepository.deleteAll();          // FK child first
         marketplaceAccountRepository.deleteAll();
         sellerRepository.deleteAll();
         categoryMappingRepository.deleteAll();
@@ -72,11 +77,11 @@ class CategoryLookupControllerTest extends BaseIntegrationTest {
      */
     private Long seedMappedCategory() {
         Category category = categoryRepository.save(Category.builder()
-                .name("신발").platform("COUPANG").platformCategoryId("cat-1").build());
+                .name("신발").platform(Platform.COUPANG).platformCategoryId("cat-1").build());
         PlatformCategory platformCategory = platformCategoryRepository.save(PlatformCategory.builder()
-                .platform("COUPANG").code("cat-1").name("운동화").build());
+                .platform(Platform.COUPANG).code("cat-1").name("운동화").build());
         categoryMappingRepository.save(CategoryMapping.builder()
-                .category(category).platform("COUPANG").platformCategoryId("cat-1")
+                .category(category).platform(Platform.COUPANG).platformCategoryId("cat-1")
                 .platformCategory(platformCategory).build());
         return category.getId();
     }
@@ -85,9 +90,11 @@ class CategoryLookupControllerTest extends BaseIntegrationTest {
     private void seedActiveCoupangAccount() {
         Seller seller = sellerRepository.save(Seller.builder()
                 .sellerName("행복상회").businessRegistration("111-22-33333").build());
-        marketplaceAccountRepository.save(MarketplaceAccount.builder()
-                .seller(seller).platform("COUPANG").accountAlias("메인")
-                .vendorId("V1").accessKey("ak").secretKey("sk").isActive(true).build());
+        MarketplaceAccountFixture.saveCredential(credentialRepository,
+                marketplaceAccountRepository.save(MarketplaceAccountFixture.coupangCoreBuilder()
+                        .seller(seller).platform(Platform.COUPANG).accountAlias("메인")
+                        .isActive(true).build()),
+                "V1", null);
     }
 
     // ---- authority (MUST-KEEP) ----

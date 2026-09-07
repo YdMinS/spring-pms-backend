@@ -5,10 +5,12 @@ import com.pms.domain.Category;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.MasterChannelConfigService;
@@ -19,7 +21,7 @@ import com.pms.service.listing.category.CategoryMetaSchema;
 import com.pms.service.listing.category.CategoryNotice;
 import com.pms.service.listing.category.CoupangCategoryMeta;
 import com.pms.service.listing.shipping.ResolvedShippingConfig;
-import com.pms.service.listing.shipping.ShippingConfigResolver;
+import com.pms.service.listing.shipping.CoupangShippingConfigResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -63,7 +65,7 @@ class CoupangListingAdapterTest {
     @Mock private RegistrationNameGenerator registrationNameGenerator;
     @Mock private com.pms.service.OptionCheckSuffixResolver optionCheckSuffixResolver;
     @Mock private MasterProductService masterProductService;
-    @Mock private ShippingConfigResolver shippingConfigResolver;
+    @Mock private CoupangShippingConfigResolver shippingConfigResolver;
     @org.mockito.Spy private ObjectMapper objectMapper = new ObjectMapper();
     @InjectMocks private CoupangListingAdapter adapter;
 
@@ -79,7 +81,7 @@ class CoupangListingAdapterTest {
     }
 
     private ProductListing cell() {
-        return ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+        return ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .platformProductId("123456789")
                 .category(Category.builder().platformCategoryId("cat-1").build())
                 .build();
@@ -87,8 +89,8 @@ class CoupangListingAdapterTest {
 
     private MarketplaceAccount acct() {
         // 73: vendorUserId (WING login id) is register-required.
-        return MarketplaceAccount.builder().vendorId("V1").vendorUserId("wing-user")
-                .accessKey("ak").secretKey("sk").isActive(true).build();
+        return MarketplaceAccountFixture.coupangStubBuilder("V1", "wing-user")
+                .isActive(true).build();
     }
 
     /** A fully-populated resolved shipping config (75) — no missing required field. extraInfoMessage null. */
@@ -125,7 +127,7 @@ class CoupangListingAdapterTest {
     void register_usesPerChannelGeneratedRegistrationNameForSellerProductName() {
         // 67: sellerProductName is always the auto-generated per-channel name (active options → generator).
         MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨").build();
-        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .platformProductId("123456789").masterProduct(master).build();
         given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
                 ProductListingOption.builder().id(1L).optionName("1세트")
@@ -154,7 +156,7 @@ class CoupangListingAdapterTest {
         MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨")
                 .categoryAttributes(Map.of("원산지", "국내산"))
                 .categoryNotices(Map.of("제품소재", "면 100%")).build();
-        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .platformProductId("123456789").masterProduct(master).build();
         // 2609_22/D1: option A is LINKED to master option 5; option B carries no link (channel-only, D2) →
         // it has no master option override, so it falls back to the master's shared value.
@@ -195,7 +197,7 @@ class CoupangListingAdapterTest {
     void register_noticeWithoutGroupMapping_isSkipped() throws Exception {
         MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨")
                 .categoryNotices(Map.of("미매핑detail", "x")).build();
-        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .platformProductId("123456789").masterProduct(master).build();
         ProductListingOption optA = ProductListingOption.builder().id(1L).optionName("A")
                 .sellingPrice(new BigDecimal("6000")).active(true).build();
@@ -246,7 +248,7 @@ class CoupangListingAdapterTest {
     void register_single_payloadHasSingleWithAttributesAndUnitCount() throws Exception {
         MasterProduct master = MasterProduct.builder().id(1L).name("라벨")
                 .categoryAttributes(Map.of("원산지", "국내산")).build();
-        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .platformProductId("123").masterProduct(master).build();
         given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
                 ProductListingOption.builder().id(1L).optionName("6개입")
@@ -273,7 +275,7 @@ class CoupangListingAdapterTest {
         MasterProduct master = MasterProduct.builder().id(1L).name("라벨")
                 .categoryAttributes(Map.of("원산지", "국내산"))
                 .categoryNotices(Map.of("제품소재", "면 100%")).build();
-        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .platformProductId("123").masterProduct(master).build();
         given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
                 ProductListingOption.builder().id(1L).optionName("혼합구성")
@@ -322,7 +324,7 @@ class CoupangListingAdapterTest {
     @Test
     void validateRegistrable_ab_skipsRequiredAttributeCheck() {
         MasterProduct master = MasterProduct.builder().id(1L).build();   // no attribute values at all
-        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
         given(masterProductService.isBundle(1L)).willReturn(true);
         // 96 ⑨: AB no longer returns before the meta lookup (it still has to validate notices) → the category
@@ -342,7 +344,7 @@ class CoupangListingAdapterTest {
         // only the required-attribute guard can fire (the two guards stay distinguishable by message).
         MasterProduct master = MasterProduct.builder().id(1L)
                 .categoryAttributes(Map.of("색상", "흰색")).build();   // no value for the required attr
-        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
         given(masterProductService.isBundle(1L)).willReturn(false);
         given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
@@ -365,7 +367,7 @@ class CoupangListingAdapterTest {
     void validateRegistrable_requiredAttributeGroup_satisfiedByOneMember() {
         MasterProduct master = MasterProduct.builder().id(1L)
                 .categoryAttributes(Map.of("최소 중량", "100g")).build();   // 용량은 비어 있음
-        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
         given(masterProductService.isBundle(1L)).willReturn(false);
         given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
@@ -387,7 +389,7 @@ class CoupangListingAdapterTest {
     void validateRegistrable_requiredAttributeGroup_blocksWhenWholeGroupBlank() {
         MasterProduct master = MasterProduct.builder().id(1L)
                 .categoryAttributes(Map.of("색상", "흰색")).build();   // 그룹 두 칸 모두 비어 있음
-        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
         given(masterProductService.isBundle(1L)).willReturn(false);
         given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
@@ -562,8 +564,8 @@ class CoupangListingAdapterTest {
     // 73: vendorUserId unset on the account → 400 before the HTTP push.
     @Test
     void register_missingVendorUserId_throws400() {
-        MarketplaceAccount noUser = MarketplaceAccount.builder().vendorId("V1")
-                .accessKey("ak").secretKey("sk").isActive(true).build();   // no vendorUserId
+        MarketplaceAccount noUser = MarketplaceAccountFixture.coupangStubBuilder("V1", null)
+                .isActive(true).build();   // no vendorUserId
         given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
         GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
 
@@ -635,7 +637,7 @@ class CoupangListingAdapterTest {
     @Test
     void validateRegistrable_attributesEmpty_throws() {
         MasterProduct master = MasterProduct.builder().id(1L).build();   // no attribute values at all
-        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
         given(masterProductService.isBundle(1L)).willReturn(false);
         given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
@@ -656,7 +658,7 @@ class CoupangListingAdapterTest {
     @Test
     void register_longName_truncatedTo100() throws Exception {
         MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨").build();
-        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .platformProductId("123456789").masterProduct(master).build();
         given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
                 ProductListingOption.builder().id(1L).optionName("1세트")
@@ -689,7 +691,7 @@ class CoupangListingAdapterTest {
                         "개당 용량", "500ml",      // already carries a unit             → untouched
                         "원산지", "국내산")))       // no basicUnit in the schema         → untouched
                 .build();
-        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .platformProductId("123456789").masterProduct(master).build();
         given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
                 ProductListingOption.builder().id(1L).optionName("A")
@@ -738,7 +740,7 @@ class CoupangListingAdapterTest {
         MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨")
                 .categoryNotices(Map.of("소비기한", "2026-12-31"))
                 .categoryNoticeGroup(group).build();
-        return ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+        return ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .platformProductId("123456789").masterProduct(master).build();
     }
 
@@ -818,7 +820,7 @@ class CoupangListingAdapterTest {
                 .categoryAttributes(Map.of("원산지", "국내산"))
                 .categoryNotices(Map.of("소비기한", "2026-12-31"))   // 포장단위별 용량 left blank
                 .categoryNoticeGroup("가공식품").build();
-        return ProductListing.builder().id(100L).platform("COUPANG").name("셀").masterProduct(master).build();
+        return ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀").masterProduct(master).build();
     }
 
     private void givenOneActiveOption() {
@@ -965,7 +967,7 @@ class CoupangListingAdapterTest {
      */
     private int registeredMaxBuyCount(Integer channelStock, Integer masterStock) throws Exception {
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터").build();
-        ProductListing cell = ProductListing.builder().id(100L).platform("COUPANG").name("셀")
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .platformProductId("123456789").masterProduct(master).build();
         MasterProductOption masterOption = MasterProductOption.builder().id(5L).name("1세트")
                 .stockQuantity(masterStock).build();

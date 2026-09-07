@@ -1,6 +1,7 @@
 package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
+import com.pms.domain.Platform;
 import com.pms.service.CarrierCodeService;
 import com.pms.service.CarrierOption;
 import com.pms.service.ManualShipmentResult;
@@ -85,7 +86,7 @@ public class ShipmentConfirmControllerTest extends BaseIntegrationTest {
 
     @Test
     public void testCarrierOptionsWithAdminTokenReturnsOptions() throws Exception {
-        given(carrierCodeService.findOptions("COUPANG"))
+        given(carrierCodeService.findOptions(Platform.COUPANG))
                 .willReturn(List.of(new CarrierOption("CJGLS", "CJ대한통운", true)));
 
         mockMvc.perform(get("/api/admin/shipping-labels/carrier-options").param("platform", "COUPANG")

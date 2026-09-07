@@ -20,7 +20,7 @@ import java.util.List;
  * 상품문의 {@code inquiryId} 와 고객센터 {@code inquiryId} 는 다른 시퀀스라 같은 숫자가 겹칠 수 있다.
  *
  * <p>주문 연결은 {@code external_order_id} <b>1건</b>만 저장한다(D14). 상품문의 {@code orderIds} 가
- * 2건 이상이면 첫 건만 쓰고 경고만 남긴다. 매칭에 실패해도 문의는 저장하고 {@code orderItem} 만
+ * 2건 이상이면 첫 건만 쓰고 경고만 남긴다. 매칭에 실패해도 문의는 저장하고 {@code orderLine} 만
  * null 로 둔다(D15) — 상품문의는 애초에 주문 없는 질문이 다수라 미연결이 정상이며, 그때 우측 패널이
  * 상품 정보라도 보여주도록 {@code external_item_id}(vendorItemId)로 {@link ProductListing} 을 잇는다.
  *
@@ -59,7 +59,8 @@ public class CustomerInquiry extends BaseEntity {
     private MarketplaceAccount marketplaceAccount;
 
     @Column(nullable = false, length = 50)
-    private String platform;                        // "COUPANG" (order_item 관례를 따라 둔다)
+    @Enumerated(EnumType.STRING)
+    private Platform platform;                      // orders 관례를 따라 둔다
 
     @Enumerated(EnumType.STRING)
     @Column(name = "inquiry_type", nullable = false, length = 20)
@@ -82,8 +83,8 @@ public class CustomerInquiry extends BaseEntity {
     private ProductListing productListing;          // vendorItemId 로 연결한 셀 (D15) — 실패 시 null
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "order_item_id")
-    private OrderItem orderItem;                    // 매칭 실패·모호하면 null (D15)
+    @JoinColumn(name = "order_line_id")
+    private OrderLine orderLine;                    // 매칭 실패·모호하면 null (D15)
 
     @Column(name = "item_name", length = 500)
     private String itemName;                        // 미연결 시 화면 공백 방지 (셀 연결에서 채우기도 한다)
@@ -122,6 +123,6 @@ public class CustomerInquiry extends BaseEntity {
 
     /** 주문 라인 연결 여부 — 화면이 "주문 미연결" 배지를 띄우는 근거. */
     public boolean isLinked() {
-        return orderItem != null;
+        return orderLine != null;
     }
 }

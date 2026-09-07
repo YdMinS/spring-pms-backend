@@ -3,6 +3,7 @@ package com.pms.service.category;
 import com.pms.common.TestJpaConfig;
 import com.pms.domain.Category;
 import com.pms.domain.CategoryMapping;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.dto.response.CategoryImportResult;
 import com.pms.repository.CategoryMappingRepository;
@@ -67,10 +68,10 @@ class CategoryImportServiceTest {
         assertThat(r.getSkipped()).isZero();
 
         // Leaf carries code + commission (fraction); intermediate carries neither.
-        PlatformCategory leaf = platformCategoryRepository.findByPlatformAndCode("COUPANG", "58646").orElseThrow();
+        PlatformCategory leaf = platformCategoryRepository.findByPlatformAndCode(Platform.COUPANG, "58646").orElseThrow();
         assertThat(leaf.getCode()).isEqualTo("58646");
         assertThat(leaf.getCommissionRate()).isEqualByComparingTo(new BigDecimal("0.106"));
-        PlatformCategory root = platformCategoryRepository.findByParentIsNullAndPlatform("COUPANG").get(0);
+        PlatformCategory root = platformCategoryRepository.findByParentIsNullAndPlatform(Platform.COUPANG).get(0);
         assertThat(root.getName()).isEqualTo("식품");
         assertThat(root.getCode()).isNull();
         assertThat(root.getCommissionRate()).isNull();
@@ -97,14 +98,14 @@ class CategoryImportServiceTest {
 
         assertThat(categoryRepository.count()).isEqualTo(oclyxCountAfterFirst);       // mirror untouched
         assertThat(categoryMappingRepository.count()).isEqualTo(mappingCountAfterFirst);
-        assertThat(platformCategoryRepository.findByPlatformAndCode("COUPANG", "58646")
+        assertThat(platformCategoryRepository.findByPlatformAndCode(Platform.COUPANG, "58646")
                 .orElseThrow().getCommissionRate()).isEqualByComparingTo(new BigDecimal("0.12"));
     }
 
     @Test
     void reImport_afterLeafRename_reusesMirrorByFk_preservesRenamedName() throws IOException {
         service.importCoupang(baseFixture("10.6"));
-        PlatformCategory leaf = platformCategoryRepository.findByPlatformAndCode("COUPANG", "58646").orElseThrow();
+        PlatformCategory leaf = platformCategoryRepository.findByPlatformAndCode(Platform.COUPANG, "58646").orElseThrow();
         Category mirror = categoryMappingRepository.findByPlatformCategoryId(leaf.getId()).orElseThrow().getCategory();
         categoryRepository.save(mirror.toBuilder().name("사용자수정라면").build()); // user renamed the mirror leaf
         long oclyxCount = categoryRepository.count();
@@ -134,7 +135,7 @@ class CategoryImportServiceTest {
         assertThat(r.getOclyxNodesCreated()).isEqualTo(1);
         assertThat(r.getMappingsCreated()).isEqualTo(1);
         assertThat(r.getSkipped()).isEqualTo(2);
-        assertThat(platformCategoryRepository.findByPlatformAndCode("COUPANG", "58648")).isPresent();
+        assertThat(platformCategoryRepository.findByPlatformAndCode(Platform.COUPANG, "58648")).isPresent();
     }
 
     /** In-memory data-sheet xlsx: header rows 1-3 dummy, leaf rows from row 5. */

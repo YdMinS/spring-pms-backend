@@ -27,7 +27,7 @@ public class CoupangProperties {
      * 대신 구매목록 화면을 같은 윈도우(syncDays)로 제한해 stale 행이 노출되지 않게 한다.
      * 주문내역 조회에는 이 값이 <b>기본 창</b>일 뿐이다 — from/to 를 명시하면 창 밖 과거도 조회하며,
      * stale 고지는 클라이언트 책임이다(FEATURE_2609_08).
-     * (표시 필터는 order_item.paidAt 기준 — 주문 createdAt 은 저장하지 않음.)
+     * (표시 필터는 orders.orderedAt 기준 — 주문 createdAt 은 저장하지 않음.)
      *
      * ⚠️ 31 이상으로 올리면 {@link com.pms.service.coupang.SyncWindow} 가 범위를 거절해
      * 부팅이 아니라 <b>첫 동기화</b>에서 IllegalArgumentException 이 난다(쿠팡 상한: range &lt; 31일).

@@ -6,6 +6,7 @@ import com.pms.domain.InquiryAuthorRole;
 import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CustomerInquiryReplyRepository;
 import com.pms.repository.CustomerInquiryRepository;
@@ -71,8 +72,8 @@ class InquiryReplyRecorderTest {
     private CustomerInquiry inquiry() {
         return CustomerInquiry.builder()
                 .id(3L)
-                .marketplaceAccount(MarketplaceAccount.builder().id(7L).platform("COUPANG").build())
-                .platform("COUPANG")
+                .marketplaceAccount(MarketplaceAccount.builder().id(7L).platform(Platform.COUPANG).build())
+                .platform(Platform.COUPANG)
                 .inquiryType(InquiryType.PRODUCT_QNA)
                 .externalInquiryId("5001")
                 .status(InquiryStatus.UNANSWERED)

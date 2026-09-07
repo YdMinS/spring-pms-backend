@@ -4,11 +4,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
+import com.pms.domain.Platform;
 import com.pms.exception.CoupangRateLimitedException;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.service.claim.ClaimOrderBackfillService.BackfillResult;
 import com.pms.service.coupang.CoupangApiClient;
-import com.pms.service.coupang.OrderItemUpserter;
+import com.pms.service.coupang.OrderUpserter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -49,7 +51,7 @@ class ClaimOrderBackfillServiceImplTest {
 
     @Mock private OrderClaimRepository orderClaimRepository;
     @Mock private CoupangApiClient coupangApiClient;
-    @Mock private OrderItemUpserter orderItemUpserter;
+    @Mock private OrderUpserter orderUpserter;
     @Mock private ClaimUpserter claimUpserter;
 
     private CoupangProperties props;
@@ -58,9 +60,9 @@ class ClaimOrderBackfillServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        account = MarketplaceAccount.builder()
-                .id(1L).platform("COUPANG").vendorId("V0001")
-                .accessKey("ak").secretKey("sk").isActive(true).build();
+        account = MarketplaceAccountFixture.coupangStubBuilder("V0001", null)
+                .id(1L).platform(Platform.COUPANG)
+                .isActive(true).build();
 
         props = new CoupangProperties();
         props.setOrdersheetByOrderPath("/api/v4/vendors/{vendorId}/{orderId}/ordersheets");
@@ -68,7 +70,7 @@ class ClaimOrderBackfillServiceImplTest {
         props.setClaimBackfillMaxAttempts(3);
 
         service = new ClaimOrderBackfillServiceImpl(
-                orderClaimRepository, coupangApiClient, orderItemUpserter, claimUpserter,
+                orderClaimRepository, coupangApiClient, orderUpserter, claimUpserter,
                 props, new ObjectMapper());
     }
 
@@ -117,7 +119,7 @@ class ClaimOrderBackfillServiceImplTest {
 
         verify(claimUpserter).recordMatchAttempt(1L);
         verify(claimUpserter, never()).relink(1L);
-        verify(orderItemUpserter, times(1)).upsertBox(eq(account), any());
+        verify(orderUpserter, times(1)).upsertBox(eq(account), any());
         verify(claimUpserter).relink(2L);
         assertThat(result.ordersFetched()).isEqualTo(1);
     }
@@ -129,7 +131,7 @@ class ClaimOrderBackfillServiceImplTest {
 
         BackfillResult result = service.backfill(account);
 
-        verify(orderItemUpserter, never()).upsertBox(any(), any());
+        verify(orderUpserter, never()).upsertBox(any(), any());
         verify(claimUpserter, never()).relink(anyLong());
         verify(claimUpserter).recordMatchAttempt(1L);
         assertThat(result.ordersFetched()).isZero();

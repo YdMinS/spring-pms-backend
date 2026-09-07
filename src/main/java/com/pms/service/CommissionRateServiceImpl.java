@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.Category;
 import com.pms.domain.CommissionRate;
+import com.pms.domain.Platform;
 import com.pms.dto.request.CommissionRateRequest;
 import com.pms.dto.response.CommissionRateResponse;
 import com.pms.exception.ResourceNotFoundException;
@@ -41,7 +42,7 @@ public class CommissionRateServiceImpl implements CommissionRateService {
         }
 
         CommissionRate commissionRate = CommissionRate.builder()
-                .platform(request.getPlatform())
+                .platform(Platform.from(request.getPlatform()))
                 .category(category)
                 .rate(request.getRate())
                 .isDefault(request.getIsDefault() != null ? request.getIsDefault() : false)
@@ -80,7 +81,7 @@ public class CommissionRateServiceImpl implements CommissionRateService {
 
         CommissionRate updated = CommissionRate.builder()
                 .id(commissionRate.getId())
-                .platform(request.getPlatform())
+                .platform(Platform.from(request.getPlatform()))
                 .category(category)
                 .rate(request.getRate())
                 .isDefault(request.getIsDefault() != null ? request.getIsDefault() : false)
@@ -99,7 +100,7 @@ public class CommissionRateServiceImpl implements CommissionRateService {
     }
 
     @Override
-    public BigDecimal findRate(String platform, Long categoryId) {
+    public BigDecimal findRate(Platform platform, Long categoryId) {
         // First query: platform + category_id match
         return commissionRateRepository.findByPlatformAndCategoryId(platform, categoryId)
                 .map(CommissionRate::getRate)
@@ -110,7 +111,7 @@ public class CommissionRateServiceImpl implements CommissionRateService {
     }
 
     @Override
-    public List<CommissionRateResponse> getCommissionRatesByPlatform(String platform) {
+    public List<CommissionRateResponse> getCommissionRatesByPlatform(Platform platform) {
         return commissionRateRepository.findByPlatform(platform)
                 .stream()
                 .map(this::mapToResponse)
@@ -128,7 +129,7 @@ public class CommissionRateServiceImpl implements CommissionRateService {
 
         return CommissionRateResponse.builder()
                 .id(commissionRate.getId())
-                .platform(commissionRate.getPlatform())
+                .platform(commissionRate.getPlatform().name())
                 .categoryId(categoryId)
                 .rate(commissionRate.getRate())
                 .isDefault(commissionRate.getIsDefault())

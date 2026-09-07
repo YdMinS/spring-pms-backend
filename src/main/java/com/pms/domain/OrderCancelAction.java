@@ -13,7 +13,7 @@ import org.hibernate.annotations.TenantId;
  *   <li>사용자가 고른 <b>사유</b>의 유일한 보존처 — INSTRUCT 건은 쿠팡이 사유를 덮어쓴다</li>
  *   <li>쿠팡 실패 원문·접수번호 보존</li>
  * </ol>
- * {@code order_item} 에 컬럼으로 뭉개면 마지막 1건만 남아 셋 다 못 한다.
+ * {@code order_line} 에 컬럼으로 뭉개면 마지막 1건만 남아 셋 다 못 한다.
  *
  * <p>⚠️ <b>UNIQUE 제약이 없다</b> — 실패 재시도가 여러 행으로 쌓이는 것이 정상이다.
  *
@@ -41,8 +41,8 @@ public class OrderCancelAction extends BaseEntity {
 
     /** 취소를 건 주문 라인(옵션 단위). 취소 단위가 라인×수량이라 박스가 아니라 라인에 남는다. */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "order_item_id", nullable = false)
-    private OrderItem orderItem;
+    @JoinColumn(name = "order_line_id", nullable = false)
+    private OrderLine orderLine;
 
     /** 요청한 취소 수량(부분취소 지원). */
     @Column(nullable = false)
@@ -57,7 +57,7 @@ public class OrderCancelAction extends BaseEntity {
     @Column(name = "platform_reason_code", length = 20)
     private String platformReasonCode;
 
-    /** 전송 <b>직전</b>의 {@code order_item.status}(ACCEPT/INSTRUCT) — 즉시취소였는지 출고중지였는지의 근거. */
+    /** 전송 <b>직전</b>의 <b>플랫폼</b> 상태 원문({@code coupang_order_line.platform_status} = ACCEPT/INSTRUCT) — 즉시취소였는지 출고중지였는지의 근거. */
     @Column(name = "status_at_send", length = 30)
     private String statusAtSend;
 

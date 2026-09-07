@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *
  * This is deliberately ddl-auto=none, NOT validate: entity<->baseline fidelity (§8-6) was verified against
  * this same Hibernate-derived baseline and is documented in DECISIONS. The two large-text columns
- * (products.description, order_item.raw) legitimately diverge H2(VARCHAR/CLOB) vs MySQL(TEXT/JSON), so a
+ * (products.description, coupang_order_line.raw) legitimately diverge H2(VARCHAR/CLOB) vs MySQL(TEXT/JSON), so a
  * portable CLOB baseline cannot pass H2 validate on those columns — hence apply-check here.
  *
  * Base config keeps liquibase disabled (create-drop everywhere else), so this test overrides it locally.
@@ -50,8 +50,8 @@ class LiquibaseChangelogApplyTest {
         assertThat(applied).isNotNull().isGreaterThanOrEqualTo(1);
 
         // ...and that baseline tables actually materialized (querying proves existence).
+        // ⚠️ order_item is gone (changeset 068) — the order tables are asserted in orderModelApplied().
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM seller", Integer.class)).isZero();
-        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM order_item", Integer.class)).isZero();
 
         // changeset 008: thumbnail_asset table + its columns materialized (a successful count proves both).
         assertThat(jdbcTemplate.queryForObject(
@@ -213,21 +213,21 @@ class LiquibaseChangelogApplyTest {
                     .isZero();
         }
 
-        // changeset 038: marketplace_account.vendor_user_id materialized (a successful count proves it; 71).
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM marketplace_account WHERE vendor_user_id IS NULL", Integer.class)).isZero();
+        // changeset 038 added marketplace_account.vendor_user_id (71), but changeset 065 moved the four
+        // Coupang credential columns to coupang_account_credential (FEATURE_2609_26) → the column is gone
+        // here. See coupangAccountCredentialApplied() for the post-065 state.
 
         // changeset 039: marketplace_shipping_config table + columns materialized (a successful count over the
         // key columns proves the table + outbound/return/delivery structure; 72).
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM marketplace_shipping_config "
+                "SELECT COUNT(*) FROM coupang_shipping_config "
                         + "WHERE outbound_shipping_place_code IS NULL AND return_center_code IS NULL "
                         + "AND remote_area_deliverable IS NULL",
                 Integer.class)).isZero();
 
         // changeset 042: marketplace_shipping_config.extra_info_message materialized (a successful count proves it; 75).
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM marketplace_shipping_config WHERE extra_info_message IS NULL",
+                "SELECT COUNT(*) FROM coupang_shipping_config WHERE extra_info_message IS NULL",
                 Integer.class)).isZero();
 
         // changeset 043: shipping_override materialized on master_product + product_listing (75; a successful
@@ -244,7 +244,7 @@ class LiquibaseChangelogApplyTest {
         // changeset 045: the FREE-shipping backfill applied (96 ⑧). No seeded rows here, so what this asserts
         // is that the two conditional UPDATEs ran without error and left no FREE row with a null charge.
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM marketplace_shipping_config "
+                "SELECT COUNT(*) FROM coupang_shipping_config "
                         + "WHERE delivery_charge_type = 'FREE' "
                         + "AND (delivery_charge IS NULL OR free_ship_over_amount IS NULL)",
                 Integer.class)).isZero();
@@ -304,11 +304,10 @@ class LiquibaseChangelogApplyTest {
                         + "AND last_sync_error IS NULL",
                 Integer.class)).isNotNull();
 
-        // changeset 052: the two customer-name columns exist on order_item (FEATURE_2609_06).
-        // Nullable with no backfill on purpose — the next sync's upsert fills orders inside the sync
-        // window — so a successful count over the new names is what proves they were added.
+        // changeset 052: the two customer-name columns (FEATURE_2609_06). They moved to the order header
+        // with 066 (order_item is dropped by 068), so the assertion follows them to `orders`.
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM order_item "
+                "SELECT COUNT(*) FROM orders "
                         + "WHERE orderer_name IS NULL AND receiver_name IS NULL",
                 Integer.class)).isNotNull();
     }
@@ -322,7 +321,7 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM order_claim "
                         + "WHERE tenant_id IS NULL AND marketplace_account_id IS NULL "
                         + "AND claim_type IS NULL AND external_claim_id IS NULL "
-                        + "AND external_item_id IS NULL AND order_item_id IS NULL "
+                        + "AND external_item_id IS NULL AND order_line_id IS NULL "
                         + "AND order_item_match_attempts IS NULL AND status IS NULL "
                         + "AND platform_status IS NULL AND received_at IS NULL AND synced_at IS NULL",
                 Integer.class)).isZero();
@@ -428,6 +427,107 @@ class LiquibaseChangelogApplyTest {
     }
 
     @Test
+    void coupangAccountCredentialApplied() {
+        // changeset 065: the credential table materialized with all its columns (FEATURE_2609_26).
+        // The MySQL-only backfill is skipped on this empty H2 DB, so an empty count is what proves
+        // the table + its structure exist.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM coupang_account_credential "
+                        + "WHERE tenant_id IS NULL AND marketplace_account_id IS NULL "
+                        + "AND vendor_id IS NULL AND vendor_user_id IS NULL "
+                        + "AND access_key IS NULL AND secret_key IS NULL",
+                Integer.class)).isZero();
+
+        // 1:1 with the account — the UNIQUE is what keeps a second credential row out.
+        List<String> constraints = jdbcTemplate.queryForList(
+                "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
+                        + "WHERE TABLE_NAME = 'COUPANG_ACCOUNT_CREDENTIAL'", String.class);
+        assertThat(constraints).contains("UQ_COUPANG_CRED_ACCOUNT");
+
+        // ...and the core lost the four Coupang columns (a rename-style move, not an additive copy).
+        assertThatThrownBy(() -> jdbcTemplate.queryForObject(
+                "SELECT vendor_id FROM marketplace_account", String.class))
+                .as("marketplace_account.vendor_id dropped by 065")
+                .isInstanceOf(DataAccessException.class);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE TABLE_NAME = 'MARKETPLACE_ACCOUNT' "
+                        + "AND COLUMN_NAME IN ('VENDOR_USER_ID', 'ACCESS_KEY', 'SECRET_KEY')",
+                Integer.class)).isZero();
+    }
+
+    @Test
+    void orderModelApplied() {
+        // changeset 066: the neutral order core (3 tables) + the Coupang extension materialized.
+        // The MySQL-only backfills are skipped on this empty H2 DB, so an empty count is what proves
+        // the tables + their structure exist (FEATURE_2609_26).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM orders WHERE tenant_id IS NULL AND marketplace_account_id IS NULL "
+                        + "AND platform IS NULL AND external_order_id IS NULL AND ordered_at IS NULL "
+                        + "AND orderer_name IS NULL AND receiver_name IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM order_shipment WHERE tenant_id IS NULL AND order_id IS NULL "
+                        + "AND external_shipment_id IS NULL AND shipping_fee IS NULL AND remote_fee IS NULL "
+                        + "AND tracking_available IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM order_line WHERE tenant_id IS NULL AND order_id IS NULL "
+                        + "AND order_shipment_id IS NULL AND status IS NULL AND item_name IS NULL "
+                        + "AND order_qty IS NULL AND cancel_qty IS NULL AND hold_qty IS NULL "
+                        + "AND unit_price IS NULL AND line_amount IS NULL AND discount_amount IS NULL "
+                        + "AND platform_discount_amount IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM coupang_order_line WHERE tenant_id IS NULL AND order_line_id IS NULL "
+                        + "AND marketplace_account_id IS NULL AND shipment_box_id IS NULL "
+                        + "AND order_id_raw IS NULL AND vendor_item_id IS NULL AND platform_status IS NULL "
+                        + "AND raw IS NULL", Integer.class)).isZero();
+
+        // tenant_id is NOT NULL on all four (PLAN D25 — the extension/child tables carry it too).
+        for (String table : new String[]{"ORDERS", "ORDER_SHIPMENT", "ORDER_LINE", "COUPANG_ORDER_LINE"}) {
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+                            + "WHERE TABLE_NAME = '" + table + "' AND COLUMN_NAME = 'TENANT_ID'", String.class))
+                    .as("tenant_id NOT NULL on %s", table)
+                    .isEqualTo("NO");
+        }
+
+        // 🔴 the line's natural key lives on the extension, not on the core (D3); the core order keeps
+        // its own (account, orderId) uniqueness.
+        List<String> coupangConstraints = jdbcTemplate.queryForList(
+                "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
+                        + "WHERE TABLE_NAME = 'COUPANG_ORDER_LINE'", String.class);
+        assertThat(coupangConstraints).contains("UQ_COUPANG_ORDER_LINE", "UQ_COUPANG_ORDER_LINE_LINE");
+        assertThat(jdbcTemplate.queryForList(
+                "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE TABLE_NAME = 'ORDERS'",
+                String.class)).contains("UQ_ORDERS_ACCOUNT_ORDER");
+        assertThat(jdbcTemplate.queryForList(
+                "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
+                        + "WHERE TABLE_NAME = 'ORDER_SHIPMENT'", String.class)).contains("UQ_ORDER_SHIPMENT");
+
+        // changeset 067: the four FK tables now carry order_line_id (a successful count proves the rename;
+        // the old order_item_id column is gone with it).
+        for (String table : new String[]{
+                "order_claim", "customer_inquiry", "shopping_list_item", "order_cancel_action"}) {
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM " + table + " WHERE order_line_id IS NULL", Integer.class))
+                    .as("order_line_id present on %s", table)
+                    .isZero();
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '"
+                            + table.toUpperCase() + "' AND COLUMN_NAME = 'ORDER_ITEM_ID'", Integer.class))
+                    .as("order_item_id gone from %s", table)
+                    .isZero();
+        }
+        // 🔴 the claim backfill counter keeps its old column name on purpose (2609_18 runs on it unchanged).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ORDER_CLAIM' "
+                        + "AND COLUMN_NAME = 'ORDER_ITEM_MATCH_ATTEMPTS'", Integer.class)).isEqualTo(1);
+
+        // changeset 068: order_item is dropped — querying it must fail.
+        assertThatThrownBy(() -> jdbcTemplate.queryForObject("SELECT COUNT(*) FROM order_item", Integer.class))
+                .isInstanceOf(DataAccessException.class);
+    }
+
+    @Test
     void tenantDimensionApplied() {
         // changeset 002: tenant table created + seeded with the default tenant (id=1).
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tenant", Integer.class)).isEqualTo(1);
@@ -436,7 +536,7 @@ class LiquibaseChangelogApplyTest {
         // No rows yet, but WHERE tenant_id IS NULL also proves backfill left nothing null.
         for (String table : new String[]{
                 "products", "seller", "product_listing", "marketplace_account", "member",
-                "order_item", "shopping_list_item", "purchase_record", "carrier_rate", "package"}) {
+                "order_line", "shopping_list_item", "purchase_record", "carrier_rate", "package"}) {
             assertThat(jdbcTemplate.queryForObject(
                     "SELECT COUNT(*) FROM " + table + " WHERE tenant_id IS NULL", Integer.class))
                     .as("tenant_id column present and non-null on %s", table)

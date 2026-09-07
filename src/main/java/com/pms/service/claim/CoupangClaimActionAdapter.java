@@ -7,8 +7,10 @@ import com.pms.domain.ClaimAction;
 import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
+import com.pms.domain.Platform;
 import com.pms.service.CarrierCodeService;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.coupang.CoupangCredentials;
 import com.pms.service.coupang.SyncWindow;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,8 +43,6 @@ import java.util.Set;
 @Component
 @RequiredArgsConstructor
 public class CoupangClaimActionAdapter implements ClaimActionAdapter {
-
-    private static final String PLATFORM_COUPANG = "COUPANG";
 
     /** 회수 송장 등록은 반품·교환 공용 엔드포인트라 이 값으로 갈린다. */
     private static final String DELIVERY_TYPE_RETURN = "RETURN";
@@ -100,8 +100,8 @@ public class CoupangClaimActionAdapter implements ClaimActionAdapter {
     private final ObjectMapper objectMapper;
 
     @Override
-    public String platform() {
-        return PLATFORM_COUPANG;
+    public Platform platform() {
+        return Platform.COUPANG;
     }
 
     @Override
@@ -200,7 +200,7 @@ public class CoupangClaimActionAdapter implements ClaimActionAdapter {
      */
     private String path(String template, MarketplaceAccount account, long claimId) {
         return template
-                .replace("{vendorId}", account.getVendorId())
+                .replace("{vendorId}", CoupangCredentials.of(account).getVendorId())
                 .replace("{receiptId}", String.valueOf(claimId))
                 .replace("{exchangeId}", String.valueOf(claimId));
     }
@@ -216,7 +216,7 @@ public class CoupangClaimActionAdapter implements ClaimActionAdapter {
 
     private Map<String, Object> receiveConfirmBody(MarketplaceAccount account, long receiptId) {
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("vendorId", account.getVendorId());
+        body.put("vendorId", CoupangCredentials.of(account).getVendorId());
         body.put("receiptId", receiptId);
         return body;
     }
@@ -257,7 +257,7 @@ public class CoupangClaimActionAdapter implements ClaimActionAdapter {
 
     private Map<String, Object> exchangeBody(MarketplaceAccount account, long exchangeId) {
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("vendorId", account.getVendorId());
+        body.put("vendorId", CoupangCredentials.of(account).getVendorId());
         body.put("exchangeId", exchangeId);         // 문자열로 보내면 쿠팡 400 — Number 로 싣는다
         return body;
     }

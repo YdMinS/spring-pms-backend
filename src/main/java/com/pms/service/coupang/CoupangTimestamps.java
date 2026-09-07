@@ -32,7 +32,7 @@ import java.util.List;
  *   <li>공백 구분 — {@code 2026-09-01 10:20:30}</li>
  * </ol>
  *
- * <p>⚠️ KST naive 로 저장하는 이유: {@code order_item.paid_at} 등 기존 쿠팡 유래 시각이 전부 KST
+ * <p>⚠️ KST naive 로 저장하는 이유: {@code orders.ordered_at} 등 쿠팡 유래 시각이 전부 KST
  * naive 다. 여기서만 UTC 로 저장하면 같은 화면의 두 시각이 9시간 어긋난다.
  * (전역 타임스탬프 정합 정리는 별건 — 그 결론이 나면 이 클래스 하나만 바꾸면 된다.)
  *

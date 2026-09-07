@@ -1,6 +1,6 @@
 package com.pms.dto.response;
 
-import com.pms.domain.MarketplaceShippingConfig;
+import com.pms.domain.CoupangShippingConfig;
 import lombok.Builder;
 import lombok.Getter;
 
@@ -41,7 +41,7 @@ public class ShippingConfigResponse {
     // extra info message (주문제작/설치배송 추가정보), 75
     private String extraInfoMessage;
 
-    public static ShippingConfigResponse from(MarketplaceShippingConfig c) {
+    public static ShippingConfigResponse from(CoupangShippingConfig c) {
         return ShippingConfigResponse.builder()
                 .marketplaceAccountId(c.getMarketplaceAccount().getId())
                 .outboundShippingPlaceCode(c.getOutboundShippingPlaceCode())

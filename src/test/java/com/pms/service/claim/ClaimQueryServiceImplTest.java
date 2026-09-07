@@ -5,6 +5,7 @@ import com.pms.domain.ClaimStatus;
 import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.dto.response.OrderClaimResponse;
 import com.pms.repository.OrderClaimRepository;
@@ -119,9 +120,9 @@ class ClaimQueryServiceImplTest {
     private OrderClaim claim(Long id, ClaimStatus status, String orderId, String requester, String itemName) {
         Seller seller = Seller.builder().id(5L).sellerName("테스트셀러").build();
         MarketplaceAccount account = MarketplaceAccount.builder()
-                .id(1L).seller(seller).platform("COUPANG").build();
+                .id(1L).seller(seller).platform(Platform.COUPANG).build();
         return OrderClaim.builder()
-                .id(id).marketplaceAccount(account).platform("COUPANG").claimType(ClaimType.RETURN)
+                .id(id).marketplaceAccount(account).platform(Platform.COUPANG).claimType(ClaimType.RETURN)
                 .externalClaimId("R-" + id).externalOrderId(orderId).externalItemId("V-" + id)
                 .orderItemMatchAttempts(0).itemName(itemName).quantity(1)
                 .status(status).platformStatus("UC").requesterName(requester)

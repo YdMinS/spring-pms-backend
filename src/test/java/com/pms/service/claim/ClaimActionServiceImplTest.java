@@ -5,10 +5,12 @@ import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
 import com.pms.domain.OrderClaimAction;
+import com.pms.domain.Platform;
 import com.pms.dto.request.ClaimActionRequest;
 import com.pms.dto.response.ClaimActionResponse;
 import com.pms.exception.BusinessException;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.OrderClaimActionRepository;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.service.coupang.CoupangApiClient;
@@ -196,7 +198,7 @@ class ClaimActionServiceImplTest {
     @Test
     void availableActions_unsupportedPlatform_returnsEmptyListWithoutThrowing() {
         // D17 — 네이버 계정이 붙는 순간 클레임 화면이 500 으로 죽지 않아야 한다.
-        OrderClaim naver = claim(1L, "RETURNS_UNCHECKED", 1).toBuilder().platform("NAVER").build();
+        OrderClaim naver = claim(1L, "RETURNS_UNCHECKED", 1).toBuilder().platform(Platform.NAVER).build();
         given(orderClaimRepository.findSiblingsBulk(eq(ClaimType.RETURN), anyList()))
                 .willReturn(List.of(naver));
         given(orderClaimActionRepository.findByOrderClaim_IdInAndSucceededTrue(anyList()))
@@ -209,7 +211,7 @@ class ClaimActionServiceImplTest {
 
     @Test
     void execute_unsupportedPlatform_throwsBadRequestWithoutCallingCoupang() {
-        OrderClaim naver = claim(1L, "RETURNS_UNCHECKED", 1).toBuilder().platform("NAVER").build();
+        OrderClaim naver = claim(1L, "RETURNS_UNCHECKED", 1).toBuilder().platform(Platform.NAVER).build();
         given(orderClaimRepository.findWithAccountById(1L)).willReturn(Optional.of(naver));
 
         assertThatThrownBy(() -> service.execute(1L, approveRequest()))
@@ -298,12 +300,12 @@ class ClaimActionServiceImplTest {
     }
 
     private OrderClaim claim(Long id, String platformStatus, int quantity) {
-        MarketplaceAccount account = MarketplaceAccount.builder()
-                .id(1L).platform("COUPANG").vendorId("A001").build();
+        MarketplaceAccount account = MarketplaceAccountFixture.coupangStubBuilder("A001", null)
+                .id(1L).platform(Platform.COUPANG).build();
         return OrderClaim.builder()
                 .id(id)
                 .marketplaceAccount(account)
-                .platform("COUPANG")
+                .platform(Platform.COUPANG)
                 .claimType(ClaimType.RETURN)
                 .externalClaimId("777")
                 .externalOrderId("O-1")

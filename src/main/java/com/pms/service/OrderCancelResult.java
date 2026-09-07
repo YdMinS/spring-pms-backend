@@ -33,7 +33,8 @@ public record OrderCancelResult(
      *    {@code cancelCount} 가, {@code STOP_SHIPMENT} 면 {@code holdCount} 가 는다(D7).
      *    하나만 내려주면 상품준비중 취소에서 화면 숫자가 안 바뀌어 성공을 못 알아본다.
      *
-     * @param resultStatus 전량취소(cancel+hold ≥ orderCount)면 {@code "CANCELLED"}, 아니면 기존 status
+     * @param resultStatus 전량취소(cancel+hold ≥ orderQty)면 {@code "CANCELLED"}, 아니면 라인의 중립 상태
+     *                     ({@code OrderStatus} 이름) — 클라이언트가 화면 상태 행을 그대로 갱신한다
      */
     public record CancelledLine(Long orderItemId, int cancelledQty,
                                 int resultCancelCount, int resultHoldCount,
@@ -45,7 +46,10 @@ public record OrderCancelResult(
     public record FailedLine(Long orderItemId, String externalItemId, String code, String message) {
     }
 
-    /** 전송하지 않은 라인 1건. {@code reason} = 스킵/불가 사유(한글 1줄). */
+    /**
+     * 전송하지 않은 라인 1건. {@code reason} = 스킵/불가 사유(한글 1줄).
+     * {@code status} 는 중립 상태({@code OrderStatus} 이름) — 라벨 변환은 클라이언트 몫이다.
+     */
     public record SkippedLine(Long orderItemId, String externalOrderId, String status, String reason) {
     }
 }

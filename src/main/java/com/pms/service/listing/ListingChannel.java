@@ -1,5 +1,6 @@
 package com.pms.service.listing;
 
+import com.pms.domain.Platform;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.ProductListing;
@@ -17,8 +18,8 @@ import java.math.BigDecimal;
  */
 public interface ListingChannel {
 
-    /** Platform key this adapter handles (e.g. "COUPANG"). Resolver matching key. */
-    String platform();
+    /** Platform key this adapter handles (e.g. {@link Platform#COUPANG}). Resolver matching key. */
+    Platform platform();
 
     /**
      * Validate that the cell may be registered under this channel's own registration policy (FEATURE_2608_06 /

@@ -3,6 +3,7 @@ package com.pms.controller;
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MasterProduct;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.Seller;
 import com.pms.repository.MasterProductRepository;
@@ -53,7 +54,7 @@ class ListingPropagationControllerTest extends BaseIntegrationTest {
 
         // One on-market cell already flagged pending (needs_market_sync = true) → pending-sync should list it.
         productListingRepository.save(ProductListing.builder()
-                .platform("COUPANG").platformProductId("SP-1").name("셀").status(ListingStatus.SELLING)
+                .platform(Platform.COUPANG).platformProductId("SP-1").name("셀").status(ListingStatus.SELLING)
                 .seller(seller).masterProduct(master).needsMarketSync(true).build());
     }
 

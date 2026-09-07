@@ -1,6 +1,7 @@
 package com.pms.service;
 
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.service.listing.category.CategoryLookupResolver;
@@ -26,13 +27,13 @@ public class CategoryLookupServiceImpl implements CategoryLookupService {
     private final CategoryLookupResolver resolver;
 
     @Override
-    public List<CategoryNode> browse(String platform, String parentCode, Long sellerId) {
+    public List<CategoryNode> browse(Platform platform, String parentCode, Long sellerId) {
         MarketplaceAccount account = resolveAccount(platform, sellerId);
         return resolver.resolve(platform).browse(account, parentCode);
     }
 
     @Override
-    public List<CategorySuggestion> predict(String platform, String productName, Long sellerId) {
+    public List<CategorySuggestion> predict(Platform platform, String productName, Long sellerId) {
         if (!StringUtils.hasText(productName)) {
             throw new IllegalArgumentException("productName 필수");
         }
@@ -44,7 +45,7 @@ public class CategoryLookupServiceImpl implements CategoryLookupService {
      * Resolve the marketplace account for the lookup call. sellerId present → the (seller, platform) account
      * (404 if none, 400 if inactive); absent → any active account for the platform (400 if none).
      */
-    private MarketplaceAccount resolveAccount(String platform, Long sellerId) {
+    private MarketplaceAccount resolveAccount(Platform platform, Long sellerId) {
         if (sellerId != null) {
             MarketplaceAccount account = marketplaceAccountRepository
                     .findBySeller_IdAndPlatform(sellerId, platform)

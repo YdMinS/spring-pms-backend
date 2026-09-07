@@ -13,6 +13,7 @@ import com.pms.domain.MasterProductComponent;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.Package;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.Product;
 import com.pms.domain.Role;
@@ -20,6 +21,7 @@ import com.pms.domain.Seller;
 import com.pms.domain.User;
 import com.pms.dto.request.ListingImportPreviewRequest;
 import com.pms.dto.request.ListingImportRequest;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.CarrierRepository;
 import com.pms.repository.CategoryMappingRepository;
@@ -27,6 +29,7 @@ import com.pms.repository.CategoryRepository;
 import com.pms.repository.CommissionRateRepository;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarginPolicyRepository;
+import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
@@ -100,6 +103,7 @@ class ListingImportControllerTest {
     @Autowired private MasterProductOptionRepository masterProductOptionRepository;
     @Autowired private MasterProductOptionItemRepository masterProductOptionItemRepository;
     @Autowired private MarketplaceAccountRepository marketplaceAccountRepository;
+    @Autowired private CoupangAccountCredentialRepository credentialRepository;
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
     @Autowired private ProductListingProductRepository productListingProductRepository;
@@ -157,9 +161,9 @@ class ListingImportControllerTest {
         Category category = categoryRepository.save(Category.builder().name("신발").build());
 
         commissionRateRepository.save(CommissionRate.builder()
-                .platform("COUPANG").category(null).rate(new BigDecimal("0.10")).isDefault(true).build());
+                .platform(Platform.COUPANG).category(null).rate(new BigDecimal("0.10")).isDefault(true).build());
         marginPolicyRepository.save(MarginPolicy.builder()
-                .seller(seller).platform("COUPANG").marginRate(new BigDecimal("0.1500")).build());
+                .seller(seller).platform(Platform.COUPANG).marginRate(new BigDecimal("0.1500")).build());
 
         Carrier carrier = carrierRepository.save(Carrier.builder().name("CJ").isActive(true).build());
         CarrierRate delivery = carrierRateRepository.save(CarrierRate.builder()
@@ -174,10 +178,10 @@ class ListingImportControllerTest {
                 .defaultDelivery(delivery).defaultPackage(box).build());
         masterId = master.getId();
         PlatformCategory platformCategory = platformCategoryRepository.save(PlatformCategory.builder()
-                .platform("COUPANG").code("cat-1").name("운동화")
+                .platform(Platform.COUPANG).code("cat-1").name("운동화")
                 .commissionRate(new BigDecimal("0.10")).build());
         categoryMappingRepository.save(CategoryMapping.builder()
-                .category(category).platform("COUPANG").platformCategoryId("cat-1")
+                .category(category).platform(Platform.COUPANG).platformCategoryId("cat-1")
                 .platformCategory(platformCategory).build());
         // The master's component set = the quantity input rows the import asks the user to fill (D9).
         masterProductComponentRepository.save(MasterProductComponent.builder()
@@ -188,10 +192,11 @@ class ListingImportControllerTest {
         masterProductOptionItemRepository.save(MasterProductOptionItem.builder()
                 .option(option).product(product).quantity(1).build());
         // The import resolves the account by (seller, platform) — it has no cell to read it from yet.
-        marketplaceAccountRepository.save(MarketplaceAccount.builder()
-                .seller(seller).platform("COUPANG").accountAlias("메인")
-                .vendorId("V1").vendorUserId("wing-user")
-                .accessKey("ak").secretKey("sk").isActive(true).build());
+        MarketplaceAccountFixture.saveCredential(credentialRepository,
+                marketplaceAccountRepository.save(MarketplaceAccountFixture.coupangCoreBuilder()
+                        .seller(seller).platform(Platform.COUPANG).accountAlias("메인")
+                        .isActive(true).build()),
+                "V1", "wing-user");
 
         given(productImageLoader.load(any())).willReturn(new byte[]{1, 2, 3});
         given(thumbnailRenderer.render(any(), any(), any())).willReturn(new byte[]{4, 5, 6});
@@ -213,6 +218,7 @@ class ListingImportControllerTest {
         productListingProductRepository.deleteAll();
         productListingOptionRepository.deleteAll();
         productListingRepository.deleteAll();
+        credentialRepository.deleteAll();          // FK child first
         marketplaceAccountRepository.deleteAll();
         categoryMappingRepository.deleteAll();
         platformCategoryRepository.deleteAll();

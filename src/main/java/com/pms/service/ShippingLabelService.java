@@ -11,8 +11,8 @@ import java.util.List;
  * 쿠팡 ordersheets(status=INSTRUCT)를 <b>온디맨드 조회</b>해 택배사 접수용 xlsx 로 내려준다.
  *
  * <p>❌ 수령인 연락처·주소·배송메시지는 DB 에 저장하지 않는다 — xlsx 에만 담고 버린다.
- * (이름은 order_item 에 저장됨, FEATURE_2609_06)
- * <br>✅ 조회분을 {@code order_item} 에 upsert 한다(2609_13 D1) — 시트에 실린 주문은 발송처리 시
+ * (이름은 orders 에 저장됨, FEATURE_2609_06)
+ * <br>✅ 조회분을 주문 3층(orders·order_shipment·order_line)에 upsert 한다(2609_13 D1) — 시트에 실린 주문은 발송처리 시
  * DB 에 있어야 하므로, 받아온 라인을 버리지 않는다. 주소·연락처·배송메시지는 여전히 저장하지 않는다(D7).
  * 저장은 best-effort 라 실패해도 xlsx 는 그대로 나간다(D6).
  * <br>대상 플랫폼: 쿠팡(COUPANG)만.
@@ -33,12 +33,12 @@ public interface ShippingLabelService {
     List<ShippingLabelPreviewRow> previewRows(Long sellerId);
 
     /**
-     * 주문 한 건(order_item.id)의 쿠팡 발주서를 단건 조회해 편집용 preview 행으로 반환한다.
+     * 주문 라인 한 건(order_line.id)의 쿠팡 발주서를 단건 조회해 편집용 preview 행으로 반환한다.
      *
      * 목록 기반 previewRows 와 달리 status 조건이 없어 어떤 상태의 주문에서도 시트를 만들 수 있고,
      * 대상 범위는 그 주문번호(orderId)의 모든 박스·모든 라인이다(PLAN D2).
      *
-     * @param orderItemId 우리 DB order_item PK (쿠팡 orderId 가 아님)
+     * @param orderItemId 우리 DB order_line PK (쿠팡 orderId 가 아님)
      * @throws com.pms.exception.ResourceNotFoundException 주문 라인 없음
      * @throws IllegalArgumentException 쿠팡 계정 주문이 아님
      * @throws IllegalStateException 쿠팡 조회/파싱 실패

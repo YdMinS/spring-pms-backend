@@ -3,6 +3,7 @@ package com.pms.repository;
 import com.pms.common.TestJpaConfig;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Seller;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.security.crypto.AesAttributeConverter;
 import org.hibernate.Hibernate;
 import org.junit.jupiter.api.Test;
@@ -43,11 +44,7 @@ class MarketplaceAccountRepositoryTest {
         Seller seller = Seller.builder()
                 .sellerName(sellerName).businessRegistration(bizReg).build();
         em.persist(seller);
-        MarketplaceAccount account = MarketplaceAccount.builder()
-                .seller(seller).platform("COUPANG").vendorId(vendorId)
-                .accessKey("ak").secretKey("sk").isActive(true).build();
-        em.persist(account);
-        em.flush();
+        MarketplaceAccountFixture.coupangAccount(em, seller, vendorId);
         em.clear();
         return seller.getId();
     }

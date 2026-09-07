@@ -1,6 +1,7 @@
 package com.pms.service;
 
 import com.pms.domain.Category;
+import com.pms.domain.Platform;
 import com.pms.dto.request.CreateCategoryRequest;
 import com.pms.dto.request.UpdateCategoryRequest;
 import com.pms.dto.response.CategoryResponse;
@@ -44,7 +45,7 @@ public class CategoryServiceImpl implements CategoryService {
 
         Category category = Category.builder()
             .name(request.name())
-            .platform(request.platform())
+            .platform(request.platform() == null ? null : Platform.from(request.platform()))
             .platformCategoryId(request.platformCategoryId())
             .parent(parent)
             .build();
@@ -87,7 +88,7 @@ public class CategoryServiceImpl implements CategoryService {
         Category updated = Category.builder()
             .id(category.getId())
             .name(request.name())
-            .platform(request.platform())
+            .platform(request.platform() == null ? null : Platform.from(request.platform()))
             .platformCategoryId(request.platformCategoryId())
             .parent(parent)
             .build();
@@ -106,7 +107,7 @@ public class CategoryServiceImpl implements CategoryService {
     }
 
     @Override
-    public List<CategoryResponse> getCategoriesByPlatform(String platform) {
+    public List<CategoryResponse> getCategoriesByPlatform(Platform platform) {
         return categoryRepository.findByPlatform(platform)
             .stream()
             .map(this::toResponse)
@@ -129,7 +130,7 @@ public class CategoryServiceImpl implements CategoryService {
         return CategoryResponse.builder()
             .id(category.getId())
             .name(category.getName())
-            .platform(category.getPlatform())
+            .platform(category.getPlatform() == null ? null : category.getPlatform().name())
             .platformCategoryId(category.getPlatformCategoryId())
             .parentId(category.getParent() != null ? category.getParent().getId() : null)
             .createdDate(category.getCreatedAt())

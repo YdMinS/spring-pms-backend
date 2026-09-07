@@ -1,0 +1,338 @@
+# Neutral order core (3 tables) + Coupang extension (FEATURE_2609_26 / PLAN D2·D3·D9).
+#   order_item squeezed three levels (order -> shipment box -> line) into one table and let Coupang's
+#   4-part natural key define line identity. Naver identifies a line by productOrderId alone and has no
+#   box concept, so the shared table cannot hold both (a NULL box column makes MySQL accept duplicates
+#   and the idempotent upsert silently breaks). The core keeps a surrogate PK; the platform extension
+#   owns the natural key.
+#
+# 6 changesets on purpose (009·065 convention): structure / BOOLEAN->BIT / 4 backfills.
+#   ⚠️ NEVER merge structure and backfill: the empty H2 apply-check skips dbms:mysql changesets.
+#   ⚠️ order_item is NOT dropped here — read paths still use it until 04 (03 and 04 ship together).
+#
+# 🔴 order_line.id = order_item.id (shared-id backfill, changeset 009 trick). 04 rewires
+#    order_claim / customer_inquiry / shopping_list_item / order_cancel_action with a plain column
+#    rename because the values already match.
+#
+# 🔴 order_line.status is NULLABLE on purpose: the CASE below has no ELSE, so any Coupang status code we
+#    do not know stays NULL and shows up in the verification query instead of being papered over with a
+#    default (PLAN D7). A NOT NULL column would abort the changeset mid-run instead.
+#
+# ⚠️ Checks to run BY HAND after the backfill (any mismatch → STOP and report, no automatic cleanup):
+#     SELECT COUNT(*) FROM order_item;                       -- must equal
+#     SELECT COUNT(*) FROM order_line;                       -- ...this
+#     SELECT COUNT(*) FROM coupang_order_line;               -- ...and this
+#     SELECT COUNT(DISTINCT CONCAT(marketplace_account_id,'|',external_order_id)) FROM order_item;  -- = orders
+#     SELECT COUNT(DISTINCT CONCAT(external_order_id,'|',external_box_id)) FROM order_item;         -- = order_shipment
+#     SELECT platform_status, COUNT(*) FROM coupang_order_line c
+#       JOIN order_line l ON l.id = c.order_line_id WHERE l.status IS NULL GROUP BY 1;              -- must be empty
+#     SELECT AUTO_INCREMENT FROM information_schema.TABLES WHERE TABLE_NAME = 'order_line';         -- > MAX(id)
+#   Amounts stay NULL here — OrderAmountBackfillRunner (gated one-off) parses them out of raw JSON.
+databaseChangeLog:
+
+  # ---- 1. structure (portable — runs on the H2 apply-check too) ----
+  - changeSet:
+      id: 066-order-model
+      author: oclyx
+      comment: "FEATURE_2609_26: orders + order_shipment + order_line + coupang_order_line."
+      changes:
+        - createTable:
+            tableName: orders
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: marketplace_account_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: platform, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: external_order_id, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: ordered_at, type: TIMESTAMP }
+              - column: { name: orderer_name, type: VARCHAR(100) }
+              - column: { name: receiver_name, type: VARCHAR(100) }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_orders_tenant
+            baseTableName: orders
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_orders_account
+            baseTableName: orders
+            baseColumnNames: marketplace_account_id
+            referencedTableName: marketplace_account
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            constraintName: uq_orders_account_order
+            tableName: orders
+            columnNames: marketplace_account_id, external_order_id
+        - createIndex:
+            tableName: orders
+            indexName: idx_orders_ordered_at
+            columns:
+              - column: { name: ordered_at }
+
+        - createTable:
+            tableName: order_shipment
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: order_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: external_shipment_id, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: shipping_fee, type: "DECIMAL(12,2)" }
+              - column: { name: remote_fee, type: "DECIMAL(12,2)" }
+              - column: { name: tracking_available, type: BOOLEAN }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_ordershipment_tenant
+            baseTableName: order_shipment
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_ordershipment_order
+            baseTableName: order_shipment
+            baseColumnNames: order_id
+            referencedTableName: orders
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            constraintName: uq_order_shipment
+            tableName: order_shipment
+            columnNames: order_id, external_shipment_id
+
+        - createTable:
+            tableName: order_line
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: order_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: order_shipment_id, type: BIGINT }
+              - column: { name: status, type: VARCHAR(30) }
+              - column: { name: item_name, type: VARCHAR(500) }
+              - column: { name: order_qty, type: INT, constraints: { nullable: false } }
+              - column: { name: cancel_qty, type: INT, constraints: { nullable: false } }
+              - column: { name: hold_qty, type: INT, constraints: { nullable: false } }
+              - column: { name: unit_price, type: "DECIMAL(12,2)" }
+              - column: { name: line_amount, type: "DECIMAL(12,2)" }
+              - column: { name: discount_amount, type: "DECIMAL(12,2)" }
+              - column: { name: platform_discount_amount, type: "DECIMAL(12,2)" }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_orderline_tenant
+            baseTableName: order_line
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_orderline_order
+            baseTableName: order_line
+            baseColumnNames: order_id
+            referencedTableName: orders
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_orderline_shipment
+            baseTableName: order_line
+            baseColumnNames: order_shipment_id
+            referencedTableName: order_shipment
+            referencedColumnNames: id
+
+        - createTable:
+            tableName: coupang_order_line
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: order_line_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: marketplace_account_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: shipment_box_id, type: VARCHAR(100) }
+              - column: { name: order_id_raw, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: vendor_item_id, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: platform_status, type: VARCHAR(30) }
+              - column: { name: raw, type: CLOB }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_coupangorderline_tenant
+            baseTableName: coupang_order_line
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_coupangorderline_line
+            baseTableName: coupang_order_line
+            baseColumnNames: order_line_id
+            referencedTableName: order_line
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_coupangorderline_account
+            baseTableName: coupang_order_line
+            baseColumnNames: marketplace_account_id
+            referencedTableName: marketplace_account
+            referencedColumnNames: id
+        # 1:1 with the core line — a second mirror row for the same line is a bug, not a variant.
+        - addUniqueConstraint:
+            constraintName: uq_coupang_order_line_line
+            tableName: coupang_order_line
+            columnNames: order_line_id
+        # 🔴 the line's natural key lives HERE, not on the core (PLAN D3).
+        - addUniqueConstraint:
+            constraintName: uq_coupang_order_line
+            tableName: coupang_order_line
+            columnNames: marketplace_account_id, shipment_box_id, order_id_raw, vendor_item_id
+        # 3-key fallback lookup (2609_18 D22) — account + orderId + vendorItemId.
+        - createIndex:
+            tableName: coupang_order_line
+            indexName: idx_coupangorderline_order_item
+            columns:
+              - column: { name: marketplace_account_id }
+              - column: { name: order_id_raw }
+              - column: { name: vendor_item_id }
+      rollback:
+        - dropTable: { tableName: coupang_order_line }
+        - dropTable: { tableName: order_line }
+        - dropTable: { tableName: order_shipment }
+        - dropTable: { tableName: orders }
+
+  # ---- 2. BOOLEAN -> BIT(1) for MySQL ----
+  # Liquibase's abstract BOOLEAN materializes as TINYINT on MySQL while Hibernate 6 expects BIT ->
+  # ddl-auto: validate crashes the app at boot. Same 006/058/064 pattern. H2 needs no follow-up.
+  - changeSet:
+      id: 066-order-shipment-boolean-bit-type
+      author: oclyx
+      dbms: mysql
+      comment: "order_shipment.tracking_available TINYINT -> BIT(1) to satisfy Hibernate schema validation."
+      changes:
+        - modifyDataType:
+            tableName: order_shipment
+            columnName: tracking_available
+            newDataType: BIT(1)
+      rollback:
+        - modifyDataType:
+            tableName: order_shipment
+            columnName: tracking_available
+            newDataType: BOOLEAN
+
+  # ---- 3. backfill orders (MySQL only) ----
+  # One row per (account, orderId). MIN() picks the box-level values that were copied onto every line.
+  # ⚠️ ONLY_FULL_GROUP_BY: every non-aggregated select column is in the GROUP BY.
+  - changeSet:
+      id: 066-backfill-orders
+      author: oclyx
+      dbms: mysql
+      comment: "order_item 을 주문 헤더(orders)로 접는다."
+      preConditions:
+        - onFail: MARK_RAN
+        - sqlCheck:
+            expectedResult: 0
+            sql: "SELECT count(*) FROM orders"
+      changes:
+        - sql:
+            sql: >
+              INSERT INTO orders (tenant_id, marketplace_account_id, platform, external_order_id,
+                                  ordered_at, orderer_name, receiver_name, created_date, modified_date)
+              SELECT oi.tenant_id, oi.marketplace_account_id, oi.platform, oi.external_order_id,
+                     MIN(oi.paid_at), MIN(oi.orderer_name), MIN(oi.receiver_name), NOW(), NOW()
+                FROM order_item oi
+               GROUP BY oi.tenant_id, oi.marketplace_account_id, oi.platform, oi.external_order_id
+      rollback:
+        - sql:
+            sql: "DELETE FROM orders"
+
+  # ---- 4. backfill order_shipment (MySQL only) ----
+  # 🔴 Rows are created only for a non-empty box id: shipping fees hang off the box, so with no box there
+  #    is nowhere to put them — and an empty string in the UNIQUE would collapse a whole order into 1 row.
+  # 🔴 MIN(oi.status) assumes every line inside one box shares the box status (it is a box-level field).
+  #    Verify BY HAND before running — 0 rows expected:
+  #      SELECT external_order_id, external_box_id, COUNT(DISTINCT status) c FROM order_item
+  #       WHERE external_box_id IS NOT NULL AND external_box_id <> '' GROUP BY 1,2 HAVING c > 1;
+  #    Not 0 → STOP and report (do NOT pick a winner by an arbitrary rule).
+  # shipping_fee / remote_fee stay NULL — never stored, and Coupang cannot be re-queried past 31 days (D13).
+  - changeSet:
+      id: 066-backfill-order-shipment
+      author: oclyx
+      dbms: mysql
+      comment: "박스 id 가 있는 라인만 배송 묶음(order_shipment)으로 접는다."
+      preConditions:
+        - onFail: MARK_RAN
+        - sqlCheck:
+            expectedResult: 0
+            sql: "SELECT count(*) FROM order_shipment"
+      changes:
+        - sql:
+            sql: >
+              INSERT INTO order_shipment (tenant_id, order_id, external_shipment_id, tracking_available,
+                                          created_date, modified_date)
+              SELECT oi.tenant_id, o.id, oi.external_box_id,
+                     CASE WHEN MIN(oi.status) = 'NONE_TRACKING' THEN 0 ELSE 1 END, NOW(), NOW()
+                FROM order_item oi
+                JOIN orders o ON o.marketplace_account_id = oi.marketplace_account_id
+                             AND o.external_order_id      = oi.external_order_id
+               WHERE oi.external_box_id IS NOT NULL AND oi.external_box_id <> ''
+               GROUP BY oi.tenant_id, o.id, oi.external_box_id
+      rollback:
+        - sql:
+            sql: "DELETE FROM order_shipment"
+
+  # ---- 5. backfill order_line (MySQL only) ----
+  # 🔴 shared-id: order_item.id is carried over as the PK so 04 can rewire 4 FK tables by renaming a column.
+  # ⚠️ The CASE has NO ELSE on purpose — an unknown status stays NULL and shows up in the check query.
+  # Amount columns stay NULL; OrderAmountBackfillRunner fills them from raw JSON.
+  - changeSet:
+      id: 066-backfill-order-line
+      author: oclyx
+      dbms: mysql
+      comment: "order_item 을 order_line 으로 옮긴다 (id 보존 = shared-id)."
+      preConditions:
+        - onFail: MARK_RAN
+        - sqlCheck:
+            expectedResult: 0
+            sql: "SELECT count(*) FROM order_line"
+      changes:
+        - sql:
+            sql: >
+              INSERT INTO order_line (id, tenant_id, order_id, order_shipment_id, status, item_name,
+                                      order_qty, cancel_qty, hold_qty, created_date, modified_date)
+              SELECT oi.id, oi.tenant_id, o.id, s.id,
+                     CASE oi.status
+                          WHEN 'ACCEPT'         THEN 'PAID'
+                          WHEN 'INSTRUCT'       THEN 'PREPARING'
+                          WHEN 'DEPARTURE'      THEN 'SHIPPED'
+                          WHEN 'DELIVERING'     THEN 'DELIVERING'
+                          WHEN 'FINAL_DELIVERY' THEN 'DELIVERED'
+                          WHEN 'NONE_TRACKING'  THEN 'SHIPPED'
+                     END,
+                     oi.item_name, oi.order_count, oi.cancel_count, oi.hold_count, NOW(), NOW()
+                FROM order_item oi
+                JOIN orders o              ON o.marketplace_account_id = oi.marketplace_account_id
+                                          AND o.external_order_id      = oi.external_order_id
+                LEFT JOIN order_shipment s ON s.order_id = o.id
+                                          AND s.external_shipment_id = oi.external_box_id
+      rollback:
+        - sql:
+            sql: "DELETE FROM order_line"
+
+  # ---- 6. backfill coupang_order_line (MySQL only) ----
+  # The mirror keeps the Coupang natural key, the raw status string and the raw orderItem JSON.
+  # shipment_box_id is copied verbatim (empty string included) — it is part of the UNIQUE, and NULL would
+  # let MySQL accept duplicates while also breaking the key match on the next sync.
+  - changeSet:
+      id: 066-backfill-coupang-order-line
+      author: oclyx
+      dbms: mysql
+      comment: "쿠팡 자연키·상태 원문·raw 를 coupang_order_line 으로 내린다."
+      preConditions:
+        - onFail: MARK_RAN
+        - sqlCheck:
+            expectedResult: 0
+            sql: "SELECT count(*) FROM coupang_order_line"
+      changes:
+        - sql:
+            sql: >
+              INSERT INTO coupang_order_line (tenant_id, order_line_id, marketplace_account_id, shipment_box_id,
+                                              order_id_raw, vendor_item_id, platform_status, raw,
+                                              created_date, modified_date)
+              SELECT oi.tenant_id, oi.id, oi.marketplace_account_id, oi.external_box_id,
+                     oi.external_order_id, oi.external_item_id, oi.status, oi.raw, NOW(), NOW()
+                FROM order_item oi
+      rollback:
+        - sql:
+            sql: "DELETE FROM coupang_order_line"

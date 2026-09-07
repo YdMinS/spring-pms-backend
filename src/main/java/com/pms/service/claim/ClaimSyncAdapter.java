@@ -1,5 +1,6 @@
 package com.pms.service.claim;
 
+import com.pms.domain.Platform;
 import com.pms.domain.MarketplaceAccount;
 
 /**
@@ -12,8 +13,8 @@ import com.pms.domain.MarketplaceAccount;
  */
 public interface ClaimSyncAdapter {
 
-    /** {@code marketplace_account.platform} 과 대조할 값. 예: "COUPANG". */
-    String platform();
+    /** {@code marketplace_account.platform} 과 대조할 값. 예: {@link Platform#COUPANG}. */
+    Platform platform();
 
     /** 신규 창 적재 + 미완결 추적. 계정 1건 처리 결과. */
     ClaimSyncResult syncExchanges(MarketplaceAccount account);

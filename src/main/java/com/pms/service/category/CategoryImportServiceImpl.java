@@ -2,6 +2,7 @@ package com.pms.service.category;
 
 import com.pms.domain.Category;
 import com.pms.domain.CategoryMapping;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.dto.response.CategoryImportResult;
 import com.pms.repository.CategoryMappingRepository;
@@ -37,7 +38,6 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class CategoryImportServiceImpl implements CategoryImportService {
 
-    private static final String PLATFORM = "COUPANG";
     private static final int FLUSH_EVERY = 500;
 
     private final CoupangCategoryXlsxParser parser;
@@ -78,14 +78,14 @@ public class CategoryImportServiceImpl implements CategoryImportService {
                 PlatformCategory platNode;
                 if (isLeaf) {
                     Optional<PlatformCategory> existing =
-                            platformCategoryRepository.findByPlatformAndCode(PLATFORM, leaf.code());
+                            platformCategoryRepository.findByPlatformAndCode(Platform.COUPANG, leaf.code());
                     if (existing.isPresent()) {
                         platNode = platformCategoryRepository.save(existing.get().toBuilder()
                                 .name(name).commissionRate(leaf.feeRate()).parent(parentPlat).build());
                         platformNodesUpdated++;
                     } else {
                         platNode = platformCategoryRepository.save(PlatformCategory.builder()
-                                .platform(PLATFORM).code(leaf.code()).name(name)
+                                .platform(Platform.COUPANG).code(leaf.code()).name(name)
                                 .parent(parentPlat).commissionRate(leaf.feeRate()).build());
                         platformNodesCreated++;
                     }
@@ -93,11 +93,11 @@ public class CategoryImportServiceImpl implements CategoryImportService {
                     platNode = platCache.get(pathPrefix);
                     if (platNode == null) {
                         platNode = platformCategoryRepository
-                                .findByPlatformAndParentAndName(PLATFORM, parentPlat, name)
+                                .findByPlatformAndParentAndName(Platform.COUPANG, parentPlat, name)
                                 .orElse(null);
                         if (platNode == null) {
                             platNode = platformCategoryRepository.save(PlatformCategory.builder()
-                                    .platform(PLATFORM).code(null).name(name)
+                                    .platform(Platform.COUPANG).code(null).name(name)
                                     .parent(parentPlat).commissionRate(null).build());
                             platformNodesCreated++;
                         }
@@ -119,7 +119,7 @@ public class CategoryImportServiceImpl implements CategoryImportService {
                         oclyxNodesCreated++;
                         categoryMappingRepository.save(CategoryMapping.builder()
                                 .category(oclyxNode)
-                                .platform(PLATFORM)
+                                .platform(Platform.COUPANG)
                                 .platformCategoryId(platNode.getCode()) // legacy String col: the mall code
                                 .platformCategoryName(truncate(pathPrefix, 255))
                                 .platformCategory(platNode)             // FK (new logic resolves through this)

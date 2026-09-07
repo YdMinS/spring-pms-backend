@@ -41,7 +41,8 @@ public class MarginPolicy extends BaseEntity {
     private Seller seller;
 
     @Column(nullable = false, length = 50)
-    private String platform;                 // "COUPANG", "NAVER", ...
+    @Enumerated(EnumType.STRING)
+    private Platform platform;
 
     // Net-profit ratio, e.g. 0.1500 = 15%. DECIMAL(5,4) → [0.0000, 0.9999].
     @Column(name = "margin_rate", nullable = false, precision = 5, scale = 4)

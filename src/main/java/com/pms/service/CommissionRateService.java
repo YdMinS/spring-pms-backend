@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.Platform;
 import com.pms.dto.request.CommissionRateRequest;
 import com.pms.dto.response.CommissionRateResponse;
 
@@ -74,7 +75,7 @@ public interface CommissionRateService {
      * @return BigDecimal commission rate
      * @throws IllegalArgumentException if no rate found for platform
      */
-    BigDecimal findRate(String platform, Long categoryId);
+    BigDecimal findRate(Platform platform, Long categoryId);
 
     /**
      * Retrieves all commission rates for a specific platform.
@@ -82,5 +83,5 @@ public interface CommissionRateService {
      * @param platform Platform name (e.g., "COUPANG", "SMARTSTORE")
      * @return List of commission rates for the platform
      */
-    List<CommissionRateResponse> getCommissionRatesByPlatform(String platform);
+    List<CommissionRateResponse> getCommissionRatesByPlatform(Platform platform);
 }

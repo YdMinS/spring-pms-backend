@@ -36,7 +36,8 @@ public class CategoryMapping {
     private Category category;
 
     @Column(name = "platform", nullable = false, length = 50)
-    private String platform;
+    @Enumerated(EnumType.STRING)
+    private Platform platform;
 
     @Column(name = "platform_category_id", nullable = false, length = 100)
     private String platformCategoryId;

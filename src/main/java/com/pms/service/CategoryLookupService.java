@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.Platform;
 import com.pms.service.listing.category.CategoryNode;
 import com.pms.service.listing.category.CategorySuggestion;
 
@@ -23,7 +24,7 @@ public interface CategoryLookupService {
      * @param sellerId   optional — when present the (seller, platform) account is used; else any active account
      * @return the child nodes
      */
-    List<CategoryNode> browse(String platform, String parentCode, Long sellerId);
+    List<CategoryNode> browse(Platform platform, String parentCode, Long sellerId);
 
     /**
      * Recommend category candidates for a product name.
@@ -33,5 +34,5 @@ public interface CategoryLookupService {
      * @param sellerId    optional account selector (see {@link #browse})
      * @return 0~N candidates
      */
-    List<CategorySuggestion> predict(String platform, String productName, Long sellerId);
+    List<CategorySuggestion> predict(Platform platform, String productName, Long sellerId);
 }

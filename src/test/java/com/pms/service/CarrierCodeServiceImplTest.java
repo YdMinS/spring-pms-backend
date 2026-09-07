@@ -1,6 +1,7 @@
 package com.pms.service;
 
 import com.pms.domain.Carrier;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCarrierCode;
 import com.pms.repository.CarrierRepository;
 import com.pms.repository.PlatformCarrierCodeRepository;
@@ -33,22 +34,22 @@ class CarrierCodeServiceImplTest {
     void resolve_happy() {
         Carrier carrier = Carrier.builder().id(1L).name("CJ대한통운").isActive(true).build();
         PlatformCarrierCode code = PlatformCarrierCode.builder()
-                .id(1L).carrier(carrier).platform("COUPANG").deliveryCompanyCode("CJGLS").build();
+                .id(1L).carrier(carrier).platform(Platform.COUPANG).deliveryCompanyCode("CJGLS").build();
         given(carrierRepository.findByIsActiveTrueOrderByIdAsc()).willReturn(List.of(carrier));
-        given(platformCarrierCodeRepository.findByCarrier_IdAndPlatform(1L, "COUPANG"))
+        given(platformCarrierCodeRepository.findByCarrier_IdAndPlatform(1L, Platform.COUPANG))
                 .willReturn(Optional.of(code));
 
-        assertThat(carrierCodeService.resolveDeliveryCompanyCode("COUPANG")).isEqualTo("CJGLS");
+        assertThat(carrierCodeService.resolveDeliveryCompanyCode(Platform.COUPANG)).isEqualTo("CJGLS");
     }
 
     @Test
     void resolve_noCode() {
         Carrier carrier = Carrier.builder().id(1L).name("CJ대한통운").isActive(true).build();
         given(carrierRepository.findByIsActiveTrueOrderByIdAsc()).willReturn(List.of(carrier));
-        given(platformCarrierCodeRepository.findByCarrier_IdAndPlatform(1L, "COUPANG"))
+        given(platformCarrierCodeRepository.findByCarrier_IdAndPlatform(1L, Platform.COUPANG))
                 .willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> carrierCodeService.resolveDeliveryCompanyCode("COUPANG"))
+        assertThatThrownBy(() -> carrierCodeService.resolveDeliveryCompanyCode(Platform.COUPANG))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("COUPANG");
     }
@@ -57,19 +58,19 @@ class CarrierCodeServiceImplTest {
     void resolve_noActiveCarrier() {
         given(carrierRepository.findByIsActiveTrueOrderByIdAsc()).willReturn(List.of());
 
-        assertThatThrownBy(() -> carrierCodeService.resolveDeliveryCompanyCode("COUPANG"))
+        assertThatThrownBy(() -> carrierCodeService.resolveDeliveryCompanyCode(Platform.COUPANG))
                 .isInstanceOf(IllegalStateException.class);
     }
 
     @Test
     void findOptions_쿠팡은_전체코드표에_등록택배사가_맨위() {
         Carrier lotte = Carrier.builder().id(2L).name("롯데(로컬 표기)").isActive(true).build();
-        given(platformCarrierCodeRepository.findByPlatformAndCarrier_IsActiveTrueOrderByCarrier_IdAsc("COUPANG"))
+        given(platformCarrierCodeRepository.findByPlatformAndCarrier_IsActiveTrueOrderByCarrier_IdAsc(Platform.COUPANG))
                 .willReturn(List.of(
                         PlatformCarrierCode.builder().id(2L).carrier(lotte)
-                                .platform("COUPANG").deliveryCompanyCode("HYUNDAI").build()));
+                                .platform(Platform.COUPANG).deliveryCompanyCode("HYUNDAI").build()));
 
-        List<CarrierOption> options = carrierCodeService.findOptions("COUPANG");
+        List<CarrierOption> options = carrierCodeService.findOptions(Platform.COUPANG);
 
         // 등록분이 먼저 오고, 표시 이름은 쿠팡 표를 따른다(로컬 표기와 달라도 코드와 어긋나지 않게).
         assertThat(options.get(0)).isEqualTo(new CarrierOption("HYUNDAI", "롯데택배", true));
@@ -82,41 +83,41 @@ class CarrierCodeServiceImplTest {
     @Test
     void findOptions_비쿠팡은_등록된것만() {
         Carrier cj = Carrier.builder().id(1L).name("CJ대한통운").isActive(true).build();
-        given(platformCarrierCodeRepository.findByPlatformAndCarrier_IsActiveTrueOrderByCarrier_IdAsc("NAVER"))
+        given(platformCarrierCodeRepository.findByPlatformAndCarrier_IsActiveTrueOrderByCarrier_IdAsc(Platform.NAVER))
                 .willReturn(List.of(
                         PlatformCarrierCode.builder().id(1L).carrier(cj)
-                                .platform("NAVER").deliveryCompanyCode("CJGLS").build()));
+                                .platform(Platform.NAVER).deliveryCompanyCode("CJGLS").build()));
 
-        assertThat(carrierCodeService.findOptions("NAVER"))
+        assertThat(carrierCodeService.findOptions(Platform.NAVER))
                 .containsExactly(new CarrierOption("CJGLS", "CJ대한통운", true));
     }
 
     @Test
     void findOptions_없으면_빈리스트() {
-        given(platformCarrierCodeRepository.findByPlatformAndCarrier_IsActiveTrueOrderByCarrier_IdAsc("NAVER"))
+        given(platformCarrierCodeRepository.findByPlatformAndCarrier_IsActiveTrueOrderByCarrier_IdAsc(Platform.NAVER))
                 .willReturn(List.of());
 
-        assertThat(carrierCodeService.findOptions("NAVER")).isEmpty();
+        assertThat(carrierCodeService.findOptions(Platform.NAVER)).isEmpty();
     }
 
     @Test
     void validateDeliveryCompanyCode_쿠팡코드표에_있으면_통과() {
-        assertThat(carrierCodeService.validateDeliveryCompanyCode("KDEXP", "COUPANG")).isEqualTo("KDEXP");
+        assertThat(carrierCodeService.validateDeliveryCompanyCode("KDEXP", Platform.COUPANG)).isEqualTo("KDEXP");
     }
 
     @Test
     void validateDeliveryCompanyCode_쿠팡코드표에_없으면_IllegalArgumentException() {
-        assertThatThrownBy(() -> carrierCodeService.validateDeliveryCompanyCode("NOPE", "COUPANG"))
+        assertThatThrownBy(() -> carrierCodeService.validateDeliveryCompanyCode("NOPE", Platform.COUPANG))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("NOPE");
     }
 
     @Test
     void validateDeliveryCompanyCode_비쿠팡은_등록된코드만() {
-        given(platformCarrierCodeRepository.findByPlatformAndCarrier_IsActiveTrueOrderByCarrier_IdAsc("NAVER"))
+        given(platformCarrierCodeRepository.findByPlatformAndCarrier_IsActiveTrueOrderByCarrier_IdAsc(Platform.NAVER))
                 .willReturn(List.of());
 
-        assertThatThrownBy(() -> carrierCodeService.validateDeliveryCompanyCode("CJGLS", "NAVER"))
+        assertThatThrownBy(() -> carrierCodeService.validateDeliveryCompanyCode("CJGLS", Platform.NAVER))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("NAVER");
     }

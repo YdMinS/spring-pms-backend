@@ -1,5 +1,6 @@
 package com.pms.controller;
 
+import com.pms.domain.Platform;
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.CategoryAttributesRequest;
 import com.pms.dto.request.ImportProductImagesRequest;
@@ -229,7 +230,7 @@ public class MasterProductController {
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<CategoryMetaResponse>> getCategoryMeta(
             @PathVariable Long id, @RequestParam String platform) {
-        return ResponseEntity.ok(ResponseDTO.success(categoryMetaService.getMeta(id, platform)));
+        return ResponseEntity.ok(ResponseDTO.success(categoryMetaService.getMeta(id, Platform.from(platform))));
     }
 
     @PatchMapping("/{id}/category-attributes")

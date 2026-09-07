@@ -1,12 +1,12 @@
 package com.pms.service;
 
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.MarketplaceShippingConfig;
+import com.pms.domain.CoupangShippingConfig;
 import com.pms.dto.request.ShippingConfigRequest;
 import com.pms.dto.response.ShippingConfigResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.MarketplaceShippingConfigRepository;
+import com.pms.repository.CoupangShippingConfigRepository;
 import com.pms.service.listing.shipping.OutboundPlace;
 import com.pms.service.listing.shipping.ReturnCenter;
 import com.pms.service.listing.shipping.ShippingPlaceProvider;
@@ -37,7 +37,7 @@ import java.util.Optional;
 public class ShippingConfigServiceImpl implements ShippingConfigService {
 
     private final MarketplaceAccountRepository marketplaceAccountRepository;
-    private final MarketplaceShippingConfigRepository shippingConfigRepository;
+    private final CoupangShippingConfigRepository shippingConfigRepository;
     private final ShippingPlaceProviderResolver providerResolver;
 
     @Override
@@ -68,15 +68,15 @@ public class ShippingConfigServiceImpl implements ShippingConfigService {
     @Transactional
     public ShippingConfigResponse upsertConfig(Long accountId, ShippingConfigRequest req) {
         MarketplaceAccount account = findAccount(accountId);
-        Optional<MarketplaceShippingConfig> existing =
+        Optional<CoupangShippingConfig> existing =
                 shippingConfigRepository.findByMarketplaceAccountId(accountId);
 
         // toBuilder from the existing row keeps its id (an update, not a fresh insert); a new one starts fresh.
-        MarketplaceShippingConfig.MarketplaceShippingConfigBuilder builder = existing
-                .map(MarketplaceShippingConfig::toBuilder)
-                .orElseGet(() -> MarketplaceShippingConfig.builder().marketplaceAccount(account));
+        CoupangShippingConfig.CoupangShippingConfigBuilder builder = existing
+                .map(CoupangShippingConfig::toBuilder)
+                .orElseGet(() -> CoupangShippingConfig.builder().marketplaceAccount(account));
 
-        MarketplaceShippingConfig saved = shippingConfigRepository.save(builder
+        CoupangShippingConfig saved = shippingConfigRepository.save(builder
                 .outboundShippingPlaceCode(req.getOutboundShippingPlaceCode())
                 .returnCenterCode(req.getReturnCenterCode())
                 .returnChargeName(req.getReturnChargeName())

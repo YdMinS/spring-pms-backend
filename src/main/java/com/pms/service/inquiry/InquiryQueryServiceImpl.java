@@ -5,7 +5,9 @@ import com.pms.domain.CustomerInquiryReply;
 import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.OrderItem;
+import com.pms.domain.OrderLine;
+import com.pms.domain.OrderStatus;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.Seller;
 import com.pms.dto.response.CustomerInquiryReplyResponse;
@@ -18,7 +20,7 @@ import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CustomerInquiryReplyRepository;
 import com.pms.repository.CustomerInquiryRepository;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.OrderItemRepository;
+import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -54,7 +56,7 @@ public class InquiryQueryServiceImpl implements InquiryQueryService {
 
     private final CustomerInquiryRepository customerInquiryRepository;
     private final CustomerInquiryReplyRepository customerInquiryReplyRepository;
-    private final OrderItemRepository orderItemRepository;
+    private final OrderLineRepository orderLineRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final InquiryTypeCatalog inquiryTypeCatalog;
@@ -105,7 +107,7 @@ public class InquiryQueryServiceImpl implements InquiryQueryService {
 
     @Override
     public List<InquiryTypeCatalogResponse> getTypes() {
-        List<String> platforms = marketplaceAccountRepository.findByIsActiveTrue().stream()
+        List<Platform> platforms = marketplaceAccountRepository.findByIsActiveTrue().stream()
                 .map(MarketplaceAccount::getPlatform)
                 .toList();
         return inquiryTypeCatalog.forPlatforms(platforms);
@@ -116,35 +118,45 @@ public class InquiryQueryServiceImpl implements InquiryQueryService {
      * 문의에 주문 라인 연결이 없으면 null 이다 — 주문번호만으로 열지 않는다(연결 판정의 소유자는 적재다).
      */
     private InquiryRelatedOrderResponse relatedOrder(CustomerInquiry inquiry) {
-        OrderItem linked = inquiry.getOrderItem();
+        OrderLine linked = inquiry.getOrderLine();
         if (linked == null) {
             return null;
         }
         Long accountId = inquiry.getMarketplaceAccount().getId();
-        List<OrderItem> lines = orderItemRepository.findByExternalOrderId(linked.getExternalOrderId()).stream()
-                .filter(line -> line.getMarketplaceAccount() != null
-                        && accountId.equals(line.getMarketplaceAccount().getId()))
-                .sorted(Comparator.comparing(OrderItem::getId))
+        String externalOrderId = linked.getOrder().getExternalOrderId();
+        List<OrderLine> lines = orderLineRepository.findByExternalOrderId(externalOrderId).stream()
+                .filter(line -> line.getOrder().getMarketplaceAccount() != null
+                        && accountId.equals(line.getOrder().getMarketplaceAccount().getId()))
+                .sorted(Comparator.comparing(OrderLine::getId))
                 .toList();
         if (lines.isEmpty()) {
             lines = List.of(linked);
         }
 
-        OrderItem head = lines.get(0);
+        var head = lines.get(0).getOrder();
         return new InquiryRelatedOrderResponse(
                 head.getExternalOrderId(),
-                head.getPaidAt(),
+                head.getOrderedAt(),
                 head.getOrdererName(),          // 2609_06 범위 — 이름만
                 head.getReceiverName(),
                 lines.stream()
                         .map(line -> new InquiryRelatedOrderResponse.Line(
                                 line.getId(),
                                 line.getItemName(),
-                                line.getOrderCount() == null ? 0 : line.getOrderCount(),
-                                line.getCancelCount() == null ? 0 : line.getCancelCount(),
-                                line.effectiveStatus(),
+                                line.getOrderQty() == null ? 0 : line.getOrderQty(),
+                                line.getCancelQty() == null ? 0 : line.getCancelQty(),
+                                statusName(line),
                                 line.getId().equals(linked.getId())))
                         .toList());
+    }
+
+    /**
+     * 라인의 표시 상태 — 전량취소는 {@code CANCELLED} 로 파생된다(PLAN D26).
+     * {@link com.pms.dto.response.OrderItemResponse#getStatus()} 와 <b>같은 규칙</b>이어야 두 화면이 갈라지지 않는다.
+     */
+    private String statusName(OrderLine line) {
+        OrderStatus effective = line.effectiveStatus();
+        return (effective == null) ? null : effective.name();
     }
 
     /** 관련 상품(셀) — D15 의 연결 결과. 옵션명은 vendorItemId 로 옵션을 되짚어 얻는다. */
@@ -174,7 +186,7 @@ public class InquiryQueryServiceImpl implements InquiryQueryService {
         Seller seller = (account != null) ? account.getSeller() : null;
         return new CustomerInquiryResponse(
                 inquiry.getId(),
-                inquiry.getPlatform(),
+                inquiry.getPlatform().name(),
                 (account != null) ? account.getId() : null,
                 (account != null) ? account.getAccountAlias() : null,
                 (seller != null) ? seller.getId() : null,
@@ -187,7 +199,7 @@ public class InquiryQueryServiceImpl implements InquiryQueryService {
                 inquiry.getExternalItemId(),
                 inquiry.getExternalProductId(),
                 (inquiry.getProductListing() != null) ? inquiry.getProductListing().getId() : null,
-                (inquiry.getOrderItem() != null) ? inquiry.getOrderItem().getId() : null,
+                (inquiry.getOrderLine() != null) ? inquiry.getOrderLine().getId() : null,
                 inquiry.getItemName(),
                 inquiry.getContent(),
                 inquiry.getCategory(),

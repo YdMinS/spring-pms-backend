@@ -1,5 +1,6 @@
 package com.pms.service.claim;
 
+import com.pms.domain.Platform;
 import com.pms.domain.ClaimAction;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
@@ -23,8 +24,8 @@ import java.util.Set;
  */
 public interface ClaimActionAdapter {
 
-    /** {@code order_claim.platform} 과 대조할 값. 예: "COUPANG". */
-    String platform();
+    /** {@code order_claim.platform} 과 대조할 값. 예: {@link Platform#COUPANG}. */
+    Platform platform();
 
     /**
      * 지금 가능한 액션. 플랫폼 상태 코드를 아는 유일한 자리다(D2).

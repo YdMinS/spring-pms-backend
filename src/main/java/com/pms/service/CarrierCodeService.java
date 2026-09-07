@@ -1,5 +1,7 @@
 package com.pms.service;
 
+import com.pms.domain.Platform;
+
 import java.util.List;
 
 /**
@@ -11,7 +13,7 @@ import java.util.List;
  *
  * <p>코드 해석 경로는 <b>둘</b>이고 용도가 다르다:
  * <ul>
- *   <li>일괄(xlsx) 발송처리 — {@link #resolveDeliveryCompanyCode(String)}: 활성 택배사 1개를 서버가 자동 선택.</li>
+ *   <li>일괄(xlsx) 발송처리 — {@link #resolveDeliveryCompanyCode(Platform)}: 활성 택배사 1개를 서버가 자동 선택.</li>
  *   <li>단건 수동 발송처리 — {@link #findOptions(String)} 로 고른 코드를
  *       {@link #validateDeliveryCompanyCode(String, String)} 로 검증(사용자 선택).</li>
  * </ul>
@@ -27,7 +29,7 @@ public interface CarrierCodeService {
      * @return 해당 플랫폼용 택배사 코드(예: 쿠팡 "CJGLS")
      * @throws IllegalStateException 활성 택배사가 없거나, 해당 플랫폼 코드가 미설정인 경우
      */
-    String resolveDeliveryCompanyCode(String platform);
+    String resolveDeliveryCompanyCode(Platform platform);
 
     /**
      * 단건 발송처리 드롭다운용 택배사 목록.
@@ -37,7 +39,7 @@ public interface CarrierCodeService {
      * {@code registered=true} 로 맨 위에 온다. 다른 플랫폼은 예전대로 등록된 활성 택배사만 준다
      * (없으면 빈 리스트 — 예외 아님, D16).
      */
-    List<CarrierOption> findOptions(String platform);
+    List<CarrierOption> findOptions(Platform platform);
 
     /**
      * 사용자가 고른 택배사 코드를 검증하고 그대로 반환(단건 발송처리 전용).
@@ -45,9 +47,9 @@ public interface CarrierCodeService {
      * <p>드롭다운이 코드를 그대로 돌려주므로 해석할 것은 없고, <b>화이트리스트 검증</b>이 일이다 —
      * 쿠팡은 {@link CoupangCourierCodes} 표에 있는 코드만, 다른 플랫폼은 택배사 관리에 등록된 코드만 통과한다.
      * 없는 코드면 {@link IllegalArgumentException}(400) 이며,
-     * {@link #resolveDeliveryCompanyCode(String)} 의 {@link IllegalStateException}(설정 오류=500)과 의미가 다르다.
+     * {@link #resolveDeliveryCompanyCode(Platform)} 의 {@link IllegalStateException}(설정 오류=500)과 의미가 다르다.
      *
      * @throws IllegalArgumentException 그 플랫폼에서 쓸 수 없는 코드일 때 → 400
      */
-    String validateDeliveryCompanyCode(String deliveryCompanyCode, String platform);
+    String validateDeliveryCompanyCode(String deliveryCompanyCode, Platform platform);
 }

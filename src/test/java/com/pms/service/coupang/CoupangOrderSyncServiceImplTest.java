@@ -2,6 +2,8 @@ package com.pms.service.coupang;
 
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.service.coupang.CoupangOrderStatusSyncer.StatusSyncResult;
 import com.pms.service.coupang.CoupangOrderSyncService.SyncResult;
 import org.junit.jupiter.api.BeforeEach;
@@ -56,12 +58,9 @@ class CoupangOrderSyncServiceImplTest {
         // 스텁이 없으면 int 기본값 0 → from == to 인 창이 만들어져 창 단언이 조용히 어긋난다.
         lenient().when(coupangProperties.getSyncDays()).thenReturn(14);
         lenient().when(coupangProperties.getTerminalSyncMinDays()).thenReturn(3);
-        account = MarketplaceAccount.builder()
+        account = MarketplaceAccountFixture.coupangStubBuilder("V0001", null)
                 .id(1L)
-                .platform("COUPANG")
-                .vendorId("V0001")
-                .accessKey("ak")
-                .secretKey("sk")
+                .platform(Platform.COUPANG)
                 .isActive(true)
                 .build();
     }

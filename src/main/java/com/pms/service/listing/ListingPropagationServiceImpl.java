@@ -53,7 +53,7 @@ public class ListingPropagationServiceImpl implements ListingPropagationService 
                             .productListingId(cell.getId())
                             .masterProductName(master != null ? master.getName() : null)
                             .seller(cell.getSeller() != null ? cell.getSeller().getSellerName() : null)
-                            .platform(cell.getPlatform())
+                            .platform(cell.getPlatform().name())
                             .status(cell.getStatus().name())
                             .build();
                 })

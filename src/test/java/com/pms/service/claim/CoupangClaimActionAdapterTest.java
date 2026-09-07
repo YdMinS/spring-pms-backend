@@ -7,6 +7,8 @@ import com.pms.domain.ClaimAction;
 import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
+import com.pms.domain.Platform;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.service.CarrierCodeService;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.SyncWindow;
@@ -152,7 +154,7 @@ class CoupangClaimActionAdapterTest {
     @Test
     void execute_collectInvoice_sendsReturnDeliveryTypeAndResolvedCarrierCode() throws Exception {
         given(coupangProperties.getReturnExchangeInvoicePath()).willReturn(INVOICE_PATH);
-        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", "COUPANG")).willReturn("CJGLS");
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", Platform.COUPANG)).willReturn("CJGLS");
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn("{\"code\":200}");
 
         adapter.execute(account(), List.of(claim(1L, "RETURNS_UNCHECKED", 1)),
@@ -297,7 +299,7 @@ class CoupangClaimActionAdapterTest {
     @Test
     void execute_exchangeCollectInvoice_reusesReturnPathWithExchangeDeliveryType() throws Exception {
         given(coupangProperties.getReturnExchangeInvoicePath()).willReturn(INVOICE_PATH);
-        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", "COUPANG")).willReturn("CJGLS");
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", Platform.COUPANG)).willReturn("CJGLS");
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn("{\"code\":200}");
 
         adapter.execute(account(), List.of(exchangeClaim("RECEIPT", "BeforeDirection")),
@@ -321,7 +323,7 @@ class CoupangClaimActionAdapterTest {
     @Test
     void execute_reshipInvoice_sendsTheNewlyQueriedBoxNotTheOriginalOne() throws Exception {
         given(coupangProperties.getExchangeInvoicePath()).willReturn(EXCHANGE_INVOICE_PATH);
-        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", "COUPANG")).willReturn("CJGLS");
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", Platform.COUPANG)).willReturn("CJGLS");
         given(coupangClaimAdapter.findExchangeReceipt(any(), eq("40362"), any()))
                 .willReturn(Optional.of(objectMapper.readTree(RESHIP_RECEIPT_JSON)));
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn("{\"code\":200}");
@@ -348,7 +350,7 @@ class CoupangClaimActionAdapterTest {
     @Test
     void execute_reshipInvoiceWithoutANewBox_failsWithoutSendingTheInvoice() throws Exception {
         given(coupangProperties.getExchangeInvoicePath()).willReturn(EXCHANGE_INVOICE_PATH);
-        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", "COUPANG")).willReturn("CJGLS");
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", Platform.COUPANG)).willReturn("CJGLS");
 
         // ① 접수를 아예 못 찾음 ② 우리가 모르는 키만 있음 ③ 원 배송번호만 있음
         // ③ 은 "찾은 것"이 아니다 — 폴백하면 200 이 돌아오고 엉뚱한 박스에 송장이 붙는다.
@@ -373,7 +375,7 @@ class CoupangClaimActionAdapterTest {
     @Test
     void execute_reshipInvoice_usesGoodsDeliveryCodeAndAOneDayWindowOnTheReceiptDate() throws Exception {
         given(coupangProperties.getExchangeInvoicePath()).willReturn(EXCHANGE_INVOICE_PATH);
-        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", "COUPANG")).willReturn("CJGLS");
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", Platform.COUPANG)).willReturn("CJGLS");
         given(coupangClaimAdapter.findExchangeReceipt(any(), eq("40362"), any()))
                 .willReturn(Optional.of(objectMapper.readTree(RESHIP_RECEIPT_JSON)));
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn("{\"code\":200}");
@@ -398,7 +400,7 @@ class CoupangClaimActionAdapterTest {
     }
 
     private MarketplaceAccount account() {
-        return MarketplaceAccount.builder().id(1L).platform("COUPANG").vendorId("A001").build();
+        return MarketplaceAccountFixture.coupangStubBuilder("A001", null).id(1L).platform(Platform.COUPANG).build();
     }
 
     /** 교환 접수 1건 — 원 배송번호(externalBoxId)가 재발송 박스와 다르다는 것이 X3 의 전제다. */
@@ -406,7 +408,7 @@ class CoupangClaimActionAdapterTest {
         return OrderClaim.builder()
                 .id(9L)
                 .marketplaceAccount(account())
-                .platform("COUPANG")
+                .platform(Platform.COUPANG)
                 .claimType(ClaimType.EXCHANGE)
                 .externalClaimId("40362")
                 .externalOrderId("O-9")
@@ -423,7 +425,7 @@ class CoupangClaimActionAdapterTest {
         return OrderClaim.builder()
                 .id(id)
                 .marketplaceAccount(account())
-                .platform("COUPANG")
+                .platform(Platform.COUPANG)
                 .claimType(ClaimType.RETURN)
                 .externalClaimId("777")
                 .externalOrderId("O-1")

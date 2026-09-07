@@ -1,12 +1,14 @@
 package com.pms.service;
 
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.MarketplaceShippingConfig;
+import com.pms.domain.CoupangShippingConfig;
+import com.pms.domain.Platform;
 import com.pms.dto.request.ShippingConfigRequest;
 import com.pms.dto.response.ShippingConfigResponse;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.MarketplaceShippingConfigRepository;
+import com.pms.repository.CoupangShippingConfigRepository;
 import com.pms.service.listing.shipping.OutboundPlace;
 import com.pms.service.listing.shipping.ShippingPlaceProvider;
 import com.pms.service.listing.shipping.ShippingPlaceProviderResolver;
@@ -34,31 +36,31 @@ import static org.mockito.Mockito.verify;
 class ShippingConfigServiceTest {
 
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
-    @Mock private MarketplaceShippingConfigRepository shippingConfigRepository;
+    @Mock private CoupangShippingConfigRepository shippingConfigRepository;
     @Mock private ShippingPlaceProviderResolver providerResolver;
     @InjectMocks private ShippingConfigServiceImpl service;
 
-    private MarketplaceAccount account(Long id, String platform) {
-        return MarketplaceAccount.builder().id(id).platform(platform)
-                .vendorId("V1").accessKey("ak").secretKey("sk").isActive(true).build();
+    private MarketplaceAccount account(Long id, Platform platform) {
+        return MarketplaceAccountFixture.coupangStubBuilder("V1", null).id(id).platform(platform)
+                .isActive(true).build();
     }
 
     // ---- lookup: unsupported platform → empty list (manual entry) ----
 
     @Test
     void listOutbound_unsupportedPlatform_returnsEmptyList() {
-        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(account(1L, "NAVER")));
-        given(providerResolver.resolve("NAVER")).willReturn(Optional.empty());
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(account(1L, Platform.NAVER)));
+        given(providerResolver.resolve(Platform.NAVER)).willReturn(Optional.empty());
 
         assertThat(service.listOutbound(1L)).isEmpty();
     }
 
     @Test
     void listOutbound_supportedPlatform_delegatesToProvider() {
-        MarketplaceAccount acct = account(1L, "COUPANG");
+        MarketplaceAccount acct = account(1L, Platform.COUPANG);
         given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acct));
         ShippingPlaceProvider provider = org.mockito.Mockito.mock(ShippingPlaceProvider.class);
-        given(providerResolver.resolve("COUPANG")).willReturn(Optional.of(provider));
+        given(providerResolver.resolve(Platform.COUPANG)).willReturn(Optional.of(provider));
         given(provider.fetchOutboundPlaces(acct)).willReturn(java.util.List.of(new OutboundPlace("74010", "기본출고지")));
 
         assertThat(service.listOutbound(1L)).extracting(OutboundPlace::code).containsExactly("74010");
@@ -68,7 +70,7 @@ class ShippingConfigServiceTest {
 
     @Test
     void upsertConfig_new_savesFreshEntity() {
-        MarketplaceAccount acct = account(1L, "COUPANG");
+        MarketplaceAccount acct = account(1L, Platform.COUPANG);
         given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acct));
         given(shippingConfigRepository.findByMarketplaceAccountId(1L)).willReturn(Optional.empty());
         given(shippingConfigRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
@@ -82,9 +84,9 @@ class ShippingConfigServiceTest {
 
         ShippingConfigResponse response = service.upsertConfig(1L, req);
 
-        ArgumentCaptor<MarketplaceShippingConfig> captor = ArgumentCaptor.forClass(MarketplaceShippingConfig.class);
+        ArgumentCaptor<CoupangShippingConfig> captor = ArgumentCaptor.forClass(CoupangShippingConfig.class);
         verify(shippingConfigRepository).save(captor.capture());
-        MarketplaceShippingConfig saved = captor.getValue();
+        CoupangShippingConfig saved = captor.getValue();
         assertThat(saved.getId()).isNull();                         // fresh insert
         assertThat(saved.getMarketplaceAccount()).isSameAs(acct);
         assertThat(saved.getOutboundShippingPlaceCode()).isEqualTo("74010");
@@ -96,8 +98,8 @@ class ShippingConfigServiceTest {
 
     @Test
     void upsertConfig_update_keepsSameIdAndReflectsChange() {
-        MarketplaceAccount acct = account(1L, "COUPANG");
-        MarketplaceShippingConfig existing = MarketplaceShippingConfig.builder()
+        MarketplaceAccount acct = account(1L, Platform.COUPANG);
+        CoupangShippingConfig existing = CoupangShippingConfig.builder()
                 .id(99L).marketplaceAccount(acct)
                 .outboundShippingPlaceCode("OLD").build();
         given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acct));
@@ -106,9 +108,9 @@ class ShippingConfigServiceTest {
 
         service.upsertConfig(1L, ShippingConfigRequest.builder().outboundShippingPlaceCode("NEW").build());
 
-        ArgumentCaptor<MarketplaceShippingConfig> captor = ArgumentCaptor.forClass(MarketplaceShippingConfig.class);
+        ArgumentCaptor<CoupangShippingConfig> captor = ArgumentCaptor.forClass(CoupangShippingConfig.class);
         verify(shippingConfigRepository).save(captor.capture());
-        MarketplaceShippingConfig saved = captor.getValue();
+        CoupangShippingConfig saved = captor.getValue();
         assertThat(saved.getId()).isEqualTo(99L);                   // update, not a new insert
         assertThat(saved.getOutboundShippingPlaceCode()).isEqualTo("NEW");
     }

@@ -2,39 +2,46 @@ package com.pms.domain;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.TenantId;
 
 import java.math.BigDecimal;
 
 /**
- * Shipping configuration for one marketplace account (FEATURE_2608_06 / 72) — the outbound place, the return
- * center (full address block) and the delivery settings needed for Coupang product registration.
+ * 쿠팡 계정 1개의 배송설정 (FEATURE_2608_06 / 72) — 출고지, 반품지(주소 블록 전체), 배송 설정.
+ * 담기는 값 어휘가 전부 WING 코드다({@code deliveryMethod}·{@code deliveryChargeType}·
+ * {@code unionDeliveryType}·출고지/반품지 코드) → 중립 core 로 올리지 않는다.
+ * 네이버는 {@code naver_shipping_config} 를 나란히 추가한다 (FEATURE_2609_26 / PLAN D17).
  *
- * <p>Platform-neutral: the values may come from a platform lookup ({@code ShippingPlaceProvider}) or from manual
- * entry — this entity does not distinguish. One config per account (delivery settings are per-account; a
- * per-listing override is out of scope), enforced by the UNIQUE {@code marketplace_account_id}
- * ({@code @OneToOne}).</p>
+ * <p>값은 플랫폼 조회({@code ShippingPlaceProvider})에서 올 수도 있고 수동 입력일 수도 있다 — 이 엔티티는
+ * 구분하지 않는다. 계정당 1개(배송 설정은 계정 단위, listing 단위 override 는 범위 밖)이며 UNIQUE
+ * {@code marketplace_account_id}({@code @OneToOne})로 강제된다.</p>
  *
  * <p>All fields are nullable (partial save allowed while the wizard fills in); register (73) guards any missing
  * required value with a 400. {@code remoteAreaDeliverable} is a "Y"/"N" String (not Boolean) to sidestep the
  * MySQL BOOLEAN↔BIT trap (changeset 006), and register transmits the same "Y"/"N".</p>
  *
- * <p>⚠️ No {@code @TenantId} — isolation flows through the parent {@link MarketplaceAccount} (which is
- * tenant-scoped); same convention as {@link GeneratedProductData}. Immutable (no {@code @Setter}; use
- * {@code toBuilder}).</p>
+ * <p>Immutable (no {@code @Setter}; use {@code toBuilder}).</p>
  */
 @Entity
-@Table(name = "marketplace_shipping_config",
+@Table(name = "coupang_shipping_config",
         uniqueConstraints = @UniqueConstraint(
                 name = "uq_mktshipcfg_account", columnNames = {"marketplace_account_id"}))
 @Getter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder(toBuilder = true)
-public class MarketplaceShippingConfig extends BaseEntity {
+public class CoupangShippingConfig extends BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    // Tenant dimension (PLAN D25) — same rule as the sibling 1:1 child coupang_account_credential.
+    // Hibernate auto-sets this on INSERT and auto-filters SELECTs — do NOT set it in the builder
+    // (assigned != current raises) and do NOT add manual tenant conditions.
+    @TenantId
+    @Column(name = "tenant_id", nullable = false)
+    private Long tenantId;
 
     /** The account these settings belong to (isolation source; UNIQUE = one config per account). */
     @OneToOne(fetch = FetchType.LAZY)

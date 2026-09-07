@@ -5,7 +5,7 @@ import java.math.BigDecimal;
 /**
  * Fully-resolved shipping config for one channel cell (FEATURE_2608_06 / 75) — the concrete values after the
  * field-wise 3-level resolution ({@code channel ?? master ?? account default}), produced by
- * {@link ShippingConfigResolver}. Same field set as {@code MarketplaceShippingConfig} plus
+ * {@link CoupangShippingConfigResolver}. Same field set as {@code CoupangShippingConfig} plus
  * {@code extraInfoMessage}, all typed. The register adapter reads this record only (never the raw entity or
  * the override maps).
  *

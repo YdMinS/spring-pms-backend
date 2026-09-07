@@ -1,6 +1,7 @@
 package com.pms.repository;
 
 import com.pms.common.TestJpaConfig;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,7 +31,7 @@ class PlatformCategoryRepositoryTest {
     private PlatformCategory node(String code, String name, PlatformCategory parent) {
         // Do NOT set tenantId: @TenantId stamps it (NO_TENANT in this @DataJpaTest slice, self-consistent).
         return PlatformCategory.builder()
-                .platform("COUPANG").code(code).name(name).parent(parent)
+                .platform(Platform.COUPANG).code(code).name(name).parent(parent)
                 .commissionRate(code == null ? null : new BigDecimal("0.10")).build();
     }
 
@@ -41,11 +42,11 @@ class PlatformCategoryRepositoryTest {
         em.flush();
         em.clear();
 
-        assertThat(repository.findByPlatformAndCode("COUPANG", "cat-1"))
+        assertThat(repository.findByPlatformAndCode(Platform.COUPANG, "cat-1"))
                 .get().extracting(PlatformCategory::getName).isEqualTo("운동화");
         assertThat(repository.findByParentId(root.getId()))
                 .extracting(PlatformCategory::getName).containsExactly("운동화");
-        assertThat(repository.findByParentIsNullAndPlatform("COUPANG"))
+        assertThat(repository.findByParentIsNullAndPlatform(Platform.COUPANG))
                 .extracting(PlatformCategory::getName).containsExactly("패션");
         assertThat(leaf.getId()).isNotNull();
     }
@@ -69,6 +70,6 @@ class PlatformCategoryRepositoryTest {
         em.persist(node(null, "중간2", null));
 
         em.flush(); // must not throw
-        assertThat(repository.findByParentIsNullAndPlatform("COUPANG")).hasSize(2);
+        assertThat(repository.findByParentIsNullAndPlatform(Platform.COUPANG)).hasSize(2);
     }
 }
