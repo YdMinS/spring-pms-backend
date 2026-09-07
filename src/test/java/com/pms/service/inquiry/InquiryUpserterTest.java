@@ -8,6 +8,7 @@ import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
 import com.pms.domain.Platform;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CustomerInquiryReplyRepository;
 import com.pms.repository.CustomerInquiryRepository;
 import com.pms.repository.OrderItemRepository;
@@ -49,8 +50,8 @@ class InquiryUpserterTest {
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @InjectMocks private InquiryUpserter upserter;
 
-    private final MarketplaceAccount account = MarketplaceAccount.builder()
-            .id(7L).platform(Platform.COUPANG).vendorId("A0001").build();
+    private final MarketplaceAccount account = MarketplaceAccountFixture.coupangStubBuilder("A0001", null)
+            .id(7L).platform(Platform.COUPANG).build();
 
     @Test
     void upsert_newInquiry_insertsWithMatchedOrderLine() {

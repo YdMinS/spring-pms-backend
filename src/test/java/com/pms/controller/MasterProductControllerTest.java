@@ -13,6 +13,7 @@ import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.MarginPolicyRepository;
@@ -129,12 +130,12 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .productListing(listing).optionName("기본").sellingPrice(new BigDecimal("1000")).build());
 
         // Two accounts: COUPANG (registered against the listing) + NAVER (uncovered) → LEFT JOIN shape.
-        marketplaceAccountRepository.save(MarketplaceAccount.builder()
+        marketplaceAccountRepository.save(MarketplaceAccountFixture.coupangCoreBuilder()
                 .seller(seller).platform(Platform.COUPANG).accountAlias("메인")
-                .vendorId("A001").accessKey("ak").secretKey("sk").isActive(true).build());
-        marketplaceAccountRepository.save(MarketplaceAccount.builder()
+                .isActive(true).build());
+        marketplaceAccountRepository.save(MarketplaceAccountFixture.coupangCoreBuilder()
                 .seller(seller).platform(Platform.NAVER).accountAlias("네이버")
-                .vendorId("A002").accessKey("ak").secretKey("sk").isActive(true).build());
+                .isActive(true).build());
     }
 
     @AfterEach

@@ -10,6 +10,7 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.repository.CustomerInquiryRepository;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.coupang.CoupangCredentials;
 import com.pms.service.coupang.SyncWindow;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -185,7 +186,7 @@ public class CoupangInquiryAdapter implements InquirySyncAdapter {
      * ⚠️ 쿼리를 인코딩하지 말 것 — 서명 대상과 전송 문자열이 같아야 한다({@code CoupangApiClientImpl}).
      */
     private PageResult collect(MarketplaceAccount account, InquiryType type, SyncWindow window) {
-        String path = path(type).replace("{vendorId}", account.getVendorId());
+        String path = path(type).replace("{vendorId}", CoupangCredentials.of(account).getVendorId());
         String baseQuery = requiredFilter(type)
                 + "&inquiryStartAt=" + window.from().format(DATE)
                 + "&inquiryEndAt=" + window.to().format(DATE)

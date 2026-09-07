@@ -48,7 +48,8 @@ public class CoupangOrderStatusSyncer {
      */
     @Transactional
     public StatusSyncResult syncStatus(MarketplaceAccount account, CoupangOrderStatus status, SyncWindow window) {
-        String path = coupangProperties.getOrdersheetsPath().replace("{vendorId}", account.getVendorId());
+        String path = coupangProperties.getOrdersheetsPath()
+                .replace("{vendorId}", CoupangCredentials.of(account).getVendorId());
         String baseQuery = baseQuery(status, window);
         String nextToken = null;
 

@@ -13,8 +13,10 @@ import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.request.ListingMasterCreateRequest;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.CategoryRepository;
+import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -49,6 +51,7 @@ class ListingMasterControllerTest extends BaseIntegrationTest {
     @Autowired private CategoryMappingRepository categoryMappingRepository;
     @Autowired private PlatformCategoryRepository platformCategoryRepository;
     @Autowired private MarketplaceAccountRepository marketplaceAccountRepository;
+    @Autowired private CoupangAccountCredentialRepository credentialRepository;
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
     @Autowired private ProductListingProductRepository productListingProductRepository;
@@ -88,10 +91,11 @@ class ListingMasterControllerTest extends BaseIntegrationTest {
                 .category(category).platform(Platform.COUPANG).platformCategoryId("63955")
                 .platformCategory(platformCategory).build());
 
-        marketplaceAccountRepository.save(MarketplaceAccount.builder()
-                .seller(seller).platform(Platform.COUPANG).accountAlias("메인")
-                .vendorId("V1").vendorUserId("wing-user")
-                .accessKey("ak").secretKey("sk").isActive(true).build());
+        MarketplaceAccountFixture.saveCredential(credentialRepository,
+                marketplaceAccountRepository.save(MarketplaceAccountFixture.coupangCoreBuilder()
+                        .seller(seller).platform(Platform.COUPANG).accountAlias("메인")
+                        .isActive(true).build()),
+                "V1", "wing-user");
 
         // legacy `판매상품 등록` 으로 만들어진 셀 = 마스터도 마스터 옵션 FK 도 없다.
         ProductListing cell = productListingRepository.save(ProductListing.builder()

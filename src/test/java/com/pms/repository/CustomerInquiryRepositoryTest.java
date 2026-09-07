@@ -9,6 +9,7 @@ import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.domain.Seller;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.security.crypto.AesAttributeConverter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -152,9 +153,9 @@ class CustomerInquiryRepositoryTest {
     private MarketplaceAccount persistAccount(String sellerName, String bizReg, String vendorId) {
         Seller seller = Seller.builder().sellerName(sellerName).businessRegistration(bizReg).build();
         em.persist(seller);
-        MarketplaceAccount account = MarketplaceAccount.builder()
-                .seller(seller).platform(Platform.COUPANG).vendorId(vendorId)
-                .accessKey("ak").secretKey("sk").isActive(true).build();
+        MarketplaceAccount account = MarketplaceAccountFixture.coupangCoreBuilder()
+                .seller(seller).platform(Platform.COUPANG)
+                .isActive(true).build();
         em.persist(account);
         return account;
     }

@@ -5,6 +5,8 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
 import com.pms.domain.Platform;
 import com.pms.domain.Seller;
+import com.pms.fixture.MarketplaceAccountFixture;
+import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderItemRepository;
 import com.pms.repository.SellerRepository;
@@ -35,6 +37,7 @@ class OrderControllerTest extends BaseIntegrationTest {
 
     @Autowired private SellerRepository sellerRepository;
     @Autowired private MarketplaceAccountRepository marketplaceAccountRepository;
+    @Autowired private CoupangAccountCredentialRepository credentialRepository;
     @Autowired private OrderItemRepository orderItemRepository;
 
     @MockBean private CoupangApiClient coupangApiClient;   // 동기화 시 빈 데이터 반환
@@ -46,9 +49,11 @@ class OrderControllerTest extends BaseIntegrationTest {
 
         Seller seller = sellerRepository.save(Seller.builder()
                 .sellerName("테스트셀러").businessRegistration("123-45-67890").build());
-        MarketplaceAccount account = marketplaceAccountRepository.save(MarketplaceAccount.builder()
+        MarketplaceAccount account = marketplaceAccountRepository.save(MarketplaceAccountFixture.coupangCoreBuilder()
                 .seller(seller).platform(Platform.COUPANG).accountAlias("쿠팡본점")
-                .vendorId("A00012345").accessKey("ak").secretKey("sk").isActive(true).build());
+                .isActive(true).build());
+        // 자격증명은 별도 행이다(2609_26) — 동기화 경로가 vendorId 를 읽으므로 함께 시드한다.
+        MarketplaceAccountFixture.saveCredential(credentialRepository, account, "A00012345", null);
         orderItemRepository.save(OrderItem.builder()
                 .marketplaceAccount(account).platform(Platform.COUPANG)
                 .externalOrderId("O1").externalBoxId("B1").externalItemId("I1")

@@ -82,8 +82,10 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
     /**
      * 주문번호(쿠팡 orderId)로 그 주문의 모든 라인(박스의 전체 vendorItemId) 조회 — 발송처리 전개용.
      *
-     * 발송처리 서비스는 @Transactional 없이(open-in-view=false) account.getPlatform()/getVendorId()/
-     * getAccessKey() 등을 읽으므로, marketplaceAccount 를 즉시 로딩해 LazyInitializationException 방지.
+     * 발송처리 서비스는 @Transactional 없이(open-in-view=false) account.getPlatform() 과 자격증명
+     * (CoupangCredentials.of(account) → vendorId/accessKey)을 읽으므로, marketplaceAccount 를 즉시 로딩해
+     * LazyInitializationException 을 막는다. 🔴 자격증명은 별도 엔티티(CoupangAccountCredential)지만
+     * 계정에서 EAGER 로 딸려오므로, 이 @EntityGraph 가 여전히 진짜 방어선이다 — 제거 금지.
      */
     @EntityGraph(attributePaths = "marketplaceAccount")
     List<OrderItem> findByExternalOrderId(String externalOrderId);
@@ -101,7 +103,7 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
     /**
      * id 목록으로 주문 라인 조회 — 발주처리 전개용(PLAN 2609_17 D1).
      *
-     * 발주처리 서비스는 @Transactional 없이(open-in-view=false) account.getPlatform()/getVendorId() 를
+     * 발주처리 서비스는 @Transactional 없이(open-in-view=false) account.getPlatform() 과 자격증명을
      * 읽으므로 marketplaceAccount 를 즉시 로딩한다. seller 는 쓰지 않으므로 포함하지 않는다.
      */
     @EntityGraph(attributePaths = "marketplaceAccount")

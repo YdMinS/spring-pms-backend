@@ -6,6 +6,7 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
 import com.pms.domain.OrderItem;
 import com.pms.domain.Platform;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.repository.OrderItemRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,7 +45,7 @@ class ClaimUpserterTest {
 
     @BeforeEach
     void setUp() {
-        account = MarketplaceAccount.builder().id(1L).platform(Platform.COUPANG).vendorId("V0001").build();
+        account = MarketplaceAccountFixture.coupangStubBuilder("V0001", null).id(1L).platform(Platform.COUPANG).build();
     }
 
     @Test

@@ -10,6 +10,7 @@ import com.pms.domain.OrderItem;
 import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.dto.request.OrderCancelRequest;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.OrderCancelActionRepository;
 import com.pms.repository.OrderItemRepository;
 import com.pms.service.coupang.CoupangApiClient;
@@ -346,9 +347,9 @@ class OrderCancelServiceImplTest {
     private MarketplaceAccount account(Long id, Platform platform, String vendorId, String vendorUserId) {
         Seller seller = Seller.builder().id(id).sellerName("셀러" + id)
                 .businessRegistration("123-45-6789" + id).build();
-        return MarketplaceAccount.builder()
-                .id(id).seller(seller).platform(platform).vendorId(vendorId).vendorUserId(vendorUserId)
-                .accessKey("ak").secretKey("sk").isActive(true).build();
+        return MarketplaceAccountFixture.coupangStubBuilder(vendorId, vendorUserId)
+                .id(id).seller(seller).platform(platform)
+                .isActive(true).build();
     }
 
     private OrderItem line(Long id, MarketplaceAccount account, String boxId, String orderId,

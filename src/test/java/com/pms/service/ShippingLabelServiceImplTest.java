@@ -8,6 +8,7 @@ import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.dto.response.ShippingLabelPreviewRow;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderItemRepository;
 import com.pms.service.coupang.CoupangApiClient;
@@ -60,9 +61,9 @@ class ShippingLabelServiceImplTest {
     @BeforeEach
     void setUp() {
         Seller seller = Seller.builder().id(1L).sellerName("셀러A").businessRegistration("123-45-67890").build();
-        coupangAccount = MarketplaceAccount.builder()
-                .id(1L).seller(seller).platform(Platform.COUPANG).vendorId("A00012345")
-                .accessKey("ak").secretKey("sk").isActive(true).build();
+        coupangAccount = MarketplaceAccountFixture.coupangStubBuilder("A00012345", null)
+                .id(1L).seller(seller).platform(Platform.COUPANG)
+                .isActive(true).build();
 
         CoupangProperties props = new CoupangProperties();
         props.setInstructDays(14);
@@ -159,9 +160,9 @@ class ShippingLabelServiceImplTest {
     @Test
     void collectRows_queriesCoupangAccountsOnly() {
         Seller seller = Seller.builder().id(2L).sellerName("셀러B").businessRegistration("999-88-77777").build();
-        MarketplaceAccount naver = MarketplaceAccount.builder()
-                .id(2L).seller(seller).platform(Platform.NAVER).vendorId("N001")
-                .accessKey("ak").secretKey("sk").isActive(true).build();
+        MarketplaceAccount naver = MarketplaceAccountFixture.coupangStubBuilder("N001", null)
+                .id(2L).seller(seller).platform(Platform.NAVER)
+                .isActive(true).build();
         given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(naver, coupangAccount));
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(oneBoxThreeLines());
 
@@ -266,9 +267,9 @@ class ShippingLabelServiceImplTest {
     @Test
     void previewRowsByOrder_rejectsNonCoupangOrder() {
         Seller seller = Seller.builder().id(2L).sellerName("셀러B").businessRegistration("999-88-77777").build();
-        MarketplaceAccount naver = MarketplaceAccount.builder()
-                .id(2L).seller(seller).platform(Platform.NAVER).vendorId("N001")
-                .accessKey("ak").secretKey("sk").isActive(true).build();
+        MarketplaceAccount naver = MarketplaceAccountFixture.coupangStubBuilder("N001", null)
+                .id(2L).seller(seller).platform(Platform.NAVER)
+                .isActive(true).build();
         OrderItem order = OrderItem.builder().id(1L).externalOrderId("4000019469460")
                 .marketplaceAccount(naver).platform(Platform.NAVER).build();
         given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(order));

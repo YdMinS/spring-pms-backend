@@ -3,9 +3,10 @@ package com.pms.controller;
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.BackgroundMode;
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.Platform;
 import com.pms.domain.Seller;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.domain.ThumbnailTemplate;
+import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.ThumbnailTemplateRepository;
@@ -33,6 +34,7 @@ class MarketplaceAccountControllerTest extends BaseIntegrationTest {
     @Autowired private SellerRepository sellerRepository;
     @Autowired private ThumbnailTemplateRepository thumbnailTemplateRepository;
     @Autowired private MarketplaceAccountRepository accountRepository;
+    @Autowired private CoupangAccountCredentialRepository credentialRepository;
 
     private static final String PATH = "/api/admin/marketplace-account";
     private Long sellerId;
@@ -61,6 +63,18 @@ class MarketplaceAccountControllerTest extends BaseIntegrationTest {
         return objectMapper.writeValueAsString(map);
     }
 
+    /**
+     * 계정 + 쿠팡 자격증명을 함께 시드한다 (FEATURE_2609_26): 자격증명은 별도 행이라
+     * 계정만 저장하면 blank secretKey PATCH 가 유지할 기존 값을 못 찾는다.
+     */
+    private Long seedAccountWithCredential() {
+        MarketplaceAccount account = accountRepository.saveAndFlush(MarketplaceAccountFixture.coupangCoreBuilder()
+                .seller(sellerRepository.findById(sellerId).orElseThrow())
+                .build());
+        MarketplaceAccountFixture.saveCredential(credentialRepository, account, "A00012345", "wing_user01");
+        return account.getId();
+    }
+
     @Test
     void create_noToken_returns401() throws Exception {
         mockMvc.perform(post(PATH).contentType("application/json").content(body(templateId)))
@@ -81,6 +95,9 @@ class MarketplaceAccountControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.thumbnailTemplateId").value(templateId))
+                // 응답 JSON 구조 무변경 — 자격증명이 별도 테이블로 내려가도 평평한 3필드 그대로다.
+                .andExpect(jsonPath("$.data.vendorId").value("A00012345"))
+                .andExpect(jsonPath("$.data.accessKey").value("ak"))
                 .andExpect(jsonPath("$.data.vendorUserId").value("wing_user01"))
                 .andExpect(jsonPath("$.data.secretKey").doesNotExist());
     }
@@ -94,10 +111,7 @@ class MarketplaceAccountControllerTest extends BaseIntegrationTest {
 
     @Test
     void update_adminToken_assignsTemplate_returns200() throws Exception {
-        Long accountId = accountRepository.saveAndFlush(MarketplaceAccount.builder()
-                .seller(sellerRepository.findById(sellerId).orElseThrow())
-                .platform(Platform.COUPANG).vendorId("A00012345").accessKey("ak").secretKey("sk")
-                .isActive(true).build()).getId();
+        Long accountId = seedAccountWithCredential();
 
         // secretKey omitted (blank keeps existing); thumbnailTemplateId assigns the template.
         String patchBody = objectMapper.writeValueAsString(Map.of(
@@ -108,16 +122,17 @@ class MarketplaceAccountControllerTest extends BaseIntegrationTest {
                         .contentType("application/json").content(patchBody))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.thumbnailTemplateId").value(templateId))
+                .andExpect(jsonPath("$.data.vendorId").value("A00012345"))
                 .andExpect(jsonPath("$.data.vendorUserId").value("wing_user01"));
+
+        // blank secretKey 는 기존 자격증명 행을 갱신할 뿐 새 행을 만들지 않는다.
+        assertThat(credentialRepository.findByMarketplaceAccountId(accountId)).isPresent();
     }
 
     // 69: channel-level 옵션확인 suffix PUT (replace; blank suffix → null inherit). 401/403 already covered above.
     @Test
     void updateRegistrationNameSuffix_adminToken_savesReplaceValues_blankToNull() throws Exception {
-        Long accountId = accountRepository.saveAndFlush(MarketplaceAccount.builder()
-                .seller(sellerRepository.findById(sellerId).orElseThrow())
-                .platform(Platform.COUPANG).vendorId("A00012345").accessKey("ak").secretKey("sk")
-                .isActive(true).build()).getId();
+        Long accountId = seedAccountWithCredential();
 
         mockMvc.perform(put(PATH + "/" + accountId + "/registration-name-suffix")
                         .header("Authorization", "Bearer " + adminToken).contentType("application/json")

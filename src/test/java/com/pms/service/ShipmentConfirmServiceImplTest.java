@@ -8,6 +8,7 @@ import com.pms.domain.OrderItem;
 import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.dto.request.ManualShipmentRequest;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderItemRepository;
 import com.pms.service.coupang.CoupangApiClient;
@@ -634,9 +635,9 @@ class ShipmentConfirmServiceImplTest {
 
     private MarketplaceAccount account(Long id, Platform platform, String vendorId) {
         Seller seller = Seller.builder().id(id).sellerName("셀러" + id).businessRegistration("123-45-6789" + id).build();
-        return MarketplaceAccount.builder()
-                .id(id).seller(seller).platform(platform).vendorId(vendorId)
-                .accessKey("ak").secretKey("sk").isActive(true).build();
+        return MarketplaceAccountFixture.coupangStubBuilder(vendorId, null)
+                .id(id).seller(seller).platform(platform)
+                .isActive(true).build();
     }
 
     private OrderItem line(MarketplaceAccount account, String boxId, String orderId, String itemId) {

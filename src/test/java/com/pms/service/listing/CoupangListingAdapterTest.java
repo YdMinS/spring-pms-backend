@@ -10,6 +10,7 @@ import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.MasterChannelConfigService;
@@ -88,8 +89,8 @@ class CoupangListingAdapterTest {
 
     private MarketplaceAccount acct() {
         // 73: vendorUserId (WING login id) is register-required.
-        return MarketplaceAccount.builder().vendorId("V1").vendorUserId("wing-user")
-                .accessKey("ak").secretKey("sk").isActive(true).build();
+        return MarketplaceAccountFixture.coupangStubBuilder("V1", "wing-user")
+                .isActive(true).build();
     }
 
     /** A fully-populated resolved shipping config (75) — no missing required field. extraInfoMessage null. */
@@ -563,8 +564,8 @@ class CoupangListingAdapterTest {
     // 73: vendorUserId unset on the account → 400 before the HTTP push.
     @Test
     void register_missingVendorUserId_throws400() {
-        MarketplaceAccount noUser = MarketplaceAccount.builder().vendorId("V1")
-                .accessKey("ak").secretKey("sk").isActive(true).build();   // no vendorUserId
+        MarketplaceAccount noUser = MarketplaceAccountFixture.coupangStubBuilder("V1", null)
+                .isActive(true).build();   // no vendorUserId
         given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
         GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
 

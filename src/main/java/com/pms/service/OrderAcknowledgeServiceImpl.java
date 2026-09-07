@@ -11,6 +11,7 @@ import com.pms.repository.OrderItemRepository;
 import com.pms.service.ShipmentConfirmResult.FailedBox;
 import com.pms.service.ShipmentConfirmResult.SkippedOrder;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.coupang.CoupangCredentials;
 import com.pms.service.coupang.CoupangOrderStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -136,11 +137,12 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
 
     /** 박스 id 청크 1개를 발주처리 API 로 보내고 응답을 집계. */
     private AccountResult send(MarketplaceAccount account, List<String> chunk) throws Exception {
+        var cred = CoupangCredentials.of(account);
         String path = coupangProperties.getAcknowledgementPath()
-                .replace("{vendorId}", account.getVendorId());
+                .replace("{vendorId}", cred.getVendorId());
 
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("vendorId", account.getVendorId());
+        body.put("vendorId", cred.getVendorId());
         // external*Id 는 저장 시 String → 요청 바디는 long 으로 변환(발송처리와 같은 규칙).
         body.put("shipmentBoxIds", chunk.stream().map(Long::parseLong).toList());
 

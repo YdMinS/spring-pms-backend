@@ -12,6 +12,7 @@ import com.pms.repository.OrderItemRepository;
 import com.pms.service.ShipmentConfirmResult.FailedBox;
 import com.pms.service.ShipmentConfirmResult.SkippedOrder;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.coupang.CoupangCredentials;
 import com.pms.service.coupang.CoupangOrderStatus;
 import com.pms.service.coupang.OrderItemUpserter;
 import lombok.RequiredArgsConstructor;
@@ -217,7 +218,7 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
         String deliveryCompanyCode = carrierCodeService
                 .validateDeliveryCompanyCode(request.deliveryCompanyCode(), account.getPlatform());
         String path = (update ? coupangProperties.getUpdateInvoicesPath() : coupangProperties.getInvoicesPath())
-                .replace("{vendorId}", account.getVendorId());
+                .replace("{vendorId}", CoupangCredentials.of(account).getVendorId());
 
         List<InvoiceLine> lines = toInvoiceLines(boxLines);
         AccountResult result;
@@ -420,7 +421,7 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
      */
     private OrderLookup fetchOrderLines(MarketplaceAccount account, String orderId) {
         String path = coupangProperties.getOrdersheetByOrderPath()
-                .replace("{vendorId}", account.getVendorId())
+                .replace("{vendorId}", CoupangCredentials.of(account).getVendorId())
                 .replace("{orderId}", orderId);
 
         JsonNode parsed = readTree(coupangApiClient.get(path, "", account));
@@ -465,7 +466,8 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
                                     Map<String, String> invoiceByOrderId) throws Exception {
         // deliveryCompanyCode 는 계정당 1회 (하드코딩 금지, 미설정 시 IllegalStateException).
         String deliveryCompanyCode = carrierCodeService.resolveDeliveryCompanyCode(account.getPlatform());
-        String path = coupangProperties.getInvoicesPath().replace("{vendorId}", account.getVendorId());
+        String path = coupangProperties.getInvoicesPath()
+                .replace("{vendorId}", CoupangCredentials.of(account).getVendorId());
         return postInvoices(account, lines, invoiceByOrderId::get, deliveryCompanyCode, path);
     }
 
@@ -494,7 +496,7 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
         }
 
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("vendorId", account.getVendorId());
+        body.put("vendorId", CoupangCredentials.of(account).getVendorId());
         body.put("orderSheetInvoiceApplyDtos", dtos);
 
         String json = objectMapper.writeValueAsString(body);

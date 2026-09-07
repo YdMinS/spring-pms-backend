@@ -5,6 +5,7 @@ import com.pms.domain.MasterProduct;
 import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.Seller;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.service.listing.OptionCheckSuffix;
 import org.junit.jupiter.api.Test;
@@ -39,8 +40,8 @@ class OptionCheckSuffixResolverTest {
     }
 
     private MarketplaceAccount account(Boolean enabled, String suffix) {
-        return MarketplaceAccount.builder().id(3L).platform(Platform.COUPANG).vendorId("V").accessKey("ak")
-                .secretKey("sk").isActive(true)
+        return MarketplaceAccountFixture.coupangStubBuilder("V", null).id(3L).platform(Platform.COUPANG)
+                .isActive(true)
                 .optionCheckSuffixEnabled(enabled).optionCheckSuffix(suffix).build();
     }
 

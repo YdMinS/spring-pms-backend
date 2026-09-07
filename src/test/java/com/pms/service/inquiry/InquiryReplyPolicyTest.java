@@ -8,6 +8,7 @@ import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.dto.response.ReplyCapability;
+import com.pms.fixture.MarketplaceAccountFixture;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
@@ -138,8 +139,8 @@ class InquiryReplyPolicyTest {
     }
 
     private MarketplaceAccount account(String vendorUserId) {
-        return MarketplaceAccount.builder()
-                .id(7L).platform(Platform.COUPANG).accountAlias("쿠팡-메인").vendorUserId(vendorUserId).build();
+        return MarketplaceAccountFixture.coupangStubBuilder(null, vendorUserId)
+                .id(7L).platform(Platform.COUPANG).accountAlias("쿠팡-메인").build();
     }
 
     private CustomerInquiry inquiry(InquiryType type, InquiryStatus status, MarketplaceAccount account) {

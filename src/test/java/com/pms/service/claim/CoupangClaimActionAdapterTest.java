@@ -8,6 +8,7 @@ import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
 import com.pms.domain.Platform;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.service.CarrierCodeService;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.SyncWindow;
@@ -399,7 +400,7 @@ class CoupangClaimActionAdapterTest {
     }
 
     private MarketplaceAccount account() {
-        return MarketplaceAccount.builder().id(1L).platform(Platform.COUPANG).vendorId("A001").build();
+        return MarketplaceAccountFixture.coupangStubBuilder("A001", null).id(1L).platform(Platform.COUPANG).build();
     }
 
     /** 교환 접수 1건 — 원 배송번호(externalBoxId)가 재발송 박스와 다르다는 것이 X3 의 전제다. */

@@ -8,6 +8,7 @@ import com.pms.domain.OrderClaim;
 import com.pms.exception.CoupangRateLimitedException;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.coupang.CoupangCredentials;
 import com.pms.service.coupang.OrderItemUpserter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -113,7 +114,7 @@ public class ClaimOrderBackfillServiceImpl implements ClaimOrderBackfillService 
      */
     private void fetchAndUpsert(MarketplaceAccount account, String orderId) {
         String path = coupangProperties.getOrdersheetByOrderPath()
-                .replace("{vendorId}", account.getVendorId())
+                .replace("{vendorId}", CoupangCredentials.of(account).getVendorId())
                 .replace("{orderId}", orderId);
 
         JsonNode parsed = readTree(coupangApiClient.get(path, "", account));

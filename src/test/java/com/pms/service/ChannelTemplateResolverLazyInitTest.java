@@ -7,6 +7,7 @@ import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.Seller;
 import com.pms.domain.ThumbnailTemplate;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.DetailTemplateRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.ThumbnailTemplateRepository;
@@ -45,8 +46,8 @@ class ChannelTemplateResolverLazyInitTest {
                 .backgroundMode(com.pms.domain.BackgroundMode.WHITE).active(true).isDefault(false).build());
         DetailTemplate detail = em.persist(DetailTemplate.builder()
                 .name("지정상세").active(true).isDefault(false).build());
-        em.persist(MarketplaceAccount.builder()
-                .seller(seller).platform(Platform.COUPANG).vendorId("V1").accessKey("ak").secretKey("sk")
+        em.persist(MarketplaceAccountFixture.coupangCoreBuilder()
+                .seller(seller).platform(Platform.COUPANG)
                 .isActive(true).thumbnailTemplate(thumb).detailTemplate(detail).build());
         em.flush();
         em.clear();

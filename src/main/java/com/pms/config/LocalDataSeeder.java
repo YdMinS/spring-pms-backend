@@ -5,6 +5,7 @@ import com.pms.domain.CarrierRate;
 import com.pms.domain.Category;
 import com.pms.domain.CommissionRate;
 import com.pms.domain.MarginPolicy;
+import com.pms.domain.CoupangAccountCredential;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Package;
 import com.pms.domain.Platform;
@@ -16,6 +17,7 @@ import com.pms.domain.Role;
 import com.pms.domain.Seller;
 import com.pms.domain.User;
 import com.pms.repository.CarrierRateRepository;
+import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.CarrierRepository;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.CommissionRateRepository;
@@ -71,6 +73,7 @@ public class LocalDataSeeder implements CommandLineRunner {
     private final UserRepository userRepository;
     private final SellerRepository sellerRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
+    private final CoupangAccountCredentialRepository coupangAccountCredentialRepository;
     private final ProductRepository productRepository;
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
@@ -132,15 +135,18 @@ public class LocalDataSeeder implements CommandLineRunner {
                 .sellerName("로컬 테스트 판매자")
                 .businessRegistration("000-00-00000")
                 .build());
-        // 더미 자격증명 — secretKey 는 AesAttributeConverter 로 암호화되어 저장(암호화 경로 검증).
-        marketplaceAccountRepository.save(MarketplaceAccount.builder()
+        MarketplaceAccount account = marketplaceAccountRepository.save(MarketplaceAccount.builder()
                 .seller(seller)
                 .platform(Platform.COUPANG)
                 .accountAlias("로컬 더미 쿠팡 계정")
+                .isActive(true)
+                .build());
+        // 더미 자격증명 — secretKey 는 AesAttributeConverter 로 암호화되어 저장(암호화 경로 검증).
+        coupangAccountCredentialRepository.save(CoupangAccountCredential.builder()
+                .marketplaceAccount(account)
                 .vendorId("A00000000")
                 .accessKey("local-dummy-access-key")
                 .secretKey("local-dummy-secret-key")
-                .isActive(true)
                 .build());
         log.info("[LOCAL-SEED] seller + marketplace account seeded");
         return seller;

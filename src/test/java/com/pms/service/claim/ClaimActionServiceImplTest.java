@@ -10,6 +10,7 @@ import com.pms.dto.request.ClaimActionRequest;
 import com.pms.dto.response.ClaimActionResponse;
 import com.pms.exception.BusinessException;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.OrderClaimActionRepository;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.service.coupang.CoupangApiClient;
@@ -299,8 +300,8 @@ class ClaimActionServiceImplTest {
     }
 
     private OrderClaim claim(Long id, String platformStatus, int quantity) {
-        MarketplaceAccount account = MarketplaceAccount.builder()
-                .id(1L).platform(Platform.COUPANG).vendorId("A001").build();
+        MarketplaceAccount account = MarketplaceAccountFixture.coupangStubBuilder("A001", null)
+                .id(1L).platform(Platform.COUPANG).build();
         return OrderClaim.builder()
                 .id(id)
                 .marketplaceAccount(account)

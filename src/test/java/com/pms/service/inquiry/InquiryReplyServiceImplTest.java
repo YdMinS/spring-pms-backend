@@ -10,6 +10,7 @@ import com.pms.dto.response.CustomerInquiryResponse;
 import com.pms.dto.response.ReplyCapability;
 import com.pms.exception.BusinessException;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CustomerInquiryReplyRepository;
 import com.pms.repository.CustomerInquiryRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -60,8 +61,8 @@ class InquiryReplyServiceImplTest {
 
     private InquiryReplyServiceImpl service;
 
-    private final MarketplaceAccount account = MarketplaceAccount.builder()
-            .id(7L).platform(Platform.COUPANG).accountAlias("쿠팡-메인").vendorUserId("wing-user").build();
+    private final MarketplaceAccount account = MarketplaceAccountFixture.coupangStubBuilder(null, "wing-user")
+            .id(7L).platform(Platform.COUPANG).accountAlias("쿠팡-메인").build();
 
     @BeforeEach
     void setUp() {

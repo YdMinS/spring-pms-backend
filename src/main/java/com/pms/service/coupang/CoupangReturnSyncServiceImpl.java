@@ -109,7 +109,8 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
     }
 
     private String returnRequestsPath(MarketplaceAccount account) {
-        return coupangProperties.getReturnrequestsPath().replace("{vendorId}", account.getVendorId());
+        return coupangProperties.getReturnrequestsPath()
+                .replace("{vendorId}", CoupangCredentials.of(account).getVendorId());
     }
 
     /** 조회 창 + 페이지 크기 — 쿼리 문자열의 공통 조각(선행 '&' 없음: 첫 파라미터로도 쓰인다). */
@@ -240,7 +241,8 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
      * ⚠️ 페이징은 {@code nextToken} 이 아니라 {@code pageIndex}/{@code nextPageIndex} 다(이 API 만의 형태).
      */
     private Set<String> collectWithdrawHistory(MarketplaceAccount account, SyncWindow window) {
-        String path = coupangProperties.getReturnWithdrawPath().replace("{vendorId}", account.getVendorId());
+        String path = coupangProperties.getReturnWithdrawPath()
+                .replace("{vendorId}", CoupangCredentials.of(account).getVendorId());
         String baseQuery = "dateFrom=" + window.from().format(DATE)
                 + "&dateTo=" + window.to().format(DATE)
                 + "&sizePerPage=" + MAX_PER_PAGE;

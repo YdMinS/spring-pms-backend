@@ -10,6 +10,7 @@ import com.pms.domain.OrderClaim;
 import com.pms.domain.Platform;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.coupang.CoupangCredentials;
 import com.pms.service.coupang.SyncWindow;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -147,7 +148,7 @@ public class CoupangClaimAdapter implements ClaimSyncAdapter {
      */
     int pageThrough(MarketplaceAccount account, SyncWindow window, Predicate<JsonNode> visitor) {
         String path = coupangProperties.getExchangeRequestsPath()
-                .replace("{vendorId}", account.getVendorId());
+                .replace("{vendorId}", CoupangCredentials.of(account).getVendorId());
         String baseQuery = "createdAtFrom=" + window.from().atStartOfDay().format(DATE_TIME)
                 + "&createdAtTo=" + window.to().atTime(23, 59, 59).format(DATE_TIME)
                 + "&maxPerPage=" + coupangProperties.getExchangeMaxPerPage();

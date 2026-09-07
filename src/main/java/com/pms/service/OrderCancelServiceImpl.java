@@ -16,6 +16,7 @@ import com.pms.service.OrderCancelResult.FailedLine;
 import com.pms.service.OrderCancelResult.SkippedLine;
 import com.pms.service.claim.ActionChoice;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.coupang.CoupangCredentials;
 import com.pms.service.coupang.CoupangOrderStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -120,7 +121,8 @@ public class OrderCancelServiceImpl implements OrderCancelService {
                 throw new IllegalArgumentException(
                         "취소 수량이 취소 가능 수량(" + line.purchasableQty() + "개)을 초과했습니다");
             }
-            if (account.getVendorUserId() == null || account.getVendorUserId().isBlank()) {
+            String wingUserId = CoupangCredentials.of(account).getVendorUserId();
+            if (wingUserId == null || wingUserId.isBlank()) {
                 // WING ID 는 API 필수값이라 없으면 400 이 확정 — 왕복하지 않는다(D10).
                 noWingId.add(new Item(line, quantity));
                 continue;
@@ -199,8 +201,9 @@ public class OrderCancelServiceImpl implements OrderCancelService {
     /** 박스 1개(= 그룹 1개)를 취소 API 로 보낸다. */
     private String send(MarketplaceAccount account, String orderId, List<Item> items,
                         OrderCancelReason reason) throws Exception {
+        var cred = CoupangCredentials.of(account);
         String path = coupangProperties.getOrderCancelPath()
-                .replace("{vendorId}", account.getVendorId())
+                .replace("{vendorId}", cred.getVendorId())
                 .replace("{orderId}", orderId);
 
         Map<String, Object> body = new LinkedHashMap<>();
@@ -212,8 +215,8 @@ public class OrderCancelServiceImpl implements OrderCancelService {
         body.put("receiptCounts", items.stream().map(Item::quantity).toList());
         body.put("bigCancelCode", BIG_CANCEL_CODE);
         body.put("middleCancelCode", reason.getMiddleCancelCode());
-        body.put("vendorId", account.getVendorId());
-        body.put("userId", account.getVendorUserId());              // WING 로그인 ID
+        body.put("vendorId", cred.getVendorId());
+        body.put("userId", cred.getVendorUserId());                 // WING 로그인 ID
         String response = coupangApiClient.post(path, objectMapper.writeValueAsString(body), account);
         // 실계정 미검증 스키마라 첫 dev 실행에서 원문을 눈으로 확인해야 한다(PII 없음: 주문·옵션 id 와 결과뿐).
         log.debug("주문취소 응답 원문: account={} order={} body={}", account.getId(), orderId, response);

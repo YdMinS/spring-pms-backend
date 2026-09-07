@@ -12,6 +12,7 @@ import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderItemRepository;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.coupang.CoupangCredentials;
 import com.pms.service.coupang.OrderItemUpserter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -108,7 +109,7 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
         }
 
         String path = coupangProperties.getOrdersheetByOrderPath()
-                .replace("{vendorId}", account.getVendorId())
+                .replace("{vendorId}", CoupangCredentials.of(account).getVendorId())
                 .replace("{orderId}", order.getExternalOrderId());
 
         List<ShippingLabelRow> rows = new ArrayList<>();
@@ -158,7 +159,8 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
 
     /** 단일 쿠팡 계정의 INSTRUCT ordersheets 를 페이징 조회하며 행으로 펼친다. */
     private List<ShippingLabelRow> collectAccountRows(MarketplaceAccount account) {
-        String path = coupangProperties.getOrdersheetsPath().replace("{vendorId}", account.getVendorId());
+        String path = coupangProperties.getOrdersheetsPath()
+                .replace("{vendorId}", CoupangCredentials.of(account).getVendorId());
         String baseQuery = baseQuery();
 
         List<ShippingLabelRow> rows = new ArrayList<>();

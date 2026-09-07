@@ -10,6 +10,7 @@ import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.domain.ShoppingListItem;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderItemRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -53,9 +54,9 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
     void seed() {
         Seller seller = sellerRepository.save(Seller.builder()
                 .sellerName("테스트셀러").businessRegistration("123-45-67890").build());
-        MarketplaceAccount account = marketplaceAccountRepository.save(MarketplaceAccount.builder()
+        MarketplaceAccount account = marketplaceAccountRepository.save(MarketplaceAccountFixture.coupangCoreBuilder()
                 .seller(seller).platform(Platform.COUPANG).accountAlias("쿠팡본점")
-                .vendorId("A001").accessKey("ak").secretKey("sk").isActive(true).build());
+                .isActive(true).build());
 
         Product product = productRepository.save(Product.builder()
                 .productName("양말A").build());

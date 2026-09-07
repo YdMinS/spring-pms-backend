@@ -9,6 +9,7 @@ import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
 import com.pms.dto.response.PushSyncResponse;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -57,7 +58,7 @@ class ListingPropagationServiceTest {
     }
 
     private MarketplaceAccount account() {
-        return MarketplaceAccount.builder().vendorId("V1").accessKey("ak").secretKey("sk").isActive(true).build();
+        return MarketplaceAccountFixture.coupangStubBuilder("V1", null).isActive(true).build();
     }
 
     private void stubAccountAndGenAndAdapter(Long cellId) {

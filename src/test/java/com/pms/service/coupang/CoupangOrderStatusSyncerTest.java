@@ -5,6 +5,7 @@ import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
 import com.pms.domain.Platform;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.OrderItemRepository;
 import com.pms.service.coupang.CoupangOrderStatusSyncer.StatusSyncResult;
 import org.junit.jupiter.api.BeforeEach;
@@ -56,12 +57,9 @@ class CoupangOrderStatusSyncerTest {
 
     @BeforeEach
     void setUp() {
-        account = MarketplaceAccount.builder()
+        account = MarketplaceAccountFixture.coupangStubBuilder("V0001", null)
                 .id(1L)
                 .platform(Platform.COUPANG)
-                .vendorId("V0001")
-                .accessKey("ak")
-                .secretKey("sk")
                 .isActive(true)
                 .build();
 

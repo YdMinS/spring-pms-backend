@@ -3,6 +3,8 @@ package com.pms.tenant;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.domain.Seller;
+import com.pms.fixture.MarketplaceAccountFixture;
+import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.security.TenantContext;
@@ -58,6 +60,7 @@ class OrderSyncCommitBoundaryTest {
 
     @Autowired
     private MarketplaceAccountRepository marketplaceAccountRepository;
+    @Autowired private CoupangAccountCredentialRepository credentialRepository;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -69,6 +72,7 @@ class OrderSyncCommitBoundaryTest {
     void cleanup() {
         TenantContext.clear();
         jdbcTemplate.execute("delete from order_item");            // FK child first
+        jdbcTemplate.execute("delete from coupang_account_credential");
         jdbcTemplate.execute("delete from marketplace_account");
         jdbcTemplate.execute("delete from seller");
     }
@@ -81,15 +85,13 @@ class OrderSyncCommitBoundaryTest {
                 .sellerName("cb-seller")
                 .businessRegistration("333-33-33333")
                 .build());
-        MarketplaceAccount account = marketplaceAccountRepository.save(MarketplaceAccount.builder()
+        MarketplaceAccount account = marketplaceAccountRepository.save(MarketplaceAccountFixture.coupangCoreBuilder()
                 .seller(seller)
                 .platform(Platform.COUPANG)
                 .accountAlias("cb-account")
-                .vendorId("A00000003")
-                .accessKey("access")
-                .secretKey("secret")
                 .isActive(true)
                 .build());
+        MarketplaceAccountFixture.saveCredential(credentialRepository, account, "A00000003", null);
 
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(EMPTY_PAGE);
         given(coupangApiClient.get(anyString(), argThat(statusIs(CoupangOrderStatus.ACCEPT)), any()))

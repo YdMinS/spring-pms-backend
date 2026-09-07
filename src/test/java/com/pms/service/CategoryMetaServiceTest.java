@@ -6,6 +6,7 @@ import com.pms.domain.MasterProduct;
 import com.pms.domain.Platform;
 import com.pms.dto.response.CategoryMetaResponse;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.service.listing.category.CategoryAttribute;
@@ -57,7 +58,7 @@ class CategoryMetaServiceTest {
     }
 
     private MarketplaceAccount account() {
-        return MarketplaceAccount.builder().vendorId("V1").accessKey("ak").secretKey("sk").isActive(true).build();
+        return MarketplaceAccountFixture.coupangStubBuilder("V1", null).isActive(true).build();
     }
 
     @Test

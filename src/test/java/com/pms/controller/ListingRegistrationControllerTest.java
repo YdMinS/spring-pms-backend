@@ -17,10 +17,12 @@ import com.pms.domain.Package;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.PlatformCategoryRepository;
+import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MarketplaceShippingConfigRepository;
 import com.pms.repository.MasterProductRepository;
@@ -64,6 +66,7 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
     @Autowired private GeneratedProductDataRepository generatedProductDataRepository;
     @Autowired private ProductListingTagRevisionRepository productListingTagRevisionRepository;
     @Autowired private MarketplaceAccountRepository marketplaceAccountRepository;
+    @Autowired private CoupangAccountCredentialRepository credentialRepository;
     @Autowired private MarketplaceShippingConfigRepository marketplaceShippingConfigRepository;
 
     @MockBean private CoupangApiClient coupangApiClient;
@@ -103,10 +106,12 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
         generatedProductDataRepository.save(GeneratedProductData.builder()
                 .productListing(cell).thumbnailUrl("thumbnails/t.jpg").detailHtml("<p>셀</p>")
                 .source(GeneratedContentSource.AUTO).generatedAt(LocalDateTime.now()).build());
-        MarketplaceAccount account = marketplaceAccountRepository.save(MarketplaceAccount.builder()
+        MarketplaceAccount account = marketplaceAccountRepository.save(MarketplaceAccountFixture.coupangCoreBuilder()
                 .seller(seller).platform(Platform.COUPANG).accountAlias("메인")
-                .vendorId("V1").vendorUserId("wing-user")   // 73: WING login id (register-required)
-                .accessKey("ak").secretKey("sk").isActive(true).build());
+                   // 73: WING login id (register-required)
+                .isActive(true).build());
+        // 73: WING login id (register-required) — 자격증명은 별도 행이다(2609_26).
+        MarketplaceAccountFixture.saveCredential(credentialRepository, account, "V1", "wing-user");
         // 73: register payload needs a complete per-account shipping config (72) → 400 otherwise.
         marketplaceShippingConfigRepository.save(MarketplaceShippingConfig.builder()
                 .marketplaceAccount(account)

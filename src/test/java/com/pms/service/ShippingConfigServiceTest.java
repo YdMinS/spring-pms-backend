@@ -6,6 +6,7 @@ import com.pms.domain.Platform;
 import com.pms.dto.request.ShippingConfigRequest;
 import com.pms.dto.response.ShippingConfigResponse;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MarketplaceShippingConfigRepository;
 import com.pms.service.listing.shipping.OutboundPlace;
@@ -40,8 +41,8 @@ class ShippingConfigServiceTest {
     @InjectMocks private ShippingConfigServiceImpl service;
 
     private MarketplaceAccount account(Long id, Platform platform) {
-        return MarketplaceAccount.builder().id(id).platform(platform)
-                .vendorId("V1").accessKey("ak").secretKey("sk").isActive(true).build();
+        return MarketplaceAccountFixture.coupangStubBuilder("V1", null).id(id).platform(platform)
+                .isActive(true).build();
     }
 
     // ---- lookup: unsupported platform → empty list (manual entry) ----

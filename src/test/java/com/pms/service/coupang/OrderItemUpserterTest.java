@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
 import com.pms.domain.Platform;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.OrderItemRepository;
 import com.pms.service.coupang.OrderItemUpserter.UpsertCount;
 import org.junit.jupiter.api.BeforeEach;
@@ -50,11 +51,9 @@ class OrderItemUpserterTest {
 
     @BeforeEach
     void setUp() {
-        account = MarketplaceAccount.builder()
+        account = MarketplaceAccountFixture.coupangStubBuilder("A00012345", null)
                 .id(1L)
                 .platform(Platform.COUPANG)
-                .vendorId("A00012345")
-                .accessKey("ak").secretKey("sk")
                 .isActive(true)
                 .build();
     }

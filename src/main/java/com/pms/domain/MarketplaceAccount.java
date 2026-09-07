@@ -1,6 +1,5 @@
 package com.pms.domain;
 
-import com.pms.security.crypto.AesAttributeConverter;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.TenantId;
@@ -8,12 +7,13 @@ import org.hibernate.annotations.TenantId;
 import java.time.LocalDateTime;
 
 /**
- * 외부 판매 플랫폼(쿠팡 등)의 셀러 계정 + API 자격증명.
+ * 외부 판매 플랫폼(쿠팡 등)의 셀러 계정 — <b>플랫폼 중립 core</b> (FEATURE_2609_26 / PLAN D15).
  *
  * 관계: Seller (1) ──< MarketplaceAccount (N). 한 셀러가 여러 플랫폼·여러 계정을 보유.
  *
- * secretKey 는 {@link AesAttributeConverter} 로 AES-256-GCM 암호화되어 저장된다 (평문 보관 금지).
- * 응답 DTO 에는 secretKey 를 절대 포함하지 않는다.
+ * ⚠️ API 자격증명은 여기 없다. 쿠팡 HMAC 4필드는 {@link CoupangAccountCredential}(1:1) 이 소유하며
+ * {@link com.pms.service.coupang.CoupangCredentials#of(MarketplaceAccount)} 로만 읽는다 —
+ * 편의 게터를 여기 되살리지 말 것(core 가 다시 쿠팡을 알게 된다).
  *
  * ⚠️ ddl-auto=validate(운영) → 아래 @Column 정의는 실제 marketplace_account DDL 과 일치해야 한다.
  */
@@ -46,21 +46,16 @@ public class MarketplaceAccount extends BaseEntity {
     @Column(name = "account_alias", length = 255)
     private String accountAlias;
 
-    @Column(name = "vendor_id", nullable = false, length = 100)
-    private String vendorId;
-
-    // WING login ID (FEATURE_2608_06 / 71). Distinct from vendorId (vendor code); required by Coupang
-    // product registration. Nullable — no backfill for existing accounts, may stay unset. An identifier
-    // like accessKey (not secretKey) → safe to expose in responses, no encryption converter.
-    @Column(name = "vendor_user_id", length = 100)
-    private String vendorUserId;
-
-    @Column(name = "access_key", nullable = false, length = 255)
-    private String accessKey;
-
-    @Convert(converter = AesAttributeConverter.class)
-    @Column(name = "secret_key", nullable = false, length = 512)
-    private String secretKey;                // 평문 보관 금지 — 컨버터가 암복호화
+    // Platform credentials live in their own table (FEATURE_2609_26 / PLAN D15) — core stays neutral.
+    // 🔴 EAGER on purpose: ~52 call sites read the credential and several of them (ShipmentConfirmServiceImpl,
+    // OrderAcknowledgeServiceImpl) run with NO @Transactional under open-in-view=false. The real defence is
+    // still OrderItemRepository's @EntityGraph(marketplaceAccount) — once the account is loaded the EAGER
+    // child comes with it inside the same transaction. Do NOT remove those graphs.
+    // ⚠️ Do NOT flip this to the owning side: an optional inverse @OneToOne is loaded immediately anyway,
+    // while an owning-side one becomes a real proxy that explodes outside a transaction.
+    // Read via CoupangCredentials.of(account) — no convenience getters here (core must not know Coupang).
+    @OneToOne(mappedBy = "marketplaceAccount", fetch = FetchType.EAGER, optional = true)
+    private CoupangAccountCredential coupangCredential;
 
     @Column(name = "is_active", nullable = false)
     private Boolean isActive;

@@ -213,9 +213,9 @@ class LiquibaseChangelogApplyTest {
                     .isZero();
         }
 
-        // changeset 038: marketplace_account.vendor_user_id materialized (a successful count proves it; 71).
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM marketplace_account WHERE vendor_user_id IS NULL", Integer.class)).isZero();
+        // changeset 038 added marketplace_account.vendor_user_id (71), but changeset 065 moved the four
+        // Coupang credential columns to coupang_account_credential (FEATURE_2609_26) → the column is gone
+        // here. See coupangAccountCredentialApplied() for the post-065 state.
 
         // changeset 039: marketplace_shipping_config table + columns materialized (a successful count over the
         // key columns proves the table + outbound/return/delivery structure; 72).
@@ -425,6 +425,36 @@ class LiquibaseChangelogApplyTest {
                 "SELECT DELETE_RULE FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS "
                         + "WHERE CONSTRAINT_NAME = 'FK_PLO_MASTER_OPTION'", String.class))
                 .isEqualTo("SET NULL");
+    }
+
+    @Test
+    void coupangAccountCredentialApplied() {
+        // changeset 065: the credential table materialized with all its columns (FEATURE_2609_26).
+        // The MySQL-only backfill is skipped on this empty H2 DB, so an empty count is what proves
+        // the table + its structure exist.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM coupang_account_credential "
+                        + "WHERE tenant_id IS NULL AND marketplace_account_id IS NULL "
+                        + "AND vendor_id IS NULL AND vendor_user_id IS NULL "
+                        + "AND access_key IS NULL AND secret_key IS NULL",
+                Integer.class)).isZero();
+
+        // 1:1 with the account — the UNIQUE is what keeps a second credential row out.
+        List<String> constraints = jdbcTemplate.queryForList(
+                "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
+                        + "WHERE TABLE_NAME = 'COUPANG_ACCOUNT_CREDENTIAL'", String.class);
+        assertThat(constraints).contains("UQ_COUPANG_CRED_ACCOUNT");
+
+        // ...and the core lost the four Coupang columns (a rename-style move, not an additive copy).
+        assertThatThrownBy(() -> jdbcTemplate.queryForObject(
+                "SELECT vendor_id FROM marketplace_account", String.class))
+                .as("marketplace_account.vendor_id dropped by 065")
+                .isInstanceOf(DataAccessException.class);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE TABLE_NAME = 'MARKETPLACE_ACCOUNT' "
+                        + "AND COLUMN_NAME IN ('VENDOR_USER_ID', 'ACCESS_KEY', 'SECRET_KEY')",
+                Integer.class)).isZero();
     }
 
     @Test

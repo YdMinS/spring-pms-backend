@@ -8,6 +8,7 @@ import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
 import com.pms.domain.Platform;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.service.claim.ClaimSyncAdapter.ClaimSyncResult;
 import com.pms.service.coupang.CoupangApiClient;
@@ -52,9 +53,9 @@ class CoupangClaimAdapterTest {
 
     @BeforeEach
     void setUp() {
-        account = MarketplaceAccount.builder()
-                .id(1L).platform(Platform.COUPANG).vendorId("V0001")
-                .accessKey("ak").secretKey("sk").isActive(true).build();
+        account = MarketplaceAccountFixture.coupangStubBuilder("V0001", null)
+                .id(1L).platform(Platform.COUPANG)
+                .isActive(true).build();
 
         props = new CoupangProperties();
         adapter = new CoupangClaimAdapter(

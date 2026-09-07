@@ -8,6 +8,7 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
 import com.pms.domain.OrderItem;
 import com.pms.domain.Platform;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.repository.OrderItemRepository;
 import com.pms.service.claim.ClaimStaleSweeper;
@@ -61,9 +62,9 @@ class CoupangReturnSyncServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        account = MarketplaceAccount.builder()
-                .id(1L).platform(Platform.COUPANG).vendorId("V0001")
-                .accessKey("ak").secretKey("sk").isActive(true).build();
+        account = MarketplaceAccountFixture.coupangStubBuilder("V0001", null)
+                .id(1L).platform(Platform.COUPANG)
+                .isActive(true).build();
 
         props = new CoupangProperties();
         props.setReturnrequestsPath("/v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests");

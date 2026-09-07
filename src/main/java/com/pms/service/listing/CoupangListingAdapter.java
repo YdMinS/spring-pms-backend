@@ -18,6 +18,7 @@ import com.pms.service.MasterProductService;
 import com.pms.service.OptionCheckSuffixResolver;
 import com.pms.service.RegistrationNameGenerator;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.coupang.CoupangCredentials;
 import com.pms.service.listing.category.CategoryAttribute;
 import com.pms.service.listing.category.CategoryMetaSchema;
 import com.pms.service.listing.category.CategoryNotice;
@@ -334,12 +335,13 @@ public class CoupangListingAdapter implements ListingChannel {
         // returns null), so by this point the code is always non-null and reused below for the notice groups.
         String categoryCode = masterChannelConfigService.resolvePlatformCategoryCode(cell);
         payload.put("displayCategoryCode", categoryCode);
-        payload.put("vendorId", acct.getVendorId());
+        var cred = CoupangCredentials.of(acct);
+        payload.put("vendorId", cred.getVendorId());
         // 73: WING login id — Coupang-required, distinct from vendorId (vendor code). Push must not proceed unset.
-        if (acct.getVendorUserId() == null || acct.getVendorUserId().isBlank()) {
+        if (cred.getVendorUserId() == null || cred.getVendorUserId().isBlank()) {
             throw new IllegalArgumentException("vendorUserId 미설정 — 계정 설정을 먼저 완료하세요");
         }
-        payload.put("vendorUserId", acct.getVendorUserId());
+        payload.put("vendorUserId", cred.getVendorUserId());
 
         // 73: sale period is not user-input → default now .. far future (Coupang format yyyy-MM-dd'T'HH:mm:ss).
         payload.put("saleStartedAt", LocalDateTime.now().format(SALE_DATE_FORMAT));

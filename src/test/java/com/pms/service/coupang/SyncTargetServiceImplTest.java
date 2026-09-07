@@ -5,6 +5,7 @@ import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.domain.SyncStatus;
 import com.pms.dto.response.SyncTargetResponse;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,9 +33,9 @@ class SyncTargetServiceImplTest {
 
     private MarketplaceAccount account(Long id, Platform platform, String sellerName) {
         Seller seller = Seller.builder().id(id * 10).sellerName(sellerName).build();
-        return MarketplaceAccount.builder()
+        return MarketplaceAccountFixture.coupangStubBuilder("V" + id, null)
                 .id(id).seller(seller).platform(platform).accountAlias("별칭" + id)
-                .vendorId("V" + id).accessKey("ak").secretKey("sk").isActive(true)
+                .isActive(true)
                 .lastSyncStatus(SyncStatus.PARTIAL)
                 .lastSyncAt(LocalDateTime.now())
                 .lastSyncError("취소 보정 실패 — HTTP 504 from Coupang")
