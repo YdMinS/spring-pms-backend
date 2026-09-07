@@ -3,6 +3,7 @@ package com.pms.service.coupang;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
+import com.pms.domain.Platform;
 import com.pms.dto.response.OrderItemResponse;
 import com.pms.dto.response.OrderMonthResponse;
 import com.pms.repository.OrderItemRepository;
@@ -39,9 +40,9 @@ class OrderQueryServiceImplTest {
     @InjectMocks private OrderQueryServiceImpl service;
 
     private OrderItem sample() {
-        MarketplaceAccount acc = MarketplaceAccount.builder().id(7L).platform("COUPANG").build();
+        MarketplaceAccount acc = MarketplaceAccount.builder().id(7L).platform(Platform.COUPANG).build();
         return OrderItem.builder()
-                .id(1L).marketplaceAccount(acc).platform("COUPANG")
+                .id(1L).marketplaceAccount(acc).platform(Platform.COUPANG)
                 .externalOrderId("O1").externalBoxId("B1").externalItemId("I1")
                 .itemName("양말").ordererName("홍길동").receiverName("김철수")
                 .orderCount(10).cancelCount(2).holdCount(1)
@@ -92,9 +93,9 @@ class OrderQueryServiceImplTest {
     void list_fullyCancelledInstruct_mapsToCancelled() {
         // 상품준비중(INSTRUCT)인데 전량 취소 → effectiveStatus=CANCELLED, status 원본 보존
         given(coupangProperties.getSyncDays()).willReturn(14);
-        MarketplaceAccount acc = MarketplaceAccount.builder().id(7L).platform("COUPANG").build();
+        MarketplaceAccount acc = MarketplaceAccount.builder().id(7L).platform(Platform.COUPANG).build();
         OrderItem fully = OrderItem.builder()
-                .id(2L).marketplaceAccount(acc).platform("COUPANG")
+                .id(2L).marketplaceAccount(acc).platform(Platform.COUPANG)
                 .externalOrderId("O2").externalBoxId("B2").externalItemId("I2")
                 .itemName("모자").orderCount(3).cancelCount(3).holdCount(0)
                 .status("INSTRUCT").build();

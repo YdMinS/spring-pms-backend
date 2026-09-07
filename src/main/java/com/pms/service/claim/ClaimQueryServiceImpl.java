@@ -105,7 +105,7 @@ public class ClaimQueryServiceImpl implements ClaimQueryService {
         var seller = claim.getMarketplaceAccount().getSeller();
         return new OrderClaimResponse(
                 claim.getId(),
-                claim.getPlatform(),
+                claim.getPlatform().name(),
                 claim.getClaimType(),
                 claim.getStatus(),
                 claim.getPlatformStatus(),

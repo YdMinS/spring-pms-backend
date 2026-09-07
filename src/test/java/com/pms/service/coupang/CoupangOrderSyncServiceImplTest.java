@@ -2,6 +2,7 @@ package com.pms.service.coupang;
 
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.service.coupang.CoupangOrderStatusSyncer.StatusSyncResult;
 import com.pms.service.coupang.CoupangOrderSyncService.SyncResult;
 import org.junit.jupiter.api.BeforeEach;
@@ -58,7 +59,7 @@ class CoupangOrderSyncServiceImplTest {
         lenient().when(coupangProperties.getTerminalSyncMinDays()).thenReturn(3);
         account = MarketplaceAccount.builder()
                 .id(1L)
-                .platform("COUPANG")
+                .platform(Platform.COUPANG)
                 .vendorId("V0001")
                 .accessKey("ak")
                 .secretKey("sk")

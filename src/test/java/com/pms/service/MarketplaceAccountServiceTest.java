@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.DetailTemplate;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.domain.ThumbnailTemplate;
 import com.pms.dto.request.MarketplaceAccountRequest;
@@ -91,7 +92,7 @@ class MarketplaceAccountServiceTest {
 
         // update: request value directly replaces (same semantics as vendorId/accessKey, full overwrite).
         MarketplaceAccount existing = MarketplaceAccount.builder()
-                .id(50L).seller(seller()).platform("COUPANG").vendorId("V1")
+                .id(50L).seller(seller()).platform(Platform.COUPANG).vendorId("V1")
                 .vendorUserId("wing_old").accessKey("ak").secretKey("sk").isActive(true).build();
         given(repository.findById(50L)).willReturn(Optional.of(existing));
         MarketplaceAccountResponse response = service.update(
@@ -103,7 +104,7 @@ class MarketplaceAccountServiceTest {
     void update_nullTemplateId_keepsExisting_valueReplaces() {
         ThumbnailTemplate oldThumb = ThumbnailTemplate.builder().id(1L).name("old").build();
         MarketplaceAccount existing = MarketplaceAccount.builder()
-                .id(50L).seller(seller()).platform("COUPANG").vendorId("V1")
+                .id(50L).seller(seller()).platform(Platform.COUPANG).vendorId("V1")
                 .accessKey("ak").secretKey("sk").isActive(true)
                 .thumbnailTemplate(oldThumb).detailTemplate(null).build();
         given(repository.findById(50L)).willReturn(Optional.of(existing));

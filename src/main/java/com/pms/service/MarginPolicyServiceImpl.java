@@ -1,6 +1,7 @@
 package com.pms.service;
 
 import com.pms.domain.MarginPolicy;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.dto.request.MarginPolicyRequest;
 import com.pms.dto.response.MarginPolicyResponse;
@@ -31,12 +32,13 @@ public class MarginPolicyServiceImpl implements MarginPolicyService {
     @Override
     @Transactional
     public MarginPolicyResponse createMarginPolicy(MarginPolicyRequest request) {
-        requireNoDuplicate(request.getSellerId(), request.getPlatform(), null);
+        Platform platform = Platform.from(request.getPlatform());
+        requireNoDuplicate(request.getSellerId(), platform, null);
         Seller seller = requireSeller(request.getSellerId());
 
         MarginPolicy policy = MarginPolicy.builder()
                 .seller(seller)
-                .platform(request.getPlatform())
+                .platform(platform)
                 .marginRate(request.getMarginRate())
                 .displayDiscountRate(request.getDisplayDiscountRate())
                 .build();
@@ -59,12 +61,13 @@ public class MarginPolicyServiceImpl implements MarginPolicyService {
     @Transactional
     public MarginPolicyResponse updateMarginPolicy(Long id, MarginPolicyRequest request) {
         MarginPolicy existing = requirePolicy(id);
-        requireNoDuplicate(request.getSellerId(), request.getPlatform(), id);
+        Platform platform = Platform.from(request.getPlatform());
+        requireNoDuplicate(request.getSellerId(), platform, id);
         Seller seller = requireSeller(request.getSellerId());
 
         MarginPolicy updated = existing.toBuilder()
                 .seller(seller)
-                .platform(request.getPlatform())
+                .platform(platform)
                 .marginRate(request.getMarginRate())
                 // null = keep existing (optional field convention).
                 .displayDiscountRate(request.getDisplayDiscountRate() != null
@@ -80,7 +83,7 @@ public class MarginPolicyServiceImpl implements MarginPolicyService {
     }
 
     /** Reject a second preset for the same (seller, platform); {@code selfId} is excluded on update. */
-    private void requireNoDuplicate(Long sellerId, String platform, Long selfId) {
+    private void requireNoDuplicate(Long sellerId, Platform platform, Long selfId) {
         marginPolicyRepository.findBySellerIdAndPlatform(sellerId, platform)
                 .filter(found -> !found.getId().equals(selfId))
                 .ifPresent(found -> {
@@ -104,7 +107,7 @@ public class MarginPolicyServiceImpl implements MarginPolicyService {
                 .id(policy.getId())
                 .sellerId(policy.getSeller().getId())
                 .sellerName(policy.getSeller().getSellerName())
-                .platform(policy.getPlatform())
+                .platform(policy.getPlatform().name())
                 .marginRate(policy.getMarginRate())
                 .displayDiscountRate(policy.getDisplayDiscountRate())
                 .build();

@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.Category;
 import com.pms.domain.CommissionRate;
+import com.pms.domain.Platform;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.CommissionRateRepository;
 import org.junit.jupiter.api.Test;
@@ -34,26 +35,26 @@ class CommissionPrefillServiceTest {
 
     @Test
     void existingRate_isNoOp() {
-        given(commissionRateRepository.findByPlatformAndCategoryId("COUPANG", 5L))
+        given(commissionRateRepository.findByPlatformAndCategoryId(Platform.COUPANG, 5L))
                 .willReturn(Optional.of(CommissionRate.builder().id(1L).build()));
 
-        service.prefillIfAbsent(5L, "COUPANG", "가전디지털");
+        service.prefillIfAbsent(5L, Platform.COUPANG, "가전디지털");
 
         verify(commissionRateRepository, never()).save(any());
     }
 
     @Test
     void absentAndResolvable_savesCategoryRate() {
-        given(commissionRateRepository.findByPlatformAndCategoryId("COUPANG", 5L)).willReturn(Optional.empty());
+        given(commissionRateRepository.findByPlatformAndCategoryId(Platform.COUPANG, 5L)).willReturn(Optional.empty());
         given(coupangFeeResolver.resolve("가전디지털")).willReturn(Optional.of(new BigDecimal("0.078")));
         given(categoryRepository.findById(5L)).willReturn(Optional.of(Category.builder().id(5L).name("가전").build()));
 
-        service.prefillIfAbsent(5L, "COUPANG", "가전디지털");
+        service.prefillIfAbsent(5L, Platform.COUPANG, "가전디지털");
 
         ArgumentCaptor<CommissionRate> captor = ArgumentCaptor.forClass(CommissionRate.class);
         verify(commissionRateRepository).save(captor.capture());
         CommissionRate saved = captor.getValue();
-        assertThat(saved.getPlatform()).isEqualTo("COUPANG");
+        assertThat(saved.getPlatform()).isEqualTo(Platform.COUPANG);
         assertThat(saved.getCategory().getId()).isEqualTo(5L);
         assertThat(saved.getRate()).isEqualByComparingTo("0.078");
         assertThat(saved.getIsDefault()).isFalse();
@@ -61,17 +62,17 @@ class CommissionPrefillServiceTest {
 
     @Test
     void unresolvedRate_isNoOp() {
-        given(commissionRateRepository.findByPlatformAndCategoryId("COUPANG", 5L)).willReturn(Optional.empty());
+        given(commissionRateRepository.findByPlatformAndCategoryId(Platform.COUPANG, 5L)).willReturn(Optional.empty());
         given(coupangFeeResolver.resolve("모르는카테고리")).willReturn(Optional.empty());
 
-        service.prefillIfAbsent(5L, "COUPANG", "모르는카테고리");
+        service.prefillIfAbsent(5L, Platform.COUPANG, "모르는카테고리");
 
         verify(commissionRateRepository, never()).save(any());
     }
 
     @Test
     void nonCoupang_isNoOp() {
-        service.prefillIfAbsent(5L, "NAVER", "가전디지털");
+        service.prefillIfAbsent(5L, Platform.NAVER, "가전디지털");
 
         verify(commissionRateRepository, never()).findByPlatformAndCategoryId(any(), any());
         verify(commissionRateRepository, never()).save(any());

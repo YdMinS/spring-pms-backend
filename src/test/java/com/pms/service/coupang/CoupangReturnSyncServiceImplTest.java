@@ -7,6 +7,7 @@ import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
 import com.pms.domain.OrderItem;
+import com.pms.domain.Platform;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.repository.OrderItemRepository;
 import com.pms.service.claim.ClaimStaleSweeper;
@@ -61,7 +62,7 @@ class CoupangReturnSyncServiceImplTest {
     @BeforeEach
     void setUp() {
         account = MarketplaceAccount.builder()
-                .id(1L).platform("COUPANG").vendorId("V0001")
+                .id(1L).platform(Platform.COUPANG).vendorId("V0001")
                 .accessKey("ak").secretKey("sk").isActive(true).build();
 
         props = new CoupangProperties();
@@ -84,7 +85,7 @@ class CoupangReturnSyncServiceImplTest {
         given(coupangApiClient.get(anyString(), contains("status="), any())).willReturn(emptyData());
         // 기존 order_item: cancel 0 → 취소 2 반영, purchasableQty 감소(10-(2+0)=8)
         OrderItem existing = OrderItem.builder()
-                .id(10L).marketplaceAccount(account).platform("COUPANG")
+                .id(10L).marketplaceAccount(account).platform(Platform.COUPANG)
                 .externalOrderId("O1").externalBoxId("B1").externalItemId("I1")
                 .orderCount(10).cancelCount(0).holdCount(0).status("ACCEPT").build();
         given(orderItemRepository.findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
@@ -123,7 +124,7 @@ class CoupangReturnSyncServiceImplTest {
         given(coupangApiClient.get(anyString(), contains("status=PR"), any())).willReturn(emptyData());
 
         OrderItem existing = OrderItem.builder()
-                .id(20L).marketplaceAccount(account).platform("COUPANG")
+                .id(20L).marketplaceAccount(account).platform(Platform.COUPANG)
                 .externalOrderId("O1").externalBoxId("B1").externalItemId("I1")
                 .orderCount(2).cancelCount(0).holdCount(0).status("INSTRUCT").build();
         given(orderItemRepository.findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
@@ -386,7 +387,7 @@ class CoupangReturnSyncServiceImplTest {
     /** receivedAt 은 쿠팡 createdAt = KST 벽시계다 — 기대치도 KST 로 만든다. */
     private OrderClaim openClaim(Long id, long receivedDaysAgo) {
         return OrderClaim.builder()
-                .id(id).marketplaceAccount(account).platform("COUPANG").claimType(ClaimType.RETURN)
+                .id(id).marketplaceAccount(account).platform(Platform.COUPANG).claimType(ClaimType.RETURN)
                 .externalClaimId("R-" + id).externalOrderId("O-" + id).externalItemId("V-" + id)
                 .status(ClaimStatus.RECEIVED).platformStatus("UC")
                 .receivedAt(LocalDate.now(SyncWindow.KST).minusDays(receivedDaysAgo).atTime(10, 0))

@@ -5,6 +5,7 @@ import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.OptionApprovalStatus;
+import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -62,7 +63,7 @@ class MasterOptionChannelSyncTest {
 
     /** platformProductId null = DRAFT cell; non-null = market-registered. */
     private ProductListing cell(Long id, String platformProductId) {
-        return ProductListing.builder().id(id).platform("COUPANG").name("셀-" + id)
+        return ProductListing.builder().id(id).platform(Platform.COUPANG).name("셀-" + id)
                 .masterProduct(MASTER).platformProductId(platformProductId).build();
     }
 

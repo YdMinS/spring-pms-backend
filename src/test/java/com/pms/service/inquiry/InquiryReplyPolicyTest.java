@@ -6,6 +6,7 @@ import com.pms.domain.InquiryAuthorRole;
 import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.dto.response.ReplyCapability;
 import org.junit.jupiter.api.Test;
 
@@ -26,8 +27,8 @@ class InquiryReplyPolicyTest {
     /** 쿠팡 어댑터 자리를 대신하는 최소 스텁 — 전송은 하지 않는다(정책은 존재 여부만 본다). */
     private static final InquiryReplyAdapter COUPANG_ADAPTER = new InquiryReplyAdapter() {
         @Override
-        public String platform() {
-            return "COUPANG";
+        public Platform platform() {
+            return Platform.COUPANG;
         }
 
         @Override
@@ -90,7 +91,7 @@ class InquiryReplyPolicyTest {
     void evaluate_unsupportedPlatform_blocksWithAccountAliasNotPlatformCode() {
         CustomerInquiry inquiry = inquiry(InquiryType.PRODUCT_QNA, InquiryStatus.UNANSWERED, account(null))
                 .toBuilder()
-                .platform("NAVER")
+                .platform(Platform.NAVER)
                 .build();
 
         ReplyCapability capability = policy.evaluate(inquiry, List.of());
@@ -138,14 +139,14 @@ class InquiryReplyPolicyTest {
 
     private MarketplaceAccount account(String vendorUserId) {
         return MarketplaceAccount.builder()
-                .id(7L).platform("COUPANG").accountAlias("쿠팡-메인").vendorUserId(vendorUserId).build();
+                .id(7L).platform(Platform.COUPANG).accountAlias("쿠팡-메인").vendorUserId(vendorUserId).build();
     }
 
     private CustomerInquiry inquiry(InquiryType type, InquiryStatus status, MarketplaceAccount account) {
         return CustomerInquiry.builder()
                 .id(3L)
                 .marketplaceAccount(account)
-                .platform("COUPANG")
+                .platform(Platform.COUPANG)
                 .inquiryType(type)
                 .externalInquiryId("I-1")
                 .status(status)

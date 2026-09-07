@@ -1,6 +1,7 @@
 package com.pms.service;
 
 import com.pms.domain.Carrier;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCarrierCode;
 import com.pms.dto.request.PlatformCarrierCodeRequest;
 import com.pms.dto.response.PlatformCarrierCodeResponse;
@@ -46,14 +47,15 @@ public class PlatformCarrierCodeServiceImpl implements PlatformCarrierCodeServic
         Carrier carrier = carrierRepository.findById(carrierId)
                 .orElseThrow(() -> new CarrierNotFoundException(carrierId));
 
-        if (platformCarrierCodeRepository.existsByCarrier_IdAndPlatform(carrierId, req.getPlatform())) {
-            throw new DuplicatePlatformCarrierCodeException(carrierId, req.getPlatform());
+        Platform platform = Platform.from(req.getPlatform());
+        if (platformCarrierCodeRepository.existsByCarrier_IdAndPlatform(carrierId, platform)) {
+            throw new DuplicatePlatformCarrierCodeException(carrierId, platform);
         }
 
         PlatformCarrierCode saved = platformCarrierCodeRepository.save(
                 PlatformCarrierCode.builder()
                         .carrier(carrier)
-                        .platform(req.getPlatform())
+                        .platform(platform)
                         .deliveryCompanyCode(req.getDeliveryCompanyCode())
                         .build());
         return toResponse(saved);
@@ -71,13 +73,14 @@ public class PlatformCarrierCodeServiceImpl implements PlatformCarrierCodeServic
             throw new PlatformCarrierCodeNotFoundException(codeId);
         }
 
+        Platform platform = Platform.from(req.getPlatform());
         if (platformCarrierCodeRepository
-                .existsByCarrier_IdAndPlatformAndIdNot(carrierId, req.getPlatform(), codeId)) {
-            throw new DuplicatePlatformCarrierCodeException(carrierId, req.getPlatform());
+                .existsByCarrier_IdAndPlatformAndIdNot(carrierId, platform, codeId)) {
+            throw new DuplicatePlatformCarrierCodeException(carrierId, platform);
         }
 
         // 영속 엔티티에 도메인 변경 메서드 호출 → dirty checking 으로 반영(새 인스턴스 build/save 금지).
-        code.updateCode(req.getPlatform(), req.getDeliveryCompanyCode());
+        code.updateCode(platform, req.getDeliveryCompanyCode());
         return toResponse(code);
     }
 
@@ -98,7 +101,7 @@ public class PlatformCarrierCodeServiceImpl implements PlatformCarrierCodeServic
         return PlatformCarrierCodeResponse.builder()
                 .id(code.getId())
                 .carrierId(code.getCarrier().getId())
-                .platform(code.getPlatform())
+                .platform(code.getPlatform().name())
                 .deliveryCompanyCode(code.getDeliveryCompanyCode())
                 .build();
     }

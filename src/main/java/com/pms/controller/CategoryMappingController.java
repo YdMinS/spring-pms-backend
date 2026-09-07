@@ -1,5 +1,6 @@
 package com.pms.controller;
 
+import com.pms.domain.Platform;
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.CategoryMappingRequest;
 import com.pms.dto.response.CategoryMappingResponse;
@@ -47,7 +48,7 @@ public class CategoryMappingController {
     @Operation(summary = "Delete a standard category's mapping for a platform")
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<Void> deleteMapping(@PathVariable Long categoryId, @PathVariable String platform) {
-        categoryMappingService.deleteMapping(categoryId, platform);
+        categoryMappingService.deleteMapping(categoryId, Platform.from(platform));
         return ResponseEntity.noContent().build();
     }
 }

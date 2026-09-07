@@ -5,6 +5,7 @@ import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
 import com.pms.domain.OrderItem;
+import com.pms.domain.Platform;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.repository.OrderItemRepository;
 import lombok.RequiredArgsConstructor;
@@ -52,7 +53,7 @@ public class ClaimUpserter {
         if (found.isEmpty()) {
             orderClaimRepository.save(OrderClaim.builder()
                     .marketplaceAccount(account)
-                    .platform("COUPANG")
+                    .platform(Platform.COUPANG)
                     .claimType(type)
                     .externalClaimId(record.externalClaimId())
                     .externalOrderId(record.externalOrderId())

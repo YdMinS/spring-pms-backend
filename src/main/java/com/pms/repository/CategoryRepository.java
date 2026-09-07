@@ -1,6 +1,7 @@
 package com.pms.repository;
 
 import com.pms.domain.Category;
+import com.pms.domain.Platform;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -19,14 +20,14 @@ import java.util.Optional;
  * - deleteById(Long)
  *
  * Custom methods:
- * - findByPlatform(String platform) - Filter categories by platform
+ * - findByPlatform(Platform platform) - Filter categories by platform
  *
  * @see Category for entity definition
  * @see com.pms.service.CategoryService for business logic
  */
 @Repository
 public interface CategoryRepository extends JpaRepository<Category, Long> {
-    List<Category> findByPlatform(String platform);
+    List<Category> findByPlatform(Platform platform);
 
     // Tree browse (FEATURE_2608_06 / 52): root nodes, a parent's children, and leaf detection.
     List<Category> findByParentIsNull();

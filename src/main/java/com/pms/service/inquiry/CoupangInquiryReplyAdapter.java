@@ -6,6 +6,7 @@ import com.pms.config.CoupangProperties;
 import com.pms.domain.CustomerInquiry;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.service.coupang.CoupangApiClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,15 +36,13 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class CoupangInquiryReplyAdapter implements InquiryReplyAdapter {
 
-    private static final String PLATFORM_COUPANG = "COUPANG";
-
     private final CoupangApiClient coupangApiClient;
     private final CoupangProperties coupangProperties;
     private final ObjectMapper objectMapper;
 
     @Override
-    public String platform() {
-        return PLATFORM_COUPANG;
+    public Platform platform() {
+        return Platform.COUPANG;
     }
 
     @Override

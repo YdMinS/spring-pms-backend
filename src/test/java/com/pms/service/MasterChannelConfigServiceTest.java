@@ -6,6 +6,7 @@ import com.pms.domain.CategoryMapping;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.Package;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.repository.CategoryMappingRepository;
@@ -45,7 +46,7 @@ class MasterChannelConfigServiceTest {
     }
 
     private ProductListing cell(MasterProduct master) {
-        return ProductListing.builder().id(1L).platform("COUPANG").masterProduct(master).build();
+        return ProductListing.builder().id(1L).platform(Platform.COUPANG).masterProduct(master).build();
     }
 
     // ---- standard category ----
@@ -75,10 +76,10 @@ class MasterChannelConfigServiceTest {
         Category category = Category.builder().id(5L).name("신발").build();
         MasterProduct master = MasterProduct.builder().id(9L).category(category).build();
         PlatformCategory platformCategory = PlatformCategory.builder()
-                .id(20L).platform("COUPANG").code("101").name("운동화").build();
-        given(categoryMappingRepository.findByCategoryIdAndPlatform(5L, "COUPANG"))
+                .id(20L).platform(Platform.COUPANG).code("101").name("운동화").build();
+        given(categoryMappingRepository.findByCategoryIdAndPlatform(5L, Platform.COUPANG))
                 .willReturn(Optional.of(CategoryMapping.builder()
-                        .category(category).platform("COUPANG").platformCategoryId("legacy")
+                        .category(category).platform(Platform.COUPANG).platformCategoryId("legacy")
                         .platformCategory(platformCategory).build()));
 
         assertThat(service.resolvePlatformCategory(cell(master)).getCommissionRate()).isNull();
@@ -89,7 +90,7 @@ class MasterChannelConfigServiceTest {
     void resolvePlatformCategoryCode_noMapping_throws400() {
         Category category = Category.builder().id(5L).name("신발").build();
         MasterProduct master = MasterProduct.builder().id(9L).category(category).build();
-        given(categoryMappingRepository.findByCategoryIdAndPlatform(5L, "COUPANG"))
+        given(categoryMappingRepository.findByCategoryIdAndPlatform(5L, Platform.COUPANG))
                 .willReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.resolvePlatformCategoryCode(cell(master)))
@@ -103,23 +104,23 @@ class MasterChannelConfigServiceTest {
     void resolvePlatformCategoryCodeByCategoryId_mappingLinked_returnsCode() {
         Category category = Category.builder().id(7L).name("신발").build();
         PlatformCategory platformCategory = PlatformCategory.builder()
-                .id(20L).platform("COUPANG").code("202").name("운동화").build();
+                .id(20L).platform(Platform.COUPANG).code("202").name("운동화").build();
         given(categoryRepository.findById(7L)).willReturn(Optional.of(category));
-        given(categoryMappingRepository.findByCategoryIdAndPlatform(7L, "COUPANG"))
+        given(categoryMappingRepository.findByCategoryIdAndPlatform(7L, Platform.COUPANG))
                 .willReturn(Optional.of(CategoryMapping.builder()
-                        .category(category).platform("COUPANG").platformCategory(platformCategory).build()));
+                        .category(category).platform(Platform.COUPANG).platformCategory(platformCategory).build()));
 
-        assertThat(service.resolvePlatformCategoryCode(7L, "COUPANG")).isEqualTo("202");
+        assertThat(service.resolvePlatformCategoryCode(7L, Platform.COUPANG)).isEqualTo("202");
     }
 
     @Test
     void resolvePlatformCategoryCodeByCategoryId_noMapping_throws400() {
         Category category = Category.builder().id(7L).name("신발").build();
         given(categoryRepository.findById(7L)).willReturn(Optional.of(category));
-        given(categoryMappingRepository.findByCategoryIdAndPlatform(7L, "COUPANG"))
+        given(categoryMappingRepository.findByCategoryIdAndPlatform(7L, Platform.COUPANG))
                 .willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.resolvePlatformCategoryCode(7L, "COUPANG"))
+        assertThatThrownBy(() -> service.resolvePlatformCategoryCode(7L, Platform.COUPANG))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("COUPANG 카테고리 매핑 미설정");
     }
@@ -128,7 +129,7 @@ class MasterChannelConfigServiceTest {
     void resolvePlatformCategoryCodeByCategoryId_categoryNotFound_throws400() {
         given(categoryRepository.findById(99L)).willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.resolvePlatformCategoryCode(99L, "COUPANG"))
+        assertThatThrownBy(() -> service.resolvePlatformCategoryCode(99L, Platform.COUPANG))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("카테고리 없음");
     }
@@ -138,9 +139,9 @@ class MasterChannelConfigServiceTest {
         // Mapping present but its PlatformCategory FK is still null (transition) = not seeded yet → 400.
         Category category = Category.builder().id(5L).name("신발").build();
         MasterProduct master = MasterProduct.builder().id(9L).category(category).build();
-        given(categoryMappingRepository.findByCategoryIdAndPlatform(5L, "COUPANG"))
+        given(categoryMappingRepository.findByCategoryIdAndPlatform(5L, Platform.COUPANG))
                 .willReturn(Optional.of(CategoryMapping.builder()
-                        .category(category).platform("COUPANG").platformCategoryId("legacy").build()));
+                        .category(category).platform(Platform.COUPANG).platformCategoryId("legacy").build()));
 
         assertThatThrownBy(() -> service.resolvePlatformCategory(cell(master)))
                 .isInstanceOf(IllegalArgumentException.class)

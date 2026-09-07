@@ -1,6 +1,7 @@
 package com.pms.tenant;
 
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.SellerRepository;
@@ -82,7 +83,7 @@ class OrderSyncCommitBoundaryTest {
                 .build());
         MarketplaceAccount account = marketplaceAccountRepository.save(MarketplaceAccount.builder()
                 .seller(seller)
-                .platform("COUPANG")
+                .platform(Platform.COUPANG)
                 .accountAlias("cb-account")
                 .vendorId("A00000003")
                 .accessKey("access")

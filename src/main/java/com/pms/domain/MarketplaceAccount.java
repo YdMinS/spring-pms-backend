@@ -40,7 +40,8 @@ public class MarketplaceAccount extends BaseEntity {
     private Seller seller;
 
     @Column(nullable = false, length = 50)
-    private String platform;                 // "COUPANG"
+    @Enumerated(EnumType.STRING)
+    private Platform platform;
 
     @Column(name = "account_alias", length = 255)
     private String accountAlias;

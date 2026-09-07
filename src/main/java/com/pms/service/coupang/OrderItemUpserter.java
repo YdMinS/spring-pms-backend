@@ -3,6 +3,7 @@ package com.pms.service.coupang;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
+import com.pms.domain.Platform;
 import com.pms.repository.OrderItemRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,7 +32,6 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class OrderItemUpserter {
 
-    private static final String PLATFORM_COUPANG = "COUPANG";
     private static final int NAME_MAX_LENGTH = 100;
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
@@ -116,7 +116,7 @@ public class OrderItemUpserter {
 
         orderItemRepository.save(OrderItem.builder()
                 .marketplaceAccount(account)
-                .platform(PLATFORM_COUPANG)
+                .platform(Platform.COUPANG)
                 .externalOrderId(orderId)
                 .externalBoxId(boxId)
                 .externalItemId(vendorItemId)

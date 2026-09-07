@@ -7,6 +7,7 @@ import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.repository.MasterProductOptionRepository;
@@ -104,8 +105,8 @@ public class CoupangListingAdapter implements ListingChannel {
     private final ShippingConfigResolver shippingConfigResolver;
 
     @Override
-    public String platform() {
-        return "COUPANG";
+    public Platform platform() {
+        return Platform.COUPANG;
     }
 
     @Override

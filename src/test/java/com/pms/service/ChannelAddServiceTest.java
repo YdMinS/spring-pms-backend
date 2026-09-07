@@ -5,6 +5,7 @@ import com.pms.domain.ListingStatus;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
+import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -92,13 +93,13 @@ class ChannelAddServiceTest {
         Product prodB = product(200L);
 
         given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master()));
-        given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(MASTER_ID, SELLER_ID, "COUPANG"))
+        given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(MASTER_ID, SELLER_ID, Platform.COUPANG))
                 .willReturn(false);
         // Master owns two options — channel-add copies BOTH (no subset selection).
         given(masterProductOptionRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(opt1, opt2));
         given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(Seller.builder().id(SELLER_ID).build()));
         // Standard category set + a COUPANG mapping present → channel-add passes pre-validation (44).
-        given(categoryMappingRepository.existsByCategoryIdAndPlatform(CATEGORY_ID, "COUPANG")).willReturn(true);
+        given(categoryMappingRepository.existsByCategoryIdAndPlatform(CATEGORY_ID, Platform.COUPANG)).willReturn(true);
         given(masterProductOptionItemRepository.findByOptionIdIn(List.of(10L, 20L)))
                 .willReturn(List.of(item(opt1, prodA, 2), item(opt2, prodB, 1)));
 
@@ -148,7 +149,7 @@ class ChannelAddServiceTest {
     @Test
     void addChannel_duplicateChannel_throwsConflict_andNoSave() {
         given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master()));
-        given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(MASTER_ID, SELLER_ID, "COUPANG"))
+        given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(MASTER_ID, SELLER_ID, Platform.COUPANG))
                 .willReturn(true);
 
         assertThatThrownBy(() -> service.addChannel(MASTER_ID, request()))
@@ -163,7 +164,7 @@ class ChannelAddServiceTest {
         // Master has no standard category (44) → 400 before the cell is created.
         MasterProduct noCategory = MasterProduct.builder().id(MASTER_ID).name("마스터").active(true).build();
         given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(noCategory));
-        given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(MASTER_ID, SELLER_ID, "COUPANG"))
+        given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(MASTER_ID, SELLER_ID, Platform.COUPANG))
                 .willReturn(false);
         given(masterProductOptionRepository.findByMasterProductId(MASTER_ID))
                 .willReturn(List.of(masterOption(10L, "1세트")));
@@ -180,13 +181,13 @@ class ChannelAddServiceTest {
     @Test
     void addChannel_noCategoryMappingForPlatform_throwsBadRequest_beforeCellSave() {
         given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master()));
-        given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(MASTER_ID, SELLER_ID, "COUPANG"))
+        given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(MASTER_ID, SELLER_ID, Platform.COUPANG))
                 .willReturn(false);
         given(masterProductOptionRepository.findByMasterProductId(MASTER_ID))
                 .willReturn(List.of(masterOption(10L, "1세트")));
         given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(Seller.builder().id(SELLER_ID).build()));
         // Standard category set but no COUPANG mapping → 400, before the cell is created.
-        given(categoryMappingRepository.existsByCategoryIdAndPlatform(CATEGORY_ID, "COUPANG")).willReturn(false);
+        given(categoryMappingRepository.existsByCategoryIdAndPlatform(CATEGORY_ID, Platform.COUPANG)).willReturn(false);
 
         assertThatThrownBy(() -> service.addChannel(MASTER_ID, request()))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -199,7 +200,7 @@ class ChannelAddServiceTest {
     @Test
     void addChannel_masterWithNoOptions_throwsBadRequest_andNoSave() {
         given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master()));
-        given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(MASTER_ID, SELLER_ID, "COUPANG"))
+        given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(MASTER_ID, SELLER_ID, Platform.COUPANG))
                 .willReturn(false);
         // No options on the master → empty listing would result → 400.
         given(masterProductOptionRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of());

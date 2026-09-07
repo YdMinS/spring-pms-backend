@@ -2,6 +2,7 @@ package com.pms.service.coupang;
 
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.service.coupang.CoupangOrderStatusSyncer.StatusSyncResult;
 import lombok.RequiredArgsConstructor;
@@ -28,8 +29,6 @@ import java.util.function.Function;
 @RequiredArgsConstructor
 public class CoupangOrderSyncServiceImpl implements CoupangOrderSyncService {
 
-    private static final String PLATFORM_COUPANG = "COUPANG";
-
     private final CoupangOrderStatusSyncer statusSyncer;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final CoupangProperties coupangProperties;
@@ -38,7 +37,7 @@ public class CoupangOrderSyncServiceImpl implements CoupangOrderSyncService {
     public SyncResult syncAll() {
         SyncResult total = SyncResult.empty();
         for (MarketplaceAccount account : marketplaceAccountRepository.findByIsActiveTrue()) {
-            if (!PLATFORM_COUPANG.equals(account.getPlatform())) {
+            if (!Platform.COUPANG.equals(account.getPlatform())) {
                 continue;
             }
             total = total.plus(syncAccount(account));

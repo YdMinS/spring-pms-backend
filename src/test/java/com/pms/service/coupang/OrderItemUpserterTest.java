@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
+import com.pms.domain.Platform;
 import com.pms.repository.OrderItemRepository;
 import com.pms.service.coupang.OrderItemUpserter.UpsertCount;
 import org.junit.jupiter.api.BeforeEach;
@@ -51,7 +52,7 @@ class OrderItemUpserterTest {
     void setUp() {
         account = MarketplaceAccount.builder()
                 .id(1L)
-                .platform("COUPANG")
+                .platform(Platform.COUPANG)
                 .vendorId("A00012345")
                 .accessKey("ak").secretKey("sk")
                 .isActive(true)
@@ -71,7 +72,7 @@ class OrderItemUpserterTest {
         OrderItem line = saved.getValue();
         assertThat(line.getId()).isNull();                                  // 신규
         assertThat(line.getStatus()).isEqualTo("INSTRUCT");
-        assertThat(line.getPlatform()).isEqualTo("COUPANG");
+        assertThat(line.getPlatform()).isEqualTo(Platform.COUPANG);
         assertThat(line.getExternalOrderId()).isEqualTo(ORDER_ID);
         assertThat(line.getExternalBoxId()).isEqualTo(BOX_ID);
         assertThat(line.getExternalItemId()).isEqualTo(ITEM_ID);
@@ -85,7 +86,7 @@ class OrderItemUpserterTest {
         OrderItem existing = OrderItem.builder()
                 .id(99L)
                 .marketplaceAccount(account)
-                .platform("COUPANG")
+                .platform(Platform.COUPANG)
                 .externalOrderId(ORDER_ID).externalBoxId(BOX_ID).externalItemId(ITEM_ID)
                 .orderCount(1).cancelCount(0).holdCount(0)
                 .status("ACCEPT")

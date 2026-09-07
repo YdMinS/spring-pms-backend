@@ -3,6 +3,7 @@ package com.pms.controller;
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.BackgroundMode;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.domain.ThumbnailTemplate;
 import com.pms.repository.MarketplaceAccountRepository;
@@ -95,7 +96,7 @@ class MarketplaceAccountControllerTest extends BaseIntegrationTest {
     void update_adminToken_assignsTemplate_returns200() throws Exception {
         Long accountId = accountRepository.saveAndFlush(MarketplaceAccount.builder()
                 .seller(sellerRepository.findById(sellerId).orElseThrow())
-                .platform("COUPANG").vendorId("A00012345").accessKey("ak").secretKey("sk")
+                .platform(Platform.COUPANG).vendorId("A00012345").accessKey("ak").secretKey("sk")
                 .isActive(true).build()).getId();
 
         // secretKey omitted (blank keeps existing); thumbnailTemplateId assigns the template.
@@ -115,7 +116,7 @@ class MarketplaceAccountControllerTest extends BaseIntegrationTest {
     void updateRegistrationNameSuffix_adminToken_savesReplaceValues_blankToNull() throws Exception {
         Long accountId = accountRepository.saveAndFlush(MarketplaceAccount.builder()
                 .seller(sellerRepository.findById(sellerId).orElseThrow())
-                .platform("COUPANG").vendorId("A00012345").accessKey("ak").secretKey("sk")
+                .platform(Platform.COUPANG).vendorId("A00012345").accessKey("ak").secretKey("sk")
                 .isActive(true).build()).getId();
 
         mockMvc.perform(put(PATH + "/" + accountId + "/registration-name-suffix")

@@ -5,6 +5,7 @@ import com.pms.domain.InquiryAuthorRole;
 import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.dto.response.CustomerInquiryResponse;
 import com.pms.dto.response.ReplyCapability;
 import com.pms.exception.BusinessException;
@@ -60,7 +61,7 @@ class InquiryReplyServiceImplTest {
     private InquiryReplyServiceImpl service;
 
     private final MarketplaceAccount account = MarketplaceAccount.builder()
-            .id(7L).platform("COUPANG").accountAlias("쿠팡-메인").vendorUserId("wing-user").build();
+            .id(7L).platform(Platform.COUPANG).accountAlias("쿠팡-메인").vendorUserId("wing-user").build();
 
     @BeforeEach
     void setUp() {
@@ -69,8 +70,8 @@ class InquiryReplyServiceImplTest {
 
         given(customerInquiryRepository.findWithAccountById(3L)).willReturn(Optional.of(inquiry()));
         given(customerInquiryReplyRepository.findByInquiry_IdOrderByRepliedAtAsc(3L)).willReturn(List.of());
-        given(adapter.platform()).willReturn("COUPANG");
-        given(inquiryReplyPolicy.resolve("COUPANG")).willReturn(Optional.of(adapter));
+        given(adapter.platform()).willReturn(Platform.COUPANG);
+        given(inquiryReplyPolicy.resolve(Platform.COUPANG)).willReturn(Optional.of(adapter));
     }
 
     @Test
@@ -203,7 +204,7 @@ class InquiryReplyServiceImplTest {
         return CustomerInquiry.builder()
                 .id(3L)
                 .marketplaceAccount(account)
-                .platform("COUPANG")
+                .platform(Platform.COUPANG)
                 .inquiryType(InquiryType.CALL_CENTER)
                 .externalInquiryId("7777")
                 .status(InquiryStatus.UNANSWERED)

@@ -7,6 +7,7 @@ import com.pms.domain.ClaimStatus;
 import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
+import com.pms.domain.Platform;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.service.claim.ClaimSyncAdapter.ClaimSyncResult;
 import com.pms.service.coupang.CoupangApiClient;
@@ -52,7 +53,7 @@ class CoupangClaimAdapterTest {
     @BeforeEach
     void setUp() {
         account = MarketplaceAccount.builder()
-                .id(1L).platform("COUPANG").vendorId("V0001")
+                .id(1L).platform(Platform.COUPANG).vendorId("V0001")
                 .accessKey("ak").secretKey("sk").isActive(true).build();
 
         props = new CoupangProperties();
@@ -186,7 +187,7 @@ class CoupangClaimAdapterTest {
     /** receivedAt 은 쿠팡 createdAt = KST 벽시계다 — 기대치도 KST 로 만든다. */
     private OrderClaim openClaim(Long id, long receivedDaysAgo) {
         return OrderClaim.builder()
-                .id(id).marketplaceAccount(account).platform("COUPANG").claimType(ClaimType.EXCHANGE)
+                .id(id).marketplaceAccount(account).platform(Platform.COUPANG).claimType(ClaimType.EXCHANGE)
                 .externalClaimId("E-" + id).externalOrderId("O-" + id).externalItemId("V-" + id)
                 .status(ClaimStatus.RECEIVED).platformStatus("RECEIPT")
                 .receivedAt(LocalDate.now(SyncWindow.KST).minusDays(receivedDaysAgo).atTime(10, 0))

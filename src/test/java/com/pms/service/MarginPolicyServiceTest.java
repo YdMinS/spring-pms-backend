@@ -1,6 +1,7 @@
 package com.pms.service;
 
 import com.pms.domain.MarginPolicy;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.dto.request.MarginPolicyRequest;
 import com.pms.dto.response.MarginPolicyResponse;
@@ -41,8 +42,8 @@ class MarginPolicyServiceTest {
     @Test
     void create_duplicateSellerPlatform_throws400_andDoesNotSave() {
         MarginPolicy existing = MarginPolicy.builder().id(1L).seller(seller())
-                .platform("COUPANG").marginRate(new BigDecimal("0.1000")).build();
-        given(marginPolicyRepository.findBySellerIdAndPlatform(3L, "COUPANG"))
+                .platform(Platform.COUPANG).marginRate(new BigDecimal("0.1000")).build();
+        given(marginPolicyRepository.findBySellerIdAndPlatform(3L, Platform.COUPANG))
                 .willReturn(Optional.of(existing));
 
         assertThatThrownBy(() -> service.createMarginPolicy(request("COUPANG")))
@@ -53,10 +54,10 @@ class MarginPolicyServiceTest {
     @Test
     void create_valid_savesAndMapsResponse() {
         Seller seller = seller();
-        given(marginPolicyRepository.findBySellerIdAndPlatform(3L, "COUPANG")).willReturn(Optional.empty());
+        given(marginPolicyRepository.findBySellerIdAndPlatform(3L, Platform.COUPANG)).willReturn(Optional.empty());
         given(sellerRepository.findById(3L)).willReturn(Optional.of(seller));
         given(marginPolicyRepository.save(any())).willReturn(MarginPolicy.builder()
-                .id(7L).seller(seller).platform("COUPANG").marginRate(new BigDecimal("0.1500")).build());
+                .id(7L).seller(seller).platform(Platform.COUPANG).marginRate(new BigDecimal("0.1500")).build());
 
         MarginPolicyResponse response = service.createMarginPolicy(request("COUPANG"));
 
@@ -73,7 +74,7 @@ class MarginPolicyServiceTest {
         MarginPolicyRequest req = MarginPolicyRequest.builder()
                 .sellerId(3L).platform("COUPANG").marginRate(new BigDecimal("0.1500"))
                 .displayDiscountRate(new BigDecimal("0.2000")).build();
-        given(marginPolicyRepository.findBySellerIdAndPlatform(3L, "COUPANG")).willReturn(Optional.empty());
+        given(marginPolicyRepository.findBySellerIdAndPlatform(3L, Platform.COUPANG)).willReturn(Optional.empty());
         given(sellerRepository.findById(3L)).willReturn(Optional.of(seller));
         given(marginPolicyRepository.save(any())).willAnswer(inv -> {
             MarginPolicy p = inv.getArgument(0);
@@ -93,10 +94,10 @@ class MarginPolicyServiceTest {
     void update_nullDisplayDiscountRate_keepsExisting() {
         Seller seller = seller();
         MarginPolicy self = MarginPolicy.builder().id(5L).seller(seller)
-                .platform("COUPANG").marginRate(new BigDecimal("0.1000"))
+                .platform(Platform.COUPANG).marginRate(new BigDecimal("0.1000"))
                 .displayDiscountRate(new BigDecimal("0.3000")).build();
         given(marginPolicyRepository.findById(5L)).willReturn(Optional.of(self));
-        given(marginPolicyRepository.findBySellerIdAndPlatform(3L, "COUPANG")).willReturn(Optional.empty());
+        given(marginPolicyRepository.findBySellerIdAndPlatform(3L, Platform.COUPANG)).willReturn(Optional.empty());
         given(sellerRepository.findById(3L)).willReturn(Optional.of(seller));
         given(marginPolicyRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
 
@@ -109,11 +110,11 @@ class MarginPolicyServiceTest {
     @Test
     void update_duplicateOnAnotherRecord_throws400_andDoesNotSave() {
         MarginPolicy self = MarginPolicy.builder().id(5L).seller(seller())
-                .platform("COUPANG").marginRate(new BigDecimal("0.1000")).build();
+                .platform(Platform.COUPANG).marginRate(new BigDecimal("0.1000")).build();
         MarginPolicy other = MarginPolicy.builder().id(9L).seller(seller())
-                .platform("NAVER").marginRate(new BigDecimal("0.2000")).build();
+                .platform(Platform.NAVER).marginRate(new BigDecimal("0.2000")).build();
         given(marginPolicyRepository.findById(5L)).willReturn(Optional.of(self));
-        given(marginPolicyRepository.findBySellerIdAndPlatform(3L, "NAVER")).willReturn(Optional.of(other));
+        given(marginPolicyRepository.findBySellerIdAndPlatform(3L, Platform.NAVER)).willReturn(Optional.of(other));
 
         assertThatThrownBy(() -> service.updateMarginPolicy(5L, request("NAVER")))
                 .isInstanceOf(IllegalArgumentException.class);

@@ -1,5 +1,6 @@
 package com.pms.repository;
 
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -15,12 +16,12 @@ import java.util.Optional;
  */
 public interface PlatformCategoryRepository extends JpaRepository<PlatformCategory, Long> {
 
-    Optional<PlatformCategory> findByPlatformAndCode(String platform, String code);
+    Optional<PlatformCategory> findByPlatformAndCode(Platform platform, String code);
 
-    List<PlatformCategory> findByParentIsNullAndPlatform(String platform);
+    List<PlatformCategory> findByParentIsNullAndPlatform(Platform platform);
 
     List<PlatformCategory> findByParentId(Long parentId);
 
     /** Intermediate-node upsert key for the 53 import (declared here, consumed there). */
-    Optional<PlatformCategory> findByPlatformAndParentAndName(String platform, PlatformCategory parent, String name);
+    Optional<PlatformCategory> findByPlatformAndParentAndName(Platform platform, PlatformCategory parent, String name);
 }

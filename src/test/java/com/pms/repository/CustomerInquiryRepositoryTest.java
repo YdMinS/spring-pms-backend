@@ -7,6 +7,7 @@ import com.pms.domain.InquiryAuthorRole;
 import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.security.crypto.AesAttributeConverter;
 import org.junit.jupiter.api.BeforeEach;
@@ -152,7 +153,7 @@ class CustomerInquiryRepositoryTest {
         Seller seller = Seller.builder().sellerName(sellerName).businessRegistration(bizReg).build();
         em.persist(seller);
         MarketplaceAccount account = MarketplaceAccount.builder()
-                .seller(seller).platform("COUPANG").vendorId(vendorId)
+                .seller(seller).platform(Platform.COUPANG).vendorId(vendorId)
                 .accessKey("ak").secretKey("sk").isActive(true).build();
         em.persist(account);
         return account;
@@ -163,7 +164,7 @@ class CustomerInquiryRepositoryTest {
                                            String itemName, String externalOrderId) {
         CustomerInquiry inquiry = CustomerInquiry.builder()
                 .marketplaceAccount(account)
-                .platform("COUPANG")
+                .platform(Platform.COUPANG)
                 .inquiryType(type)
                 .externalInquiryId(externalId)
                 .externalOrderId(externalOrderId)

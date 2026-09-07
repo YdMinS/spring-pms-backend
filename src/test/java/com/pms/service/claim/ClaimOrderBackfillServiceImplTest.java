@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
+import com.pms.domain.Platform;
 import com.pms.exception.CoupangRateLimitedException;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.service.claim.ClaimOrderBackfillService.BackfillResult;
@@ -59,7 +60,7 @@ class ClaimOrderBackfillServiceImplTest {
     @BeforeEach
     void setUp() {
         account = MarketplaceAccount.builder()
-                .id(1L).platform("COUPANG").vendorId("V0001")
+                .id(1L).platform(Platform.COUPANG).vendorId("V0001")
                 .accessKey("ak").secretKey("sk").isActive(true).build();
 
         props = new CoupangProperties();

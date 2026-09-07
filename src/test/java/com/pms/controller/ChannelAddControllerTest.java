@@ -5,6 +5,7 @@ import com.pms.domain.Carrier;
 import com.pms.domain.CarrierRate;
 import com.pms.domain.Category;
 import com.pms.domain.CommissionRate;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.MarginPolicy;
 import com.pms.domain.MasterProduct;
@@ -135,9 +136,9 @@ class ChannelAddControllerTest {
 
         // Commission (COUPANG default) + margin preset so the reused price engine resolves.
         commissionRateRepository.save(CommissionRate.builder()
-                .platform("COUPANG").category(null).rate(new BigDecimal("0.10")).isDefault(true).build());
+                .platform(Platform.COUPANG).category(null).rate(new BigDecimal("0.10")).isDefault(true).build());
         marginPolicyRepository.save(MarginPolicy.builder()
-                .seller(seller).platform("COUPANG").marginRate(new BigDecimal("0.1500")).build());
+                .seller(seller).platform(Platform.COUPANG).marginRate(new BigDecimal("0.1500")).build());
 
         // (1500 + 2500 + 500) / 0.75 = 6000.
         Carrier carrier = carrierRepository.save(Carrier.builder().name("CJ").isActive(true).build());
@@ -155,10 +156,10 @@ class ChannelAddControllerTest {
                 .defaultDelivery(delivery).defaultPackage(box).build());
         masterId = master.getId();
         PlatformCategory platformCategory = platformCategoryRepository.save(PlatformCategory.builder()
-                .platform("COUPANG").code("cat-1").name("운동화")
+                .platform(Platform.COUPANG).code("cat-1").name("운동화")
                 .commissionRate(new BigDecimal("0.10")).build());
         categoryMappingRepository.save(CategoryMapping.builder()
-                .category(category).platform("COUPANG").platformCategoryId("cat-1")
+                .category(category).platform(Platform.COUPANG).platformCategoryId("cat-1")
                 .platformCategory(platformCategory).build());
         MasterProductOption option = masterProductOptionRepository.save(MasterProductOption.builder()
                 .masterProduct(master).name("1세트").build());

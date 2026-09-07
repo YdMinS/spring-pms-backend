@@ -1,5 +1,6 @@
 package com.pms.service.inquiry;
 
+import com.pms.domain.Platform;
 import com.pms.domain.CustomerInquiry;
 import com.pms.domain.MarketplaceAccount;
 
@@ -19,8 +20,8 @@ import com.pms.domain.MarketplaceAccount;
  */
 public interface InquiryReplyAdapter {
 
-    /** {@code customer_inquiry.platform} 과 대조할 값. 예: "COUPANG". */
-    String platform();
+    /** {@code customer_inquiry.platform} 과 대조할 값. 예: {@link Platform#COUPANG}. */
+    Platform platform();
 
     /**
      * 답변 1건 전송.

@@ -4,6 +4,7 @@ import com.pms.domain.CarrierRate;
 import com.pms.domain.MarginPolicy;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.Package;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.domain.Seller;
@@ -37,13 +38,13 @@ class PriceCalculatorTest {
     @InjectMocks private PriceCalculator priceCalculator;
 
     private final ProductListing cell = ProductListing.builder()
-            .id(1L).platform("COUPANG")
+            .id(1L).platform(Platform.COUPANG)
             .seller(Seller.builder().id(7L).sellerName("판매자").build())
             .build();
     private final MasterProductOption masterOption = MasterProductOption.builder().id(5L).name("기본").build();
 
     private PlatformCategory platformCategory(String commission) {
-        return PlatformCategory.builder().id(3L).platform("COUPANG").code("cat-1")
+        return PlatformCategory.builder().id(3L).platform(Platform.COUPANG).code("cat-1")
                 .commissionRate(commission == null ? null : new BigDecimal(commission)).build();
     }
 
@@ -59,7 +60,7 @@ class PriceCalculatorTest {
     void calculatePrice_appliesFormulaAndRoundsToTenWon() {
         // cost 5000 + delivery 2500 + box 500 = 8000; 1 − 0.10 − 0.15 = 0.75; 8000/0.75 = 10666.67 → 10670
         stubConfig("0.10", "2500", "500");
-        given(marginPolicyRepository.findBySellerIdAndPlatform(7L, "COUPANG"))
+        given(marginPolicyRepository.findBySellerIdAndPlatform(7L, Platform.COUPANG))
                 .willReturn(Optional.of(MarginPolicy.builder().marginRate(new BigDecimal("0.15")).build()));
 
         BigDecimal price = priceCalculator.calculatePrice(cell, masterOption, new BigDecimal("5000"));
@@ -80,7 +81,7 @@ class PriceCalculatorTest {
     @Test
     void calculatePrice_missingMarginPreset_throws400() {
         stubConfig("0.10", "2500", "500");
-        given(marginPolicyRepository.findBySellerIdAndPlatform(7L, "COUPANG"))
+        given(marginPolicyRepository.findBySellerIdAndPlatform(7L, Platform.COUPANG))
                 .willReturn(Optional.empty());
 
         assertThatThrownBy(() -> priceCalculator.calculatePrice(cell, masterOption, new BigDecimal("5000")))
@@ -92,7 +93,7 @@ class PriceCalculatorTest {
     void calculatePrice_denominatorNotPositive_throws400() {
         // commission 0.60 + margin 0.50 = 1.10 → 1 − 1.10 = −0.10 ≤ 0
         stubConfig("0.60", "2500", "500");
-        given(marginPolicyRepository.findBySellerIdAndPlatform(7L, "COUPANG"))
+        given(marginPolicyRepository.findBySellerIdAndPlatform(7L, Platform.COUPANG))
                 .willReturn(Optional.of(MarginPolicy.builder().marginRate(new BigDecimal("0.50")).build()));
 
         assertThatThrownBy(() -> priceCalculator.calculatePrice(cell, masterOption, new BigDecimal("5000")))
@@ -114,7 +115,7 @@ class PriceCalculatorTest {
 
     private void stubMargin(String marginRate, String discountRate) {
         stubConfig("0.10", "2500", "500");
-        given(marginPolicyRepository.findBySellerIdAndPlatform(7L, "COUPANG"))
+        given(marginPolicyRepository.findBySellerIdAndPlatform(7L, Platform.COUPANG))
                 .willReturn(Optional.of(MarginPolicy.builder()
                         .marginRate(new BigDecimal(marginRate))
                         .displayDiscountRate(discountRate == null ? null : new BigDecimal(discountRate))

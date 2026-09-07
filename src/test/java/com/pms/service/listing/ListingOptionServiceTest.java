@@ -5,6 +5,7 @@ import com.pms.domain.ListingStatus;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.OptionApprovalStatus;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.dto.request.SetOptionNamesRequest;
@@ -63,12 +64,12 @@ class ListingOptionServiceTest {
     private static final Long LISTING_ID = 100L;
 
     private ProductListing listing(ListingStatus status) {
-        return ProductListing.builder().id(LISTING_ID).platform("COUPANG").name("셀").status(status).build();
+        return ProductListing.builder().id(LISTING_ID).platform(Platform.COUPANG).name("셀").status(status).build();
     }
 
     /** A cell that actually reached the market — 87's guard only applies to these (platformProductId != null). */
     private ProductListing pushedListing() {
-        return ProductListing.builder().id(LISTING_ID).platform("COUPANG").name("셀")
+        return ProductListing.builder().id(LISTING_ID).platform(Platform.COUPANG).name("셀")
                 .status(ListingStatus.SELLING).platformProductId("P-1").build();
     }
 
@@ -214,7 +215,7 @@ class ListingOptionServiceTest {
     @Test
     void setActiveOptions_carriesPerChannelRegistrationNameForActiveSet() {
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터").build();
-        ProductListing listing = ProductListing.builder().id(LISTING_ID).platform("COUPANG").name("셀")
+        ProductListing listing = ProductListing.builder().id(LISTING_ID).platform(Platform.COUPANG).name("셀")
                 .status(ListingStatus.DRAFT).masterProduct(master).build();
         given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(listing));
         given(productListingOptionRepository.findByProductListingId(LISTING_ID))
@@ -236,7 +237,7 @@ class ListingOptionServiceTest {
     @Test
     void setActiveOptions_registrationNameReflectsChannelSuffixOverride() {
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터").build();
-        ProductListing listing = ProductListing.builder().id(LISTING_ID).platform("COUPANG").name("셀")
+        ProductListing listing = ProductListing.builder().id(LISTING_ID).platform(Platform.COUPANG).name("셀")
                 .status(ListingStatus.DRAFT).masterProduct(master).build();
         given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(listing));
         given(productListingOptionRepository.findByProductListingId(LISTING_ID))
@@ -271,7 +272,7 @@ class ListingOptionServiceTest {
             masterOptions.add(MasterProductOption.builder().id(6L).name(name2).stockQuantity(stock2).build());
         }
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(masterOptions);
-        ProductListing listing = ProductListing.builder().id(LISTING_ID).platform("COUPANG").name("셀")
+        ProductListing listing = ProductListing.builder().id(LISTING_ID).platform(Platform.COUPANG).name("셀")
                 .status(ListingStatus.DRAFT).masterProduct(master).build();
         given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(listing));
         return listing;
@@ -414,7 +415,7 @@ class ListingOptionServiceTest {
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(
                 List.of(MasterProductOption.builder().id(5L).name("2세트").build()));
         given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(
-                ProductListing.builder().id(LISTING_ID).platform("COUPANG").name("셀")
+                ProductListing.builder().id(LISTING_ID).platform(Platform.COUPANG).name("셀")
                         .status(ListingStatus.DRAFT).masterProduct(master).build()));
     }
 
@@ -484,7 +485,7 @@ class ListingOptionServiceTest {
 
     /** A cell with a seller, so the market path can resolve its marketplace account. */
     private ProductListing pricingListing() {
-        return ProductListing.builder().id(LISTING_ID).platform("COUPANG").name("셀")
+        return ProductListing.builder().id(LISTING_ID).platform(Platform.COUPANG).name("셀")
                 .status(ListingStatus.DRAFT)
                 .seller(com.pms.domain.Seller.builder().id(7L).sellerName("행복상회").build())
                 .build();
@@ -499,12 +500,12 @@ class ListingOptionServiceTest {
     }
 
     private com.pms.domain.MarketplaceAccount activeAccount() {
-        return com.pms.domain.MarketplaceAccount.builder().id(3L).platform("COUPANG").isActive(true).build();
+        return com.pms.domain.MarketplaceAccount.builder().id(3L).platform(Platform.COUPANG).isActive(true).build();
     }
 
     /** Stub the (seller, platform) account lookup used by the market path. */
     private void givenActiveAccount() {
-        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(7L, "COUPANG"))
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(7L, Platform.COUPANG))
                 .willReturn(Optional.of(activeAccount()));
     }
 
@@ -522,7 +523,7 @@ class ListingOptionServiceTest {
         given(productListingOptionRepository.findByProductListingId(LISTING_ID))
                 .willReturn(List.of(pricedOption(1L, null)));
         given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("18750.00"));
-        given(resolver.resolveOptional("COUPANG")).willReturn(Optional.of(adapter));
+        given(resolver.resolveOptional(Platform.COUPANG)).willReturn(Optional.of(adapter));
 
         service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, new BigDecimal("15000"))));
 
@@ -540,7 +541,7 @@ class ListingOptionServiceTest {
         given(listingAssetService.quoteOptionPrice(any(), any()))
                 .willReturn(new com.pms.service.PriceCalculator.PriceResult(
                         new BigDecimal("9000.00"), new BigDecimal("11250.00")));
-        given(resolver.resolveOptional("COUPANG")).willReturn(Optional.of(adapter));
+        given(resolver.resolveOptional(Platform.COUPANG)).willReturn(Optional.of(adapter));
 
         service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, null)));
 
@@ -559,7 +560,7 @@ class ListingOptionServiceTest {
                 .willReturn(List.of(pricedOption(1L, null)));
         given(priceCalculator.displayOriginalPrice(any(), eq(new BigDecimal("15000.00"))))
                 .willReturn(new BigDecimal("18750.00"));
-        given(resolver.resolveOptional("COUPANG")).willReturn(Optional.of(adapter));
+        given(resolver.resolveOptional(Platform.COUPANG)).willReturn(Optional.of(adapter));
 
         service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, new BigDecimal("15000"))));
 
@@ -573,7 +574,7 @@ class ListingOptionServiceTest {
         given(productListingOptionRepository.findByProductListingId(LISTING_ID))
                 .willReturn(List.of(pricedOption(1L, "V-1")));
         given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("18750.00"));
-        given(resolver.resolveOptional("COUPANG")).willReturn(Optional.of(adapter));
+        given(resolver.resolveOptional(Platform.COUPANG)).willReturn(Optional.of(adapter));
         givenActiveAccount();
 
         ChannelPriceUpdateResponse response =
@@ -592,13 +593,13 @@ class ListingOptionServiceTest {
         given(productListingOptionRepository.findByProductListingId(LISTING_ID))
                 .willReturn(List.of(pricedOption(1L, null)));
         given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("18750.00"));
-        given(resolver.resolveOptional("COUPANG")).willReturn(Optional.of(adapter));
+        given(resolver.resolveOptional(Platform.COUPANG)).willReturn(Optional.of(adapter));
 
         ChannelPriceUpdateResponse response =
                 service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, new BigDecimal("15000"))));
 
         verify(adapter, never()).updateOptionPrice(any(), any(), any());
-        verify(marketplaceAccountRepository, never()).findBySeller_IdAndPlatform(any(), anyString());
+        verify(marketplaceAccountRepository, never()).findBySeller_IdAndPlatform(any(), any());
         assertThat(response.skipped()).containsExactly("opt1");
         assertThat(response.pushed()).isZero();
         assertThat(captureSaved()).hasSize(1);
@@ -611,7 +612,7 @@ class ListingOptionServiceTest {
         given(productListingOptionRepository.findByProductListingId(LISTING_ID))
                 .willReturn(List.of(pricedOption(1L, "V-1")));
         given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("18750.00"));
-        given(resolver.resolveOptional("COUPANG")).willReturn(Optional.of(adapter));
+        given(resolver.resolveOptional(Platform.COUPANG)).willReturn(Optional.of(adapter));
         givenActiveAccount();
         org.mockito.BDDMockito.willThrow(new IllegalStateException("쿠팡 가격변경 실패: 판매중이 아닌 상품"))
                 .given(adapter).updateOptionPrice(any(), any(), any());
@@ -660,7 +661,7 @@ class ListingOptionServiceTest {
         given(listingAssetService.quoteOptionPrice(any(), any()))
                 .willReturn(new com.pms.service.PriceCalculator.PriceResult(
                         new BigDecimal("9000.00"), new BigDecimal("11250.00")));
-        given(resolver.resolveOptional("COUPANG")).willReturn(Optional.of(adapter));
+        given(resolver.resolveOptional(Platform.COUPANG)).willReturn(Optional.of(adapter));
         givenActiveAccount();
 
         ChannelPriceUpdateResponse response =
@@ -678,7 +679,7 @@ class ListingOptionServiceTest {
         given(productListingOptionRepository.findByProductListingId(LISTING_ID))
                 .willReturn(List.of(pricedOption(1L, "V-1")));
         given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("16250.00"));
-        given(resolver.resolveOptional("COUPANG")).willReturn(Optional.of(adapter));
+        given(resolver.resolveOptional(Platform.COUPANG)).willReturn(Optional.of(adapter));
         givenActiveAccount();
 
         service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, new BigDecimal("12999.99"))));

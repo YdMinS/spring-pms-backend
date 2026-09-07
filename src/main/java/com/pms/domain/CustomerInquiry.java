@@ -59,7 +59,8 @@ public class CustomerInquiry extends BaseEntity {
     private MarketplaceAccount marketplaceAccount;
 
     @Column(nullable = false, length = 50)
-    private String platform;                        // "COUPANG" (order_item 관례를 따라 둔다)
+    @Enumerated(EnumType.STRING)
+    private Platform platform;                      // order_item 관례를 따라 둔다
 
     @Enumerated(EnumType.STRING)
     @Column(name = "inquiry_type", nullable = false, length = 20)

@@ -1,5 +1,6 @@
 package com.pms.service.listing.category;
 
+import com.pms.domain.Platform;
 import com.pms.domain.MarketplaceAccount;
 
 import java.util.List;
@@ -14,8 +15,8 @@ import java.util.List;
  */
 public interface CategoryLookup {
 
-    /** Platform key this adapter handles (e.g. "COUPANG"). Resolver matching key. */
-    String platform();
+    /** Platform key this adapter handles (e.g. {@link Platform#COUPANG}). Resolver matching key. */
+    Platform platform();
 
     /**
      * List the immediate children of a category node (tree drill-down).

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
+import com.pms.domain.Platform;
 import com.pms.dto.request.ShippingLabelExportRequest.ExportRow;
 import com.pms.dto.response.ShippingLabelPreviewRow;
 import com.pms.exception.ResourceNotFoundException;
@@ -40,7 +41,6 @@ import java.util.List;
 @RequiredArgsConstructor
 public class ShippingLabelServiceImpl implements ShippingLabelService {
 
-    private static final String PLATFORM_COUPANG = "COUPANG";
     private static final int MAX_PER_PAGE = 50;
     private static final int MAX_PAGES = 100;                    // 무한루프 가드
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
@@ -71,7 +71,7 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
         int targetAccounts = 0;
         int failedAccounts = 0;
         for (MarketplaceAccount account : accounts) {
-            if (!PLATFORM_COUPANG.equals(account.getPlatform())) {
+            if (!Platform.COUPANG.equals(account.getPlatform())) {
                 continue;
             }
             targetAccounts++;
@@ -103,7 +103,7 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
                 .orElseThrow(() -> new ResourceNotFoundException("Order", orderItemId));
 
         MarketplaceAccount account = order.getMarketplaceAccount();
-        if (!PLATFORM_COUPANG.equals(account.getPlatform())) {
+        if (!Platform.COUPANG.equals(account.getPlatform())) {
             throw new IllegalArgumentException("쿠팡 주문만 송장시트를 만들 수 있습니다: " + account.getPlatform());
         }
 
@@ -219,7 +219,8 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
         String shipmentBoxId = box.path("shipmentBoxId").asText("");
         String deliveryMessage = box.path("parcelPrintMessage").asText("");  // nullable → ""
         String sellerName = account.getSeller().getSellerName();
-        String platform = account.getPlatform();
+        // 시트/미리보기 출력용 표시값 — 엑셀 셀·응답 DTO 로만 흘러간다.
+        String platform = account.getPlatform().name();
 
         for (JsonNode item : box.path("orderItems")) {
             int shipping = item.path("shippingCount").asInt(0);

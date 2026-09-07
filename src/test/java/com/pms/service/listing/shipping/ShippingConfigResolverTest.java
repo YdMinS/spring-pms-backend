@@ -3,6 +3,7 @@ package com.pms.service.listing.shipping;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MarketplaceShippingConfig;
 import com.pms.domain.MasterProduct;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.Seller;
 import com.pms.repository.MarketplaceAccountRepository;
@@ -39,7 +40,7 @@ class ShippingConfigResolverTest {
         MasterProduct master = masterOverride == null ? null
                 : MasterProduct.builder().id(1L).shippingOverride(masterOverride).build();
         return ProductListing.builder()
-                .id(100L).platform("COUPANG")
+                .id(100L).platform(Platform.COUPANG)
                 .seller(Seller.builder().id(SELLER_ID).build())
                 .masterProduct(master)
                 .shippingOverride(listingOverride)
@@ -49,7 +50,7 @@ class ShippingConfigResolverTest {
     /** Stub the (seller, platform) account + its stored base config. */
     private void withBaseConfig(MarketplaceShippingConfig base) {
         MarketplaceAccount account = MarketplaceAccount.builder().id(ACCOUNT_ID).build();
-        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(SELLER_ID, "COUPANG"))
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(SELLER_ID, Platform.COUPANG))
                 .willReturn(Optional.of(account));
         given(shippingConfigRepository.findByMarketplaceAccountId(ACCOUNT_ID))
                 .willReturn(Optional.ofNullable(base));
@@ -158,7 +159,7 @@ class ShippingConfigResolverTest {
     // Account absent (no config): only overrides apply; every other field is null (all-null base).
     @Test
     void accountAbsent_onlyOverridesApply() {
-        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(SELLER_ID, "COUPANG"))
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(SELLER_ID, Platform.COUPANG))
                 .willReturn(Optional.empty());
 
         ResolvedShippingConfig r = resolver.resolve(cell(

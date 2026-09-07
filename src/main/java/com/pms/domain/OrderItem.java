@@ -50,7 +50,8 @@ public class OrderItem extends BaseEntity {
     private MarketplaceAccount marketplaceAccount;
 
     @Column(nullable = false, length = 50)
-    private String platform;                 // "COUPANG"
+    @Enumerated(EnumType.STRING)
+    private Platform platform;
 
     @Column(name = "external_order_id", nullable = false, length = 100)
     private String externalOrderId;          // 쿠팡 orderId

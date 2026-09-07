@@ -1,6 +1,7 @@
 package com.pms.service;
 
 import com.pms.domain.MasterProduct;
+import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import org.junit.jupiter.api.Test;
@@ -27,7 +28,7 @@ class ListingTextBindingsTest {
     }
 
     private ProductListing cell(Map<String, String> fieldValues) {
-        return ProductListing.builder().id(100L).platform("COUPANG").name("셀").fieldValues(fieldValues).build();
+        return ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀").fieldValues(fieldValues).build();
     }
 
     @Test

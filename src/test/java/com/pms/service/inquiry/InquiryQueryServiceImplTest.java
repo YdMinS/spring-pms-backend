@@ -5,6 +5,7 @@ import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.dto.response.CustomerInquiryResponse;
 import com.pms.exception.ResourceNotFoundException;
@@ -53,7 +54,7 @@ class InquiryQueryServiceImplTest {
 
     private final Seller seller = Seller.builder().id(5L).sellerName("테스트셀러").build();
     private final MarketplaceAccount account = MarketplaceAccount.builder()
-            .id(7L).platform("COUPANG").accountAlias("쿠팡-메인").seller(seller).build();
+            .id(7L).platform(Platform.COUPANG).accountAlias("쿠팡-메인").seller(seller).build();
 
     @BeforeEach
     void setUp() {
@@ -154,7 +155,7 @@ class InquiryQueryServiceImplTest {
         return CustomerInquiry.builder()
                 .id(1L)
                 .marketplaceAccount(account)
-                .platform("COUPANG")
+                .platform(Platform.COUPANG)
                 .inquiryType(InquiryType.PRODUCT_QNA)
                 .externalInquiryId("I-1")
                 .externalItemId("V-11")

@@ -64,7 +64,8 @@ public class ProductListing extends BaseEntity {
      */
     @Column(length = 50, nullable = false)
     @Schema(description = "Platform identifier", example = "COUPANG")
-    private String platform;
+    @Enumerated(EnumType.STRING)
+    private Platform platform;
 
     /**
      * Platform-specific product ID (업체상품 ID on Coupang).

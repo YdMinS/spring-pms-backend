@@ -5,6 +5,7 @@ import com.pms.config.CoupangProperties;
 import com.pms.domain.CustomerInquiry;
 import com.pms.domain.InquiryStatus;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.repository.CustomerInquiryRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.SyncWindow;
@@ -54,7 +55,7 @@ class CoupangInquiryAdapterTest {
     private CoupangInquiryAdapter adapter;
 
     private final MarketplaceAccount account = MarketplaceAccount.builder()
-            .id(7L).platform("COUPANG").vendorId("A0001").build();
+            .id(7L).platform(Platform.COUPANG).vendorId("A0001").build();
 
     @BeforeEach
     void setUp() {

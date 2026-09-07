@@ -1,5 +1,6 @@
 package com.pms.controller;
 
+import com.pms.domain.Platform;
 import com.pms.dto.request.CreateProductListingRequest;
 import com.pms.dto.response.ProductListingResponse;
 import com.pms.dto.common.ResponseDTO;
@@ -144,7 +145,7 @@ public class ProductListingController {
             // 3값(미지정/true/false)이라 boolean 으로 받지 말 것 — 미지정이 곧 "필터 없음"이다.
             @RequestParam(required = false) Boolean masterLinked) {
         Page<ProductListingResponse> response =
-                productListingService.getByPlatform(platform, page, size, masterLinked);
+                productListingService.getByPlatform(Platform.from(platform), page, size, masterLinked);
         return ResponseEntity.ok(ResponseDTO.success(response));
     }
 

@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MarketplaceShippingConfig;
+import com.pms.domain.Platform;
 import com.pms.dto.request.ShippingConfigRequest;
 import com.pms.dto.response.ShippingConfigResponse;
 import com.pms.exception.ResourceNotFoundException;
@@ -38,7 +39,7 @@ class ShippingConfigServiceTest {
     @Mock private ShippingPlaceProviderResolver providerResolver;
     @InjectMocks private ShippingConfigServiceImpl service;
 
-    private MarketplaceAccount account(Long id, String platform) {
+    private MarketplaceAccount account(Long id, Platform platform) {
         return MarketplaceAccount.builder().id(id).platform(platform)
                 .vendorId("V1").accessKey("ak").secretKey("sk").isActive(true).build();
     }
@@ -47,18 +48,18 @@ class ShippingConfigServiceTest {
 
     @Test
     void listOutbound_unsupportedPlatform_returnsEmptyList() {
-        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(account(1L, "NAVER")));
-        given(providerResolver.resolve("NAVER")).willReturn(Optional.empty());
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(account(1L, Platform.NAVER)));
+        given(providerResolver.resolve(Platform.NAVER)).willReturn(Optional.empty());
 
         assertThat(service.listOutbound(1L)).isEmpty();
     }
 
     @Test
     void listOutbound_supportedPlatform_delegatesToProvider() {
-        MarketplaceAccount acct = account(1L, "COUPANG");
+        MarketplaceAccount acct = account(1L, Platform.COUPANG);
         given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acct));
         ShippingPlaceProvider provider = org.mockito.Mockito.mock(ShippingPlaceProvider.class);
-        given(providerResolver.resolve("COUPANG")).willReturn(Optional.of(provider));
+        given(providerResolver.resolve(Platform.COUPANG)).willReturn(Optional.of(provider));
         given(provider.fetchOutboundPlaces(acct)).willReturn(java.util.List.of(new OutboundPlace("74010", "기본출고지")));
 
         assertThat(service.listOutbound(1L)).extracting(OutboundPlace::code).containsExactly("74010");
@@ -68,7 +69,7 @@ class ShippingConfigServiceTest {
 
     @Test
     void upsertConfig_new_savesFreshEntity() {
-        MarketplaceAccount acct = account(1L, "COUPANG");
+        MarketplaceAccount acct = account(1L, Platform.COUPANG);
         given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acct));
         given(shippingConfigRepository.findByMarketplaceAccountId(1L)).willReturn(Optional.empty());
         given(shippingConfigRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
@@ -96,7 +97,7 @@ class ShippingConfigServiceTest {
 
     @Test
     void upsertConfig_update_keepsSameIdAndReflectsChange() {
-        MarketplaceAccount acct = account(1L, "COUPANG");
+        MarketplaceAccount acct = account(1L, Platform.COUPANG);
         MarketplaceShippingConfig existing = MarketplaceShippingConfig.builder()
                 .id(99L).marketplaceAccount(acct)
                 .outboundShippingPlaceCode("OLD").build();

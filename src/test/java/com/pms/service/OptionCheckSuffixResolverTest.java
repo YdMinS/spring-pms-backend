@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.Seller;
 import com.pms.repository.MarketplaceAccountRepository;
@@ -38,7 +39,7 @@ class OptionCheckSuffixResolverTest {
     }
 
     private MarketplaceAccount account(Boolean enabled, String suffix) {
-        return MarketplaceAccount.builder().id(3L).platform("COUPANG").vendorId("V").accessKey("ak")
+        return MarketplaceAccount.builder().id(3L).platform(Platform.COUPANG).vendorId("V").accessKey("ak")
                 .secretKey("sk").isActive(true)
                 .optionCheckSuffixEnabled(enabled).optionCheckSuffix(suffix).build();
     }
@@ -94,8 +95,8 @@ class OptionCheckSuffixResolverTest {
         MasterProduct master = master(null, null);
         MarketplaceAccount account = account(false, "채널문구");
         ProductListing cell = ProductListing.builder()
-                .id(100L).platform("COUPANG").name("셀").seller(seller).masterProduct(master).build();
-        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(1L, "COUPANG"))
+                .id(100L).platform(Platform.COUPANG).name("셀").seller(seller).masterProduct(master).build();
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(1L, Platform.COUPANG))
                 .willReturn(Optional.of(account));
 
         OptionCheckSuffix result = resolver.resolve(cell);
@@ -110,8 +111,8 @@ class OptionCheckSuffixResolverTest {
         Seller seller = seller(true, "판매자문구");
         MasterProduct master = master(false, null);   // enabled from master, text from seller
         ProductListing cell = ProductListing.builder()
-                .id(100L).platform("COUPANG").name("셀").seller(seller).masterProduct(master).build();
-        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(1L, "COUPANG"))
+                .id(100L).platform(Platform.COUPANG).name("셀").seller(seller).masterProduct(master).build();
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(1L, Platform.COUPANG))
                 .willReturn(Optional.empty());
 
         OptionCheckSuffix result = resolver.resolve(cell);

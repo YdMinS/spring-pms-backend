@@ -4,6 +4,7 @@ import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OptionApprovalStatus;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
@@ -49,7 +50,7 @@ class ListingPropagationServiceTest {
     private static final Long SELLER_ID = 7L;
 
     private ProductListing cell(Long id, String platformProductId, boolean pending) {
-        return ProductListing.builder().id(id).platform("COUPANG").name("셀-" + id)
+        return ProductListing.builder().id(id).platform(Platform.COUPANG).name("셀-" + id)
                 .seller(Seller.builder().id(SELLER_ID).build())
                 .status(ListingStatus.SELLING).platformProductId(platformProductId)
                 .needsMarketSync(pending).build();
@@ -60,11 +61,11 @@ class ListingPropagationServiceTest {
     }
 
     private void stubAccountAndGenAndAdapter(Long cellId) {
-        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(eq(SELLER_ID), eq("COUPANG")))
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(eq(SELLER_ID), eq(Platform.COUPANG)))
                 .willReturn(Optional.of(account()));
         given(generatedProductDataRepository.findByProductListingId(cellId))
                 .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
-        given(resolver.resolve("COUPANG")).willReturn(adapter);
+        given(resolver.resolve(Platform.COUPANG)).willReturn(adapter);
     }
 
     // (a) happy: pending on-market cell with account + gen → adapter.update + SUBMITTED + dirty cleared.
@@ -109,11 +110,11 @@ class ListingPropagationServiceTest {
         ProductListing boom = cell(2L, "SP-2", true);
         given(productListingRepository.findScopedById(1L)).willReturn(Optional.of(ok));
         given(productListingRepository.findScopedById(2L)).willReturn(Optional.of(boom));
-        lenient().when(marketplaceAccountRepository.findBySeller_IdAndPlatform(eq(SELLER_ID), eq("COUPANG")))
+        lenient().when(marketplaceAccountRepository.findBySeller_IdAndPlatform(eq(SELLER_ID), eq(Platform.COUPANG)))
                 .thenReturn(Optional.of(account()));
         lenient().when(generatedProductDataRepository.findByProductListingId(any()))
                 .thenReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
-        given(resolver.resolve("COUPANG")).willReturn(adapter);
+        given(resolver.resolve(Platform.COUPANG)).willReturn(adapter);
         // ok cell: update() is void → default no-op. Lenient so the ok cell's non-matching call to the same
         // mocked method does not trip strict-stubbing (which the service's try/catch would count as a failure).
         lenient().doThrow(new RuntimeException("coupang 500"))

@@ -3,6 +3,7 @@ package com.pms.controller;
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
+import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -53,13 +54,13 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
         Seller seller = sellerRepository.save(Seller.builder()
                 .sellerName("테스트셀러").businessRegistration("123-45-67890").build());
         MarketplaceAccount account = marketplaceAccountRepository.save(MarketplaceAccount.builder()
-                .seller(seller).platform("COUPANG").accountAlias("쿠팡본점")
+                .seller(seller).platform(Platform.COUPANG).accountAlias("쿠팡본점")
                 .vendorId("A001").accessKey("ak").secretKey("sk").isActive(true).build());
 
         Product product = productRepository.save(Product.builder()
                 .productName("양말A").build());
         ProductListing listing = productListingRepository.save(ProductListing.builder()
-                .platform("COUPANG").platformProductId("P001").name("양말세트").seller(seller).build());
+                .platform(Platform.COUPANG).platformProductId("P001").name("양말세트").seller(seller).build());
         ProductListingOption option = productListingOptionRepository.save(ProductListingOption.builder()
                 .productListing(listing).optionName("기본").sellingPrice(new BigDecimal("9900"))
                 .platformOptionId("OPT1").build());
@@ -67,7 +68,7 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
                 .productListingOption(option).product(product).quantity(2).build());   // BOM: A×2
 
         orderItemRepository.save(OrderItem.builder()
-                .marketplaceAccount(account).platform("COUPANG")
+                .marketplaceAccount(account).platform(Platform.COUPANG)
                 .externalOrderId("O1").externalBoxId("B1").externalItemId("OPT1")
                 .itemName("양말세트").orderCount(3).cancelCount(0).holdCount(0)
                 .status("ACCEPT").paidAt(LocalDateTime.now())   // 추출 윈도우(syncDays) 안에 들도록

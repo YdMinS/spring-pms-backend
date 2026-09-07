@@ -4,6 +4,7 @@ import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.Category;
 import com.pms.domain.CategoryMapping;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.Seller;
 import com.pms.repository.CategoryMappingRepository;
@@ -72,11 +73,11 @@ class CategoryLookupControllerTest extends BaseIntegrationTest {
      */
     private Long seedMappedCategory() {
         Category category = categoryRepository.save(Category.builder()
-                .name("신발").platform("COUPANG").platformCategoryId("cat-1").build());
+                .name("신발").platform(Platform.COUPANG).platformCategoryId("cat-1").build());
         PlatformCategory platformCategory = platformCategoryRepository.save(PlatformCategory.builder()
-                .platform("COUPANG").code("cat-1").name("운동화").build());
+                .platform(Platform.COUPANG).code("cat-1").name("운동화").build());
         categoryMappingRepository.save(CategoryMapping.builder()
-                .category(category).platform("COUPANG").platformCategoryId("cat-1")
+                .category(category).platform(Platform.COUPANG).platformCategoryId("cat-1")
                 .platformCategory(platformCategory).build());
         return category.getId();
     }
@@ -86,7 +87,7 @@ class CategoryLookupControllerTest extends BaseIntegrationTest {
         Seller seller = sellerRepository.save(Seller.builder()
                 .sellerName("행복상회").businessRegistration("111-22-33333").build());
         marketplaceAccountRepository.save(MarketplaceAccount.builder()
-                .seller(seller).platform("COUPANG").accountAlias("메인")
+                .seller(seller).platform(Platform.COUPANG).accountAlias("메인")
                 .vendorId("V1").accessKey("ak").secretKey("sk").isActive(true).build());
     }
 

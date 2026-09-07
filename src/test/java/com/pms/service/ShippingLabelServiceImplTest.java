@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.dto.response.ShippingLabelPreviewRow;
 import com.pms.exception.ResourceNotFoundException;
@@ -60,7 +61,7 @@ class ShippingLabelServiceImplTest {
     void setUp() {
         Seller seller = Seller.builder().id(1L).sellerName("셀러A").businessRegistration("123-45-67890").build();
         coupangAccount = MarketplaceAccount.builder()
-                .id(1L).seller(seller).platform("COUPANG").vendorId("A00012345")
+                .id(1L).seller(seller).platform(Platform.COUPANG).vendorId("A00012345")
                 .accessKey("ak").secretKey("sk").isActive(true).build();
 
         CoupangProperties props = new CoupangProperties();
@@ -159,7 +160,7 @@ class ShippingLabelServiceImplTest {
     void collectRows_queriesCoupangAccountsOnly() {
         Seller seller = Seller.builder().id(2L).sellerName("셀러B").businessRegistration("999-88-77777").build();
         MarketplaceAccount naver = MarketplaceAccount.builder()
-                .id(2L).seller(seller).platform("NAVER").vendorId("N001")
+                .id(2L).seller(seller).platform(Platform.NAVER).vendorId("N001")
                 .accessKey("ak").secretKey("sk").isActive(true).build();
         given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(naver, coupangAccount));
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(oneBoxThreeLines());
@@ -266,10 +267,10 @@ class ShippingLabelServiceImplTest {
     void previewRowsByOrder_rejectsNonCoupangOrder() {
         Seller seller = Seller.builder().id(2L).sellerName("셀러B").businessRegistration("999-88-77777").build();
         MarketplaceAccount naver = MarketplaceAccount.builder()
-                .id(2L).seller(seller).platform("NAVER").vendorId("N001")
+                .id(2L).seller(seller).platform(Platform.NAVER).vendorId("N001")
                 .accessKey("ak").secretKey("sk").isActive(true).build();
         OrderItem order = OrderItem.builder().id(1L).externalOrderId("4000019469460")
-                .marketplaceAccount(naver).platform("NAVER").build();
+                .marketplaceAccount(naver).platform(Platform.NAVER).build();
         given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(order));
 
         assertThatThrownBy(() -> service.previewRowsByOrder(1L))
@@ -290,7 +291,7 @@ class ShippingLabelServiceImplTest {
     /** 쿠팡 계정에 묶인 주문 라인 1건 스텁 (by-order 테스트 공통 given). */
     private void givenCoupangOrder() {
         OrderItem order = OrderItem.builder().id(1L).externalOrderId("4000019469460")
-                .marketplaceAccount(coupangAccount).platform("COUPANG").build();
+                .marketplaceAccount(coupangAccount).platform(Platform.COUPANG).build();
         given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(order));
     }
 

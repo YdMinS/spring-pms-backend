@@ -1,6 +1,7 @@
 package com.pms.repository;
 
 import com.pms.domain.CategoryMapping;
+import com.pms.domain.Platform;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -19,9 +20,9 @@ public interface CategoryMappingRepository extends JpaRepository<CategoryMapping
 
     List<CategoryMapping> findByCategoryId(Long categoryId);
 
-    Optional<CategoryMapping> findByCategoryIdAndPlatform(Long categoryId, String platform);
+    Optional<CategoryMapping> findByCategoryIdAndPlatform(Long categoryId, Platform platform);
 
-    boolean existsByCategoryIdAndPlatform(Long categoryId, String platform);
+    boolean existsByCategoryIdAndPlatform(Long categoryId, Platform platform);
 
     /**
      * Reverse lookup of a leaf mirror by its {@link com.pms.domain.PlatformCategory} FK (FEATURE_2608_06 / 53).

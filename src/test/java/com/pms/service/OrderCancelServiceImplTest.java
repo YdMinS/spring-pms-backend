@@ -7,6 +7,7 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderCancelAction;
 import com.pms.domain.OrderCancelReason;
 import com.pms.domain.OrderItem;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.dto.request.OrderCancelRequest;
 import com.pms.repository.OrderCancelActionRepository;
@@ -73,7 +74,7 @@ class OrderCancelServiceImplTest {
 
     @Test
     void cancelSendsVendorItemIdsAndReceiptCountsPaired() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001", "wing-user");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", "wing-user");
         given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
                 line(11L, account, "700001", "300001", "5001", "ACCEPT", 3, 0, 0),
                 line(12L, account, "700001", "300001", "5002", "ACCEPT", 1, 0, 0)));
@@ -101,7 +102,7 @@ class OrderCancelServiceImplTest {
 
     @Test
     void cancelSplitsRequestPerShipmentBox() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001", "wing-user");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", "wing-user");
         given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
                 line(11L, account, "700001", "300001", "5001", "ACCEPT", 1, 0, 0),
                 line(12L, account, "700002", "300001", "5002", "ACCEPT", 1, 0, 0)));
@@ -123,7 +124,7 @@ class OrderCancelServiceImplTest {
 
     @Test
     void cancelSkipsNonCancellableAndFullyCancelledLines() {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001", "wing-user");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", "wing-user");
         given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
                 line(11L, account, "700001", "300001", "5001", "DEPARTURE", 1, 0, 0),
                 line(12L, account, "700001", "300001", "5002", "ACCEPT", 2, 2, 0)));
@@ -141,8 +142,8 @@ class OrderCancelServiceImplTest {
 
     @Test
     void cancelMarksNonCoupangLineUnsupported() {
-        MarketplaceAccount naver = account(2L, "NAVER", "N001", "wing-user");
-        MarketplaceAccount coupang = account(1L, "COUPANG", "A001", "wing-user");
+        MarketplaceAccount naver = account(2L, Platform.NAVER, "N001", "wing-user");
+        MarketplaceAccount coupang = account(1L, Platform.COUPANG, "A001", "wing-user");
         given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
                 line(11L, naver, "700001", "300001", "5001", "ACCEPT", 1, 0, 0),
                 line(12L, coupang, null, "300002", "5002", "ACCEPT", 1, 0, 0)));
@@ -159,7 +160,7 @@ class OrderCancelServiceImplTest {
 
     @Test
     void cancelRejectsInvalidRequestBeforeSending() {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001", "wing-user");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", "wing-user");
         given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
                 line(11L, account, "700001", "300001", "5001", "ACCEPT", 3, 1, 0)));
 
@@ -179,7 +180,7 @@ class OrderCancelServiceImplTest {
 
     @Test
     void cancelFailsLineWithoutWingId() {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001", null);
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", null);
         given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
                 line(11L, account, "700001", "300001", "5001", "ACCEPT", 1, 0, 0)));
 
@@ -193,7 +194,7 @@ class OrderCancelServiceImplTest {
 
     @Test
     void cancelMarksFailedVendorItemIdsAsFailed() {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001", "wing-user");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", "wing-user");
         given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
                 line(11L, account, "700001", "300001", "5001", "ACCEPT", 1, 0, 0),
                 line(12L, account, "700001", "300001", "5002", "ACCEPT", 1, 0, 0)));
@@ -218,7 +219,7 @@ class OrderCancelServiceImplTest {
 
     @Test
     void cancelFailsGroupWhenResponseHasNoData() {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001", "wing-user");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", "wing-user");
         given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
                 line(11L, account, "700001", "300001", "5001", "ACCEPT", 1, 0, 0),
                 line(12L, account, "700001", "300001", "5002", "ACCEPT", 1, 0, 0)));
@@ -237,7 +238,7 @@ class OrderCancelServiceImplTest {
 
     @Test
     void cancelWritesBackByReceiptType() {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001", "wing-user");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", "wing-user");
         given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
                 line(11L, account, "700001", "300001", "5001", "ACCEPT", 2, 0, 0),
                 line(12L, account, "700001", "300001", "5002", "INSTRUCT", 3, 0, 0)));
@@ -283,7 +284,7 @@ class OrderCancelServiceImplTest {
 
     @Test
     void cancelKeepsSuccessWhenWriteBackFails() {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001", "wing-user");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", "wing-user");
         given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
                 line(11L, account, "700001", "300001", "5001", "ACCEPT", 1, 0, 0)));
         given(coupangProperties.getOrderCancelPath()).willReturn(CANCEL_PATH);
@@ -301,7 +302,7 @@ class OrderCancelServiceImplTest {
     void cancelRecordsHistoryForSuccessAndFailure() {
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken("admin@oclyx.com", "n/a", List.of()));
-        MarketplaceAccount account = account(1L, "COUPANG", "A001", "wing-user");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", "wing-user");
         given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
                 line(11L, account, "700001", "300001", "5001", "ACCEPT", 1, 0, 0),
                 line(12L, account, "700001", "300001", "5002", "ACCEPT", 1, 0, 0),
@@ -342,7 +343,7 @@ class OrderCancelServiceImplTest {
         return new OrderCancelRequest.Line(orderItemId, quantity);
     }
 
-    private MarketplaceAccount account(Long id, String platform, String vendorId, String vendorUserId) {
+    private MarketplaceAccount account(Long id, Platform platform, String vendorId, String vendorUserId) {
         Seller seller = Seller.builder().id(id).sellerName("셀러" + id)
                 .businessRegistration("123-45-6789" + id).build();
         return MarketplaceAccount.builder()

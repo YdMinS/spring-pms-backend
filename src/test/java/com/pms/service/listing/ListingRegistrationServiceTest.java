@@ -4,6 +4,7 @@ import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OptionApprovalStatus;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
@@ -58,7 +59,7 @@ class ListingRegistrationServiceTest {
     private static final Long SELLER_ID = 7L;
 
     private ProductListing cell(ListingStatus status, String platformProductId) {
-        return ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀")
+        return ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀")
                 .seller(Seller.builder().id(SELLER_ID).build())
                 .status(status).platformProductId(platformProductId).build();
     }
@@ -73,9 +74,9 @@ class ListingRegistrationServiceTest {
     }
 
     private void stubAccountAndAdapter() {
-        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(eq(SELLER_ID), eq("COUPANG")))
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(eq(SELLER_ID), eq(Platform.COUPANG)))
                 .willReturn(Optional.of(account()));
-        given(resolver.resolve("COUPANG")).willReturn(adapter);
+        given(resolver.resolve(Platform.COUPANG)).willReturn(adapter);
     }
 
     // (a) register happy: DRAFT + gen → SUBMITTED + platformProductId; options untouched.
@@ -139,7 +140,7 @@ class ListingRegistrationServiceTest {
         given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell(ListingStatus.DRAFT, null)));
         given(generatedProductDataRepository.findByProductListingId(CELL_ID))
                 .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
-        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(eq(SELLER_ID), eq("COUPANG")))
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(eq(SELLER_ID), eq(Platform.COUPANG)))
                 .willReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.register(CELL_ID)).isInstanceOf(ResourceNotFoundException.class);
@@ -294,18 +295,18 @@ class ListingRegistrationServiceTest {
     // (e) syncApprovals: 2 pending → each fetchStatus; 1 throws → others proceed, failed counted.
     @Test
     void syncApprovals_isolatesPerListingFailure() {
-        ProductListing ok = ProductListing.builder().id(1L).platform("COUPANG").name("ok")
+        ProductListing ok = ProductListing.builder().id(1L).platform(Platform.COUPANG).name("ok")
                 .seller(Seller.builder().id(SELLER_ID).build())
                 .status(ListingStatus.SUBMITTED).platformProductId("SP-1").build();
-        ProductListing boom = ProductListing.builder().id(2L).platform("COUPANG").name("boom")
+        ProductListing boom = ProductListing.builder().id(2L).platform(Platform.COUPANG).name("boom")
                 .seller(Seller.builder().id(SELLER_ID).build())
                 .status(ListingStatus.SUBMITTED).platformProductId("SP-2").build();
         given(productListingRepository.findPendingApproval()).willReturn(List.of(ok, boom));
         given(productListingRepository.findScopedById(1L)).willReturn(Optional.of(ok));
         given(productListingRepository.findScopedById(2L)).willReturn(Optional.of(boom));
-        lenient().when(marketplaceAccountRepository.findBySeller_IdAndPlatform(eq(SELLER_ID), anyString()))
+        lenient().when(marketplaceAccountRepository.findBySeller_IdAndPlatform(eq(SELLER_ID), any()))
                 .thenReturn(Optional.of(account()));
-        given(resolver.resolve("COUPANG")).willReturn(adapter);
+        given(resolver.resolve(Platform.COUPANG)).willReturn(adapter);
         given(adapter.fetchStatus(eq(ok), any())).willReturn(new FetchResult(ListingStatus.SELLING, List.of()));
         given(adapter.fetchStatus(eq(boom), any())).willThrow(new RuntimeException("coupang 500"));
         lenient().when(productListingOptionRepository.findByProductListingId(1L)).thenReturn(List.of());

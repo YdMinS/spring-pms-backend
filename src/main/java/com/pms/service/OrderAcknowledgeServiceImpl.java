@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
+import com.pms.domain.Platform;
 import com.pms.dto.request.OrderAcknowledgeRequest;
 import com.pms.repository.OrderItemRepository;
 import com.pms.service.ShipmentConfirmResult.FailedBox;
@@ -39,8 +40,6 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
-
-    private static final String PLATFORM_COUPANG = "COUPANG";
 
     /**
      * 전송 대상 상태 — 결제완료만.
@@ -83,7 +82,7 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
             String boxId = line.getExternalBoxId();
             // 플랫폼 판정은 계정 기준 — ShipmentConfirmServiceImpl 과 같은 기준이어야 두 레그가 갈라지지 않는다
             // (OrderItem 에도 platform 컬럼이 있지만 쓰지 않는다).
-            if (!PLATFORM_COUPANG.equals(account.getPlatform()) || boxId == null || boxId.isBlank()) {
+            if (!Platform.COUPANG.equals(account.getPlatform()) || boxId == null || boxId.isBlank()) {
                 if (reportedOrders.add(orderId)) {
                     unsupported.add(orderId);
                 }

@@ -10,6 +10,7 @@ import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.OptionApprovalStatus;
 import com.pms.domain.Package;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
@@ -92,7 +93,7 @@ class ListingMasterCreateServiceTest {
     private static final Long CATEGORY_ID = 41L;
     private static final Long PRODUCT_A = 100L;
     private static final Long PRODUCT_B = 200L;
-    private static final String PLATFORM = "COUPANG";
+    private static final Platform PLATFORM = Platform.COUPANG;
     private static final String PRODUCT_ID = "222333444";
     private static final String COUPANG_CATEGORY = "63955";
 

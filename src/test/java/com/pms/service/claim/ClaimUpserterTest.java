@@ -5,6 +5,7 @@ import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
 import com.pms.domain.OrderItem;
+import com.pms.domain.Platform;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.repository.OrderItemRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,7 +44,7 @@ class ClaimUpserterTest {
 
     @BeforeEach
     void setUp() {
-        account = MarketplaceAccount.builder().id(1L).platform("COUPANG").vendorId("V0001").build();
+        account = MarketplaceAccount.builder().id(1L).platform(Platform.COUPANG).vendorId("V0001").build();
     }
 
     @Test
@@ -60,7 +61,7 @@ class ClaimUpserterTest {
         verify(orderClaimRepository, times(1)).save(captor.capture());
         OrderClaim saved = captor.getValue();
         assertThat(saved.getOrderItem()).isSameAs(line);
-        assertThat(saved.getPlatform()).isEqualTo("COUPANG");
+        assertThat(saved.getPlatform()).isEqualTo(Platform.COUPANG);
         assertThat(saved.getClaimType()).isEqualTo(ClaimType.RETURN);
         assertThat(saved.getOrderItemMatchAttempts()).isZero();
         assertThat(saved.getSyncedAt()).isNotNull();
@@ -254,7 +255,7 @@ class ClaimUpserterTest {
 
     private OrderClaim existingExchange(String reshipInvoiceNo, String reshipCarrierCode) {
         return OrderClaim.builder()
-                .id(98L).marketplaceAccount(account).platform("COUPANG").claimType(ClaimType.EXCHANGE)
+                .id(98L).marketplaceAccount(account).platform(Platform.COUPANG).claimType(ClaimType.EXCHANGE)
                 .externalClaimId("E-1").externalOrderId("O-1").externalBoxId("B-1").externalItemId("V-1")
                 .orderItem(orderLine(10L)).orderItemMatchAttempts(0)
                 .itemName("양말").quantity(1).status(ClaimStatus.IN_PROGRESS).platformStatus("PROGRESS")
@@ -272,7 +273,7 @@ class ClaimUpserterTest {
     /** 04 백필 대상 — 주문 라인이 아직 붙지 않은 클레임. */
     private OrderClaim unlinked(long id) {
         return OrderClaim.builder()
-                .id(id).marketplaceAccount(account).platform("COUPANG").claimType(ClaimType.RETURN)
+                .id(id).marketplaceAccount(account).platform(Platform.COUPANG).claimType(ClaimType.RETURN)
                 .externalClaimId("R-1").externalOrderId("O-1").externalBoxId("B-1").externalItemId("V-1")
                 .orderItem(null).orderItemMatchAttempts(0).status(ClaimStatus.RECEIVED)
                 .receivedAt(LocalDateTime.of(2026, 9, 1, 10, 0))
@@ -281,7 +282,7 @@ class ClaimUpserterTest {
 
     private OrderItem orderLine(Long id) {
         return OrderItem.builder()
-                .id(id).marketplaceAccount(account).platform("COUPANG")
+                .id(id).marketplaceAccount(account).platform(Platform.COUPANG)
                 .externalOrderId("O-1").externalBoxId("B-1").externalItemId("V-1")
                 .orderCount(3).cancelCount(0).holdCount(0).status("ACCEPT").build();
     }
@@ -295,7 +296,7 @@ class ClaimUpserterTest {
 
     private OrderClaim existingClaim(ClaimStatus status, String platformStatus, int quantity) {
         return OrderClaim.builder()
-                .id(99L).marketplaceAccount(account).platform("COUPANG").claimType(ClaimType.RETURN)
+                .id(99L).marketplaceAccount(account).platform(Platform.COUPANG).claimType(ClaimType.RETURN)
                 .externalClaimId("R-1").externalOrderId("O-1").externalBoxId("B-1").externalItemId("V-1")
                 .orderItem(orderLine(10L)).orderItemMatchAttempts(0)
                 .itemName("양말").quantity(quantity).status(status).platformStatus(platformStatus)

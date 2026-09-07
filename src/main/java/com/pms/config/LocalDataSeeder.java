@@ -7,6 +7,7 @@ import com.pms.domain.CommissionRate;
 import com.pms.domain.MarginPolicy;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Package;
+import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -134,7 +135,7 @@ public class LocalDataSeeder implements CommandLineRunner {
         // 더미 자격증명 — secretKey 는 AesAttributeConverter 로 암호화되어 저장(암호화 경로 검증).
         marketplaceAccountRepository.save(MarketplaceAccount.builder()
                 .seller(seller)
-                .platform("COUPANG")
+                .platform(Platform.COUPANG)
                 .accountAlias("로컬 더미 쿠팡 계정")
                 .vendorId("A00000000")
                 .accessKey("local-dummy-access-key")
@@ -174,7 +175,7 @@ public class LocalDataSeeder implements CommandLineRunner {
         }
         // 판매상품 A: 단일 옵션 + Product A
         ProductListing listingA = productListingRepository.save(ProductListing.builder()
-                .platform("COUPANG")
+                .platform(Platform.COUPANG)
                 .platformProductId("LOCAL-0001")
                 .name("로컬 판매상품 A")
                 .seller(seller)
@@ -193,7 +194,7 @@ public class LocalDataSeeder implements CommandLineRunner {
 
         // 판매상품 B: 묶음 옵션 + Product B 1 / Product C 2
         ProductListing listingB = productListingRepository.save(ProductListing.builder()
-                .platform("COUPANG")
+                .platform(Platform.COUPANG)
                 .platformProductId("LOCAL-0002")
                 .name("로컬 판매상품 B (2종 묶음)")
                 .seller(seller)
@@ -253,10 +254,10 @@ public class LocalDataSeeder implements CommandLineRunner {
             return;
         }
         categoryRepository.saveAll(List.of(
-                localCategory("패션의류", "COUPANG", "C-1001"),
-                localCategory("생활용품", "COUPANG", "C-1002"),
-                localCategory("패션의류", "NAVER", "N-2001"),
-                localCategory("생활용품", "NAVER", "N-2002")));
+                localCategory("패션의류", Platform.COUPANG, "C-1001"),
+                localCategory("생활용품", Platform.COUPANG, "C-1002"),
+                localCategory("패션의류", Platform.NAVER, "N-2001"),
+                localCategory("생활용품", Platform.NAVER, "N-2002")));
         log.info("[LOCAL-SEED] 4 categories seeded (COUPANG/NAVER)");
     }
 
@@ -269,9 +270,9 @@ public class LocalDataSeeder implements CommandLineRunner {
             return;
         }
         commissionRateRepository.save(CommissionRate.builder()
-                .platform("COUPANG").category(null).rate(new BigDecimal("0.1000")).isDefault(true).build());
+                .platform(Platform.COUPANG).category(null).rate(new BigDecimal("0.1000")).isDefault(true).build());
         commissionRateRepository.save(CommissionRate.builder()
-                .platform("NAVER").category(null).rate(new BigDecimal("0.0600")).isDefault(true).build());
+                .platform(Platform.NAVER).category(null).rate(new BigDecimal("0.0600")).isDefault(true).build());
         log.info("[LOCAL-SEED] 2 default commission rates seeded (COUPANG 10% / NAVER 6%)");
     }
 
@@ -284,9 +285,9 @@ public class LocalDataSeeder implements CommandLineRunner {
             return;
         }
         marginPolicyRepository.save(MarginPolicy.builder()
-                .seller(seller).platform("COUPANG").marginRate(new BigDecimal("0.1500")).build());
+                .seller(seller).platform(Platform.COUPANG).marginRate(new BigDecimal("0.1500")).build());
         marginPolicyRepository.save(MarginPolicy.builder()
-                .seller(seller).platform("NAVER").marginRate(new BigDecimal("0.1200")).build());
+                .seller(seller).platform(Platform.NAVER).marginRate(new BigDecimal("0.1200")).build());
         log.info("[LOCAL-SEED] 2 margin policies seeded (seller × COUPANG 15% / NAVER 12%)");
     }
 
@@ -299,7 +300,7 @@ public class LocalDataSeeder implements CommandLineRunner {
                 .build();
     }
 
-    private Category localCategory(String name, String platform, String platformCategoryId) {
+    private Category localCategory(String name, Platform platform, String platformCategoryId) {
         return Category.builder()
                 .name(name)
                 .platform(platform)

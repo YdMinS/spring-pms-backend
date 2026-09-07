@@ -3,6 +3,7 @@ package com.pms.service.listing.category;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.service.coupang.CoupangApiClient;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -66,8 +67,8 @@ public class CoupangCategoryMeta implements CategoryMetaAdapter {
     private final ObjectMapper objectMapper;
 
     @Override
-    public String platform() {
-        return "COUPANG";
+    public Platform platform() {
+        return Platform.COUPANG;
     }
 
     @Override

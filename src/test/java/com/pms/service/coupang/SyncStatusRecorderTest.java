@@ -1,6 +1,7 @@
 package com.pms.service.coupang;
 
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.domain.SyncStatus;
 import com.pms.repository.MarketplaceAccountRepository;
 import org.junit.jupiter.api.Test;
@@ -37,7 +38,7 @@ class SyncStatusRecorderTest {
 
     private MarketplaceAccount account() {
         return MarketplaceAccount.builder()
-                .id(1L).platform("COUPANG").vendorId("V1")
+                .id(1L).platform(Platform.COUPANG).vendorId("V1")
                 .accessKey("ak").secretKey("sk").isActive(true)
                 .lastCancelSyncAt(PREVIOUS_CANCEL_SYNC)
                 .build();

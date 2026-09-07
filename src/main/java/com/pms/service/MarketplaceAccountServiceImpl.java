@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.DetailTemplate;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.domain.ThumbnailTemplate;
 import com.pms.dto.request.MarketplaceAccountRequest;
@@ -50,7 +51,7 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
 
         MarketplaceAccount account = MarketplaceAccount.builder()
                 .seller(seller)
-                .platform(req.getPlatform())
+                .platform(Platform.from(req.getPlatform()))
                 .accountAlias(req.getAccountAlias())
                 .vendorId(req.getVendorId())
                 .vendorUserId(req.getVendorUserId())
@@ -103,7 +104,7 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
 
         MarketplaceAccount updated = existing.toBuilder()
                 .seller(seller)
-                .platform(req.getPlatform())
+                .platform(Platform.from(req.getPlatform()))
                 .accountAlias(req.getAccountAlias())
                 .vendorId(req.getVendorId())
                 // vendorUserId: same semantics as vendorId/accessKey — request value directly replaces
@@ -169,7 +170,7 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
         return MarketplaceAccountResponse.builder()
                 .id(a.getId())
                 .sellerId(a.getSeller().getId())
-                .platform(a.getPlatform())
+                .platform(a.getPlatform().name())
                 .accountAlias(a.getAccountAlias())
                 .vendorId(a.getVendorId())
                 .vendorUserId(a.getVendorUserId())

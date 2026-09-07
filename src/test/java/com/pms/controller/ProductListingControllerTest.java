@@ -3,6 +3,7 @@ package com.pms.controller;
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MasterProduct;
+import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.Seller;
@@ -58,10 +59,10 @@ class ProductListingControllerTest extends BaseIntegrationTest {
         masterId = master.getId();
 
         linkedId = productListingRepository.save(ProductListing.builder()
-                .platform("COUPANG").platformProductId("P-LINKED").name("연결된 셀")
+                .platform(Platform.COUPANG).platformProductId("P-LINKED").name("연결된 셀")
                 .status(ListingStatus.SELLING).seller(seller).masterProduct(master).build()).getId();
         unlinkedId = productListingRepository.save(ProductListing.builder()
-                .platform("COUPANG").platformProductId("P-UNLINKED").name("미연결 셀")
+                .platform(Platform.COUPANG).platformProductId("P-UNLINKED").name("미연결 셀")
                 .status(ListingStatus.SELLING).seller(seller).build()).getId();
     }
 

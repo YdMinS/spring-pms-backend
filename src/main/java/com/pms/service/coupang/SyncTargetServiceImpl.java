@@ -1,6 +1,7 @@
 package com.pms.service.coupang;
 
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.domain.SyncStatus;
 import com.pms.dto.response.SyncTargetResponse;
 import com.pms.repository.MarketplaceAccountRepository;
@@ -24,8 +25,6 @@ import java.util.List;
 @Transactional(readOnly = true)
 public class SyncTargetServiceImpl implements SyncTargetService {
 
-    private static final String PLATFORM_COUPANG = "COUPANG";
-
     private final MarketplaceAccountRepository marketplaceAccountRepository;
 
     @Override
@@ -35,7 +34,7 @@ public class SyncTargetServiceImpl implements SyncTargetService {
                 : marketplaceAccountRepository.findBySeller_IdAndIsActiveTrue(sellerId);
 
         return accounts.stream()
-                .filter(account -> PLATFORM_COUPANG.equals(account.getPlatform()))
+                .filter(account -> Platform.COUPANG.equals(account.getPlatform()))
                 .map(this::toResponse)
                 .toList();
     }
@@ -46,7 +45,7 @@ public class SyncTargetServiceImpl implements SyncTargetService {
                 .accountId(account.getId())
                 .sellerId(account.getSeller() == null ? null : account.getSeller().getId())
                 .sellerName(account.getSeller() == null ? null : account.getSeller().getSellerName())
-                .platform(account.getPlatform())
+                .platform(account.getPlatform().name())
                 .accountAlias(account.getAccountAlias())
                 .lastSyncStatus(status == null ? null : status.name())
                 .lastSyncAt(account.getLastSyncAt())

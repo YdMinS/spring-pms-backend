@@ -1,5 +1,6 @@
 package com.pms.service.listing.shipping;
 
+import com.pms.domain.Platform;
 import com.pms.domain.MarketplaceAccount;
 
 import java.util.List;
@@ -17,8 +18,8 @@ import java.util.List;
  */
 public interface ShippingPlaceProvider {
 
-    /** Platform key this adapter handles (e.g. "COUPANG"). Resolver matching key. */
-    String platform();
+    /** Platform key this adapter handles (e.g. {@link Platform#COUPANG}). Resolver matching key. */
+    Platform platform();
 
     /**
      * Fetch the outbound shipping places registered on the platform for this account.

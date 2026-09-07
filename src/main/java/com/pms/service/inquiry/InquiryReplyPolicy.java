@@ -5,6 +5,7 @@ import com.pms.domain.CustomerInquiryReply;
 import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.dto.response.ReplyCapability;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -135,7 +136,7 @@ public class InquiryReplyPolicy {
     }
 
     /** 플랫폼이 맞는 어댑터 1개 — {@code ClaimActionServiceImpl.resolve()} 와 동형. */
-    Optional<InquiryReplyAdapter> resolve(String platform) {
+    Optional<InquiryReplyAdapter> resolve(Platform platform) {
         if (platform == null) {
             return Optional.empty();
         }

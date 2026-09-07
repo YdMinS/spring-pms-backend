@@ -7,6 +7,7 @@ import com.pms.domain.ListingStatus;
 import com.pms.domain.MarginPolicy;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.OptionApprovalStatus;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
@@ -61,14 +62,14 @@ class ListingOptionControllerTest extends BaseIntegrationTest {
         Seller seller = sellerRepository.save(Seller.builder()
                 .sellerName("행복상회").businessRegistration("111-22-33333").build());
         categoryRepository.save(Category.builder()
-                .name("신발").platform("COUPANG").platformCategoryId("cat-1").build());
+                .name("신발").platform(Platform.COUPANG).platformCategoryId("cat-1").build());
         MasterProduct master = masterProductRepository.save(MasterProduct.builder()
                 .name("운동화 마스터").active(true).build());
         // 2609_19/D7: a manual price also refreshes the display price, which needs the seller×platform preset.
         marginPolicyRepository.save(MarginPolicy.builder()
-                .seller(seller).platform("COUPANG").marginRate(new BigDecimal("0.1500")).build());
+                .seller(seller).platform(Platform.COUPANG).marginRate(new BigDecimal("0.1500")).build());
         ProductListing cell = productListingRepository.save(ProductListing.builder()
-                .platform("COUPANG").platformProductId(null).name("셀").status(ListingStatus.DRAFT)
+                .platform(Platform.COUPANG).platformProductId(null).name("셀").status(ListingStatus.DRAFT)
                 .seller(seller).masterProduct(master).build());
         listingId = cell.getId();
         opt1Id = saveOption(cell, "opt1");
@@ -76,7 +77,7 @@ class ListingOptionControllerTest extends BaseIntegrationTest {
         opt3Id = saveOption(cell, "opt3");
 
         ProductListing marketCell = productListingRepository.save(ProductListing.builder()
-                .platform("COUPANG").platformProductId("P-1").name("마켓 셀").status(ListingStatus.SELLING)
+                .platform(Platform.COUPANG).platformProductId("P-1").name("마켓 셀").status(ListingStatus.SELLING)
                 .seller(seller).masterProduct(master).build());
         marketListingId = marketCell.getId();
         marketOptAId = saveOption(marketCell, "market-a", "V-1");

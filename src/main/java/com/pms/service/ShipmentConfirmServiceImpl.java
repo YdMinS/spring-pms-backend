@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
+import com.pms.domain.Platform;
 import com.pms.dto.request.ManualShipmentRequest;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderItemRepository;
@@ -57,7 +58,6 @@ import java.util.function.Function;
 @RequiredArgsConstructor
 public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
 
-    private static final String PLATFORM_COUPANG = "COUPANG";
     private static final int COL_ORDER_ID = 5;    // 주문번호
     private static final int COL_INVOICE = 6;      // 운송장번호
 
@@ -128,7 +128,7 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
             }
             // 1주문=1박스 → 라인들은 같은 계정. 비-COUPANG 은 unmatched 로 스킵(resolve/post 미호출).
             MarketplaceAccount account = lines.get(0).getMarketplaceAccount();
-            if (!PLATFORM_COUPANG.equals(account.getPlatform())) {
+            if (!Platform.COUPANG.equals(account.getPlatform())) {
                 unmatched.add(orderId);
                 continue;
             }
@@ -194,7 +194,7 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
         OrderItem anchor = orderItemRepository.findWithAccountAndSellerById(request.orderItemId())
                 .orElseThrow(() -> new IllegalArgumentException("주문 라인을 찾을 수 없습니다"));
         MarketplaceAccount account = anchor.getMarketplaceAccount();
-        if (!PLATFORM_COUPANG.equals(account.getPlatform())) {
+        if (!Platform.COUPANG.equals(account.getPlatform())) {
             throw new IllegalArgumentException("쿠팡 주문만 발송처리할 수 있습니다");     // D7
         }
         String boxId = anchor.getExternalBoxId();
@@ -316,7 +316,7 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
 
         List<MarketplaceAccount> coupangAccounts = new ArrayList<>(
                 marketplaceAccountRepository.findByIsActiveTrue().stream()
-                        .filter(a -> PLATFORM_COUPANG.equals(a.getPlatform()))
+                        .filter(a -> Platform.COUPANG.equals(a.getPlatform()))
                         .toList());
         if (coupangAccounts.isEmpty()) {
             unmatched.addAll(candidates);

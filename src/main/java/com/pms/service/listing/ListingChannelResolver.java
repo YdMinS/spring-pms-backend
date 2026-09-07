@@ -1,5 +1,6 @@
 package com.pms.service.listing;
 
+import com.pms.domain.Platform;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -16,7 +17,7 @@ import java.util.stream.Collectors;
 @Component
 public class ListingChannelResolver {
 
-    private final Map<String, ListingChannel> byPlatform;
+    private final Map<Platform, ListingChannel> byPlatform;
 
     public ListingChannelResolver(List<ListingChannel> channels) {
         this.byPlatform = channels.stream()
@@ -28,7 +29,7 @@ public class ListingChannelResolver {
      * @return the matching adapter
      * @throws IllegalArgumentException (→ 400) if no adapter handles the platform
      */
-    public ListingChannel resolve(String platform) {
+    public ListingChannel resolve(Platform platform) {
         return resolveOptional(platform)
                 .orElseThrow(() -> new IllegalArgumentException("미지원 플랫폼: " + platform));
     }
@@ -42,7 +43,7 @@ public class ListingChannelResolver {
      * @param platform platform key (e.g. "COUPANG")
      * @return the matching adapter, or empty when none handles the platform
      */
-    public Optional<ListingChannel> resolveOptional(String platform) {
+    public Optional<ListingChannel> resolveOptional(Platform platform) {
         return Optional.ofNullable(byPlatform.get(platform));
     }
 }

@@ -54,7 +54,8 @@ public class Category extends BaseEntity {
      */
     @Deprecated
     @Column(nullable = true, length = 50)
-    private String platform;
+    @Enumerated(EnumType.STRING)
+    private Platform platform;
 
     /**
      * @deprecated (44) External platform's category ID. Nullable now — owned by {@link CategoryMapping}.

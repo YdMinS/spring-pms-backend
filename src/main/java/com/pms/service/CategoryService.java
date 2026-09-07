@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.Platform;
 import com.pms.dto.request.CreateCategoryRequest;
 import com.pms.dto.request.UpdateCategoryRequest;
 import com.pms.dto.response.CategoryResponse;
@@ -66,7 +67,7 @@ public interface CategoryService {
      * @param platform Platform name (e.g., "COUPANG", "SMARTSTORE")
      * @return List of categories for the platform
      */
-    List<CategoryResponse> getCategoriesByPlatform(String platform);
+    List<CategoryResponse> getCategoriesByPlatform(Platform platform);
 
     /**
      * Browse the standard-category tree one level at a time (FEATURE_2608_06 / 52).

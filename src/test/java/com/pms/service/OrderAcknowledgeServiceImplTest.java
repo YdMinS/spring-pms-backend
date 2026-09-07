@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.dto.request.OrderAcknowledgeRequest;
 import com.pms.repository.OrderItemRepository;
@@ -62,7 +63,7 @@ class OrderAcknowledgeServiceImplTest {
 
     @Test
     void testAcknowledgeSendsDistinctBoxIds() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
         // 옵션 3줄 = 같은 박스
         given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
                 line(account, "302012345678", "4000019469460", "1", "ACCEPT"),
@@ -84,7 +85,7 @@ class OrderAcknowledgeServiceImplTest {
 
     @Test
     void testAcknowledgeSkipsNonAcceptStatus() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
         given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
                 line(account, "111", "4000000001", "1", "INSTRUCT"),
                 line(account, "222", "4000000002", "1", "ACCEPT")));
@@ -107,7 +108,7 @@ class OrderAcknowledgeServiceImplTest {
     @Test
     void testAcknowledgeReportsNonCoupangAsUnsupported() {
         // 판정은 계정 기준 — OrderItem.platform 이 아니다.
-        MarketplaceAccount naver = account(2L, "NAVER", "N001");
+        MarketplaceAccount naver = account(2L, Platform.NAVER, "N001");
         given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
                 line(naver, "333", "4000000003", "1", "ACCEPT")));
 
@@ -120,7 +121,7 @@ class OrderAcknowledgeServiceImplTest {
 
     @Test
     void testAcknowledgeReportsMissingBoxIdAsUnsupported() {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
         given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
                 line(account, null, "4000000004", "1", "ACCEPT")));
 
@@ -132,7 +133,7 @@ class OrderAcknowledgeServiceImplTest {
 
     @Test
     void testAcknowledgeWritesBackInstructOnSuccess() {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
         given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
                 line(account, "444", "4000000005", "1", "ACCEPT"),
                 line(account, "444", "4000000005", "2", "ACCEPT")));
@@ -151,7 +152,7 @@ class OrderAcknowledgeServiceImplTest {
 
     @Test
     void testAcknowledgeDoesNotWriteBackFailedBox() {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
         given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
                 line(account, "555", "4000000006", "1", "ACCEPT")));
         given(coupangProperties.getAcknowledgementPath()).willReturn(ACK_PATH);
@@ -170,8 +171,8 @@ class OrderAcknowledgeServiceImplTest {
 
     @Test
     void testAcknowledgeIsolatesAccountFailure() {
-        MarketplaceAccount a = account(1L, "COUPANG", "A001");
-        MarketplaceAccount b = account(2L, "COUPANG", "B002");
+        MarketplaceAccount a = account(1L, Platform.COUPANG, "A001");
+        MarketplaceAccount b = account(2L, Platform.COUPANG, "B002");
         given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
                 line(a, "666", "4000000007", "1", "ACCEPT"),
                 line(b, "777", "4000000008", "1", "ACCEPT")));
@@ -190,7 +191,7 @@ class OrderAcknowledgeServiceImplTest {
 
     @Test
     void testAcknowledgeChunksOver50Boxes() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
         List<OrderItem> lines = new ArrayList<>();
         for (int i = 0; i < 51; i++) {
             lines.add(line(account, String.valueOf(1000 + i), "40000001" + i, "1", "ACCEPT"));
@@ -215,7 +216,7 @@ class OrderAcknowledgeServiceImplTest {
 
     @Test
     void testAcknowledgeSucceedsWhenWriteBackFails() {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
         given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
                 line(account, "888", "4000000009", "1", "ACCEPT")));
         given(coupangProperties.getAcknowledgementPath()).willReturn(ACK_PATH);
@@ -243,7 +244,7 @@ class OrderAcknowledgeServiceImplTest {
         return new OrderAcknowledgeRequest(List.of(ids));
     }
 
-    private MarketplaceAccount account(Long id, String platform, String vendorId) {
+    private MarketplaceAccount account(Long id, Platform platform, String vendorId) {
         Seller seller = Seller.builder().id(id).sellerName("셀러" + id).businessRegistration("123-45-6789" + id).build();
         return MarketplaceAccount.builder()
                 .id(id).seller(seller).platform(platform).vendorId(vendorId)

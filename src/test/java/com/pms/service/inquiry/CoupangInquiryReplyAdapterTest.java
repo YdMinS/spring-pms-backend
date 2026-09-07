@@ -7,6 +7,7 @@ import com.pms.domain.CustomerInquiry;
 import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.service.coupang.CoupangApiClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,7 +44,7 @@ class CoupangInquiryReplyAdapterTest {
     }
 
     private final MarketplaceAccount account = MarketplaceAccount.builder()
-            .id(7L).platform("COUPANG").vendorId("A00012345").vendorUserId("wing-user").build();
+            .id(7L).platform(Platform.COUPANG).vendorId("A00012345").vendorUserId("wing-user").build();
 
     @Test
     void reply_productQna_postsToV4OnlineInquiriesWithReplyBy() throws Exception {
@@ -135,7 +136,7 @@ class CoupangInquiryReplyAdapterTest {
         return CustomerInquiry.builder()
                 .id(3L)
                 .marketplaceAccount(account)
-                .platform("COUPANG")
+                .platform(Platform.COUPANG)
                 .inquiryType(type)
                 .externalInquiryId(externalInquiryId)
                 .status(InquiryStatus.UNANSWERED)

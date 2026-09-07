@@ -1,5 +1,6 @@
 package com.pms.controller;
 
+import com.pms.domain.Platform;
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.ManualShipmentRequest;
 import com.pms.service.CarrierCodeService;
@@ -71,7 +72,7 @@ public class ShipmentConfirmController {
     @ApiResponse(responseCode = "403", description = "Permission denied (ADMIN role required)")
     public ResponseEntity<ResponseDTO<List<CarrierOption>>> carrierOptions(
             @RequestParam("platform") String platform) {
-        return ResponseEntity.ok(ResponseDTO.success(carrierCodeService.findOptions(platform)));
+        return ResponseEntity.ok(ResponseDTO.success(carrierCodeService.findOptions(Platform.from(platform))));
     }
 
     @PostMapping("/confirm/manual")

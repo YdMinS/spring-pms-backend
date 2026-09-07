@@ -74,7 +74,7 @@ public class OrderQueryServiceImpl implements OrderQueryService {
         return OrderItemResponse.builder()
                 .id(o.getId())
                 .marketplaceAccountId(o.getMarketplaceAccount().getId())
-                .platform(o.getPlatform())
+                .platform(o.getPlatform().name())
                 .externalOrderId(o.getExternalOrderId())
                 .externalBoxId(o.getExternalBoxId())
                 .externalItemId(o.getExternalItemId())

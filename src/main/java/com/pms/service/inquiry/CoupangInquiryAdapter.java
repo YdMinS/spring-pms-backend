@@ -7,6 +7,7 @@ import com.pms.domain.CustomerInquiry;
 import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.repository.CustomerInquiryRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.SyncWindow;
@@ -41,8 +42,6 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class CoupangInquiryAdapter implements InquirySyncAdapter {
 
-    private static final String PLATFORM_COUPANG = "COUPANG";
-
     /** 페이징 무한루프 가드. {@code totalPages} 를 못 읽는 응답이 와도 여기서 멈춘다. */
     static final int MAX_PAGES = 20;
 
@@ -62,8 +61,8 @@ public class CoupangInquiryAdapter implements InquirySyncAdapter {
     private final CustomerInquiryRepository customerInquiryRepository;
 
     @Override
-    public String platform() {
-        return PLATFORM_COUPANG;
+    public Platform platform() {
+        return Platform.COUPANG;
     }
 
     @Override

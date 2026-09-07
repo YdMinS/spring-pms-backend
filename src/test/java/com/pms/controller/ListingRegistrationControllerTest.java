@@ -10,6 +10,7 @@ import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MarketplaceShippingConfig;
 import com.pms.domain.CategoryMapping;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.Package;
@@ -87,14 +88,14 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
         // 52: the mapping's linked PlatformCategory owns the mall code — the adapter payload resolves
         // displayCategoryCode from it.
         PlatformCategory platformCategory = platformCategoryRepository.save(PlatformCategory.builder()
-                .platform("COUPANG").code("cat-1").name("운동화")
+                .platform(Platform.COUPANG).code("cat-1").name("운동화")
                 .commissionRate(new BigDecimal("0.10")).build());
         categoryMappingRepository.save(CategoryMapping.builder()
-                .category(category).platform("COUPANG").platformCategoryId("cat-1")
+                .category(category).platform(Platform.COUPANG).platformCategoryId("cat-1")
                 .platformCategory(platformCategory).build());
 
         ProductListing cell = productListingRepository.save(ProductListing.builder()
-                .platform("COUPANG").platformProductId(null).name("셀").status(ListingStatus.DRAFT)
+                .platform(Platform.COUPANG).platformProductId(null).name("셀").status(ListingStatus.DRAFT)
                 .seller(seller).category(category).delivery(delivery).package_(box).masterProduct(master).build());
         draftCellId = cell.getId();
         productListingOptionRepository.save(ProductListingOption.builder()
@@ -103,7 +104,7 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
                 .productListing(cell).thumbnailUrl("thumbnails/t.jpg").detailHtml("<p>셀</p>")
                 .source(GeneratedContentSource.AUTO).generatedAt(LocalDateTime.now()).build());
         MarketplaceAccount account = marketplaceAccountRepository.save(MarketplaceAccount.builder()
-                .seller(seller).platform("COUPANG").accountAlias("메인")
+                .seller(seller).platform(Platform.COUPANG).accountAlias("메인")
                 .vendorId("V1").vendorUserId("wing-user")   // 73: WING login id (register-required)
                 .accessKey("ak").secretKey("sk").isActive(true).build());
         // 73: register payload needs a complete per-account shipping config (72) → 400 otherwise.

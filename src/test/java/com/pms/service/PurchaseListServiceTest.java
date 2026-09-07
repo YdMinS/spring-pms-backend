@@ -1,6 +1,7 @@
 package com.pms.service;
 
 import com.pms.domain.OrderItem;
+import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
@@ -59,7 +60,7 @@ class PurchaseListServiceTest {
 
     private OrderItem acceptOrder(Long id, String optionId, int orderCount) {
         return OrderItem.builder()
-                .id(id).platform("COUPANG").externalOrderId("O" + id).externalItemId(optionId)
+                .id(id).platform(Platform.COUPANG).externalOrderId("O" + id).externalItemId(optionId)
                 .itemName("주문" + id).orderCount(orderCount).cancelCount(0).holdCount(0)
                 .status("ACCEPT").build();
     }

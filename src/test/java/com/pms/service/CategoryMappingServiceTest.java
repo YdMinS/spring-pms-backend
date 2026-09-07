@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.Category;
 import com.pms.domain.CategoryMapping;
+import com.pms.domain.Platform;
 import com.pms.dto.request.CategoryMappingRequest;
 import com.pms.dto.response.CategoryMappingResponse;
 import com.pms.exception.BusinessException;
@@ -46,7 +47,7 @@ class CategoryMappingServiceTest {
     @Test
     void upsert_new_savesMapping() {
         given(categoryRepository.findById(3L)).willReturn(Optional.of(Category.builder().id(3L).name("신발").build()));
-        given(categoryMappingRepository.findByCategoryIdAndPlatform(3L, "COUPANG")).willReturn(Optional.empty());
+        given(categoryMappingRepository.findByCategoryIdAndPlatform(3L, Platform.COUPANG)).willReturn(Optional.empty());
         given(categoryMappingRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
 
         CategoryMappingResponse resp = service.upsertMapping(3L, request("101"));
@@ -63,9 +64,9 @@ class CategoryMappingServiceTest {
     void upsert_existing_updatesSameRow() {
         Category category = Category.builder().id(3L).name("신발").build();
         CategoryMapping existing = CategoryMapping.builder()
-                .id(9L).category(category).platform("COUPANG").platformCategoryId("old").build();
+                .id(9L).category(category).platform(Platform.COUPANG).platformCategoryId("old").build();
         given(categoryRepository.findById(3L)).willReturn(Optional.of(category));
-        given(categoryMappingRepository.findByCategoryIdAndPlatform(3L, "COUPANG")).willReturn(Optional.of(existing));
+        given(categoryMappingRepository.findByCategoryIdAndPlatform(3L, Platform.COUPANG)).willReturn(Optional.of(existing));
         given(categoryMappingRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
 
         service.upsertMapping(3L, request("102"));
@@ -79,18 +80,18 @@ class CategoryMappingServiceTest {
     @Test
     void upsert_invokesCommissionPrefill() {
         given(categoryRepository.findById(3L)).willReturn(Optional.of(Category.builder().id(3L).name("신발").build()));
-        given(categoryMappingRepository.findByCategoryIdAndPlatform(3L, "COUPANG")).willReturn(Optional.empty());
+        given(categoryMappingRepository.findByCategoryIdAndPlatform(3L, Platform.COUPANG)).willReturn(Optional.empty());
         given(categoryMappingRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
 
         service.upsertMapping(3L, request("101"));
 
-        verify(commissionPrefillService).prefillIfAbsent(eq(3L), eq("COUPANG"), eq("경로"));
+        verify(commissionPrefillService).prefillIfAbsent(eq(3L), eq(Platform.COUPANG), eq("경로"));
     }
 
     @Test
     void upsert_prefillFailure_stillSavesMapping() {
         given(categoryRepository.findById(3L)).willReturn(Optional.of(Category.builder().id(3L).name("신발").build()));
-        given(categoryMappingRepository.findByCategoryIdAndPlatform(3L, "COUPANG")).willReturn(Optional.empty());
+        given(categoryMappingRepository.findByCategoryIdAndPlatform(3L, Platform.COUPANG)).willReturn(Optional.empty());
         given(categoryMappingRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
         willThrow(new RuntimeException("prefill boom"))
                 .given(commissionPrefillService).prefillIfAbsent(any(), any(), any());
@@ -113,7 +114,7 @@ class CategoryMappingServiceTest {
     void getMappings_returnsList() {
         Category category = Category.builder().id(3L).name("신발").build();
         given(categoryMappingRepository.findByCategoryId(3L)).willReturn(List.of(
-                CategoryMapping.builder().category(category).platform("COUPANG").platformCategoryId("101").build()));
+                CategoryMapping.builder().category(category).platform(Platform.COUPANG).platformCategoryId("101").build()));
 
         List<CategoryMappingResponse> resp = service.getMappings(3L);
 
@@ -123,19 +124,19 @@ class CategoryMappingServiceTest {
 
     @Test
     void deleteMapping_missing_throws404() {
-        given(categoryMappingRepository.findByCategoryIdAndPlatform(3L, "NAVER")).willReturn(Optional.empty());
+        given(categoryMappingRepository.findByCategoryIdAndPlatform(3L, Platform.NAVER)).willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.deleteMapping(3L, "NAVER"))
+        assertThatThrownBy(() -> service.deleteMapping(3L, Platform.NAVER))
                 .isInstanceOf(BusinessException.class);
     }
 
     @Test
     void deleteMapping_present_deletes() {
         CategoryMapping existing = CategoryMapping.builder()
-                .id(9L).category(Category.builder().id(3L).build()).platform("COUPANG").platformCategoryId("101").build();
-        given(categoryMappingRepository.findByCategoryIdAndPlatform(3L, "COUPANG")).willReturn(Optional.of(existing));
+                .id(9L).category(Category.builder().id(3L).build()).platform(Platform.COUPANG).platformCategoryId("101").build();
+        given(categoryMappingRepository.findByCategoryIdAndPlatform(3L, Platform.COUPANG)).willReturn(Optional.of(existing));
 
-        service.deleteMapping(3L, "COUPANG");
+        service.deleteMapping(3L, Platform.COUPANG);
 
         verify(categoryMappingRepository).delete(existing);
     }

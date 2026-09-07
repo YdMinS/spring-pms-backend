@@ -2,6 +2,7 @@ package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.dto.request.ShippingConfigRequest;
 import com.pms.repository.MarketplaceAccountRepository;
@@ -45,7 +46,7 @@ class ShippingConfigControllerTest extends BaseIntegrationTest {
         Seller seller = sellerRepository.save(Seller.builder()
                 .sellerName("행복상회").businessRegistration("111-22-33333").build());
         MarketplaceAccount account = marketplaceAccountRepository.save(MarketplaceAccount.builder()
-                .seller(seller).platform("COUPANG").accountAlias("메인")
+                .seller(seller).platform(Platform.COUPANG).accountAlias("메인")
                 .vendorId("V1").accessKey("ak").secretKey("sk").isActive(true).build());
         accountId = account.getId();
 

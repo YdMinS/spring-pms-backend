@@ -1,6 +1,7 @@
 package com.pms.service.coupang;
 
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.domain.SyncStatus;
 import com.pms.dto.response.SyncTargetResponse;
@@ -29,7 +30,7 @@ class SyncTargetServiceImplTest {
 
     @InjectMocks private SyncTargetServiceImpl service;
 
-    private MarketplaceAccount account(Long id, String platform, String sellerName) {
+    private MarketplaceAccount account(Long id, Platform platform, String sellerName) {
         Seller seller = Seller.builder().id(id * 10).sellerName(sellerName).build();
         return MarketplaceAccount.builder()
                 .id(id).seller(seller).platform(platform).accountAlias("별칭" + id)
@@ -43,9 +44,9 @@ class SyncTargetServiceImplTest {
     @Test
     void list_filtersOutNonCoupangAndMapsSellerName() {
         given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(
-                account(1L, "COUPANG", "셀러A"),
-                account(2L, "COUPANG", "셀러B"),
-                account(3L, "NAVER", "셀러C")));
+                account(1L, Platform.COUPANG, "셀러A"),
+                account(2L, Platform.COUPANG, "셀러B"),
+                account(3L, Platform.NAVER, "셀러C")));
 
         List<SyncTargetResponse> targets = service.list(null);
 
@@ -59,7 +60,7 @@ class SyncTargetServiceImplTest {
     @Test
     void list_bySeller_usesSellerScopedQuery() {
         given(marketplaceAccountRepository.findBySeller_IdAndIsActiveTrue(7L))
-                .willReturn(List.of(account(1L, "COUPANG", "셀러A")));
+                .willReturn(List.of(account(1L, Platform.COUPANG, "셀러A")));
 
         List<SyncTargetResponse> targets = service.list(7L);
 

@@ -7,6 +7,7 @@ import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
+import com.pms.domain.Platform;
 import com.pms.repository.CustomerInquiryReplyRepository;
 import com.pms.repository.CustomerInquiryRepository;
 import com.pms.repository.OrderItemRepository;
@@ -49,7 +50,7 @@ class InquiryUpserterTest {
     @InjectMocks private InquiryUpserter upserter;
 
     private final MarketplaceAccount account = MarketplaceAccount.builder()
-            .id(7L).platform("COUPANG").vendorId("A0001").build();
+            .id(7L).platform(Platform.COUPANG).vendorId("A0001").build();
 
     @Test
     void upsert_newInquiry_insertsWithMatchedOrderLine() {
@@ -150,7 +151,7 @@ class InquiryUpserterTest {
         return CustomerInquiry.builder()
                 .id(3L)
                 .marketplaceAccount(account)
-                .platform("COUPANG")
+                .platform(Platform.COUPANG)
                 .inquiryType(InquiryType.PRODUCT_QNA)
                 .externalInquiryId("I-1")
                 .externalItemId("V-1")

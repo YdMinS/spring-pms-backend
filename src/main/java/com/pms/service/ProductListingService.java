@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.Platform;
 import com.pms.dto.request.CreateProductListingRequest;
 import com.pms.dto.response.ProductListingResponse;
 import com.pms.exception.ResourceNotFoundException;
@@ -63,7 +64,7 @@ public interface ProductListingService {
      *                     {@code boolean} 이 아니라 {@code Boolean} 이다.
      * @return Page of ProductListingResponse objects
      */
-    Page<ProductListingResponse> getByPlatform(String platform, int page, int size, Boolean masterLinked);
+    Page<ProductListingResponse> getByPlatform(Platform platform, int page, int size, Boolean masterLinked);
 
     /**
      * Update an existing product listing.

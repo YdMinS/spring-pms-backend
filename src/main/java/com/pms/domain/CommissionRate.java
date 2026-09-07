@@ -34,9 +34,10 @@ public class CommissionRate {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /** Platform name (e.g., "COUPANG", "GMARKET") */
+    /** Platform this rate belongs to (e.g. {@link Platform#COUPANG}) */
     @Column(length = 50, nullable = false)
-    private String platform;
+    @Enumerated(EnumType.STRING)
+    private Platform platform;
 
     /** Category relationship for category-specific rate */
     @ManyToOne(fetch = FetchType.LAZY)

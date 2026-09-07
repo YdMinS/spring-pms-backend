@@ -7,6 +7,7 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderCancelAction;
 import com.pms.domain.OrderCancelReason;
 import com.pms.domain.OrderItem;
+import com.pms.domain.Platform;
 import com.pms.dto.request.OrderCancelRequest;
 import com.pms.repository.OrderCancelActionRepository;
 import com.pms.repository.OrderItemRepository;
@@ -49,8 +50,6 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 public class OrderCancelServiceImpl implements OrderCancelService {
-
-    private static final String PLATFORM_COUPANG = "COUPANG";
 
     /** 취소를 받아 주는 상태 화이트리스트 — 그 외는 쿠팡이 400 을 준다(D2). 되돌릴 수 없는 쓰기라 안 보낸다. */
     private static final Set<String> CANCELLABLE_STATUSES = Set.of(
@@ -104,7 +103,7 @@ public class OrderCancelServiceImpl implements OrderCancelService {
             MarketplaceAccount account = line.getMarketplaceAccount();
             String boxId = line.getExternalBoxId();
             // 플랫폼 판정은 계정 기준 — 발주처리·발송처리와 같은 기준이어야 레그가 갈라지지 않는다.
-            if (!PLATFORM_COUPANG.equals(account.getPlatform()) || boxId == null || boxId.isBlank()) {
+            if (!Platform.COUPANG.equals(account.getPlatform()) || boxId == null || boxId.isBlank()) {
                 unsupported.add(skippedLine(line, "쿠팡 주문이 아니거나 배송번호가 없습니다"));
                 continue;
             }

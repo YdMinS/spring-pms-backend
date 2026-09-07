@@ -10,6 +10,7 @@ import com.pms.domain.MasterProductComponent;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.OptionApprovalStatus;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
@@ -85,7 +86,7 @@ class CoupangListingImportServiceTest {
     private static final Long CATEGORY_ID = 3L;
     private static final Long PRODUCT_A = 100L;
     private static final Long PRODUCT_B = 200L;
-    private static final String PLATFORM = "COUPANG";
+    private static final Platform PLATFORM = Platform.COUPANG;
     private static final String PRODUCT_ID = "1234567";
     private static final String COUPANG_CATEGORY = "72882";
 
@@ -121,7 +122,7 @@ class CoupangListingImportServiceTest {
 
     private ListingImportPreviewRequest previewRequest() {
         return ListingImportPreviewRequest.builder()
-                .sellerId(SELLER_ID).platform(PLATFORM).platformProductId(PRODUCT_ID).build();
+                .sellerId(SELLER_ID).platform(PLATFORM.name()).platformProductId(PRODUCT_ID).build();
     }
 
     private ListingImportRequest.OptionSpec spec(String itemName, String vendorItemId, int qtyA, Integer qtyB) {
@@ -137,7 +138,7 @@ class CoupangListingImportServiceTest {
 
     private ListingImportRequest importRequest(ListingImportRequest.OptionSpec... specs) {
         return ListingImportRequest.builder()
-                .sellerId(SELLER_ID).platform(PLATFORM).platformProductId(PRODUCT_ID)
+                .sellerId(SELLER_ID).platform(PLATFORM.name()).platformProductId(PRODUCT_ID)
                 .options(List.of(specs)).build();
     }
 

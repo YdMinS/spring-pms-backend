@@ -3,6 +3,7 @@ package com.pms.controller;
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderItemRepository;
@@ -46,10 +47,10 @@ class OrderControllerTest extends BaseIntegrationTest {
         Seller seller = sellerRepository.save(Seller.builder()
                 .sellerName("테스트셀러").businessRegistration("123-45-67890").build());
         MarketplaceAccount account = marketplaceAccountRepository.save(MarketplaceAccount.builder()
-                .seller(seller).platform("COUPANG").accountAlias("쿠팡본점")
+                .seller(seller).platform(Platform.COUPANG).accountAlias("쿠팡본점")
                 .vendorId("A00012345").accessKey("ak").secretKey("sk").isActive(true).build());
         orderItemRepository.save(OrderItem.builder()
-                .marketplaceAccount(account).platform("COUPANG")
+                .marketplaceAccount(account).platform(Platform.COUPANG)
                 .externalOrderId("O1").externalBoxId("B1").externalItemId("I1")
                 .itemName("양말").ordererName("홍길동").receiverName("김철수")
                 .orderCount(10).cancelCount(2).holdCount(1)

@@ -7,6 +7,7 @@ import com.pms.domain.ClaimAction;
 import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
+import com.pms.domain.Platform;
 import com.pms.service.CarrierCodeService;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.SyncWindow;
@@ -41,8 +42,6 @@ import java.util.Set;
 @Component
 @RequiredArgsConstructor
 public class CoupangClaimActionAdapter implements ClaimActionAdapter {
-
-    private static final String PLATFORM_COUPANG = "COUPANG";
 
     /** 회수 송장 등록은 반품·교환 공용 엔드포인트라 이 값으로 갈린다. */
     private static final String DELIVERY_TYPE_RETURN = "RETURN";
@@ -100,8 +99,8 @@ public class CoupangClaimActionAdapter implements ClaimActionAdapter {
     private final ObjectMapper objectMapper;
 
     @Override
-    public String platform() {
-        return PLATFORM_COUPANG;
+    public Platform platform() {
+        return Platform.COUPANG;
     }
 
     @Override

@@ -1,6 +1,7 @@
 package com.pms.repository;
 
 import com.pms.common.TestJpaConfig;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.Seller;
 import org.junit.jupiter.api.Test;
@@ -36,7 +37,7 @@ class ProductListingAuditTest {
         Seller seller = em.persist(Seller.builder()
                 .sellerName("판매자").businessRegistration("123-45-67890").build());
         ProductListing saved = repository.save(ProductListing.builder()
-                .platform("COUPANG").name("리스팅").seller(seller).build());
+                .platform(Platform.COUPANG).name("리스팅").seller(seller).build());
         em.flush();
 
         assertThat(saved.getCreatedAt()).isNotNull();

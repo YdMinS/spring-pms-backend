@@ -1,5 +1,6 @@
 package com.pms.service.listing.category;
 
+import com.pms.domain.Platform;
 import com.pms.domain.MarketplaceAccount;
 
 /**
@@ -9,8 +10,8 @@ import com.pms.domain.MarketplaceAccount;
  */
 public interface CategoryMetaAdapter {
 
-    /** Platform key (e.g. "COUPANG"). */
-    String platform();
+    /** Platform key (e.g. {@link Platform#COUPANG}). */
+    Platform platform();
 
     /**
      * Resolve the meta schema for a category. <b>Returning an empty schema is allowed</b> (no required

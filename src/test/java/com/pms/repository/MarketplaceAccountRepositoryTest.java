@@ -2,6 +2,7 @@ package com.pms.repository;
 
 import com.pms.common.TestJpaConfig;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.security.crypto.AesAttributeConverter;
 import org.hibernate.Hibernate;
@@ -44,7 +45,7 @@ class MarketplaceAccountRepositoryTest {
                 .sellerName(sellerName).businessRegistration(bizReg).build();
         em.persist(seller);
         MarketplaceAccount account = MarketplaceAccount.builder()
-                .seller(seller).platform("COUPANG").vendorId(vendorId)
+                .seller(seller).platform(Platform.COUPANG).vendorId(vendorId)
                 .accessKey("ak").secretKey("sk").isActive(true).build();
         em.persist(account);
         em.flush();

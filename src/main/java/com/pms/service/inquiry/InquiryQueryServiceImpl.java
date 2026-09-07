@@ -6,6 +6,7 @@ import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderItem;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.Seller;
 import com.pms.dto.response.CustomerInquiryReplyResponse;
@@ -105,7 +106,7 @@ public class InquiryQueryServiceImpl implements InquiryQueryService {
 
     @Override
     public List<InquiryTypeCatalogResponse> getTypes() {
-        List<String> platforms = marketplaceAccountRepository.findByIsActiveTrue().stream()
+        List<Platform> platforms = marketplaceAccountRepository.findByIsActiveTrue().stream()
                 .map(MarketplaceAccount::getPlatform)
                 .toList();
         return inquiryTypeCatalog.forPlatforms(platforms);
@@ -174,7 +175,7 @@ public class InquiryQueryServiceImpl implements InquiryQueryService {
         Seller seller = (account != null) ? account.getSeller() : null;
         return new CustomerInquiryResponse(
                 inquiry.getId(),
-                inquiry.getPlatform(),
+                inquiry.getPlatform().name(),
                 (account != null) ? account.getId() : null,
                 (account != null) ? account.getAccountAlias() : null,
                 (seller != null) ? seller.getId() : null,

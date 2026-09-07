@@ -7,6 +7,7 @@ import com.pms.domain.ClaimStatus;
 import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
+import com.pms.domain.Platform;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.SyncWindow;
@@ -43,7 +44,6 @@ import java.util.function.Predicate;
 @RequiredArgsConstructor
 public class CoupangClaimAdapter implements ClaimSyncAdapter {
 
-    private static final String PLATFORM_COUPANG = "COUPANG";
     private static final int MAX_PAGES = 20;                // nextToken 무한루프 가드
 
     /** ⚠️ 반품(yyyy-MM-dd)과 다르다 — 교환 조회는 시각까지 필수다. */
@@ -59,8 +59,8 @@ public class CoupangClaimAdapter implements ClaimSyncAdapter {
     private final ClaimTrackingSlicer claimTrackingSlicer;
 
     @Override
-    public String platform() {
-        return PLATFORM_COUPANG;
+    public Platform platform() {
+        return Platform.COUPANG;
     }
 
     @Override

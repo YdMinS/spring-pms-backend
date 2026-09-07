@@ -1,6 +1,7 @@
 package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.Seller;
 import com.pms.repository.GeneratedProductDataRepository;
@@ -37,7 +38,7 @@ class ListingDetailControllerTest extends BaseIntegrationTest {
         Seller seller = sellerRepository.save(Seller.builder()
                 .sellerName("행복상회").businessRegistration("111-22-33333").build());
         ProductListing listing = productListingRepository.save(ProductListing.builder()
-                .platform("COUPANG").platformProductId("X").name("셀").seller(seller).build());
+                .platform(Platform.COUPANG).platformProductId("X").name("셀").seller(seller).build());
         listingId = listing.getId();
     }
 

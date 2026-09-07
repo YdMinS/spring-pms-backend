@@ -7,6 +7,7 @@ import com.pms.domain.MasterProductComponent;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.OptionApprovalStatus;
+import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -72,7 +73,7 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
      * {@link ListingChannel#fetchProduct} 를 실제로 구현한 플랫폼. ⚠️ 어댑터 기본 구현의
      * {@code UnsupportedOperationException} 은 전역 핸들러가 없어 500 이 되므로 여기서 400 으로 막는다.
      */
-    private static final Set<String> SUPPORTED_PLATFORMS = Set.of("COUPANG");
+    private static final Set<Platform> SUPPORTED_PLATFORMS = Set.of(Platform.COUPANG);
 
     private final MasterProductRepository masterProductRepository;
     private final MasterProductComponentRepository masterProductComponentRepository;
@@ -94,11 +95,12 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
 
     @Override
     public ListingImportPreviewResponse preview(Long masterProductId, ListingImportPreviewRequest request) {
+        Platform platform = Platform.from(request.getPlatform());
         ImportContext ctx = validate(masterProductId, request.getSellerId(),
-                request.getPlatform(), request.getPlatformProductId());
+                platform, request.getPlatformProductId());
         ImportedProduct fetched = fetchProduct(ctx, request.getPlatformProductId());
 
-        boolean matched = categoryMatches(ctx.master(), request.getPlatform(), fetched.categoryCode());
+        boolean matched = categoryMatches(ctx.master(), platform, fetched.categoryCode());
         return ListingImportPreviewResponse.builder()
                 .productName(fetched.productName())
                 .status(fetched.status())
@@ -125,8 +127,9 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
     @Transactional
     public ChannelAddResponse importListing(Long masterProductId, ListingImportRequest request) {
         // Defence in depth: a direct call may skip the preview entirely, so every preview guard runs again.
+        Platform platform = Platform.from(request.getPlatform());
         ImportContext ctx = validate(masterProductId, request.getSellerId(),
-                request.getPlatform(), request.getPlatformProductId());
+                platform, request.getPlatformProductId());
         // The market is re-read here on purpose (D-commit): prices/options may have moved since the preview,
         // and the client's copy of them is never trusted.
         ImportedProduct fetched = fetchProduct(ctx, request.getPlatformProductId());
@@ -153,12 +156,12 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
         }
 
         // --- 2) the cell itself
-        boolean matched = categoryMatches(ctx.master(), request.getPlatform(), fetched.categoryCode());
+        boolean matched = categoryMatches(ctx.master(), platform, fetched.categoryCode());
         List<String> channelTags = channelTags(ctx.master(), fetched.tags());
         ProductListing cell = productListingRepository.save(ProductListing.builder()
                 .masterProduct(ctx.master())
                 .seller(ctx.seller())
-                .platform(request.getPlatform())
+                .platform(platform)
                 .platformProductId(request.getPlatformProductId())
                 // D16: the market's own leaf code, kept for display/compare only — never for the payload.
                 .platformCategoryCode(fetched.categoryCode())
@@ -223,7 +226,7 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
      * 미리보기·커밋 공통 검증(Step 2 의 1~6). 마켓 조회 <b>전에</b> 끝나는 것들만 여기 있다 — 사용자가 수량을
      * 다 채운 뒤에 실패하면 안 되기 때문에 커밋도 같은 순서로 다시 돈다.
      */
-    private ImportContext validate(Long masterProductId, Long sellerId, String platform, String platformProductId) {
+    private ImportContext validate(Long masterProductId, Long sellerId, Platform platform, String platformProductId) {
         if (!SUPPORTED_PLATFORMS.contains(platform)) {
             throw new IllegalArgumentException(platform + " 가져오기 미지원");
         }
@@ -436,7 +439,7 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
      * <p>어느 쪽이든 막지 않는다 — 등록·수정 payload 는 원래도 마스터 카테고리로 만들어지므로 폴백이 곧
      * 현행 동작이다.</p>
      */
-    private boolean categoryMatches(MasterProduct master, String platform, String marketCategoryCode) {
+    private boolean categoryMatches(MasterProduct master, Platform platform, String marketCategoryCode) {
         if (marketCategoryCode == null || marketCategoryCode.isBlank()) {
             return false;
         }

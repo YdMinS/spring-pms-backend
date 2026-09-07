@@ -4,6 +4,7 @@ import com.pms.domain.ListingStatus;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
@@ -78,6 +79,7 @@ public class ChannelAddServiceImpl implements ChannelAddService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ChannelAddResponse addChannel(Long masterProductId, ChannelAddRequest request) {
         // --- validation (MUST-KEEP) ---
+        Platform platform = Platform.from(request.getPlatform());
         MasterProduct master = masterProductRepository.findScopedById(masterProductId)
                 .orElseThrow(() -> new ResourceNotFoundException("MasterProduct", masterProductId));
         if (Boolean.FALSE.equals(master.getActive())) {
@@ -85,7 +87,7 @@ public class ChannelAddServiceImpl implements ChannelAddService {
         }
 
         if (productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(
-                masterProductId, request.getSellerId(), request.getPlatform())) {
+                masterProductId, request.getSellerId(), platform)) {
             throw new DuplicateChannelException();
         }
 
@@ -106,15 +108,15 @@ public class ChannelAddServiceImpl implements ChannelAddService {
             throw new IllegalArgumentException("표준 카테고리 미설정");
         }
         if (!categoryMappingRepository.existsByCategoryIdAndPlatform(
-                master.getCategory().getId(), request.getPlatform())) {
-            throw new IllegalArgumentException(request.getPlatform() + " 카테고리 매핑 미설정");
+                master.getCategory().getId(), platform)) {
+            throw new IllegalArgumentException(platform + " 카테고리 매핑 미설정");
         }
 
         // --- copy: master options → listing options + BOM ---
         ProductListing cell = productListingRepository.save(ProductListing.builder()
                 .masterProduct(master)
                 .seller(seller)
-                .platform(request.getPlatform())
+                .platform(platform)
                 .platformProductId(null)              // no market id until 3c push
                 .name(master.getName())
                 .status(ListingStatus.DRAFT)

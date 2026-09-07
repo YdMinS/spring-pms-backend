@@ -3,6 +3,7 @@ package com.pms.service;
 import com.pms.domain.Category;
 import com.pms.domain.CarrierRate;
 import com.pms.domain.Package;
+import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -115,7 +116,7 @@ public class ProductListingServiceImpl implements ProductListingService {
         // Build and save listing
         ProductListing listing = ProductListing.builder()
                 .seller(seller)
-                .platform(request.getPlatform())
+                .platform(Platform.from(request.getPlatform()))
                 .platformProductId(request.getPlatformProductId())
                 .name(request.getName())
                 .category(category)
@@ -186,7 +187,7 @@ public class ProductListingServiceImpl implements ProductListingService {
      * @return Page of ProductListingResponse with options
      */
     @Override
-    public Page<ProductListingResponse> getByPlatform(String platform, int page, int size, Boolean masterLinked) {
+    public Page<ProductListingResponse> getByPlatform(Platform platform, int page, int size, Boolean masterLinked) {
         if (size <= 0) {
             size = DEFAULT_PAGE_SIZE;
         }
@@ -270,7 +271,7 @@ public class ProductListingServiceImpl implements ProductListingService {
         // Update using immutable pattern
         ProductListing updated = listing.toBuilder()
                 .seller(seller)
-                .platform(request.getPlatform())
+                .platform(Platform.from(request.getPlatform()))
                 .platformProductId(request.getPlatformProductId())
                 .name(request.getName())
                 .category(category)

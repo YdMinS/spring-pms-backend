@@ -1,6 +1,7 @@
 package com.pms.service.coupang;
 
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.service.claim.ClaimOrderBackfillService;
@@ -68,7 +69,7 @@ class OrderSyncFacadeImplTest {
 
     private MarketplaceAccount account(Long id) {
         return MarketplaceAccount.builder()
-                .id(id).platform("COUPANG").vendorId("V" + id)
+                .id(id).platform(Platform.COUPANG).vendorId("V" + id)
                 .accessKey("ak").secretKey("sk").isActive(true).build();
     }
 
@@ -261,7 +262,7 @@ class OrderSyncFacadeImplTest {
         given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
         given(coupangOrderSyncService.syncAccount(acc, OrderSyncScope.FULL)).willReturn(new SyncResult(1, 0, 1, List.of()));
         given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(0, 1));
-        given(claimSyncAdapter.platform()).willReturn("COUPANG");
+        given(claimSyncAdapter.platform()).willReturn(Platform.COUPANG);
         given(claimSyncAdapter.syncExchanges(acc)).willThrow(new RuntimeException("쿠팡 500"));
 
         facade.sync(1L);
@@ -278,7 +279,7 @@ class OrderSyncFacadeImplTest {
         given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
         given(coupangOrderSyncService.syncAccount(acc, OrderSyncScope.FULL)).willReturn(new SyncResult(1, 0, 1, List.of()));
         given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(0, 1));
-        given(claimSyncAdapter.platform()).willReturn("NAVER");
+        given(claimSyncAdapter.platform()).willReturn(Platform.NAVER);
 
         facade.sync(1L);
 
@@ -332,7 +333,7 @@ class OrderSyncFacadeImplTest {
     @Test
     void syncPeriod_nonCoupangAccount_throws() {
         MarketplaceAccount naver = MarketplaceAccount.builder()
-                .id(9L).platform("NAVER").vendorId("V9")
+                .id(9L).platform(Platform.NAVER).vendorId("V9")
                 .accessKey("ak").secretKey("sk").isActive(true).build();
         given(marketplaceAccountRepository.findById(9L)).willReturn(Optional.of(naver));
 
