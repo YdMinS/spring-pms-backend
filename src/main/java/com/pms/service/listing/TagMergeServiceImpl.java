@@ -1,5 +1,6 @@
 package com.pms.service.listing;
 
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingTagRevision;
 import com.pms.repository.ProductListingTagRevisionRepository;
@@ -66,7 +67,7 @@ public class TagMergeServiceImpl implements TagMergeService {
         }
     }
 
-    private int cap(String platform) {
+    private int cap(Platform platform) {
         return TagLimits.BY_PLATFORM.getOrDefault(platform, TagLimits.DEFAULT);
     }
 }

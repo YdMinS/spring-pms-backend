@@ -1,6 +1,7 @@
 package com.pms.service.coupang;
 
 import com.pms.domain.MarketplaceAccount;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.exception.CoupangRateLimitedException;
 import com.pms.service.external.PiiMasker;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,8 +38,9 @@ class CoupangApiClientTest {
     @Mock
     private PiiMasker piiMasker;
 
-    @Mock
-    private MarketplaceAccount account;
+    // 실객체 — 자격증명은 별도 엔티티라 mock 이면 CoupangCredentials.of() 가 400 을 던진다.
+    private final MarketplaceAccount account =
+            MarketplaceAccountFixture.coupangStubBuilder("V1", null, "ak", "sk").build();
 
     private MockRestServiceServer server;
     private CoupangApiClient client;
@@ -55,8 +57,6 @@ class CoupangApiClientTest {
     @Test
     void execute_실패raw마스킹() {
         String rawBody = "{\"name\":\"김철수\"}";
-        given(account.getAccessKey()).willReturn("ak");
-        given(account.getSecretKey()).willReturn("sk");
         given(signer.authorization(anyString(), anyString(), anyString(), anyString(), anyString()))
                 .willReturn("auth");
         server.expect(requestTo("https://api-gateway.coupang.com/v5/orders"))
@@ -72,8 +72,6 @@ class CoupangApiClientTest {
 
     @Test
     void execute_429후_다음호출은_쿠팡을_치지않고_차단() {
-        given(account.getAccessKey()).willReturn("ak");
-        given(account.getSecretKey()).willReturn("sk");
         given(signer.authorization(anyString(), anyString(), anyString(), anyString(), anyString()))
                 .willReturn("auth");
         server.expect(requestTo("https://api-gateway.coupang.com/v5/orders"))

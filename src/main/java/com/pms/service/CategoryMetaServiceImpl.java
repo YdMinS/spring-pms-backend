@@ -3,6 +3,7 @@ package com.pms.service;
 import com.pms.domain.Category;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
+import com.pms.domain.Platform;
 import com.pms.dto.response.CategoryMetaResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
@@ -31,7 +32,7 @@ public class CategoryMetaServiceImpl implements CategoryMetaService {
     private final CategoryMetaResolver metaResolver;
 
     @Override
-    public CategoryMetaSchema getSchema(Long categoryId, String platform) {
+    public CategoryMetaSchema getSchema(Long categoryId, Platform platform) {
         // Schema is (platform × category)-dependent, not master-dependent — resolve the code from the category
         // id directly. Missing category / missing mapping → 400.
         String code = masterChannelConfigService.resolvePlatformCategoryCode(categoryId, platform);
@@ -40,7 +41,7 @@ public class CategoryMetaServiceImpl implements CategoryMetaService {
     }
 
     @Override
-    public CategoryMetaResponse getMeta(Long masterId, String platform) {
+    public CategoryMetaResponse getMeta(Long masterId, Platform platform) {
         MasterProduct master = requireScopedMaster(masterId);
         Category standard = master.getCategory();
         if (standard == null) {
@@ -86,7 +87,7 @@ public class CategoryMetaServiceImpl implements CategoryMetaService {
     }
 
     /** Any active account for the platform (HMAC credentials); 400 if none (mirrors the lookup service). */
-    private MarketplaceAccount resolveAccount(String platform) {
+    private MarketplaceAccount resolveAccount(Platform platform) {
         return marketplaceAccountRepository.findFirstByPlatformAndIsActiveTrue(platform)
                 .orElseThrow(() -> new IllegalArgumentException("활성 계정 없음"));
     }

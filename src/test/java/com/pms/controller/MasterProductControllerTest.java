@@ -3,6 +3,7 @@ package com.pms.controller;
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.Category;
 import com.pms.domain.CategoryMapping;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MarginPolicy;
@@ -12,6 +13,7 @@ import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.MarginPolicyRepository;
@@ -92,17 +94,17 @@ class MasterProductControllerTest extends BaseIntegrationTest {
         productId1 = product1.getId();
         productId2 = product2.getId();
         Category category = categoryRepository.save(Category.builder()
-                .name("신발").platform("COUPANG").platformCategoryId("cat-1").build());
+                .name("신발").platform(Platform.COUPANG).platformCategoryId("cat-1").build());
         categoryId = category.getId();
         // 52: setCategory now requires the standard category to be a leaf AND mapped to Coupang, and
         // resolvePlatformCategoryCode reads the mapping's linked PlatformCategory FK (owns code + commission).
         // The category above has no children (leaf); add the Coupang mapping + platform category so both the
         // happy-path setCategory and the category-meta resolution succeed.
         PlatformCategory platformCategory = platformCategoryRepository.save(PlatformCategory.builder()
-                .platform("COUPANG").code("cat-1").name("운동화")
+                .platform(Platform.COUPANG).code("cat-1").name("운동화")
                 .commissionRate(new java.math.BigDecimal("0.10")).build());
         categoryMappingRepository.save(CategoryMapping.builder()
-                .category(category).platform("COUPANG").platformCategoryId("cat-1")
+                .category(category).platform(Platform.COUPANG).platformCategoryId("cat-1")
                 .platformCategory(platformCategory).build());
         componentRepository.save(MasterProductComponent.builder()
                 .masterProduct(master).product(product1).build());
@@ -119,21 +121,21 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .defaultPackage(packageRepository.findById(seededPackageId).orElseThrow())
                 .build());
         marginPolicyRepository.save(MarginPolicy.builder()
-                .seller(seller).platform("COUPANG").marginRate(new BigDecimal("0.1500")).build());
+                .seller(seller).platform(Platform.COUPANG).marginRate(new BigDecimal("0.1500")).build());
 
         ProductListing listing = productListingRepository.save(ProductListing.builder()
-                .platform("COUPANG").platformProductId("X").name("리스팅").seller(seller)
+                .platform(Platform.COUPANG).platformProductId("X").name("리스팅").seller(seller)
                 .masterProduct(master).build());
         productListingOptionRepository.save(ProductListingOption.builder()
                 .productListing(listing).optionName("기본").sellingPrice(new BigDecimal("1000")).build());
 
         // Two accounts: COUPANG (registered against the listing) + NAVER (uncovered) → LEFT JOIN shape.
-        marketplaceAccountRepository.save(MarketplaceAccount.builder()
-                .seller(seller).platform("COUPANG").accountAlias("메인")
-                .vendorId("A001").accessKey("ak").secretKey("sk").isActive(true).build());
-        marketplaceAccountRepository.save(MarketplaceAccount.builder()
-                .seller(seller).platform("NAVER").accountAlias("네이버")
-                .vendorId("A002").accessKey("ak").secretKey("sk").isActive(true).build());
+        marketplaceAccountRepository.save(MarketplaceAccountFixture.coupangCoreBuilder()
+                .seller(seller).platform(Platform.COUPANG).accountAlias("메인")
+                .isActive(true).build());
+        marketplaceAccountRepository.save(MarketplaceAccountFixture.coupangCoreBuilder()
+                .seller(seller).platform(Platform.NAVER).accountAlias("네이버")
+                .isActive(true).build());
     }
 
     @AfterEach

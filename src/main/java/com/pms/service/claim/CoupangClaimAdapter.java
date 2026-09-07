@@ -7,8 +7,10 @@ import com.pms.domain.ClaimStatus;
 import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
+import com.pms.domain.Platform;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.coupang.CoupangCredentials;
 import com.pms.service.coupang.SyncWindow;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -43,7 +45,6 @@ import java.util.function.Predicate;
 @RequiredArgsConstructor
 public class CoupangClaimAdapter implements ClaimSyncAdapter {
 
-    private static final String PLATFORM_COUPANG = "COUPANG";
     private static final int MAX_PAGES = 20;                // nextToken 무한루프 가드
 
     /** ⚠️ 반품(yyyy-MM-dd)과 다르다 — 교환 조회는 시각까지 필수다. */
@@ -59,8 +60,8 @@ public class CoupangClaimAdapter implements ClaimSyncAdapter {
     private final ClaimTrackingSlicer claimTrackingSlicer;
 
     @Override
-    public String platform() {
-        return PLATFORM_COUPANG;
+    public Platform platform() {
+        return Platform.COUPANG;
     }
 
     @Override
@@ -147,7 +148,7 @@ public class CoupangClaimAdapter implements ClaimSyncAdapter {
      */
     int pageThrough(MarketplaceAccount account, SyncWindow window, Predicate<JsonNode> visitor) {
         String path = coupangProperties.getExchangeRequestsPath()
-                .replace("{vendorId}", account.getVendorId());
+                .replace("{vendorId}", CoupangCredentials.of(account).getVendorId());
         String baseQuery = "createdAtFrom=" + window.from().atStartOfDay().format(DATE_TIME)
                 + "&createdAtTo=" + window.to().atTime(23, 59, 59).format(DATE_TIME)
                 + "&maxPerPage=" + coupangProperties.getExchangeMaxPerPage();

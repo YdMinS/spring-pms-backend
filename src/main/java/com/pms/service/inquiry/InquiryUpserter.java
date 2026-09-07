@@ -4,12 +4,13 @@ import com.pms.domain.CustomerInquiry;
 import com.pms.domain.CustomerInquiryReply;
 import com.pms.domain.InquiryAuthorRole;
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.OrderItem;
+import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.OrderLine;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.repository.CustomerInquiryReplyRepository;
 import com.pms.repository.CustomerInquiryRepository;
-import com.pms.repository.OrderItemRepository;
+import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -45,7 +46,7 @@ public class InquiryUpserter {
 
     private final CustomerInquiryRepository customerInquiryRepository;
     private final CustomerInquiryReplyRepository customerInquiryReplyRepository;
-    private final OrderItemRepository orderItemRepository;
+    private final CoupangOrderLineRepository coupangOrderLineRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
 
     /**
@@ -76,7 +77,7 @@ public class InquiryUpserter {
                     .externalOrderId(record.externalOrderId())
                     .externalProductId(record.externalProductId())
                     .productListing(listing)
-                    .orderItem(matchOrderItem(account, record))
+                    .orderLine(matchOrderLine(account, record))
                     .itemName(itemName)
                     .content(record.content())
                     .category(record.category())
@@ -100,20 +101,20 @@ public class InquiryUpserter {
     private CustomerInquiry update(CustomerInquiry existing, MarketplaceAccount account,
                                    InquiryRecord record, ProductListing listing,
                                    String itemName, LocalDateTime now) {
-        OrderItem orderItem = (existing.getOrderItem() != null)
-                ? existing.getOrderItem()
-                : matchOrderItem(account, record);
+        OrderLine orderLine = (existing.getOrderLine() != null)
+                ? existing.getOrderLine()
+                : matchOrderLine(account, record);
         ProductListing resolvedListing = (existing.getProductListing() != null)
                 ? existing.getProductListing()
                 : listing;
         String resolvedItemName = (itemName != null) ? itemName : existing.getItemName();
 
-        if (!hasChanges(existing, record, orderItem, resolvedListing, resolvedItemName)) {
+        if (!hasChanges(existing, record, orderLine, resolvedListing, resolvedItemName)) {
             return existing;
         }
 
         return customerInquiryRepository.save(existing.toBuilder()
-                .orderItem(orderItem)
+                .orderLine(orderLine)
                 .productListing(resolvedListing)
                 .externalOrderId(record.externalOrderId() != null
                         ? record.externalOrderId() : existing.getExternalOrderId())
@@ -128,9 +129,9 @@ public class InquiryUpserter {
     }
 
     /** 갱신 대상 중 하나라도 달라졌는가 — lastSyncedAt 만 바꾸려고 UPDATE 를 쏘지 않기 위한 판정. */
-    private boolean hasChanges(CustomerInquiry existing, InquiryRecord record, OrderItem orderItem,
+    private boolean hasChanges(CustomerInquiry existing, InquiryRecord record, OrderLine orderLine,
                                ProductListing listing, String itemName) {
-        return !Objects.equals(existing.getOrderItem(), orderItem)
+        return !Objects.equals(existing.getOrderLine(), orderLine)
                 || !Objects.equals(existing.getProductListing(), listing)
                 || (record.externalOrderId() != null
                         && !Objects.equals(existing.getExternalOrderId(), record.externalOrderId()))
@@ -147,15 +148,16 @@ public class InquiryUpserter {
      * 0건(주문 없는 문의)이거나 2건 이상(합포장으로 모호)이면 <b>연결하지 않는다</b> —
      * 틀린 라인에 붙이느니 미연결이 낫다. 문의 자체는 그대로 저장된다.
      */
-    private OrderItem matchOrderItem(MarketplaceAccount account, InquiryRecord record) {
+    private OrderLine matchOrderLine(MarketplaceAccount account, InquiryRecord record) {
         if (record.externalOrderId() == null || record.externalItemId() == null) {
             return null;
         }
-        List<OrderItem> candidates = orderItemRepository
-                .findByMarketplaceAccount_IdAndExternalOrderIdAndExternalItemId(
+        // 자연키는 core 가 아니라 쿠팡 거울이 소유한다(FEATURE_2609_26 / PLAN D3·D19) — 규칙은 그대로다.
+        List<CoupangOrderLine> candidates = coupangOrderLineRepository
+                .findByMarketplaceAccount_IdAndOrderIdRawAndVendorItemId(
                         account.getId(), record.externalOrderId(), record.externalItemId());
         if (candidates.size() == 1) {
-            return candidates.get(0);
+            return candidates.get(0).getOrderLine();
         }
         if (candidates.size() > 1) {
             log.debug("Ambiguous order line for inquiry (multi-box shipment): account={} orderId={} itemId={} matches={}",

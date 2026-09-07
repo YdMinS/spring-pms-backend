@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.Platform;
 import com.pms.dto.response.CategoryMetaResponse;
 import com.pms.service.listing.category.CategoryMetaSchema;
 
@@ -20,7 +21,7 @@ public interface CategoryMetaService {
      * @param platform platform key (e.g. "COUPANG")
      * @return schema + current values
      */
-    CategoryMetaResponse getMeta(Long masterId, String platform);
+    CategoryMetaResponse getMeta(Long masterId, Platform platform);
 
     /**
      * The (platform × category) meta <b>schema</b> only (no values), keyed by a category id — so the master
@@ -32,7 +33,7 @@ public interface CategoryMetaService {
      * @param platform   platform key (e.g. "COUPANG")
      * @return the schema (possibly empty)
      */
-    CategoryMetaSchema getSchema(Long categoryId, String platform);
+    CategoryMetaSchema getSchema(Long categoryId, Platform platform);
 
     /**
      * Store the master-level attribute + notice values ({@code toBuilder} save). Does NOT trigger

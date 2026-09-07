@@ -1,5 +1,7 @@
 package com.pms.service.listing;
 
+import com.pms.domain.Platform;
+
 import java.util.Map;
 
 /**
@@ -13,7 +15,7 @@ public final class TagLimits {
     public static final int DEFAULT = 20;
 
     /** Confirmed per-platform caps. */
-    public static final Map<String, Integer> BY_PLATFORM = Map.of("COUPANG", 20);
+    public static final Map<Platform, Integer> BY_PLATFORM = Map.of(Platform.COUPANG, 20);
 
     private TagLimits() {
     }

@@ -1,5 +1,6 @@
 package com.pms.controller;
 
+import com.pms.domain.Platform;
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.ManualShipmentRequest;
 import com.pms.service.CarrierCodeService;
@@ -29,7 +30,7 @@ import java.util.List;
 /**
  * 발송처리 컨트롤러 (ADMIN 전용, 발송처리 레그).
  *
- * 택배사 결과 xlsx 를 업로드하면 {@link ShipmentConfirmService#confirm} 로 order_item 을 전개해
+ * 택배사 결과 xlsx 를 업로드하면 {@link ShipmentConfirmService#confirm} 로 주문 라인을 전개해
  * 계정별 쿠팡 송장업로드 배치를 전송하고 결과(JSON)를 반환한다.
  * 단건 수동 경로({@code /carrier-options} + {@code /confirm/manual}, PLAN 2609_11)도 여기 붙는다 —
  * 클래스 {@code @PreAuthorize} 가 그대로 적용되기 때문이다(D11).
@@ -49,7 +50,7 @@ public class ShipmentConfirmController {
 
     @PostMapping(value = "/confirm", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @Operation(summary = "Confirm shipment (upload carrier result)",
-            description = "Carrier result xlsx → order_item expand → Coupang invoice upload batch (ADMIN role required)")
+            description = "Carrier result xlsx → order line expand → Coupang invoice upload batch (ADMIN role required)")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "200", description = "Confirm result (succeeded/unmatched/failed)")
     @ApiResponse(responseCode = "400", description = "Empty file or parse failure")
@@ -71,7 +72,7 @@ public class ShipmentConfirmController {
     @ApiResponse(responseCode = "403", description = "Permission denied (ADMIN role required)")
     public ResponseEntity<ResponseDTO<List<CarrierOption>>> carrierOptions(
             @RequestParam("platform") String platform) {
-        return ResponseEntity.ok(ResponseDTO.success(carrierCodeService.findOptions(platform)));
+        return ResponseEntity.ok(ResponseDTO.success(carrierCodeService.findOptions(Platform.from(platform))));
     }
 
     @PostMapping("/confirm/manual")

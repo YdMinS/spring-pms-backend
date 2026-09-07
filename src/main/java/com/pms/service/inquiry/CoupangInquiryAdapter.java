@@ -7,8 +7,10 @@ import com.pms.domain.CustomerInquiry;
 import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.repository.CustomerInquiryRepository;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.coupang.CoupangCredentials;
 import com.pms.service.coupang.SyncWindow;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,8 +43,6 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class CoupangInquiryAdapter implements InquirySyncAdapter {
 
-    private static final String PLATFORM_COUPANG = "COUPANG";
-
     /** 페이징 무한루프 가드. {@code totalPages} 를 못 읽는 응답이 와도 여기서 멈춘다. */
     static final int MAX_PAGES = 20;
 
@@ -62,8 +62,8 @@ public class CoupangInquiryAdapter implements InquirySyncAdapter {
     private final CustomerInquiryRepository customerInquiryRepository;
 
     @Override
-    public String platform() {
-        return PLATFORM_COUPANG;
+    public Platform platform() {
+        return Platform.COUPANG;
     }
 
     @Override
@@ -186,7 +186,7 @@ public class CoupangInquiryAdapter implements InquirySyncAdapter {
      * ⚠️ 쿼리를 인코딩하지 말 것 — 서명 대상과 전송 문자열이 같아야 한다({@code CoupangApiClientImpl}).
      */
     private PageResult collect(MarketplaceAccount account, InquiryType type, SyncWindow window) {
-        String path = path(type).replace("{vendorId}", account.getVendorId());
+        String path = path(type).replace("{vendorId}", CoupangCredentials.of(account).getVendorId());
         String baseQuery = requiredFilter(type)
                 + "&inquiryStartAt=" + window.from().format(DATE)
                 + "&inquiryEndAt=" + window.to().format(DATE)

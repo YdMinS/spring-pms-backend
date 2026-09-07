@@ -1,5 +1,6 @@
 package com.pms.controller;
 
+import com.pms.domain.Platform;
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.response.CategoryMetaSchemaResponse;
 import com.pms.dto.response.CategoryNodeResponse;
@@ -36,7 +37,7 @@ public class CategoryLookupController {
             @PathVariable String platform,
             @RequestParam(required = false) String parentCode,
             @RequestParam(required = false) Long sellerId) {
-        List<CategoryNodeResponse> nodes = categoryLookupService.browse(platform, parentCode, sellerId).stream()
+        List<CategoryNodeResponse> nodes = categoryLookupService.browse(Platform.from(platform), parentCode, sellerId).stream()
                 .map(CategoryNodeResponse::from)
                 .toList();
         return ResponseEntity.ok(ResponseDTO.success(nodes));
@@ -50,7 +51,7 @@ public class CategoryLookupController {
             @RequestParam String productName,
             @RequestParam(required = false) Long sellerId) {
         List<CategorySuggestionResponse> suggestions =
-                categoryLookupService.predict(platform, productName, sellerId).stream()
+                categoryLookupService.predict(Platform.from(platform), productName, sellerId).stream()
                         .map(CategorySuggestionResponse::from)
                         .toList();
         return ResponseEntity.ok(ResponseDTO.success(suggestions));
@@ -63,7 +64,7 @@ public class CategoryLookupController {
             @PathVariable String platform,
             @RequestParam Long categoryId) {
         CategoryMetaSchemaResponse schema =
-                CategoryMetaSchemaResponse.from(categoryMetaService.getSchema(categoryId, platform));
+                CategoryMetaSchemaResponse.from(categoryMetaService.getSchema(categoryId, Platform.from(platform)));
         return ResponseEntity.ok(ResponseDTO.success(schema));
     }
 }

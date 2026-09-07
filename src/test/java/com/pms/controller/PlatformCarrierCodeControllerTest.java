@@ -2,6 +2,7 @@ package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.Carrier;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCarrierCode;
 import com.pms.repository.PlatformCarrierCodeRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -34,7 +35,7 @@ public class PlatformCarrierCodeControllerTest extends BaseIntegrationTest {
         platformCarrierCodeRepository.deleteAll();
     }
 
-    private PlatformCarrierCode saveCode(String platform, String code) {
+    private PlatformCarrierCode saveCode(Platform platform, String code) {
         return platformCarrierCodeRepository.save(PlatformCarrierCode.builder()
                 .carrier(carrierRepository.findById(carrierId).orElseThrow())
                 .platform(platform)
@@ -72,7 +73,7 @@ public class PlatformCarrierCodeControllerTest extends BaseIntegrationTest {
 
     @Test
     public void create_duplicatePlatform_409() throws Exception {
-        saveCode("COUPANG", "CJGLS");
+        saveCode(Platform.COUPANG, "CJGLS");
         String requestJson = objectMapper.writeValueAsString(
                 Map.of("platform", "COUPANG", "deliveryCompanyCode", "HANJIN"));
 
@@ -99,7 +100,7 @@ public class PlatformCarrierCodeControllerTest extends BaseIntegrationTest {
 
     @Test
     public void list_authenticated_200() throws Exception {
-        saveCode("COUPANG", "CJGLS");
+        saveCode(Platform.COUPANG, "CJGLS");
 
         // USER token: GET is authenticated (dropdown source).
         mockMvc.perform(get("/api/admin/carriers/" + carrierId + "/platform-codes")
@@ -112,7 +113,7 @@ public class PlatformCarrierCodeControllerTest extends BaseIntegrationTest {
 
     @Test
     public void update_asAdmin_replacesFields_200() throws Exception {
-        PlatformCarrierCode code = saveCode("COUPANG", "CJGLS");
+        PlatformCarrierCode code = saveCode(Platform.COUPANG, "CJGLS");
         String requestJson = objectMapper.writeValueAsString(
                 Map.of("platform", "NAVER", "deliveryCompanyCode", "HANJIN"));
 
@@ -128,8 +129,8 @@ public class PlatformCarrierCodeControllerTest extends BaseIntegrationTest {
 
     @Test
     public void update_duplicatePlatform_409() throws Exception {
-        saveCode("COUPANG", "CJGLS");
-        PlatformCarrierCode target = saveCode("NAVER", "HANJIN");
+        saveCode(Platform.COUPANG, "CJGLS");
+        PlatformCarrierCode target = saveCode(Platform.NAVER, "HANJIN");
         // NAVER 코드를 이미 존재하는 COUPANG 으로 수정 시도 → 409.
         String requestJson = objectMapper.writeValueAsString(
                 Map.of("platform", "COUPANG", "deliveryCompanyCode", "HANJIN"));
@@ -144,7 +145,7 @@ public class PlatformCarrierCodeControllerTest extends BaseIntegrationTest {
 
     @Test
     public void delete_asAdmin_200() throws Exception {
-        PlatformCarrierCode code = saveCode("COUPANG", "CJGLS");
+        PlatformCarrierCode code = saveCode(Platform.COUPANG, "CJGLS");
 
         mockMvc.perform(delete("/api/admin/carriers/" + carrierId + "/platform-codes/" + code.getId())
                 .header("Authorization", "Bearer " + adminToken))

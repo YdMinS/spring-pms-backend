@@ -9,6 +9,7 @@ import com.pms.domain.CommissionRate;
 import com.pms.domain.MarginPolicy;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.Package;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
@@ -92,7 +93,7 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
         // Commission is now owned by the mapped PlatformCategory (52); the legacy CommissionRate is kept but
         // unused by the price engine. Margin preset so the price engine resolves.
         marginPolicyRepository.save(MarginPolicy.builder()
-                .seller(seller).platform("COUPANG").marginRate(new BigDecimal("0.1500")).build());
+                .seller(seller).platform(Platform.COUPANG).marginRate(new BigDecimal("0.1500")).build());
 
         // Fresh delivery (carrier rate) + box (package) created in this flow so both FK targets exist
         // under the same session tenant as the listing insert (avoids the @Transactional session-tenant
@@ -115,14 +116,14 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
         masterId = master.getId();
         // 52: the mapped PlatformCategory owns the mall code + commission (0.10 = the old rate → same price).
         PlatformCategory platformCategory = platformCategoryRepository.save(PlatformCategory.builder()
-                .platform("COUPANG").code("cat-1").name("운동화")
+                .platform(Platform.COUPANG).code("cat-1").name("운동화")
                 .commissionRate(new BigDecimal("0.10")).build());
         categoryMappingRepository.save(CategoryMapping.builder()
-                .category(category).platform("COUPANG").platformCategoryId("cat-1")
+                .category(category).platform(Platform.COUPANG).platformCategoryId("cat-1")
                 .platformCategory(platformCategory).build());
 
         ProductListing listing = productListingRepository.save(ProductListing.builder()
-                .platform("COUPANG").platformProductId("X").name("셀").seller(seller)
+                .platform(Platform.COUPANG).platformProductId("X").name("셀").seller(seller)
                 .masterProduct(master)
                 .build());
         listingId = listing.getId();

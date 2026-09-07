@@ -5,6 +5,7 @@ import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
 import com.pms.domain.OrderClaimAction;
+import com.pms.domain.Platform;
 import com.pms.dto.request.ClaimActionRequest;
 import com.pms.dto.response.ClaimActionResponse;
 import com.pms.exception.BusinessException;
@@ -209,7 +210,7 @@ public class ClaimActionServiceImpl implements ClaimActionService {
         return byClaim;
     }
 
-    private Optional<ClaimActionAdapter> resolve(String platform) {
+    private Optional<ClaimActionAdapter> resolve(Platform platform) {
         return adapters.stream().filter(a -> a.platform().equals(platform)).findFirst();
     }
 

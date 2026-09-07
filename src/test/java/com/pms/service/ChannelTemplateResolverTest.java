@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.DetailTemplate;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.Seller;
 import com.pms.domain.ThumbnailTemplate;
@@ -35,7 +36,7 @@ class ChannelTemplateResolverTest {
     @InjectMocks private ChannelTemplateResolver resolver;
 
     private static final Long SELLER_ID = 1L;
-    private static final String PLATFORM = "COUPANG";
+    private static final Platform PLATFORM = Platform.COUPANG;
 
     private ProductListing cell() {
         return ProductListing.builder().id(100L).platform(PLATFORM)

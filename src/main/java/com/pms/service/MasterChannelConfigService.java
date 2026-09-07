@@ -5,6 +5,7 @@ import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.Package;
 import com.pms.domain.CarrierRate;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 
@@ -57,7 +58,7 @@ public interface MasterChannelConfigService {
      * standard category or that category has no mapping for the platform. Same logic as
      * {@link #resolvePlatformCategoryCode(ProductListing)}.
      */
-    String resolvePlatformCategoryCode(MasterProduct master, String platform);
+    String resolvePlatformCategoryCode(MasterProduct master, Platform platform);
 
     /**
      * Platform marketplace code for a (standard category × platform), for callers that hold only a category id
@@ -65,7 +66,7 @@ public interface MasterChannelConfigService {
      * master exists). 400 if the category id does not exist, or the category has no mapping for the platform.
      * Same core resolution as {@link #resolvePlatformCategoryCode(ProductListing)}.
      */
-    String resolvePlatformCategoryCode(Long categoryId, String platform);
+    String resolvePlatformCategoryCode(Long categoryId, Platform platform);
 
     /** Delivery = option override ?? master default. 400 if both are null. */
     CarrierRate resolveDelivery(ProductListing cell, MasterProductOption masterOption);

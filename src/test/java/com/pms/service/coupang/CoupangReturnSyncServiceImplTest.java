@@ -6,9 +6,15 @@ import com.pms.domain.ClaimStatus;
 import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
-import com.pms.domain.OrderItem;
+import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.Order;
+import com.pms.domain.OrderLine;
+import com.pms.domain.OrderStatus;
+import com.pms.domain.Platform;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.OrderClaimRepository;
-import com.pms.repository.OrderItemRepository;
+import com.pms.repository.CoupangOrderLineRepository;
+import com.pms.repository.OrderLineRepository;
 import com.pms.service.claim.ClaimStaleSweeper;
 import com.pms.service.claim.ClaimTrackingSlicer;
 import com.pms.service.claim.ClaimUpserter;
@@ -42,13 +48,14 @@ import static org.mockito.Mockito.verify;
 
 /**
  * CoupangReturnSyncServiceImpl 취소 보정 테스트 — CANCEL 배치 1 + status 4종 배치.
- * CoupangApiClient는 @Mock 캔드 JSON, ObjectMapper는 실제, OrderItemRepository는 @Mock(find/save 검증).
+ * CoupangApiClient는 @Mock 캔드 JSON, ObjectMapper는 실제, 주문 라인 리포지토리는 @Mock(find/save 검증).
  */
 @ExtendWith(MockitoExtension.class)
 class CoupangReturnSyncServiceImplTest {
 
     @Mock private CoupangApiClient coupangApiClient;
-    @Mock private OrderItemRepository orderItemRepository;
+    @Mock private CoupangOrderLineRepository coupangOrderLineRepository;
+    @Mock private OrderLineRepository orderLineRepository;
     @Mock private ClaimUpserter claimUpserter;      // 클레임 적재는 별도 트랜잭션 — 취소 보정과 분리 검증
     @Mock private OrderClaimRepository orderClaimRepository;
 
@@ -60,9 +67,9 @@ class CoupangReturnSyncServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        account = MarketplaceAccount.builder()
-                .id(1L).platform("COUPANG").vendorId("V0001")
-                .accessKey("ak").secretKey("sk").isActive(true).build();
+        account = MarketplaceAccountFixture.coupangStubBuilder("V0001", null)
+                .id(1L).platform(Platform.COUPANG)
+                .isActive(true).build();
 
         props = new CoupangProperties();
         props.setReturnrequestsPath("/v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests");
@@ -72,7 +79,7 @@ class CoupangReturnSyncServiceImplTest {
 
         // 스윕·슬라이스는 06 에서 컴포넌트로 추출됐다 — 목이 아니라 실제 구현을 넣어 기존 단언을 그대로 유지한다.
         service = new CoupangReturnSyncServiceImpl(
-                coupangApiClient, orderItemRepository, props, new ObjectMapper(),
+                coupangApiClient, coupangOrderLineRepository, orderLineRepository, props, new ObjectMapper(),
                 new CoupangReturnClaimParser(), claimUpserter, orderClaimRepository,
                 new ClaimStaleSweeper(orderClaimRepository, props), new ClaimTrackingSlicer());
     }
@@ -82,20 +89,17 @@ class CoupangReturnSyncServiceImplTest {
         given(coupangApiClient.get(anyString(), contains("cancelType=CANCEL"), any()))
                 .willReturn(oneCancel("O1", "B1", "I1", 2));
         given(coupangApiClient.get(anyString(), contains("status="), any())).willReturn(emptyData());
-        // 기존 order_item: cancel 0 → 취소 2 반영, purchasableQty 감소(10-(2+0)=8)
-        OrderItem existing = OrderItem.builder()
-                .id(10L).marketplaceAccount(account).platform("COUPANG")
-                .externalOrderId("O1").externalBoxId("B1").externalItemId("I1")
-                .orderCount(10).cancelCount(0).holdCount(0).status("ACCEPT").build();
-        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
-                1L, "B1", "O1", "I1")).willReturn(Optional.of(existing));
+        // 기존 라인: cancel 0 → 취소 2 반영, purchasableQty 감소(10-(2+0)=8)
+        OrderLine existing = orderLine(10L, OrderStatus.PAID, 10);
+        given(coupangOrderLineRepository.findByMarketplaceAccount_IdAndShipmentBoxIdAndOrderIdRawAndVendorItemId(
+                1L, "B1", "O1", "I1")).willReturn(Optional.of(mirror(existing)));
 
         CancelSyncResult result = service.syncCancels(account);
 
-        ArgumentCaptor<OrderItem> captor = ArgumentCaptor.forClass(OrderItem.class);
-        verify(orderItemRepository, times(1)).save(captor.capture());
-        OrderItem saved = captor.getValue();
-        assertThat(saved.getCancelCount()).isEqualTo(2);
+        ArgumentCaptor<OrderLine> captor = ArgumentCaptor.forClass(OrderLine.class);
+        verify(orderLineRepository, times(1)).save(captor.capture());
+        OrderLine saved = captor.getValue();
+        assertThat(saved.getCancelQty()).isEqualTo(2);
         assertThat(saved.purchasableQty()).isEqualTo(8);
         assertThat(result.matchedUpdated()).isEqualTo(1);
     }
@@ -103,12 +107,12 @@ class CoupangReturnSyncServiceImplTest {
     @Test
     void syncCancels_ignores_whenNoMatch() {
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(oneCancel("O9", "B9", "I9", 1));
-        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
+        given(coupangOrderLineRepository.findByMarketplaceAccount_IdAndShipmentBoxIdAndOrderIdRawAndVendorItemId(
                 any(), anyString(), anyString(), anyString())).willReturn(Optional.empty());
 
         CancelSyncResult result = service.syncCancels(account);
 
-        verify(orderItemRepository, never()).save(any());
+        verify(orderLineRepository, never()).save(any());
         assertThat(result.matchedUpdated()).isZero();
     }
 
@@ -122,19 +126,16 @@ class CoupangReturnSyncServiceImplTest {
         given(coupangApiClient.get(anyString(), contains("status=CC"), any())).willReturn(emptyData());
         given(coupangApiClient.get(anyString(), contains("status=PR"), any())).willReturn(emptyData());
 
-        OrderItem existing = OrderItem.builder()
-                .id(20L).marketplaceAccount(account).platform("COUPANG")
-                .externalOrderId("O1").externalBoxId("B1").externalItemId("I1")
-                .orderCount(2).cancelCount(0).holdCount(0).status("INSTRUCT").build();
-        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
-                1L, "B1", "O1", "I1")).willReturn(Optional.of(existing));
+        OrderLine existing = orderLine(20L, OrderStatus.PREPARING, 2);
+        given(coupangOrderLineRepository.findByMarketplaceAccount_IdAndShipmentBoxIdAndOrderIdRawAndVendorItemId(
+                1L, "B1", "O1", "I1")).willReturn(Optional.of(mirror(existing)));
 
         CancelSyncResult result = service.syncCancels(account);
 
-        ArgumentCaptor<OrderItem> captor = ArgumentCaptor.forClass(OrderItem.class);
-        verify(orderItemRepository, times(1)).save(captor.capture());
-        assertThat(captor.getValue().getCancelCount()).isEqualTo(2);
-        assertThat(captor.getValue().isFullyCancelled()).isTrue();      // 2 >= orderCount 2 → 전량취소
+        ArgumentCaptor<OrderLine> captor = ArgumentCaptor.forClass(OrderLine.class);
+        verify(orderLineRepository, times(1)).save(captor.capture());
+        assertThat(captor.getValue().getCancelQty()).isEqualTo(2);
+        assertThat(captor.getValue().isFullyCancelled()).isTrue();      // 2 >= orderQty 2 → 전량취소
         assertThat(result.matchedUpdated()).isEqualTo(1);
     }
 
@@ -168,7 +169,7 @@ class CoupangReturnSyncServiceImplTest {
         given(coupangApiClient.get(anyString(), contains("cancelType=CANCEL"), any()))
                 .willReturn(pageWithToken("t"), pageWithToken(""));
         given(coupangApiClient.get(anyString(), contains("status="), any())).willReturn(emptyData());
-        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
+        given(coupangOrderLineRepository.findByMarketplaceAccount_IdAndShipmentBoxIdAndOrderIdRawAndVendorItemId(
                 any(), anyString(), anyString(), anyString())).willReturn(Optional.empty());
 
         CancelSyncResult result = service.syncCancels(account);
@@ -386,7 +387,7 @@ class CoupangReturnSyncServiceImplTest {
     /** receivedAt 은 쿠팡 createdAt = KST 벽시계다 — 기대치도 KST 로 만든다. */
     private OrderClaim openClaim(Long id, long receivedDaysAgo) {
         return OrderClaim.builder()
-                .id(id).marketplaceAccount(account).platform("COUPANG").claimType(ClaimType.RETURN)
+                .id(id).marketplaceAccount(account).platform(Platform.COUPANG).claimType(ClaimType.RETURN)
                 .externalClaimId("R-" + id).externalOrderId("O-" + id).externalItemId("V-" + id)
                 .status(ClaimStatus.RECEIVED).platformStatus("UC")
                 .receivedAt(LocalDate.now(SyncWindow.KST).minusDays(receivedDaysAgo).atTime(10, 0))
@@ -423,6 +424,21 @@ class CoupangReturnSyncServiceImplTest {
         return """
             {"code":200,"data":[{"cancelId":%s,"orderId":300012345}],"nextPageIndex":""}
             """.formatted(cancelId);
+    }
+
+    /** core 라인 1건 — 자연키·원문은 거울(mirror)이 갖는다(2609_26 D3). */
+    private OrderLine orderLine(Long id, OrderStatus status, int orderQty) {
+        return OrderLine.builder()
+                .id(id)
+                .order(Order.builder().id(1000L + id).marketplaceAccount(account).platform(Platform.COUPANG)
+                        .externalOrderId("O1").build())
+                .orderQty(orderQty).cancelQty(0).holdQty(0).status(status).build();
+    }
+
+    private CoupangOrderLine mirror(OrderLine line) {
+        return CoupangOrderLine.builder()
+                .id(2000L + line.getId()).orderLine(line).marketplaceAccount(account)
+                .shipmentBoxId("B1").orderIdRaw("O1").vendorItemId("I1").build();
     }
 
     private String pageWithToken(String token) {

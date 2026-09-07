@@ -1,5 +1,6 @@
 package com.pms.controller;
 
+import com.pms.domain.Platform;
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.CreateCategoryRequest;
 import com.pms.dto.request.UpdateCategoryRequest;
@@ -78,8 +79,10 @@ public class CategoryController {
         @Parameter(description = "Platform filter (optional)", example = "COUPANG")
         @RequestParam(required = false) String platform
     ) {
-        List<CategoryResponse> responses = platform != null
-            ? categoryService.getCategoriesByPlatform(platform)
+        // required = false — from(null) 은 400 을 던지므로 null 을 그대로 흘린다.
+        Platform parsed = (platform == null) ? null : Platform.from(platform);
+        List<CategoryResponse> responses = parsed != null
+            ? categoryService.getCategoriesByPlatform(parsed)
             : categoryService.getAllCategories();
         return ResponseEntity.ok(ResponseDTO.success(responses));
     }

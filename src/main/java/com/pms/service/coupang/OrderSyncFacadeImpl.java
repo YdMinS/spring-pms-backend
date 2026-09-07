@@ -1,6 +1,7 @@
 package com.pms.service.coupang;
 
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.security.TenantContext;
@@ -38,8 +39,6 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class OrderSyncFacadeImpl implements OrderSyncFacade {
 
-    private static final String PLATFORM_COUPANG = "COUPANG";
-
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final CoupangOrderSyncService coupangOrderSyncService;
     private final CoupangReturnSyncService coupangReturnSyncService;
@@ -76,7 +75,7 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
     public OrderSyncResult syncPeriod(Long accountId, LocalDate from, LocalDate to) {
         MarketplaceAccount account = marketplaceAccountRepository.findById(accountId)
                 .orElseThrow(() -> new ResourceNotFoundException("MarketplaceAccount", accountId));
-        if (!PLATFORM_COUPANG.equals(account.getPlatform())) {
+        if (!Platform.COUPANG.equals(account.getPlatform())) {
             throw new IllegalArgumentException("쿠팡 계정만 기간 조회를 지원합니다. accountId=" + accountId);
         }
         SyncWindow window = new SyncWindow(from, to);      // 검증은 record 생성자
@@ -110,7 +109,7 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
     private OrderSyncResult syncEach(List<MarketplaceAccount> accounts) {
         OrderSyncResult total = OrderSyncResult.empty();
         for (MarketplaceAccount account : accounts) {
-            if (!PLATFORM_COUPANG.equals(account.getPlatform())) {
+            if (!Platform.COUPANG.equals(account.getPlatform())) {
                 continue;
             }
             try {
@@ -129,7 +128,7 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
      * 그대로 돈다(PLAN 2609_16 D5·D6).
      */
     private OrderSyncResult syncOne(MarketplaceAccount account, OrderSyncScope scope) {
-        // Drive the tenant from the account being synced so saved order_item/shopping_list_item
+        // Drive the tenant from the account being synced so saved order_line/shopping_list_item
         // (@TenantId) land in the account's tenant regardless of trigger (web admin or a future
         // batch/@Scheduled with no SecurityContext). Save/restore the previous value instead of
         // blindly clearing, so a web request's TenantContext survives across the account loop.

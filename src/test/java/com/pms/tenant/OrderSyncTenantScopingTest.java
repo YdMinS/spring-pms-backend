@@ -1,7 +1,9 @@
 package com.pms.tenant;
 
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.security.TenantContext;
@@ -76,13 +78,10 @@ class OrderSyncTenantScopingTest {
                 .sellerName("t2-seller")
                 .businessRegistration("222-22-22222")
                 .build());
-        Long accountId = marketplaceAccountRepository.save(MarketplaceAccount.builder()
+        Long accountId = marketplaceAccountRepository.save(MarketplaceAccountFixture.coupangCoreBuilder()
                 .seller(seller)
-                .platform("COUPANG")
+                .platform(Platform.COUPANG)
                 .accountAlias("t2-account")
-                .vendorId("A00000002")
-                .accessKey("access")
-                .secretKey("secret")
                 .isActive(true)
                 .build()).getId();
 

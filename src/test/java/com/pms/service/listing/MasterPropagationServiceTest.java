@@ -4,6 +4,7 @@ import com.pms.domain.GeneratedProductData;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
+import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -72,7 +73,7 @@ class MasterPropagationServiceTest {
     }
 
     private ProductListing cell(Long id, String platformProductId) {
-        return ProductListing.builder().id(id).platform("COUPANG").name("셀-" + id)
+        return ProductListing.builder().id(id).platform(Platform.COUPANG).name("셀-" + id)
                 .platformProductId(platformProductId).build();   // masterProduct null → quantity sync no-op
     }
 
@@ -152,7 +153,7 @@ class MasterPropagationServiceTest {
     @Test
     void propagate_delegatesMatchedOptionToQuantitySync() {
         MasterProduct master = MasterProduct.builder().id(MASTER_ID).name("마스터").build();
-        ProductListing cell = ProductListing.builder().id(1L).platform("COUPANG").name("셀")
+        ProductListing cell = ProductListing.builder().id(1L).platform(Platform.COUPANG).name("셀")
                 .platformProductId("SP-1").masterProduct(master).build();
         given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
         hasGenerated(1L);
@@ -188,7 +189,7 @@ class MasterPropagationServiceTest {
     @Test
     void propagateOne_syncsStructureBeforeQuantities() {
         MasterProduct master = MasterProduct.builder().id(MASTER_ID).name("마스터").build();
-        ProductListing cell = ProductListing.builder().id(1L).platform("COUPANG").name("셀")
+        ProductListing cell = ProductListing.builder().id(1L).platform(Platform.COUPANG).name("셀")
                 .platformProductId("SP-1").masterProduct(master).build();
         given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
         hasGenerated(1L);

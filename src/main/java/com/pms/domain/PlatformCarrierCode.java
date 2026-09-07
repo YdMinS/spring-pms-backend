@@ -31,7 +31,8 @@ public class PlatformCarrierCode {
     private Carrier carrier;
 
     @Column(nullable = false, length = 50)
-    private String platform;                 // "COUPANG", "NAVER"...
+    @Enumerated(EnumType.STRING)
+    private Platform platform;
 
     @Column(name = "delivery_company_code", nullable = false, length = 50)
     private String deliveryCompanyCode;      // 예: 쿠팡 "CJGLS"
@@ -42,7 +43,7 @@ public class PlatformCarrierCode {
      * 영속 엔티티에 직접 호출해 dirty checking 으로 반영한다(별도 save 불필요).
      * carrier 소속은 바꾸지 않는다(중첩 리소스라 경로의 carrierId 로 고정).
      */
-    public void updateCode(String platform, String deliveryCompanyCode) {
+    public void updateCode(Platform platform, String deliveryCompanyCode) {
         this.platform = platform;
         this.deliveryCompanyCode = deliveryCompanyCode;
     }

@@ -1,5 +1,6 @@
 package com.pms.service.listing.category;
 
+import com.pms.domain.Platform;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -15,7 +16,7 @@ import java.util.stream.Collectors;
 @Component
 public class CategoryLookupResolver {
 
-    private final Map<String, CategoryLookup> byPlatform;
+    private final Map<Platform, CategoryLookup> byPlatform;
 
     public CategoryLookupResolver(List<CategoryLookup> lookups) {
         this.byPlatform = lookups.stream()
@@ -27,7 +28,7 @@ public class CategoryLookupResolver {
      * @return the matching lookup adapter
      * @throws IllegalArgumentException (→ 400) if no adapter handles the platform
      */
-    public CategoryLookup resolve(String platform) {
+    public CategoryLookup resolve(Platform platform) {
         CategoryLookup lookup = byPlatform.get(platform);
         if (lookup == null) {
             throw new IllegalArgumentException("미지원 플랫폼: " + platform);

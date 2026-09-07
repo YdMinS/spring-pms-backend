@@ -55,7 +55,7 @@ public class CoupangApiClientImpl implements CoupangApiClient {
     @Override
     public String get(String path, String query, MarketplaceAccount account) {
         String auth = signer.authorization("GET", path, query,
-                account.getAccessKey(), account.getSecretKey());
+                CoupangCredentials.of(account).getAccessKey(), CoupangCredentials.of(account).getSecretKey());
         String uri = query.isEmpty() ? path : path + "?" + query;
         // URI.create 로 전송: 이미 인코딩된 쿼리(%2B 등)가 RestClient 템플릿 인코딩으로 재인코딩되지
         // 않게 해, 서명 대상 query 와 실제 전송 query 를 동일하게 유지한다.
@@ -69,7 +69,7 @@ public class CoupangApiClientImpl implements CoupangApiClient {
     public String post(String path, String body, MarketplaceAccount account) {
         // 쿠팡 HMAC 은 method+path+query 만 서명(바디 제외)하므로 query="" 로 서명한다.
         String auth = signer.authorization("POST", path, "",
-                account.getAccessKey(), account.getSecretKey());
+                CoupangCredentials.of(account).getAccessKey(), CoupangCredentials.of(account).getSecretKey());
         return execute("POST", path, "", () -> restClient.post().uri(URI.create(HOST + path))
                 .header("Authorization", auth)
                 .header("Content-Type", "application/json")
@@ -80,7 +80,7 @@ public class CoupangApiClientImpl implements CoupangApiClient {
     public String put(String path, String body, MarketplaceAccount account) {
         // POST 와 동일: 쿠팡 HMAC 은 method+path+query 만 서명(바디 제외)하므로 query="" 로 서명한다.
         String auth = signer.authorization("PUT", path, "",
-                account.getAccessKey(), account.getSecretKey());
+                CoupangCredentials.of(account).getAccessKey(), CoupangCredentials.of(account).getSecretKey());
         return execute("PUT", path, "", () -> restClient.put().uri(URI.create(HOST + path))
                 .header("Authorization", auth)
                 .header("Content-Type", "application/json")
@@ -91,7 +91,7 @@ public class CoupangApiClientImpl implements CoupangApiClient {
     public String patch(String path, String body, MarketplaceAccount account) {
         // POST/PUT 과 동일: 쿠팡 HMAC 은 method+path+query 만 서명(바디 제외)하므로 query="" 로 서명한다.
         String auth = signer.authorization("PATCH", path, "",
-                account.getAccessKey(), account.getSecretKey());
+                CoupangCredentials.of(account).getAccessKey(), CoupangCredentials.of(account).getSecretKey());
         return execute("PATCH", path, "", () -> restClient.patch().uri(URI.create(HOST + path))
                 .header("Authorization", auth)
                 .header("Content-Type", "application/json")

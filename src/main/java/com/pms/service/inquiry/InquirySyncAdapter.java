@@ -1,5 +1,6 @@
 package com.pms.service.inquiry;
 
+import com.pms.domain.Platform;
 import com.pms.domain.MarketplaceAccount;
 
 /**
@@ -11,8 +12,8 @@ import com.pms.domain.MarketplaceAccount;
  */
 public interface InquirySyncAdapter {
 
-    /** {@code marketplace_account.platform} 과 대조할 값. 예: "COUPANG". */
-    String platform();
+    /** {@code marketplace_account.platform} 과 대조할 값. 예: {@link Platform#COUPANG}. */
+    Platform platform();
 
     /**
      * 계정 1건의 문의 적재(유형 전부) + STALE 종결.

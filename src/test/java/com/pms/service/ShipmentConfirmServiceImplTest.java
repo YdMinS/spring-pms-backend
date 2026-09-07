@@ -3,14 +3,21 @@ package com.pms.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
+import com.pms.domain.CoupangOrderLine;
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.OrderItem;
+import com.pms.domain.Order;
+import com.pms.domain.OrderLine;
+import com.pms.domain.OrderShipment;
+import com.pms.domain.OrderStatus;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.dto.request.ManualShipmentRequest;
+import com.pms.fixture.MarketplaceAccountFixture;
+import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.OrderItemRepository;
+import com.pms.repository.OrderLineRepository;
 import com.pms.service.coupang.CoupangApiClient;
-import com.pms.service.coupang.OrderItemUpserter;
+import com.pms.service.coupang.OrderUpserter;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -24,16 +31,21 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.client.RestClientException;
 
 import java.io.ByteArrayOutputStream;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -41,7 +53,7 @@ import static org.mockito.Mockito.verify;
 /**
  * ShipmentConfirmServiceImpl 전개·그룹핑·응답집계 테스트.
  *
- * CoupangApiClient·OrderItemRepository·CarrierCodeService·CoupangProperties 는 @Mock,
+ * CoupangApiClient·OrderLineRepository·CarrierCodeService·CoupangProperties 는 @Mock,
  * ObjectMapper 는 실제 인스턴스(요청 바디 직렬화/응답 파싱을 실제로 검증).
  */
 @ExtendWith(MockitoExtension.class)
@@ -57,7 +69,9 @@ class ShipmentConfirmServiceImplTest {
     @Mock
     private CoupangApiClient coupangApiClient;
     @Mock
-    private OrderItemRepository orderItemRepository;
+    private OrderLineRepository orderLineRepository;
+    @Mock
+    private CoupangOrderLineRepository coupangOrderLineRepository;
     @Mock
     private CarrierCodeService carrierCodeService;
     @Mock
@@ -65,25 +79,34 @@ class ShipmentConfirmServiceImplTest {
     @Mock
     private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock
-    private OrderItemUpserter orderItemUpserter;
+    private OrderUpserter orderUpserter;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private ShipmentConfirmServiceImpl service;
 
+    /** 라인 id → 쿠팡 거울. {@link #line} 이 채우고 아래 스텁이 배치 조회를 흉내낸다. */
+    private final Map<Long, CoupangOrderLine> mirrors = new LinkedHashMap<>();
+
     @BeforeEach
     void setUp() {
         service = new ShipmentConfirmServiceImpl(
-                coupangApiClient, coupangProperties, orderItemRepository,
-                marketplaceAccountRepository, carrierCodeService, objectMapper, orderItemUpserter);
+                coupangApiClient, coupangProperties, orderLineRepository, coupangOrderLineRepository,
+                marketplaceAccountRepository, carrierCodeService, objectMapper, orderUpserter);
+        // vendorItemId 는 core 가 아니라 쿠팡 거울에 있다(2609_26 / 04 §3-3) — 배치 조회를 그대로 흉내낸다.
+        lenient().when(coupangOrderLineRepository.findByOrderLine_IdIn(anyList()))
+                .thenAnswer(invocation -> {
+                    List<?> ids = invocation.getArgument(0);
+                    return ids.stream().map(mirrors::get).filter(Objects::nonNull).toList();
+                });
     }
 
     @Test
     void confirm_happy_합포장전개() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        OrderItem l1 = line(account, "302012345678", "4000019469460", "3823839899");
-        OrderItem l2 = line(account, "302012345678", "4000019469460", "3823839900");
-        given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(l1, l2));
-        given(carrierCodeService.resolveDeliveryCompanyCode("COUPANG")).willReturn("CJGLS");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        OrderLine l1 = line(account, "302012345678", "4000019469460", "3823839899");
+        OrderLine l2 = line(account, "302012345678", "4000019469460", "3823839900");
+        given(orderLineRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(l1, l2));
+        given(carrierCodeService.resolveDeliveryCompanyCode(Platform.COUPANG)).willReturn("CJGLS");
         given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302012345678", "302012345678"));
 
@@ -111,7 +134,7 @@ class ShipmentConfirmServiceImplTest {
 
     @Test
     void confirm_미매칭() throws Exception {
-        given(orderItemRepository.findByExternalOrderId("9999")).willReturn(List.of());
+        given(orderLineRepository.findByExternalOrderId("9999")).willReturn(List.of());
 
         ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{"9999", "123"}}));
 
@@ -121,12 +144,12 @@ class ShipmentConfirmServiceImplTest {
 
     @Test
     void confirm_계정별그룹핑() throws Exception {
-        MarketplaceAccount account1 = account(1L, "COUPANG", "A001");
-        MarketplaceAccount account2 = account(2L, "COUPANG", "B002");
-        given(orderItemRepository.findByExternalOrderId("1001")).willReturn(List.of(line(account1, "9001", "1001", "8001")));
-        given(orderItemRepository.findByExternalOrderId("1002")).willReturn(List.of(line(account1, "9002", "1002", "8002")));
-        given(orderItemRepository.findByExternalOrderId("1003")).willReturn(List.of(line(account2, "9003", "1003", "8003")));
-        given(carrierCodeService.resolveDeliveryCompanyCode("COUPANG")).willReturn("CJGLS");
+        MarketplaceAccount account1 = account(1L, Platform.COUPANG, "A001");
+        MarketplaceAccount account2 = account(2L, Platform.COUPANG, "B002");
+        given(orderLineRepository.findByExternalOrderId("1001")).willReturn(List.of(line(account1, "9001", "1001", "8001")));
+        given(orderLineRepository.findByExternalOrderId("1002")).willReturn(List.of(line(account1, "9002", "1002", "8002")));
+        given(orderLineRepository.findByExternalOrderId("1003")).willReturn(List.of(line(account2, "9003", "1003", "8003")));
+        given(carrierCodeService.resolveDeliveryCompanyCode(Platform.COUPANG)).willReturn("CJGLS");
         given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("9001"));
 
@@ -147,24 +170,24 @@ class ShipmentConfirmServiceImplTest {
 
     @Test
     void confirm_비쿠팡_배제() throws Exception {
-        MarketplaceAccount naver = account(1L, "NAVER", "N001");
-        given(orderItemRepository.findByExternalOrderId("4000")).willReturn(List.of(line(naver, "302", "4000", "3823")));
+        MarketplaceAccount naver = account(1L, Platform.NAVER, "N001");
+        given(orderLineRepository.findByExternalOrderId("4000")).willReturn(List.of(line(naver, "302", "4000", "3823")));
 
         ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{"4000", "123"}}));
 
         assertThat(result.unmatched()).contains("4000");
         verify(coupangApiClient, never()).post(anyString(), anyString(), any());
         // 플랫폼 가드 잠금: resolve 도 미호출.
-        verify(carrierCodeService, never()).resolveDeliveryCompanyCode(anyString());
+        verify(carrierCodeService, never()).resolveDeliveryCompanyCode(any());
         // 비-COUPANG 은 폴백 대상이 아니다 — 네이버 주문을 쿠팡에 조회하면 안 된다.
         verify(coupangApiClient, never()).get(anyString(), anyString(), any());
     }
 
     @Test
     void confirm_부분실패() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        given(orderItemRepository.findByExternalOrderId("4000")).willReturn(List.of(line(account, "302", "4000", "5001")));
-        given(carrierCodeService.resolveDeliveryCompanyCode("COUPANG")).willReturn("CJGLS");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        given(orderLineRepository.findByExternalOrderId("4000")).willReturn(List.of(line(account, "302", "4000", "5001")));
+        given(carrierCodeService.resolveDeliveryCompanyCode(Platform.COUPANG)).willReturn("CJGLS");
         given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responsePartialFail());
 
@@ -179,7 +202,7 @@ class ShipmentConfirmServiceImplTest {
     @Test
     void confirm_공백행스킵() throws Exception {
         // 유효행 1 + 운송장번호 공백행 1 → totalRows 는 1 (공백행 제외).
-        given(orderItemRepository.findByExternalOrderId("4000")).willReturn(List.of());
+        given(orderLineRepository.findByExternalOrderId("4000")).willReturn(List.of());
 
         ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{"4000", "123"}, {"5000", ""}}));
 
@@ -190,13 +213,13 @@ class ShipmentConfirmServiceImplTest {
 
     @Test
     void confirm_DB미매칭이면_쿠팡단건조회로_폴백해_송장업로드() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of());
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        given(orderLineRepository.findByExternalOrderId("4000019469460")).willReturn(List.of());
         given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(account));
         given(coupangProperties.getOrdersheetByOrderPath()).willReturn(ORDER_BY_ID_PATH);
         given(coupangApiClient.get(anyString(), anyString(), any()))
                 .willReturn(singleOrderTwoLines());
-        given(carrierCodeService.resolveDeliveryCompanyCode("COUPANG")).willReturn("CJGLS");
+        given(carrierCodeService.resolveDeliveryCompanyCode(Platform.COUPANG)).willReturn("CJGLS");
         given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any()))
                 .willReturn(responseAllSuccess("302012345678", "302012345678"));
@@ -223,8 +246,8 @@ class ShipmentConfirmServiceImplTest {
 
     @Test
     void confirm_폴백조회도실패하면_미매칭유지하고_POST안함() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        given(orderItemRepository.findByExternalOrderId("4000")).willReturn(List.of());
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        given(orderLineRepository.findByExternalOrderId("4000")).willReturn(List.of());
         given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(account));
         given(coupangProperties.getOrdersheetByOrderPath()).willReturn(ORDER_BY_ID_PATH);
         given(coupangApiClient.get(anyString(), anyString(), any()))
@@ -239,13 +262,13 @@ class ShipmentConfirmServiceImplTest {
 
     @Test
     void confirm_폴백응답의_전량취소라인은_제외() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        given(orderItemRepository.findByExternalOrderId("4000")).willReturn(List.of());
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        given(orderLineRepository.findByExternalOrderId("4000")).willReturn(List.of());
         given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(account));
         given(coupangProperties.getOrdersheetByOrderPath()).willReturn(ORDER_BY_ID_PATH);
         given(coupangApiClient.get(anyString(), anyString(), any()))
                 .willReturn(singleOrderOneCancelledLine());
-        given(carrierCodeService.resolveDeliveryCompanyCode("COUPANG")).willReturn("CJGLS");
+        given(carrierCodeService.resolveDeliveryCompanyCode(Platform.COUPANG)).willReturn("CJGLS");
         given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302"));
 
@@ -262,9 +285,9 @@ class ShipmentConfirmServiceImplTest {
 
     @Test
     void confirm_DEPARTURE라인은_조회없이_스킵() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        given(orderItemRepository.findByExternalOrderId("4000"))
-                .willReturn(List.of(line(account, "302", "4000", "5001", "DEPARTURE")));
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        given(orderLineRepository.findByExternalOrderId("4000"))
+                .willReturn(List.of(line(account, "302", "4000", "5001", OrderStatus.SHIPPED)));
 
         ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{"4000", "123"}}));
 
@@ -273,7 +296,8 @@ class ShipmentConfirmServiceImplTest {
         verify(coupangApiClient, never()).get(anyString(), anyString(), any());
         assertThat(result.skipped()).hasSize(1);
         assertThat(result.skipped().get(0).orderId()).isEqualTo("4000");
-        assertThat(result.skipped().get(0).status()).isEqualTo("DEPARTURE");
+        // 스킵 상태도 중립 값이다(2609_26 D4) — 원문(DEPARTURE)이 아니다.
+        assertThat(result.skipped().get(0).status()).isEqualTo("SHIPPED");
         assertThat(result.matchedOrders()).isZero();
         assertThat(result.unmatched()).isEmpty();
         assertThat(result.failed()).isEmpty();
@@ -281,11 +305,11 @@ class ShipmentConfirmServiceImplTest {
 
     @Test
     void confirm_박스별상태혼재시_미발송박스만전송() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        given(orderItemRepository.findByExternalOrderId("4000")).willReturn(List.of(
-                line(account, "9001", "4000", "5001", "INSTRUCT"),
-                line(account, "9002", "4000", "5002", "DEPARTURE")));
-        given(carrierCodeService.resolveDeliveryCompanyCode("COUPANG")).willReturn("CJGLS");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        given(orderLineRepository.findByExternalOrderId("4000")).willReturn(List.of(
+                line(account, "9001", "4000", "5001", OrderStatus.PREPARING),
+                line(account, "9002", "4000", "5002", OrderStatus.SHIPPED)));
+        given(carrierCodeService.resolveDeliveryCompanyCode(Platform.COUPANG)).willReturn("CJGLS");
         given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("9001"));
 
@@ -303,10 +327,10 @@ class ShipmentConfirmServiceImplTest {
 
     @Test
     void confirm_로컬ACCEPT라인도_조회없이_전송() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        given(orderItemRepository.findByExternalOrderId("4000"))
-                .willReturn(List.of(line(account, "302", "4000", "5001", "ACCEPT")));
-        given(carrierCodeService.resolveDeliveryCompanyCode("COUPANG")).willReturn("CJGLS");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        given(orderLineRepository.findByExternalOrderId("4000"))
+                .willReturn(List.of(line(account, "302", "4000", "5001", OrderStatus.PAID)));
+        given(carrierCodeService.resolveDeliveryCompanyCode(Platform.COUPANG)).willReturn("CJGLS");
         given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302"));
 
@@ -321,12 +345,12 @@ class ShipmentConfirmServiceImplTest {
 
     @Test
     void confirm_성공박스는_로컬status를_DEPARTURE로갱신() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        given(orderItemRepository.findByExternalOrderId("4000"))
-                .willReturn(List.of(line(account, "9001", "4000", "5001", "INSTRUCT")));
-        given(orderItemRepository.findByExternalOrderId("4001"))
-                .willReturn(List.of(line(account, "9002", "4001", "5002", "INSTRUCT")));
-        given(carrierCodeService.resolveDeliveryCompanyCode("COUPANG")).willReturn("CJGLS");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        given(orderLineRepository.findByExternalOrderId("4000"))
+                .willReturn(List.of(line(account, "9001", "4000", "5001", OrderStatus.PREPARING)));
+        given(orderLineRepository.findByExternalOrderId("4001"))
+                .willReturn(List.of(line(account, "9002", "4001", "5002", OrderStatus.PREPARING)));
+        given(carrierCodeService.resolveDeliveryCompanyCode(Platform.COUPANG)).willReturn("CJGLS");
         given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseMixed());
 
@@ -334,24 +358,24 @@ class ShipmentConfirmServiceImplTest {
                 xlsx(new Object[][]{{"4000", "i1"}, {"4001", "i2"}}));
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<OrderItem>> saved = ArgumentCaptor.forClass(List.class);
-        verify(orderItemRepository).saveAll(saved.capture());
+        ArgumentCaptor<List<OrderLine>> saved = ArgumentCaptor.forClass(List.class);
+        verify(orderLineRepository).saveAll(saved.capture());
         assertThat(saved.getValue()).hasSize(1);                       // 실패 박스는 갱신하지 않는다
-        assertThat(saved.getValue().get(0).getExternalBoxId()).isEqualTo("9001");
-        assertThat(saved.getValue().get(0).getStatus()).isEqualTo("DEPARTURE");
+        assertThat(saved.getValue().get(0).getOrderShipment().getExternalShipmentId()).isEqualTo("9001");
+        assertThat(saved.getValue().get(0).getStatus()).isEqualTo(OrderStatus.SHIPPED);
         assertThat(result.succeeded()).isEqualTo(1);
         assertThat(result.failed()).hasSize(1);
     }
 
     @Test
     void confirm_로컬갱신실패해도_성공집계유지() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        given(orderItemRepository.findByExternalOrderId("4000"))
-                .willReturn(List.of(line(account, "302", "4000", "5001", "INSTRUCT")));
-        given(carrierCodeService.resolveDeliveryCompanyCode("COUPANG")).willReturn("CJGLS");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        given(orderLineRepository.findByExternalOrderId("4000"))
+                .willReturn(List.of(line(account, "302", "4000", "5001", OrderStatus.PREPARING)));
+        given(carrierCodeService.resolveDeliveryCompanyCode(Platform.COUPANG)).willReturn("CJGLS");
         given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302"));
-        given(orderItemRepository.saveAll(any())).willThrow(new RuntimeException("db"));
+        given(orderLineRepository.saveAll(any())).willThrow(new RuntimeException("db"));
 
         ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{"4000", "123"}}));
 
@@ -362,8 +386,8 @@ class ShipmentConfirmServiceImplTest {
 
     @Test
     void confirm_폴백응답의_발송완료박스는_스킵() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        given(orderItemRepository.findByExternalOrderId("4000")).willReturn(List.of());
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        given(orderLineRepository.findByExternalOrderId("4000")).willReturn(List.of());
         given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(account));
         given(coupangProperties.getOrdersheetByOrderPath()).willReturn(ORDER_BY_ID_PATH);
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(singleOrderDelivering());
@@ -382,12 +406,12 @@ class ShipmentConfirmServiceImplTest {
 
     @Test
     void 폴백조회분을적재한다() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of());
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        given(orderLineRepository.findByExternalOrderId("4000019469460")).willReturn(List.of());
         given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(account));
         given(coupangProperties.getOrdersheetByOrderPath()).willReturn(ORDER_BY_ID_PATH);
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(singleOrderTwoLines());
-        given(carrierCodeService.resolveDeliveryCompanyCode("COUPANG")).willReturn("CJGLS");
+        given(carrierCodeService.resolveDeliveryCompanyCode(Platform.COUPANG)).willReturn("CJGLS");
         given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any()))
                 .willReturn(responseAllSuccess("302012345678", "302012345678"));
@@ -395,13 +419,13 @@ class ShipmentConfirmServiceImplTest {
         service.confirm(xlsx(new Object[][]{{4000019469460L, "123456789"}}));
 
         // 이미 받아온 응답이라 추가 API 호출 없이 저장된다(PLAN 2609_13 D1).
-        verify(orderItemUpserter).upsertBox(eq(account), any());
+        verify(orderUpserter).upsertBox(eq(account), any());
     }
 
     @Test
     void 전송제외박스도적재한다() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        given(orderItemRepository.findByExternalOrderId("4000")).willReturn(List.of());
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        given(orderLineRepository.findByExternalOrderId("4000")).willReturn(List.of());
         given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(account));
         given(coupangProperties.getOrdersheetByOrderPath()).willReturn(ORDER_BY_ID_PATH);
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(singleOrderDelivering());
@@ -409,23 +433,23 @@ class ShipmentConfirmServiceImplTest {
         ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{"4000", "123"}}));
 
         // 배송지시 이상이라 전송에선 빠지지만, 그 상태가 정확한 값이라 저장 가치가 있다(D9).
-        verify(orderItemUpserter).upsertBox(eq(account), any());
+        verify(orderUpserter).upsertBox(eq(account), any());
         assertThat(result.skipped()).hasSize(1);
         verify(coupangApiClient, never()).post(anyString(), anyString(), any());
     }
 
     @Test
     void 적재실패해도전송은진행된다() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of());
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        given(orderLineRepository.findByExternalOrderId("4000019469460")).willReturn(List.of());
         given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(account));
         given(coupangProperties.getOrdersheetByOrderPath()).willReturn(ORDER_BY_ID_PATH);
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(singleOrderTwoLines());
-        given(carrierCodeService.resolveDeliveryCompanyCode("COUPANG")).willReturn("CJGLS");
+        given(carrierCodeService.resolveDeliveryCompanyCode(Platform.COUPANG)).willReturn("CJGLS");
         given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any()))
                 .willReturn(responseAllSuccess("302012345678", "302012345678"));
-        willThrow(new RuntimeException("boom")).given(orderItemUpserter).upsertBox(any(), any());
+        willThrow(new RuntimeException("boom")).given(orderUpserter).upsertBox(any(), any());
 
         ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{4000019469460L, "123456789"}}));
 
@@ -436,8 +460,8 @@ class ShipmentConfirmServiceImplTest {
 
     @Test
     void confirm_폴백_전량취소주문은_스킵아님_미매칭유지() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        given(orderItemRepository.findByExternalOrderId("4000")).willReturn(List.of());
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        given(orderLineRepository.findByExternalOrderId("4000")).willReturn(List.of());
         given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(account));
         given(coupangProperties.getOrdersheetByOrderPath()).willReturn(ORDER_BY_ID_PATH);
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(singleOrderAllCancelled());
@@ -456,13 +480,13 @@ class ShipmentConfirmServiceImplTest {
 
     @Test
     void confirmManual_신규모드_박스전체라인전송() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        OrderItem anchor = line(account, "302012345678", "4000019469460", "8001");
-        OrderItem l2 = line(account, "302012345678", "4000019469460", "8002");
-        OrderItem l3 = line(account, "302012345678", "4000019469460", "8003");
-        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
-        given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor, l2, l3));
-        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", "COUPANG")).willReturn("CJGLS");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        OrderLine anchor = line(account, "302012345678", "4000019469460", "8001");
+        OrderLine l2 = line(account, "302012345678", "4000019469460", "8002");
+        OrderLine l3 = line(account, "302012345678", "4000019469460", "8003");
+        given(orderLineRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
+        given(orderLineRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor, l2, l3));
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", Platform.COUPANG)).willReturn("CJGLS");
         given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302012345678"));
 
@@ -488,34 +512,35 @@ class ShipmentConfirmServiceImplTest {
 
     @Test
     void confirmManual_신규모드_성공시_DEPARTURE_writeback() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        OrderItem anchor = line(account, "302012345678", "4000019469460", "8001");
-        OrderItem l2 = line(account, "302012345678", "4000019469460", "8002");
-        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
-        given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor, l2));
-        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", "COUPANG")).willReturn("CJGLS");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        OrderLine anchor = line(account, "302012345678", "4000019469460", "8001");
+        OrderLine l2 = line(account, "302012345678", "4000019469460", "8002");
+        given(orderLineRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
+        given(orderLineRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor, l2));
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", Platform.COUPANG)).willReturn("CJGLS");
         given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302012345678"));
 
         ManualShipmentResult result = service.confirmManual(new ManualShipmentRequest(1L, "CJGLS", "123456789"));
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<OrderItem>> captor = ArgumentCaptor.forClass(List.class);
-        verify(orderItemRepository).saveAll(captor.capture());
+        ArgumentCaptor<List<OrderLine>> captor = ArgumentCaptor.forClass(List.class);
+        verify(orderLineRepository).saveAll(captor.capture());
         assertThat(captor.getValue()).hasSize(2)
-                .allMatch(l -> "DEPARTURE".equals(l.getStatus()));
-        assertThat(result.resultStatus()).isEqualTo("DEPARTURE");
+                .allMatch(l -> l.getStatus() == OrderStatus.SHIPPED);
+        // 클라이언트가 화면 갱신에 그대로 쓰는 값이라 중립 상태여야 한다(2609_26 / 04 Step 4).
+        assertThat(result.resultStatus()).isEqualTo("SHIPPED");
         assertThat(result.succeeded()).isEqualTo(1);
     }
 
     @Test
     void confirmManual_수정모드_updateInvoices경로_writeback없음() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
         // 앵커가 이미 배송지시 → 송장수정 모드(D3)
-        OrderItem anchor = line(account, "302012345678", "4000019469460", "8001", "DEPARTURE");
-        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
-        given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor));
-        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", "COUPANG")).willReturn("CJGLS");
+        OrderLine anchor = line(account, "302012345678", "4000019469460", "8001", OrderStatus.SHIPPED);
+        given(orderLineRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
+        given(orderLineRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor));
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", Platform.COUPANG)).willReturn("CJGLS");
         given(coupangProperties.getUpdateInvoicesPath()).willReturn(UPDATE_INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302012345678"));
 
@@ -524,21 +549,21 @@ class ShipmentConfirmServiceImplTest {
         ArgumentCaptor<String> pathCaptor = ArgumentCaptor.forClass(String.class);
         verify(coupangApiClient).post(pathCaptor.capture(), anyString(), eq(account));
         assertThat(pathCaptor.getValue()).isEqualTo(UPDATE_INVOICES_PATH.replace("{vendorId}", "A001"));
-        verify(orderItemRepository, never()).saveAll(any());
+        verify(orderLineRepository, never()).saveAll(any());
         assertThat(result.mode()).isEqualTo("UPDATE");
         assertThat(result.resultStatus()).isNull();
     }
 
     @Test
     void confirmManual_다른박스라인은_제외() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        OrderItem anchor = line(account, "302012345678", "4000019469460", "8001");
-        OrderItem sameBox = line(account, "302012345678", "4000019469460", "8002");
-        OrderItem otherBox = line(account, "302012345679", "4000019469460", "8003");
-        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
-        given(orderItemRepository.findByExternalOrderId("4000019469460"))
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        OrderLine anchor = line(account, "302012345678", "4000019469460", "8001");
+        OrderLine sameBox = line(account, "302012345678", "4000019469460", "8002");
+        OrderLine otherBox = line(account, "302012345679", "4000019469460", "8003");
+        given(orderLineRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
+        given(orderLineRepository.findByExternalOrderId("4000019469460"))
                 .willReturn(List.of(anchor, sameBox, otherBox));
-        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", "COUPANG")).willReturn("CJGLS");
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", Platform.COUPANG)).willReturn("CJGLS");
         given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302012345678"));
 
@@ -556,9 +581,9 @@ class ShipmentConfirmServiceImplTest {
 
     @Test
     void confirmManual_비쿠팡이면_IllegalArgumentException() {
-        MarketplaceAccount account = account(1L, "NAVER", "N001");
-        OrderItem anchor = line(account, "302012345678", "4000019469460", "8001");
-        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
+        MarketplaceAccount account = account(1L, Platform.NAVER, "N001");
+        OrderLine anchor = line(account, "302012345678", "4000019469460", "8001");
+        given(orderLineRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
 
         assertThatThrownBy(() -> service.confirmManual(new ManualShipmentRequest(1L, "CJGLS", "123456789")))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -568,9 +593,9 @@ class ShipmentConfirmServiceImplTest {
 
     @Test
     void confirmManual_박스ID없으면_IllegalArgumentException() {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        OrderItem anchor = line(account, null, "4000019469460", "8001");
-        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        OrderLine anchor = line(account, null, "4000019469460", "8001");
+        given(orderLineRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
 
         assertThatThrownBy(() -> service.confirmManual(new ManualShipmentRequest(1L, "CJGLS", "123456789")))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -580,11 +605,11 @@ class ShipmentConfirmServiceImplTest {
 
     @Test
     void confirmManual_택배사코드가_그플랫폼에_없으면_IllegalArgumentException() {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        OrderItem anchor = line(account, "302012345678", "4000019469460", "8001");
-        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
-        given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor));
-        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", "COUPANG"))
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        OrderLine anchor = line(account, "302012345678", "4000019469460", "8001");
+        given(orderLineRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
+        given(orderLineRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor));
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", Platform.COUPANG))
                 .willThrow(new IllegalArgumentException("선택한 택배사를 COUPANG 에 사용할 수 없습니다: CJGLS"));
 
         assertThatThrownBy(() -> service.confirmManual(new ManualShipmentRequest(1L, "CJGLS", "123456789")))
@@ -594,11 +619,11 @@ class ShipmentConfirmServiceImplTest {
 
     @Test
     void confirmManual_쿠팡실패응답이면_failed채우고_writeback없음() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001");
-        OrderItem anchor = line(account, "302", "4000019469460", "8001");
-        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
-        given(orderItemRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor));
-        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", "COUPANG")).willReturn("CJGLS");
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        OrderLine anchor = line(account, "302", "4000019469460", "8001");
+        given(orderLineRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
+        given(orderLineRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor));
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", Platform.COUPANG)).willReturn("CJGLS");
         given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responsePartialFail());
 
@@ -610,12 +635,12 @@ class ShipmentConfirmServiceImplTest {
         assertThat(result.failed().get(0).resultCode()).isEqualTo("DUPLICATE_INVOICE_NUMBER");
         assertThat(result.failed().get(0).message()).isEqualTo("중복 송장번호");
         assertThat(result.resultStatus()).isNull();
-        verify(orderItemRepository, never()).saveAll(any());
+        verify(orderLineRepository, never()).saveAll(any());
     }
 
     @Test
     void confirmManual_라인없으면_IllegalArgumentException() {
-        given(orderItemRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.empty());
+        given(orderLineRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.confirmManual(new ManualShipmentRequest(1L, "CJGLS", "123456789")))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -631,22 +656,37 @@ class ShipmentConfirmServiceImplTest {
         }
     }
 
-    private MarketplaceAccount account(Long id, String platform, String vendorId) {
+    private MarketplaceAccount account(Long id, Platform platform, String vendorId) {
         Seller seller = Seller.builder().id(id).sellerName("셀러" + id).businessRegistration("123-45-6789" + id).build();
-        return MarketplaceAccount.builder()
-                .id(id).seller(seller).platform(platform).vendorId(vendorId)
-                .accessKey("ak").secretKey("sk").isActive(true).build();
+        return MarketplaceAccountFixture.coupangStubBuilder(vendorId, null)
+                .id(id).seller(seller).platform(platform)
+                .isActive(true).build();
     }
 
-    private OrderItem line(MarketplaceAccount account, String boxId, String orderId, String itemId) {
-        return line(account, boxId, orderId, itemId, "INSTRUCT");
+    private OrderLine line(MarketplaceAccount account, String boxId, String orderId, String itemId) {
+        return line(account, boxId, orderId, itemId, OrderStatus.PREPARING);
     }
 
-    private OrderItem line(MarketplaceAccount account, String boxId, String orderId, String itemId, String status) {
-        return OrderItem.builder()
+    /**
+     * core 라인 1건 + 그 쿠팡 거울을 만든다. 라인 id 는 {@code itemId} 를 그대로 쓴다(테스트 안에서 유일).
+     *
+     * <p>박스 id 는 배송 묶음에, vendorItemId 는 거울에 있다(2609_26 D2·D3).
+     */
+    private OrderLine line(MarketplaceAccount account, String boxId, String orderId, String itemId,
+                           OrderStatus status) {
+        Order order = Order.builder()
                 .marketplaceAccount(account).platform(account.getPlatform())
-                .externalOrderId(orderId).externalBoxId(boxId).externalItemId(itemId)
-                .orderCount(1).cancelCount(0).holdCount(0).status(status).build();
+                .externalOrderId(orderId).build();
+        OrderShipment shipment = (boxId == null) ? null
+                : OrderShipment.builder().order(order).externalShipmentId(boxId).build();
+        OrderLine line = OrderLine.builder()
+                .id(Long.parseLong(itemId)).order(order).orderShipment(shipment)
+                .orderQty(1).cancelQty(0).holdQty(0).status(status).build();
+        mirrors.put(line.getId(), CoupangOrderLine.builder()
+                .id(line.getId()).orderLine(line).marketplaceAccount(account)
+                .shipmentBoxId(boxId).orderIdRaw(orderId).vendorItemId(itemId)
+                .build());
+        return line;
     }
 
     /** 택배사 고정 양식 xlsx 생성: 헤더(10칸) + 데이터행(주문번호 col5, 운송장번호 col6). */

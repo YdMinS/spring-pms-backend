@@ -60,7 +60,7 @@ public interface CustomerInquiryRepository extends JpaRepository<CustomerInquiry
      * @param start 문의일 하한(포함)
      * @param end   문의일 상한(<b>배타적</b>) — 당일 마지막 초에 들어온 문의를 놓치지 않기 위함
      */
-    @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller", "orderItem", "productListing"})
+    @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller", "orderLine", "productListing"})
     @Query("select i from CustomerInquiry i "
             + "where (:type is null or i.inquiryType = :type) "
             + "and (:status is null or i.status = :status) "
@@ -81,6 +81,6 @@ public interface CustomerInquiryRepository extends JpaRepository<CustomerInquiry
                                  @Param("keyword") String keyword);
 
     /** 단건 상세 — GET /api/inquiries/{id}. 스레드는 별도 조회다(컬렉션 fetch 금지). */
-    @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller", "orderItem", "productListing"})
+    @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller", "orderLine", "productListing"})
     Optional<CustomerInquiry> findWithAccountById(Long id);
 }

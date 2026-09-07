@@ -1,5 +1,6 @@
 package com.pms.controller;
 
+import com.pms.domain.Platform;
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.CommissionRateRequest;
 import com.pms.dto.response.CommissionRateResponse;
@@ -72,8 +73,10 @@ public class CommissionRateController {
     public ResponseEntity<ResponseDTO<List<CommissionRateResponse>>> findAll(
             @Parameter(description = "Platform filter (optional)", example = "COUPANG")
             @RequestParam(required = false) String platform) {
-        List<CommissionRateResponse> response = platform != null
-                ? commissionRateService.getCommissionRatesByPlatform(platform)
+        // required = false — from(null) 은 400 을 던지므로 null 을 그대로 흘린다.
+        Platform parsed = (platform == null) ? null : Platform.from(platform);
+        List<CommissionRateResponse> response = parsed != null
+                ? commissionRateService.getCommissionRatesByPlatform(parsed)
                 : commissionRateService.findAll();
         return ResponseEntity.ok(ResponseDTO.success(response));
     }

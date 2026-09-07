@@ -1,0 +1,80 @@
+# Rename the shipping config table to its real owner (FEATURE_2609_26 / PLAN D17).
+#   Table rename only — no column rename, no data move, no backfill of business data, no boolean
+#   (= 006 BIT trap N/A). Every value stored here is WING vocabulary (deliveryMethod·unionDeliveryType·
+#   outbound/return place codes), so no neutral core table is created; naver_shipping_config comes later.
+# ⚠️ FK/UNIQUE constraint names ride along unchanged (MySQL RENAME TABLE). Do NOT re-name them:
+#    H2 constraint names are schema-global unique, so a new name only risks a collision.
+# ⚠️ tenant_id is added here because the entity gains @TenantId (PLAN D25 — the sibling 1:1 child
+#    coupang_account_credential has it, the two must not diverge). Backfill BEFORE the NOT NULL switch:
+#    this table already has live rows, and the reverse order fails on them.
+# ⚠️ Post-rename check to run BY HAND — must equal the pre-migration count recorded on the old name:
+#      SELECT COUNT(*) FROM coupang_shipping_config;
+databaseChangeLog:
+
+  - changeSet:
+      id: 069-coupang-shipping-config
+      author: oclyx
+      comment: "FEATURE_2609_26/D17: rename marketplace_shipping_config -> coupang_shipping_config."
+      changes:
+        - renameTable:
+            oldTableName: marketplace_shipping_config
+            newTableName: coupang_shipping_config
+      rollback:
+        - renameTable:
+            oldTableName: coupang_shipping_config
+            newTableName: marketplace_shipping_config
+
+  # ---- tenant dimension (PLAN D25). Nullable first so the backfill has something to fill. ----
+  - changeSet:
+      id: 069-shipping-config-tenant-column
+      author: oclyx
+      comment: "coupang_shipping_config.tenant_id (nullable until the backfill runs)."
+      changes:
+        - addColumn:
+            tableName: coupang_shipping_config
+            columns:
+              - column: { name: tenant_id, type: BIGINT }
+      rollback:
+        - dropColumn: { tableName: coupang_shipping_config, columnName: tenant_id }
+
+  # ---- backfill from the parent account (MySQL only; the empty H2 apply-check has no rows) ----
+  # ⚠️ Kept separate from the NOT NULL switch: a mixed changeset would skip the copy on H2 and then
+  #    fail (or silently differ) on the constraint. 009·060 convention.
+  - changeSet:
+      id: 069-shipping-config-tenant-backfill
+      author: oclyx
+      dbms: mysql
+      comment: "기존 배송설정 행의 tenant_id 를 부모 marketplace_account 에서 채운다."
+      changes:
+        - sql:
+            sql: |
+              UPDATE coupang_shipping_config c
+                JOIN marketplace_account a ON a.id = c.marketplace_account_id
+                 SET c.tenant_id = a.tenant_id
+      rollback:
+        - sql:
+            sql: "UPDATE coupang_shipping_config SET tenant_id = NULL"
+
+  - changeSet:
+      id: 069-shipping-config-tenant-notnull
+      author: oclyx
+      comment: "tenant_id NOT NULL + FK to tenant (after the backfill)."
+      changes:
+        - addNotNullConstraint:
+            tableName: coupang_shipping_config
+            columnName: tenant_id
+            columnDataType: BIGINT
+        - addForeignKeyConstraint:
+            constraintName: fk_coupang_shipcfg_tenant
+            baseTableName: coupang_shipping_config
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+      rollback:
+        - dropForeignKeyConstraint:
+            baseTableName: coupang_shipping_config
+            constraintName: fk_coupang_shipcfg_tenant
+        - dropNotNullConstraint:
+            tableName: coupang_shipping_config
+            columnName: tenant_id
+            columnDataType: BIGINT

@@ -1,5 +1,6 @@
 package com.pms.repository;
 
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -27,7 +28,7 @@ public interface ProductListingRepository extends JpaRepository<ProductListing, 
      * @param pageable Pagination information
      * @return Page of ProductListing entities
      */
-    Page<ProductListing> findByPlatform(String platform, Pageable pageable);
+    Page<ProductListing> findByPlatform(Platform platform, Pageable pageable);
 
     /**
      * Master-link filter for the listing screen (FEATURE_2609_22 / 04): the "마스터 미연결" tab lists exactly
@@ -37,7 +38,7 @@ public interface ProductListingRepository extends JpaRepository<ProductListing, 
      * @param pageable Pagination information
      * @return Page of cells with no master link
      */
-    Page<ProductListing> findByPlatformAndMasterProductIsNull(String platform, Pageable pageable);
+    Page<ProductListing> findByPlatformAndMasterProductIsNull(Platform platform, Pageable pageable);
 
     /**
      * Counterpart of {@link #findByPlatformAndMasterProductIsNull} — cells already grouped under a master.
@@ -46,7 +47,7 @@ public interface ProductListingRepository extends JpaRepository<ProductListing, 
      * @param pageable Pagination information
      * @return Page of cells that are linked to a master
      */
-    Page<ProductListing> findByPlatformAndMasterProductIsNotNull(String platform, Pageable pageable);
+    Page<ProductListing> findByPlatformAndMasterProductIsNotNull(Platform platform, Pageable pageable);
 
     /**
      * Find a product listing by platform product ID.
@@ -103,7 +104,7 @@ public interface ProductListingRepository extends JpaRepository<ProductListing, 
      * @param platform        platform identifier (e.g., "COUPANG")
      * @return true if a listing already exists for that account under the master
      */
-    boolean existsByMasterProductIdAndSellerIdAndPlatform(Long masterProductId, Long sellerId, String platform);
+    boolean existsByMasterProductIdAndSellerIdAndPlatform(Long masterProductId, Long sellerId, Platform platform);
 
     /**
      * Pending-approval sweep source (FEATURE_2608_06 / 3c, sync-approvals): cells still SUBMITTED that have at

@@ -26,13 +26,17 @@ public record InquiryRelatedOrderResponse(
      *
      * ⚠️ 필드 이름은 {@link OrderItemResponse} 와 <b>그대로</b> 맞춘다(프론트가 두 벌 매핑을 갖지 않도록).
      * 단 PK 만 {@code id} → {@code orderItemId} 로 바꾼다 — 문의 id 와 섞이지 않게 하려는 것이다.
+     *
+     * <p>🔴 {@code effectiveStatus} → {@code status} (FEATURE_2609_26 / PLAN D26). 값도 중립 상태
+     * ({@code OrderStatus} 이름)이며 전량취소는 {@code CANCELLED} 로 내려간다 —
+     * {@link OrderItemResponse#getStatus()} 와 <b>같은 규칙</b>이라 두 화면이 갈라지지 않는다.
      */
     public record Line(
             Long orderItemId,
             String itemName,
             int orderCount,
             int cancelCount,
-            String effectiveStatus,
+            String status,
             boolean isInquiryLine) {
     }
 }

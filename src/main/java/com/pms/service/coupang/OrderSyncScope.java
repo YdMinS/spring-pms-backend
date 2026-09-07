@@ -1,5 +1,7 @@
 package com.pms.service.coupang;
 
+import com.pms.domain.OrderStatus;
+
 import java.util.Arrays;
 import java.util.List;
 
@@ -25,14 +27,15 @@ public enum OrderSyncScope {
     /**
      * 이 범위가 조회할 상태 — 순서는 enum 선언(라이프사이클) 순을 유지한다.
      *
-     * ⚠️ {@code ACTIVE} 는 {@link CoupangOrderStatus#isTerminal()} 의 <b>여집합</b>으로만 정의한다(D2).
-     * 상태 목록을 여기에 복제하면 상태가 늘 때 두 곳이 갈라진다.
+     * ⚠️ {@code ACTIVE} 는 {@link OrderStatus#isTerminal()} 의 <b>여집합</b>으로만 정의한다(D2).
+     * 상태 목록을 여기에 복제하면 상태가 늘 때 두 곳이 갈라진다. 판정은 중립 상태가 소유하고,
+     * 이 enum 은 그 판정을 쿠팡 조회 파라미터로 되돌릴 뿐이다(FEATURE_2609_26 / PLAN D4).
      */
     public List<CoupangOrderStatus> statuses() {
         return switch (this) {
             case FULL -> List.of(CoupangOrderStatus.values());
             case ACTIVE -> Arrays.stream(CoupangOrderStatus.values())
-                    .filter(s -> !s.isTerminal())
+                    .filter(s -> !s.toOrderStatus().isTerminal())
                     .toList();
         };
     }

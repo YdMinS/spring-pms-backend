@@ -1,6 +1,7 @@
 package com.pms.repository;
 
 import com.pms.domain.MarginPolicy;
+import com.pms.domain.Platform;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Optional;
@@ -14,5 +15,5 @@ import java.util.Optional;
 public interface MarginPolicyRepository extends JpaRepository<MarginPolicy, Long> {
 
     /** For the (seller, platform) duplicate guard on create/update. Tenant-scoped by @TenantId. */
-    Optional<MarginPolicy> findBySellerIdAndPlatform(Long sellerId, String platform);
+    Optional<MarginPolicy> findBySellerIdAndPlatform(Long sellerId, Platform platform);
 }

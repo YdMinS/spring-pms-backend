@@ -2,10 +2,13 @@ package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.dto.request.ShippingConfigRequest;
+import com.pms.fixture.MarketplaceAccountFixture;
+import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.MarketplaceShippingConfigRepository;
+import com.pms.repository.CoupangShippingConfigRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import org.junit.jupiter.api.AfterEach;
@@ -34,7 +37,8 @@ class ShippingConfigControllerTest extends BaseIntegrationTest {
 
     @Autowired private SellerRepository sellerRepository;
     @Autowired private MarketplaceAccountRepository marketplaceAccountRepository;
-    @Autowired private MarketplaceShippingConfigRepository shippingConfigRepository;
+    @Autowired private CoupangAccountCredentialRepository credentialRepository;
+    @Autowired private CoupangShippingConfigRepository shippingConfigRepository;
 
     @MockBean private CoupangApiClient coupangApiClient;
 
@@ -44,10 +48,11 @@ class ShippingConfigControllerTest extends BaseIntegrationTest {
     void seed() {
         Seller seller = sellerRepository.save(Seller.builder()
                 .sellerName("행복상회").businessRegistration("111-22-33333").build());
-        MarketplaceAccount account = marketplaceAccountRepository.save(MarketplaceAccount.builder()
-                .seller(seller).platform("COUPANG").accountAlias("메인")
-                .vendorId("V1").accessKey("ak").secretKey("sk").isActive(true).build());
+        MarketplaceAccount account = marketplaceAccountRepository.save(MarketplaceAccountFixture.coupangCoreBuilder()
+                .seller(seller).platform(Platform.COUPANG).accountAlias("메인")
+                .isActive(true).build());
         accountId = account.getId();
+        MarketplaceAccountFixture.saveCredential(credentialRepository, account, "V1", null);
 
         given(coupangApiClient.get(contains("shipping-place/outbound"), anyString(), any())).willReturn(
                 "{\"code\":200,\"data\":{\"content\":["
@@ -61,6 +66,7 @@ class ShippingConfigControllerTest extends BaseIntegrationTest {
     @AfterEach
     void cleanup() {
         shippingConfigRepository.deleteAll();
+        credentialRepository.deleteAll();          // FK child first
         marketplaceAccountRepository.deleteAll();
         sellerRepository.deleteAll();
     }

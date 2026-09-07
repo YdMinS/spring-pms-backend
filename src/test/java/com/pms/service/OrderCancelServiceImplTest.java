@@ -5,13 +5,21 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderCancelAction;
+import com.pms.domain.CoupangOrderLine;
 import com.pms.domain.OrderCancelReason;
-import com.pms.domain.OrderItem;
+import com.pms.domain.Order;
+import com.pms.domain.OrderLine;
+import com.pms.domain.OrderShipment;
+import com.pms.domain.OrderStatus;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.dto.request.OrderCancelRequest;
+import com.pms.fixture.MarketplaceAccountFixture;
+import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.OrderCancelActionRepository;
-import com.pms.repository.OrderItemRepository;
+import com.pms.repository.OrderLineRepository;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.coupang.CoupangOrderStatus;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,7 +30,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -39,7 +49,7 @@ import static org.mockito.Mockito.verify;
 /**
  * OrderCancelServiceImpl 분류·그룹핑·전송 바디·응답 판정·write-back·이력 테스트 (FEATURE_2609_25).
  *
- * CoupangApiClient·OrderItemRepository·OrderCancelActionRepository·CoupangProperties 는 @Mock,
+ * CoupangApiClient·OrderLineRepository·OrderCancelActionRepository·CoupangProperties 는 @Mock,
  * ObjectMapper 는 실제 인스턴스(요청 바디를 문자열로 캡처해 검증하기 위해).
  */
 @ExtendWith(MockitoExtension.class)
@@ -53,7 +63,9 @@ class OrderCancelServiceImplTest {
     @Mock
     private CoupangProperties coupangProperties;
     @Mock
-    private OrderItemRepository orderItemRepository;
+    private OrderLineRepository orderLineRepository;
+    @Mock
+    private CoupangOrderLineRepository coupangOrderLineRepository;
     @Mock
     private OrderCancelActionRepository orderCancelActionRepository;
 
@@ -63,7 +75,7 @@ class OrderCancelServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new OrderCancelServiceImpl(coupangApiClient, coupangProperties,
-                orderItemRepository, orderCancelActionRepository, objectMapper);
+                orderLineRepository, coupangOrderLineRepository, orderCancelActionRepository, objectMapper);
     }
 
     @AfterEach
@@ -73,10 +85,10 @@ class OrderCancelServiceImplTest {
 
     @Test
     void cancelSendsVendorItemIdsAndReceiptCountsPaired() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001", "wing-user");
-        given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
-                line(11L, account, "700001", "300001", "5001", "ACCEPT", 3, 0, 0),
-                line(12L, account, "700001", "300001", "5002", "ACCEPT", 1, 0, 0)));
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", "wing-user");
+        givenLines(
+                line(11L, account, "700001", "300001", "5001", OrderStatus.PAID, 3, 0, 0),
+                line(12L, account, "700001", "300001", "5002", OrderStatus.PAID, 1, 0, 0));
         given(coupangProperties.getOrderCancelPath()).willReturn(CANCEL_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any()))
                 .willReturn(success("CANCEL", "5001", "5002"));
@@ -101,10 +113,10 @@ class OrderCancelServiceImplTest {
 
     @Test
     void cancelSplitsRequestPerShipmentBox() throws Exception {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001", "wing-user");
-        given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
-                line(11L, account, "700001", "300001", "5001", "ACCEPT", 1, 0, 0),
-                line(12L, account, "700002", "300001", "5002", "ACCEPT", 1, 0, 0)));
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", "wing-user");
+        givenLines(
+                line(11L, account, "700001", "300001", "5001", OrderStatus.PAID, 1, 0, 0),
+                line(12L, account, "700002", "300001", "5002", OrderStatus.PAID, 1, 0, 0));
         given(coupangProperties.getOrderCancelPath()).willReturn(CANCEL_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any()))
                 .willReturn(success("CANCEL", "5001"), success("CANCEL", "5002"));
@@ -123,10 +135,10 @@ class OrderCancelServiceImplTest {
 
     @Test
     void cancelSkipsNonCancellableAndFullyCancelledLines() {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001", "wing-user");
-        given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
-                line(11L, account, "700001", "300001", "5001", "DEPARTURE", 1, 0, 0),
-                line(12L, account, "700001", "300001", "5002", "ACCEPT", 2, 2, 0)));
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", "wing-user");
+        givenLines(
+                line(11L, account, "700001", "300001", "5001", OrderStatus.SHIPPED, 1, 0, 0),
+                line(12L, account, "700001", "300001", "5002", OrderStatus.PAID, 2, 2, 0));
 
         OrderCancelResult result = service.cancel(
                 request(OrderCancelReason.OUT_OF_STOCK, line(11L, 1), line(12L, 1)));
@@ -141,11 +153,11 @@ class OrderCancelServiceImplTest {
 
     @Test
     void cancelMarksNonCoupangLineUnsupported() {
-        MarketplaceAccount naver = account(2L, "NAVER", "N001", "wing-user");
-        MarketplaceAccount coupang = account(1L, "COUPANG", "A001", "wing-user");
-        given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
-                line(11L, naver, "700001", "300001", "5001", "ACCEPT", 1, 0, 0),
-                line(12L, coupang, null, "300002", "5002", "ACCEPT", 1, 0, 0)));
+        MarketplaceAccount naver = account(2L, Platform.NAVER, "N001", "wing-user");
+        MarketplaceAccount coupang = account(1L, Platform.COUPANG, "A001", "wing-user");
+        givenLines(
+                line(11L, naver, "700001", "300001", "5001", OrderStatus.PAID, 1, 0, 0),
+                line(12L, coupang, null, "300002", "5002", OrderStatus.PAID, 1, 0, 0));
 
         OrderCancelResult result = service.cancel(
                 request(OrderCancelReason.OUT_OF_STOCK, line(11L, 1), line(12L, 1)));
@@ -159,9 +171,9 @@ class OrderCancelServiceImplTest {
 
     @Test
     void cancelRejectsInvalidRequestBeforeSending() {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001", "wing-user");
-        given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
-                line(11L, account, "700001", "300001", "5001", "ACCEPT", 3, 1, 0)));
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", "wing-user");
+        givenLines(
+                line(11L, account, "700001", "300001", "5001", OrderStatus.PAID, 3, 1, 0));
 
         // 취소 가능 수량(3 − 1 = 2) 초과 → 전체 요청을 400 으로 막는다(부분 전송 금지)
         assertThatThrownBy(() -> service.cancel(request(OrderCancelReason.OUT_OF_STOCK, line(11L, 3))))
@@ -179,9 +191,9 @@ class OrderCancelServiceImplTest {
 
     @Test
     void cancelFailsLineWithoutWingId() {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001", null);
-        given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
-                line(11L, account, "700001", "300001", "5001", "ACCEPT", 1, 0, 0)));
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", null);
+        givenLines(
+                line(11L, account, "700001", "300001", "5001", OrderStatus.PAID, 1, 0, 0));
 
         OrderCancelResult result = service.cancel(request(OrderCancelReason.OUT_OF_STOCK, line(11L, 1)));
 
@@ -193,10 +205,10 @@ class OrderCancelServiceImplTest {
 
     @Test
     void cancelMarksFailedVendorItemIdsAsFailed() {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001", "wing-user");
-        given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
-                line(11L, account, "700001", "300001", "5001", "ACCEPT", 1, 0, 0),
-                line(12L, account, "700001", "300001", "5002", "ACCEPT", 1, 0, 0)));
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", "wing-user");
+        givenLines(
+                line(11L, account, "700001", "300001", "5001", OrderStatus.PAID, 1, 0, 0),
+                line(12L, account, "700001", "300001", "5002", OrderStatus.PAID, 1, 0, 0));
         given(coupangProperties.getOrderCancelPath()).willReturn(CANCEL_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(
                 "{\"code\":200,\"message\":\"취소 가능한 개수보다 요청한 개수가 더 많습니다\",\"data\":{"
@@ -218,10 +230,10 @@ class OrderCancelServiceImplTest {
 
     @Test
     void cancelFailsGroupWhenResponseHasNoData() {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001", "wing-user");
-        given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
-                line(11L, account, "700001", "300001", "5001", "ACCEPT", 1, 0, 0),
-                line(12L, account, "700001", "300001", "5002", "ACCEPT", 1, 0, 0)));
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", "wing-user");
+        givenLines(
+                line(11L, account, "700001", "300001", "5001", OrderStatus.PAID, 1, 0, 0),
+                line(12L, account, "700001", "300001", "5002", OrderStatus.PAID, 1, 0, 0));
         given(coupangProperties.getOrderCancelPath()).willReturn(CANCEL_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn("{\"code\":200}");
 
@@ -232,15 +244,15 @@ class OrderCancelServiceImplTest {
         assertThat(result.cancelled()).isEmpty();
         assertThat(result.failed()).hasSize(2);
         assertThat(result.failed().get(0).code()).isEqualTo("ERROR");
-        verify(orderItemRepository, never()).saveAll(anyList());
+        verify(orderLineRepository, never()).saveAll(anyList());
     }
 
     @Test
     void cancelWritesBackByReceiptType() {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001", "wing-user");
-        given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
-                line(11L, account, "700001", "300001", "5001", "ACCEPT", 2, 0, 0),
-                line(12L, account, "700001", "300001", "5002", "INSTRUCT", 3, 0, 0)));
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", "wing-user");
+        givenLines(
+                line(11L, account, "700001", "300001", "5001", OrderStatus.PAID, 2, 0, 0),
+                line(12L, account, "700001", "300001", "5002", OrderStatus.PREPARING, 3, 0, 0));
         given(coupangProperties.getOrderCancelPath()).willReturn(CANCEL_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(
                 "{\"code\":200,\"data\":{\"failedVendorItemIds\":[],\"receiptMap\":{"
@@ -253,17 +265,17 @@ class OrderCancelServiceImplTest {
                 request(OrderCancelReason.OUT_OF_STOCK, line(11L, 2), line(12L, 1)));
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<OrderItem>> captor = ArgumentCaptor.forClass(List.class);
-        verify(orderItemRepository).saveAll(captor.capture());
-        List<OrderItem> saved = captor.getValue();
+        ArgumentCaptor<List<OrderLine>> captor = ArgumentCaptor.forClass(List.class);
+        verify(orderLineRepository).saveAll(captor.capture());
+        List<OrderLine> saved = captor.getValue();
         assertThat(saved).hasSize(2);
         // CANCEL → cancelCount, STOP_SHIPMENT → holdCount, status 는 둘 다 불변
-        assertThat(saved.get(0).getCancelCount()).isEqualTo(2);
-        assertThat(saved.get(0).getHoldCount()).isZero();
-        assertThat(saved.get(0).getStatus()).isEqualTo("ACCEPT");
-        assertThat(saved.get(1).getCancelCount()).isZero();
-        assertThat(saved.get(1).getHoldCount()).isEqualTo(1);
-        assertThat(saved.get(1).getStatus()).isEqualTo("INSTRUCT");
+        assertThat(saved.get(0).getCancelQty()).isEqualTo(2);
+        assertThat(saved.get(0).getHoldQty()).isZero();
+        assertThat(saved.get(0).getStatus()).isEqualTo(OrderStatus.PAID);
+        assertThat(saved.get(1).getCancelQty()).isZero();
+        assertThat(saved.get(1).getHoldQty()).isEqualTo(1);
+        assertThat(saved.get(1).getStatus()).isEqualTo(OrderStatus.PREPARING);
 
         // 응답은 어느 컬럼이 늘었든 두 수량을 모두 담는다(D14)
         OrderCancelResult.CancelledLine cancelledFirst = result.cancelled().get(0);
@@ -277,19 +289,20 @@ class OrderCancelServiceImplTest {
         assertThat(cancelledSecond.resultCancelCount()).isZero();
         assertThat(cancelledSecond.resultHoldCount()).isEqualTo(1);
         assertThat(cancelledSecond.resultPurchasableQty()).isEqualTo(2);
-        assertThat(cancelledSecond.resultStatus()).isEqualTo("INSTRUCT");
+        // 결과 상태도 중립 값이다(2609_26 D4) — 원문(INSTRUCT)이 아니다.
+        assertThat(cancelledSecond.resultStatus()).isEqualTo("PREPARING");
         assertThat(result.succeededQty()).isEqualTo(3);
     }
 
     @Test
     void cancelKeepsSuccessWhenWriteBackFails() {
-        MarketplaceAccount account = account(1L, "COUPANG", "A001", "wing-user");
-        given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
-                line(11L, account, "700001", "300001", "5001", "ACCEPT", 1, 0, 0)));
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", "wing-user");
+        givenLines(
+                line(11L, account, "700001", "300001", "5001", OrderStatus.PAID, 1, 0, 0));
         given(coupangProperties.getOrderCancelPath()).willReturn(CANCEL_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any()))
                 .willReturn(success("CANCEL", "5001"));
-        willThrow(new RuntimeException("db down")).given(orderItemRepository).saveAll(anyList());
+        willThrow(new RuntimeException("db down")).given(orderLineRepository).saveAll(anyList());
 
         OrderCancelResult result = service.cancel(request(OrderCancelReason.OUT_OF_STOCK, line(11L, 1)));
 
@@ -301,11 +314,11 @@ class OrderCancelServiceImplTest {
     void cancelRecordsHistoryForSuccessAndFailure() {
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken("admin@oclyx.com", "n/a", List.of()));
-        MarketplaceAccount account = account(1L, "COUPANG", "A001", "wing-user");
-        given(orderItemRepository.findWithAccountByIdIn(any())).willReturn(List.of(
-                line(11L, account, "700001", "300001", "5001", "ACCEPT", 1, 0, 0),
-                line(12L, account, "700001", "300001", "5002", "ACCEPT", 1, 0, 0),
-                line(13L, account, "700001", "300001", "5003", "DEPARTURE", 1, 0, 0)));
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", "wing-user");
+        givenLines(
+                line(11L, account, "700001", "300001", "5001", OrderStatus.PAID, 1, 0, 0),
+                line(12L, account, "700001", "300001", "5002", OrderStatus.PAID, 1, 0, 0),
+                line(13L, account, "700001", "300001", "5003", OrderStatus.SHIPPED, 1, 0, 0));
         given(coupangProperties.getOrderCancelPath()).willReturn(CANCEL_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(
                 "{\"code\":200,\"message\":\"OK\",\"data\":{\"failedVendorItemIds\":[\"5002\"],"
@@ -323,6 +336,7 @@ class OrderCancelServiceImplTest {
             assertThat(row.getReason()).isEqualTo(OrderCancelReason.WRONG_PRICE);
             assertThat(row.getPlatformReasonCode()).isEqualTo("CCPRER");
             assertThat(row.getCreatedBy()).isEqualTo("admin@oclyx.com");
+            // 🔴 이력의 status_at_send 는 플랫폼 원문이다(PLAN D1) — 중립 이름을 넣으면 한 컬럼에 두 어휘가 섞인다.
             assertThat(row.getStatusAtSend()).isEqualTo("ACCEPT");
         });
         assertThat(rows.get(0).isSucceeded()).isTrue();
@@ -342,21 +356,47 @@ class OrderCancelServiceImplTest {
         return new OrderCancelRequest.Line(orderItemId, quantity);
     }
 
-    private MarketplaceAccount account(Long id, String platform, String vendorId, String vendorUserId) {
+    private MarketplaceAccount account(Long id, Platform platform, String vendorId, String vendorUserId) {
         Seller seller = Seller.builder().id(id).sellerName("셀러" + id)
                 .businessRegistration("123-45-6789" + id).build();
-        return MarketplaceAccount.builder()
-                .id(id).seller(seller).platform(platform).vendorId(vendorId).vendorUserId(vendorUserId)
-                .accessKey("ak").secretKey("sk").isActive(true).build();
+        return MarketplaceAccountFixture.coupangStubBuilder(vendorId, vendorUserId)
+                .id(id).seller(seller).platform(platform)
+                .isActive(true).build();
     }
 
-    private OrderItem line(Long id, MarketplaceAccount account, String boxId, String orderId,
-                           String itemId, String status, int orderCount, int cancelCount, int holdCount) {
-        return OrderItem.builder()
-                .id(id).marketplaceAccount(account).platform(account.getPlatform())
-                .externalOrderId(orderId).externalBoxId(boxId).externalItemId(itemId)
-                .orderCount(orderCount).cancelCount(cancelCount).holdCount(holdCount)
+    /** 라인 id → 쿠팡 거울. {@link #line} 이 채우고 {@link #givenLines} 가 스텁으로 세운다. */
+    private final Map<Long, CoupangOrderLine> mirrors = new LinkedHashMap<>();
+
+    /**
+     * core 라인 1건 + 그 쿠팡 거울을 만든다.
+     *
+     * <p>전송 식별자(vendorItemId)와 이력의 근거(platform_status)는 거울 쪽 값이다(2609_26 / 04 §3-3).
+     */
+    private OrderLine line(Long id, MarketplaceAccount account, String boxId, String orderId,
+                           String itemId, OrderStatus status, int orderQty, int cancelQty, int holdQty) {
+        Order order = Order.builder()
+                .id(1000L + id).marketplaceAccount(account).platform(account.getPlatform())
+                .externalOrderId(orderId).build();
+        OrderShipment shipment = (boxId == null) ? null
+                : OrderShipment.builder().order(order).externalShipmentId(boxId).build();
+        OrderLine line = OrderLine.builder()
+                .id(id).order(order).orderShipment(shipment)
+                .orderQty(orderQty).cancelQty(cancelQty).holdQty(holdQty)
                 .status(status).build();
+        mirrors.put(id, CoupangOrderLine.builder()
+                .id(2000L + id).orderLine(line).marketplaceAccount(account)
+                .shipmentBoxId(boxId).orderIdRaw(orderId).vendorItemId(itemId)
+                .platformStatus(CoupangOrderStatus.forOrderStatus(status).get(0).name())
+                .build());
+        return line;
+    }
+
+    /** 조회 스텁 — core 라인과 거울을 한 벌로 세운다. */
+    private void givenLines(OrderLine... lines) {
+        List<OrderLine> list = List.of(lines);
+        given(orderLineRepository.findWithAccountByIdIn(any())).willReturn(list);
+        given(coupangOrderLineRepository.findByOrderLine_IdIn(anyList()))
+                .willReturn(list.stream().map(l -> mirrors.get(l.getId())).toList());
     }
 
     /** 전량 성공 응답 — 하나의 접수에 vendorItemId 들이 묶인 모양. */

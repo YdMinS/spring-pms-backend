@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.Platform;
 import com.pms.dto.request.CategoryMappingRequest;
 import com.pms.dto.response.CategoryMappingResponse;
 
@@ -19,5 +20,5 @@ public interface CategoryMappingService {
     CategoryMappingResponse upsertMapping(Long categoryId, CategoryMappingRequest request);
 
     /** Delete the mapping for (category, platform). 404 if none. */
-    void deleteMapping(Long categoryId, String platform);
+    void deleteMapping(Long categoryId, Platform platform);
 }

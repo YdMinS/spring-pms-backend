@@ -2,6 +2,7 @@ package com.pms.service.coupang;
 
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.service.coupang.CoupangOrderStatusSyncer.StatusSyncResult;
 import lombok.RequiredArgsConstructor;
@@ -20,15 +21,13 @@ import java.util.function.Function;
  *
  * ⚠️ 이 클래스에 {@code @Transactional} 을 붙이면 안 된다(PLAN D15). 붙이면 syncer 가 REQUIRED 로
  * 그 트랜잭션에 합류해 커밋 경계가 다시 하나로 합쳐지고, 뒤쪽 상태의 쿠팡 실패(예: 504)가 앞쪽 상태의
- * upsert 까지 롤백시킨다 — 그 계정 주문이 order_item 에 한 건도 남지 않아 발송처리가 전량 미매칭된다
+ * upsert 까지 롤백시킨다 — 그 계정 주문이 order_line 에 한 건도 남지 않아 발송처리가 전량 미매칭된다
  * (2026-09-02 사고). 회귀 테스트: {@code OrderSyncCommitBoundaryTest}.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class CoupangOrderSyncServiceImpl implements CoupangOrderSyncService {
-
-    private static final String PLATFORM_COUPANG = "COUPANG";
 
     private final CoupangOrderStatusSyncer statusSyncer;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
@@ -38,7 +37,7 @@ public class CoupangOrderSyncServiceImpl implements CoupangOrderSyncService {
     public SyncResult syncAll() {
         SyncResult total = SyncResult.empty();
         for (MarketplaceAccount account : marketplaceAccountRepository.findByIsActiveTrue()) {
-            if (!PLATFORM_COUPANG.equals(account.getPlatform())) {
+            if (!Platform.COUPANG.equals(account.getPlatform())) {
                 continue;
             }
             total = total.plus(syncAccount(account));
@@ -58,7 +57,8 @@ public class CoupangOrderSyncServiceImpl implements CoupangOrderSyncService {
         SyncWindow active = SyncWindow.recent(coupangProperties.getSyncDays());
         SyncWindow terminal = SyncWindow.recentSince(account.getLastOrderSyncAt(),
                 coupangProperties.getTerminalSyncMinDays(), coupangProperties.getSyncDays());
-        return sync(account, scope, status -> status.isTerminal() ? terminal : active);
+        // 종결 판정의 소유자는 중립 상태다(FEATURE_2609_26 / PLAN D4·D6) — 여기에 목록을 복제하지 않는다.
+        return sync(account, scope, status -> status.toOrderStatus().isTerminal() ? terminal : active);
     }
 
     @Override

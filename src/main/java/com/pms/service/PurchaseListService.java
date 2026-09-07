@@ -13,7 +13,7 @@ import java.util.List;
  * "오늘 구매 목록"(사입 리스트) 비즈니스 로직.
  *
  * SSOT: oklyx-context/coupang-purchase-list-design.md (대안 B, 라인 단위 추적).
- * 구매(사입)만 다루며 입고(재고 증가)는 범위 밖. 주문 동기화는 order-sync 소관 — 여기선 적재된 order_item 만 사용.
+ * 구매(사입)만 다루며 입고(재고 증가)는 범위 밖. 주문 동기화는 order-sync 소관 — 여기선 적재된 order_line 만 사용.
  *
  * 모든 구매 목록 작업은 이 서비스를 경유해야 한다(Controller 에서 Repository 직접 호출 금지).
  *

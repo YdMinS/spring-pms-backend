@@ -11,7 +11,9 @@ import java.util.List;
  * @param sentLines      전송한 dto 수 = 박스의 옵션 라인 수
  * @param succeeded      쿠팡 responseList 의 succeed=true 건수
  * @param failed         실패 상세(쿠팡 원문, D6) — {@link ShipmentConfirmResult.FailedBox} 재사용
- * @param resultStatus   성공 후 로컬 상태(CREATE 성공 시 "DEPARTURE", 그 외 null) — 클라이언트가 화면 갱신에 쓴다(D4)
+ * @param resultStatus   성공 후 로컬 상태(CREATE 성공 시 {@code "SHIPPED"}, 그 외 null) — 클라이언트가
+ *                       화면 갱신에 그대로 쓴다(D4). 🔴 중립 상태다(FEATURE_2609_26 / PLAN D4) —
+ *                       원문(DEPARTURE)을 내려주면 갱신 직후에만 옛 라벨이 노출돼 재현이 어렵다
  */
 public record ManualShipmentResult(String orderId, String shipmentBoxId, String mode, int sentLines,
                                    int succeeded, List<ShipmentConfirmResult.FailedBox> failed,

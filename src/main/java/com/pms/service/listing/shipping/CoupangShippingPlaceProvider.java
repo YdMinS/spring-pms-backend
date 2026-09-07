@@ -3,7 +3,9 @@ package com.pms.service.listing.shipping;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.coupang.CoupangCredentials;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,8 +52,8 @@ public class CoupangShippingPlaceProvider implements ShippingPlaceProvider {
     private final ObjectMapper objectMapper;
 
     @Override
-    public String platform() {
-        return "COUPANG";
+    public Platform platform() {
+        return Platform.COUPANG;
     }
 
     @Override
@@ -69,7 +71,8 @@ public class CoupangShippingPlaceProvider implements ShippingPlaceProvider {
     @Override
     public List<ReturnCenter> fetchReturnCenters(MarketplaceAccount account) {
         // No paging query on return — the confirmed-working v4 call sends none.
-        JsonNode content = fetchContent(String.format(RETURN_CENTERS, account.getVendorId()), "", account, "return");
+        JsonNode content = fetchContent(String.format(RETURN_CENTERS, CoupangCredentials.of(account).getVendorId()),
+                "", account, "return");
         List<ReturnCenter> centers = new ArrayList<>();
         for (JsonNode node : content) {
             JsonNode addr = node.path("placeAddresses").path(0);   // first address block

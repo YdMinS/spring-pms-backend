@@ -6,7 +6,9 @@ import com.pms.config.CoupangProperties;
 import com.pms.domain.CustomerInquiry;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.coupang.CoupangCredentials;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -35,15 +37,13 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class CoupangInquiryReplyAdapter implements InquiryReplyAdapter {
 
-    private static final String PLATFORM_COUPANG = "COUPANG";
-
     private final CoupangApiClient coupangApiClient;
     private final CoupangProperties coupangProperties;
     private final ObjectMapper objectMapper;
 
     @Override
-    public String platform() {
-        return PLATFORM_COUPANG;
+    public Platform platform() {
+        return Platform.COUPANG;
     }
 
     @Override
@@ -52,7 +52,7 @@ public class CoupangInquiryReplyAdapter implements InquiryReplyAdapter {
         String path = (callCenter
                 ? coupangProperties.getCallCenterInquiryReplyPath()
                 : coupangProperties.getOnlineInquiryReplyPath())
-                .replace("{vendorId}", account.getVendorId())
+                .replace("{vendorId}", CoupangCredentials.of(account).getVendorId())
                 .replace("{inquiryId}", inquiry.getExternalInquiryId());
 
         Map<String, Object> body = callCenter
@@ -65,9 +65,10 @@ public class CoupangInquiryReplyAdapter implements InquiryReplyAdapter {
     /** 상품문의 바디 — {@code replyBy} 는 WING 사용자 ID 다(D18, 계정에서 온다). */
     private Map<String, Object> productQnaBody(MarketplaceAccount account, ReplyCommand command) {
         Map<String, Object> body = new LinkedHashMap<>();
+        var cred = CoupangCredentials.of(account);
         body.put("content", command.content());
-        body.put("vendorId", account.getVendorId());
-        body.put("replyBy", account.getVendorUserId());
+        body.put("vendorId", cred.getVendorId());
+        body.put("replyBy", cred.getVendorUserId());
         return body;
     }
 
@@ -80,10 +81,11 @@ public class CoupangInquiryReplyAdapter implements InquiryReplyAdapter {
     private Map<String, Object> callCenterBody(MarketplaceAccount account, CustomerInquiry inquiry,
                                                ReplyCommand command) {
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("vendorId", account.getVendorId());
+        var cred = CoupangCredentials.of(account);
+        body.put("vendorId", cred.getVendorId());
         body.put("inquiryId", inquiry.getExternalInquiryId());
         body.put("content", command.content());
-        body.put("replyBy", account.getVendorUserId());
+        body.put("replyBy", cred.getVendorUserId());
         body.put("parentAnswerId", parentAnswerId(command.parentReplyId()));
         return body;
     }

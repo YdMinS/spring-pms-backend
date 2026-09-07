@@ -8,6 +8,7 @@ import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductImage;
 import com.pms.domain.MasterProductOption;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductImage;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
@@ -118,7 +119,7 @@ class ListingAssetServiceTest {
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터")
                 .sourceImageUrl("https://cdn/override.jpg")
                 .fieldValues(Map.of("productName", "직접입력상품")).build();
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀")
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
 
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
@@ -161,7 +162,7 @@ class ListingAssetServiceTest {
     void regenerateAssets_sourceReferenceEntry_usesLiveProductImageUrl() {
         // The master cover is a __source__ mapping onto a REFERENCE pool entry (live-links a product slot).
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터").build();
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀")
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
         MasterProductImage refEntry = MasterProductImage.builder()
                 .id(20L).masterProduct(master)
@@ -190,7 +191,7 @@ class ListingAssetServiceTest {
     @Test
     void regenerateAssets_noOverride_usesFirstBomProductImage_andProductInfoFallback() {
         Product product = product();
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
 
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
         given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
@@ -214,7 +215,7 @@ class ListingAssetServiceTest {
 
     @Test
     void regenerateAssets_existingData_updatesInPlace() {
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
 
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
         given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
@@ -237,7 +238,7 @@ class ListingAssetServiceTest {
 
     @Test
     void regenerateAssets_manualOverride_preservesDetailHtml_stillRegeneratesThumbnailAndPrice() {
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
 
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
         given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
@@ -276,7 +277,7 @@ class ListingAssetServiceTest {
     void updateFieldValues_savesOverride_andOverrideWinsInThumbnailBindings() {
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터")
                 .fieldValues(Map.of("productName", "마스터상품")).build();
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀")
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
 
         given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
@@ -304,7 +305,7 @@ class ListingAssetServiceTest {
 
     @Test
     void regenerateAssets_autoSource_regeneratesDetailHtmlFromGenerator() {
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
 
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
         given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
@@ -325,7 +326,7 @@ class ListingAssetServiceTest {
 
     @Test
     void overrideThumbnail_replacesUrl_setsManualOverride_detailUntouched() {
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
         GeneratedProductData existing = GeneratedProductData.builder()
                 .id(88L).productListing(cell).thumbnailUrl("old.jpg")
                 .thumbnailSource(GeneratedContentSource.AUTO)
@@ -354,7 +355,7 @@ class ListingAssetServiceTest {
 
     @Test
     void overrideThumbnail_notYetGenerated_throws404() {
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
         given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
         given(generatedProductDataRepository.findByProductListingId(CELL_ID)).willReturn(Optional.empty());
         MockMultipartFile file = new MockMultipartFile("file", "t.jpg", "image/jpeg", new byte[]{1});
@@ -365,7 +366,7 @@ class ListingAssetServiceTest {
 
     @Test
     void regenerateAssets_thumbnailManualOverride_preservesThumbnail_noRerender() {
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
 
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
         given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
@@ -397,7 +398,7 @@ class ListingAssetServiceTest {
 
     @Test
     void regenerateAssets_detailOverride_thumbnailAuto_independentlyPreserved() {
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
 
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
         given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
@@ -431,7 +432,7 @@ class ListingAssetServiceTest {
 
     @Test
     void clearThumbnail_flipsToAutoFirst_thenReRenders_detailUntouched() {
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
         GeneratedProductData override = GeneratedProductData.builder()
                 .id(88L).productListing(cell).thumbnailUrl("override.jpg")
                 .thumbnailSource(GeneratedContentSource.MANUAL_OVERRIDE)
@@ -477,7 +478,7 @@ class ListingAssetServiceTest {
 
     @Test
     void resolveDetailTemplate_mapsResolverResultToResponse() {
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
         DetailTemplate resolved = DetailTemplate.builder().id(9L).name("판매채널 상세").active(true).isDefault(false)
                 .blocks(List.of(
                         DetailBlock.builder().type("text").bind("brandName").build(),
@@ -507,12 +508,12 @@ class ListingAssetServiceTest {
     // resolveOptional yields empty → shippingReady=null (no opinion), never a 400.
     @Test
     void getGenerated_unsupportedPlatform_yieldsNullShippingReadyWithoutThrowing() {
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("NAVER").name("셀").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.NAVER).name("셀").build();
         given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
         given(generatedProductDataRepository.findByProductListingId(CELL_ID))
                 .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of());
-        given(listingChannelResolver.resolveOptional("NAVER")).willReturn(Optional.empty());
+        given(listingChannelResolver.resolveOptional(Platform.NAVER)).willReturn(Optional.empty());
 
         GeneratedProductResponse response = service.getGenerated(CELL_ID);
 
@@ -522,7 +523,7 @@ class ListingAssetServiceTest {
     // 2609_19/D2: a price the user set for this channel survives a regeneration; AUTO options still recompute.
     @Test
     void recalculateOptionPricesSkipsManualOption() {
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
         ProductListingOption manual = ProductListingOption.builder().id(50L).optionName("수동")
                 .sellingPrice(new BigDecimal("15000"))
                 .priceSource(com.pms.domain.GeneratedContentSource.MANUAL_OVERRIDE).build();
@@ -548,7 +549,7 @@ class ListingAssetServiceTest {
     @Test
     void recalculateOptionPricesResolvesMasterByFkNotName() {
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터").build();
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀")
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
         MasterProductOption masterOption = MasterProductOption.builder().id(7L).name("2세트").build();
         ProductListingOption renamed = ProductListingOption.builder().id(50L).optionName("채널이 붙인 이름")
@@ -576,7 +577,7 @@ class ListingAssetServiceTest {
 
     @Test
     void previewDetail_noTemplateId_usesResolvedTemplate() {
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
         given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
         given(detailContentGenerator.generate(cell)).willReturn("<p>해석된 템플릿</p>");
 
@@ -589,7 +590,7 @@ class ListingAssetServiceTest {
 
     @Test
     void previewDetail_withTemplateId_rendersThatTemplate() {
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
         DetailTemplate other = detailTemplate(7L);
         given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
         given(detailTemplateRepository.findById(7L)).willReturn(Optional.of(other));
@@ -604,7 +605,7 @@ class ListingAssetServiceTest {
 
     @Test
     void previewDetail_unknownTemplate_throws404() {
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
         given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
         given(detailTemplateRepository.findById(999L)).willReturn(Optional.empty());
 
@@ -614,7 +615,7 @@ class ListingAssetServiceTest {
 
     /** Cell + assets + option/BOM stubs shared by the updateDetailTemplate tests (regeneration runs for real). */
     private ProductListing pinnableCell() {
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
         given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
         given(productListingRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
@@ -667,7 +668,7 @@ class ListingAssetServiceTest {
 
     @Test
     void updateDetailTemplate_notYetGenerated_throws404() {
-        ProductListing cell = ProductListing.builder().id(CELL_ID).platform("COUPANG").name("셀").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
         given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
         given(generatedProductDataRepository.findByProductListingId(CELL_ID)).willReturn(Optional.empty());
 

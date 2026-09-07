@@ -3,10 +3,15 @@ package com.pms.service.claim;
 import com.pms.domain.ClaimStatus;
 import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Order;
 import com.pms.domain.OrderClaim;
-import com.pms.domain.OrderItem;
+import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.OrderLine;
+import com.pms.domain.OrderStatus;
+import com.pms.domain.Platform;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.OrderClaimRepository;
-import com.pms.repository.OrderItemRepository;
+import com.pms.repository.CoupangOrderLineRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,53 +41,53 @@ import static org.mockito.Mockito.verify;
 class ClaimUpserterTest {
 
     @Mock private OrderClaimRepository orderClaimRepository;
-    @Mock private OrderItemRepository orderItemRepository;
+    @Mock private CoupangOrderLineRepository coupangOrderLineRepository;
     @InjectMocks private ClaimUpserter upserter;
 
     private MarketplaceAccount account;
 
     @BeforeEach
     void setUp() {
-        account = MarketplaceAccount.builder().id(1L).platform("COUPANG").vendorId("V0001").build();
+        account = MarketplaceAccountFixture.coupangStubBuilder("V0001", null).id(1L).platform(Platform.COUPANG).build();
     }
 
     @Test
     void upsert_newClaimWithBoxId_linksByFourKeyMatch() {
-        OrderItem line = orderLine(10L);
+        OrderLine line = orderLine(10L);
         given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
                 1L, ClaimType.RETURN, "R-1", "V-1")).willReturn(Optional.empty());
-        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
-                1L, "B-1", "O-1", "V-1")).willReturn(Optional.of(line));
+        given(coupangOrderLineRepository.findByMarketplaceAccount_IdAndShipmentBoxIdAndOrderIdRawAndVendorItemId(
+                1L, "B-1", "O-1", "V-1")).willReturn(Optional.of(mirror(line)));
 
         upserter.upsert(account, ClaimType.RETURN, record("B-1", ClaimStatus.RECEIVED, "UC", 2));
 
         ArgumentCaptor<OrderClaim> captor = ArgumentCaptor.forClass(OrderClaim.class);
         verify(orderClaimRepository, times(1)).save(captor.capture());
         OrderClaim saved = captor.getValue();
-        assertThat(saved.getOrderItem()).isSameAs(line);
-        assertThat(saved.getPlatform()).isEqualTo("COUPANG");
+        assertThat(saved.getOrderLine()).isSameAs(line);
+        assertThat(saved.getPlatform()).isEqualTo(Platform.COUPANG);
         assertThat(saved.getClaimType()).isEqualTo(ClaimType.RETURN);
         assertThat(saved.getOrderItemMatchAttempts()).isZero();
         assertThat(saved.getSyncedAt()).isNotNull();
         assertThat(saved.getTenantId()).isNull();   // @TenantId 가 INSERT 시 주입한다
         // boxId 가 있으면 3키 폴백은 타지 않는다
-        verify(orderItemRepository, never())
-                .findByMarketplaceAccount_IdAndExternalOrderIdAndExternalItemId(anyLong(), anyString(), anyString());
+        verify(coupangOrderLineRepository, never())
+                .findByMarketplaceAccount_IdAndOrderIdRawAndVendorItemId(anyLong(), anyString(), anyString());
     }
 
     @Test
     void upsert_nullBoxId_fallsBackToThreeKeyMatch() {
-        OrderItem line = orderLine(11L);
+        OrderLine line = orderLine(11L);
         given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
                 1L, ClaimType.RETURN, "R-1", "V-1")).willReturn(Optional.empty());
-        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalOrderIdAndExternalItemId(
-                1L, "O-1", "V-1")).willReturn(List.of(line));
+        given(coupangOrderLineRepository.findByMarketplaceAccount_IdAndOrderIdRawAndVendorItemId(
+                1L, "O-1", "V-1")).willReturn(List.of(mirror(line)));
 
         upserter.upsert(account, ClaimType.RETURN, record(null, ClaimStatus.RECEIVED, "UC", 1));
 
         ArgumentCaptor<OrderClaim> captor = ArgumentCaptor.forClass(OrderClaim.class);
         verify(orderClaimRepository).save(captor.capture());
-        assertThat(captor.getValue().getOrderItem()).isSameAs(line);
+        assertThat(captor.getValue().getOrderLine()).isSameAs(line);
         assertThat(captor.getValue().getExternalBoxId()).isNull();
     }
 
@@ -91,14 +96,14 @@ class ClaimUpserterTest {
         // D22: 합포장으로 같은 옵션이 여러 박스에 걸리면 모호하다 → 틀린 라인에 붙이느니 미연결
         given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
                 1L, ClaimType.RETURN, "R-1", "V-1")).willReturn(Optional.empty());
-        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalOrderIdAndExternalItemId(
-                1L, "O-1", "V-1")).willReturn(List.of(orderLine(12L), orderLine(13L)));
+        given(coupangOrderLineRepository.findByMarketplaceAccount_IdAndOrderIdRawAndVendorItemId(
+                1L, "O-1", "V-1")).willReturn(List.of(mirror(orderLine(12L)), mirror(orderLine(13L))));
 
         upserter.upsert(account, ClaimType.RETURN, record(null, ClaimStatus.RECEIVED, "UC", 1));
 
         ArgumentCaptor<OrderClaim> captor = ArgumentCaptor.forClass(OrderClaim.class);
         verify(orderClaimRepository).save(captor.capture());
-        assertThat(captor.getValue().getOrderItem()).isNull();
+        assertThat(captor.getValue().getOrderLine()).isNull();
         assertThat(captor.getValue().isLinked()).isFalse();
     }
 
@@ -120,8 +125,8 @@ class ClaimUpserterTest {
         assertThat(saved.getReceivedAt()).isEqualTo(existing.getReceivedAt());
         assertThat(saved.getExternalClaimId()).isEqualTo("R-1");
         // 이미 연결된 주문 라인은 재매칭하지 않는다
-        verify(orderItemRepository, never())
-                .findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
+        verify(coupangOrderLineRepository, never())
+                .findByMarketplaceAccount_IdAndShipmentBoxIdAndOrderIdRawAndVendorItemId(
                         anyLong(), anyString(), anyString(), anyString());
     }
 
@@ -138,17 +143,17 @@ class ClaimUpserterTest {
 
     @Test
     void relink_fourKeyMatches_linksWithoutConsumingAttempt() {
-        OrderItem line = orderLine(20L);
+        OrderLine line = orderLine(20L);
         given(orderClaimRepository.findById(1L)).willReturn(Optional.of(unlinked(1L)));
-        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
-                1L, "B-1", "O-1", "V-1")).willReturn(Optional.of(line));
+        given(coupangOrderLineRepository.findByMarketplaceAccount_IdAndShipmentBoxIdAndOrderIdRawAndVendorItemId(
+                1L, "B-1", "O-1", "V-1")).willReturn(Optional.of(mirror(line)));
 
         boolean linked = upserter.relink(1L);
 
         assertThat(linked).isTrue();
         ArgumentCaptor<OrderClaim> captor = ArgumentCaptor.forClass(OrderClaim.class);
         verify(orderClaimRepository).save(captor.capture());
-        assertThat(captor.getValue().getOrderItem()).isSameAs(line);
+        assertThat(captor.getValue().getOrderLine()).isSameAs(line);
         // 성공은 시도횟수를 소모하지 않는다 — 포기 조건(D13)은 실패에만 걸린다
         assertThat(captor.getValue().getOrderItemMatchAttempts()).isZero();
     }
@@ -156,17 +161,17 @@ class ClaimUpserterTest {
     @Test
     void relink_ambiguousThreeKey_incrementsAttemptsAndStaysUnlinked() {
         given(orderClaimRepository.findById(1L)).willReturn(Optional.of(unlinked(1L)));
-        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
+        given(coupangOrderLineRepository.findByMarketplaceAccount_IdAndShipmentBoxIdAndOrderIdRawAndVendorItemId(
                 1L, "B-1", "O-1", "V-1")).willReturn(Optional.empty());
-        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalOrderIdAndExternalItemId(
-                1L, "O-1", "V-1")).willReturn(List.of(orderLine(21L), orderLine(22L)));
+        given(coupangOrderLineRepository.findByMarketplaceAccount_IdAndOrderIdRawAndVendorItemId(
+                1L, "O-1", "V-1")).willReturn(List.of(mirror(orderLine(21L)), mirror(orderLine(22L))));
 
         boolean linked = upserter.relink(1L);
 
         assertThat(linked).isFalse();
         ArgumentCaptor<OrderClaim> captor = ArgumentCaptor.forClass(OrderClaim.class);
         verify(orderClaimRepository).save(captor.capture());
-        assertThat(captor.getValue().getOrderItem()).isNull();
+        assertThat(captor.getValue().getOrderLine()).isNull();
         assertThat(captor.getValue().getOrderItemMatchAttempts()).isEqualTo(1);
     }
 
@@ -199,8 +204,8 @@ class ClaimUpserterTest {
     void upsert_exchangeRecord_storesReshipInvoiceAndNoReturnCharge() {
         given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
                 1L, ClaimType.EXCHANGE, "E-1", "V-1")).willReturn(Optional.empty());
-        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
-                1L, "B-1", "O-1", "V-1")).willReturn(Optional.of(orderLine(10L)));
+        given(coupangOrderLineRepository.findByMarketplaceAccount_IdAndShipmentBoxIdAndOrderIdRawAndVendorItemId(
+                1L, "B-1", "O-1", "V-1")).willReturn(Optional.of(mirror(orderLine(10L))));
 
         upserter.upsert(account, ClaimType.EXCHANGE, exchangeRecord("RES-1", "HANJIN"));
 
@@ -219,8 +224,8 @@ class ClaimUpserterTest {
         // 교환이 반품 행을 덮어써 claimType=RETURN 인 채 상태·사유만 교환 값인 행이 남는다.
         given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
                 1L, ClaimType.EXCHANGE, "E-1", "V-1")).willReturn(Optional.empty());
-        given(orderItemRepository.findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
-                1L, "B-1", "O-1", "V-1")).willReturn(Optional.of(orderLine(10L)));
+        given(coupangOrderLineRepository.findByMarketplaceAccount_IdAndShipmentBoxIdAndOrderIdRawAndVendorItemId(
+                1L, "B-1", "O-1", "V-1")).willReturn(Optional.of(mirror(orderLine(10L))));
 
         upserter.upsert(account, ClaimType.EXCHANGE, exchangeRecord("RES-1", "HANJIN"));
 
@@ -254,9 +259,9 @@ class ClaimUpserterTest {
 
     private OrderClaim existingExchange(String reshipInvoiceNo, String reshipCarrierCode) {
         return OrderClaim.builder()
-                .id(98L).marketplaceAccount(account).platform("COUPANG").claimType(ClaimType.EXCHANGE)
+                .id(98L).marketplaceAccount(account).platform(Platform.COUPANG).claimType(ClaimType.EXCHANGE)
                 .externalClaimId("E-1").externalOrderId("O-1").externalBoxId("B-1").externalItemId("V-1")
-                .orderItem(orderLine(10L)).orderItemMatchAttempts(0)
+                .orderLine(orderLine(10L)).orderItemMatchAttempts(0)
                 .itemName("양말").quantity(1).status(ClaimStatus.IN_PROGRESS).platformStatus("PROGRESS")
                 .collectStatus("BeforeDirection")
                 .reasonCode("DEFECT").reasonText("상품 불량").faultType("VENDOR")
@@ -272,18 +277,27 @@ class ClaimUpserterTest {
     /** 04 백필 대상 — 주문 라인이 아직 붙지 않은 클레임. */
     private OrderClaim unlinked(long id) {
         return OrderClaim.builder()
-                .id(id).marketplaceAccount(account).platform("COUPANG").claimType(ClaimType.RETURN)
+                .id(id).marketplaceAccount(account).platform(Platform.COUPANG).claimType(ClaimType.RETURN)
                 .externalClaimId("R-1").externalOrderId("O-1").externalBoxId("B-1").externalItemId("V-1")
-                .orderItem(null).orderItemMatchAttempts(0).status(ClaimStatus.RECEIVED)
+                .orderLine(null).orderItemMatchAttempts(0).status(ClaimStatus.RECEIVED)
                 .receivedAt(LocalDateTime.of(2026, 9, 1, 10, 0))
                 .build();
     }
 
-    private OrderItem orderLine(Long id) {
-        return OrderItem.builder()
-                .id(id).marketplaceAccount(account).platform("COUPANG")
-                .externalOrderId("O-1").externalBoxId("B-1").externalItemId("V-1")
-                .orderCount(3).cancelCount(0).holdCount(0).status("ACCEPT").build();
+    private OrderLine orderLine(Long id) {
+        return OrderLine.builder()
+                .id(id)
+                .order(Order.builder().id(1000L + id).marketplaceAccount(account).platform(Platform.COUPANG)
+                        .externalOrderId("O-1").build())
+                .orderQty(3).cancelQty(0).holdQty(0).status(OrderStatus.PAID).build();
+    }
+
+    /** 자연키는 쿠팡 거울이 소유한다(2609_26 D3) — 매칭 조회가 돌려주는 것도 거울이다. */
+    private CoupangOrderLine mirror(OrderLine line) {
+        return CoupangOrderLine.builder()
+                .id(2000L + line.getId()).orderLine(line).marketplaceAccount(account)
+                .shipmentBoxId("B-1").orderIdRaw("O-1").vendorItemId("V-1")
+                .platformStatus("ACCEPT").build();
     }
 
     /** 아래 existingClaim 과 같은 값 — 다른 값을 주면 그 필드만 변경 판정된다. */
@@ -295,9 +309,9 @@ class ClaimUpserterTest {
 
     private OrderClaim existingClaim(ClaimStatus status, String platformStatus, int quantity) {
         return OrderClaim.builder()
-                .id(99L).marketplaceAccount(account).platform("COUPANG").claimType(ClaimType.RETURN)
+                .id(99L).marketplaceAccount(account).platform(Platform.COUPANG).claimType(ClaimType.RETURN)
                 .externalClaimId("R-1").externalOrderId("O-1").externalBoxId("B-1").externalItemId("V-1")
-                .orderItem(orderLine(10L)).orderItemMatchAttempts(0)
+                .orderLine(orderLine(10L)).orderItemMatchAttempts(0)
                 .itemName("양말").quantity(quantity).status(status).platformStatus(platformStatus)
                 .reasonCode("CHANGEMIND").reasonText("단순변심").faultType("CUSTOMER")
                 .returnShippingCharge(3000).collectInvoiceNo("INV-9").collectCarrierCode("CJGLS")

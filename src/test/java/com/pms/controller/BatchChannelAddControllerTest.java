@@ -5,6 +5,7 @@ import com.pms.domain.Carrier;
 import com.pms.domain.CarrierRate;
 import com.pms.domain.Category;
 import com.pms.domain.CommissionRate;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.MarginPolicy;
 import com.pms.domain.MasterProduct;
@@ -143,12 +144,12 @@ class BatchChannelAddControllerTest {
         Category category = categoryRepository.save(Category.builder().name("신발").build());
 
         commissionRateRepository.save(CommissionRate.builder()
-                .platform("COUPANG").category(null).rate(new BigDecimal("0.10")).isDefault(true).build());
+                .platform(Platform.COUPANG).category(null).rate(new BigDecimal("0.10")).isDefault(true).build());
         // Both sellers need a COUPANG margin preset so the price engine resolves for the all-succeed case.
         marginPolicyRepository.save(MarginPolicy.builder()
-                .seller(seller1).platform("COUPANG").marginRate(new BigDecimal("0.1500")).build());
+                .seller(seller1).platform(Platform.COUPANG).marginRate(new BigDecimal("0.1500")).build());
         marginPolicyRepository.save(MarginPolicy.builder()
-                .seller(seller2).platform("COUPANG").marginRate(new BigDecimal("0.1500")).build());
+                .seller(seller2).platform(Platform.COUPANG).marginRate(new BigDecimal("0.1500")).build());
 
         Carrier carrier = carrierRepository.save(Carrier.builder().name("CJ").isActive(true).build());
         CarrierRate delivery = carrierRateRepository.save(CarrierRate.builder()
@@ -165,10 +166,10 @@ class BatchChannelAddControllerTest {
                 .defaultDelivery(delivery).defaultPackage(box).build());
         masterId = master.getId();
         PlatformCategory platformCategory = platformCategoryRepository.save(PlatformCategory.builder()
-                .platform("COUPANG").code("cat-1").name("운동화")
+                .platform(Platform.COUPANG).code("cat-1").name("운동화")
                 .commissionRate(new BigDecimal("0.10")).build());
         categoryMappingRepository.save(CategoryMapping.builder()
-                .category(category).platform("COUPANG").platformCategoryId("cat-1")
+                .category(category).platform(Platform.COUPANG).platformCategoryId("cat-1")
                 .platformCategory(platformCategory).build());
         MasterProductOption option = masterProductOptionRepository.save(MasterProductOption.builder()
                 .masterProduct(master).name("1세트").build());
@@ -275,8 +276,8 @@ class BatchChannelAddControllerTest {
         // DB truth: the succeeding target committed its cell; the failing target wrote nothing.
         TenantContext.set(1L);
         assertThat(productListingRepository
-                .existsByMasterProductIdAndSellerIdAndPlatform(masterId, seller1Id, "COUPANG")).isTrue();
+                .existsByMasterProductIdAndSellerIdAndPlatform(masterId, seller1Id, Platform.COUPANG)).isTrue();
         assertThat(productListingRepository
-                .existsByMasterProductIdAndSellerIdAndPlatform(masterId, seller2Id, "NAVER")).isFalse();
+                .existsByMasterProductIdAndSellerIdAndPlatform(masterId, seller2Id, Platform.NAVER)).isFalse();
     }
 }

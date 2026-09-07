@@ -1,6 +1,7 @@
 package com.pms.service.inquiry;
 
 import com.pms.domain.InquiryType;
+import com.pms.domain.Platform;
 import com.pms.dto.response.InquiryTypeCatalogResponse;
 import org.springframework.stereotype.Component;
 
@@ -20,8 +21,8 @@ import java.util.Optional;
 @Component
 public class InquiryTypeCatalog {
 
-    private static final Map<String, List<InquiryTypeCatalogResponse.Option>> BY_PLATFORM = Map.of(
-            "COUPANG", List.of(
+    private static final Map<Platform, List<InquiryTypeCatalogResponse.Option>> BY_PLATFORM = Map.of(
+            Platform.COUPANG, List.of(
                     new InquiryTypeCatalogResponse.Option(InquiryType.PRODUCT_QNA, "상품문의"),
                     new InquiryTypeCatalogResponse.Option(InquiryType.CALL_CENTER, "고객센터문의")));
 
@@ -29,11 +30,11 @@ public class InquiryTypeCatalog {
      * 주어진 플랫폼들의 지원 유형 목록. 아는 플랫폼만 담는다(모르는 플랫폼은 조용히 빠진다) —
      * 빈 유형 목록을 내려보내면 화면에 유형 없는 탭 줄이 생긴다.
      */
-    public List<InquiryTypeCatalogResponse> forPlatforms(List<String> platforms) {
+    public List<InquiryTypeCatalogResponse> forPlatforms(List<Platform> platforms) {
         return platforms.stream()
                 .distinct()
                 .map(platform -> Optional.ofNullable(BY_PLATFORM.get(platform))
-                        .map(types -> new InquiryTypeCatalogResponse(platform, types))
+                        .map(types -> new InquiryTypeCatalogResponse(platform.name(), types))
                         .orElse(null))
                 .filter(java.util.Objects::nonNull)
                 .toList();

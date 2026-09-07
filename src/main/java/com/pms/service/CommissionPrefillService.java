@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.Category;
 import com.pms.domain.CommissionRate;
+import com.pms.domain.Platform;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.CommissionRateRepository;
 import lombok.RequiredArgsConstructor;
@@ -32,8 +33,6 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class CommissionPrefillService {
 
-    private static final String COUPANG = "COUPANG";
-
     private final CommissionRateRepository commissionRateRepository;
     private final CategoryRepository categoryRepository;
     private final CoupangFeeResolver coupangFeeResolver;
@@ -44,12 +43,12 @@ public class CommissionPrefillService {
      * category is gone, or the fee table has no match.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void prefillIfAbsent(Long categoryId, String platform, String platformCategoryName) {
-        if (!COUPANG.equalsIgnoreCase(platform)) {
+    public void prefillIfAbsent(Long categoryId, Platform platform, String platformCategoryName) {
+        if (Platform.COUPANG != platform) {
             return;
         }
         // A rate already exists (possibly user-edited) → never overwrite.
-        if (commissionRateRepository.findByPlatformAndCategoryId(COUPANG, categoryId).isPresent()) {
+        if (commissionRateRepository.findByPlatformAndCategoryId(Platform.COUPANG, categoryId).isPresent()) {
             return;
         }
         Optional<BigDecimal> rate = coupangFeeResolver.resolve(platformCategoryName);
@@ -61,7 +60,7 @@ public class CommissionPrefillService {
             return;
         }
         commissionRateRepository.save(CommissionRate.builder()
-                .platform(COUPANG)
+                .platform(Platform.COUPANG)
                 .category(category)
                 .rate(rate.get())
                 .isDefault(false)

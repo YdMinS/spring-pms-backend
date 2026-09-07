@@ -1,0 +1,42 @@
+# Drop order_item — the last step of FEATURE_2609_26 (PLAN D12, big-bang).
+#
+# 🔴 IRREVERSIBLE. Run only after:
+#   1. 067 applied and `SELECT TABLE_NAME, CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+#      WHERE REFERENCED_TABLE_NAME = 'order_item'` returns 0 rows.
+#   2. The row-count reconciliation from 066 passed (order_item = order_line = coupang_order_line).
+#   3. The deploy pipeline's DB backup gate actually produced a dump
+#      (docs/deployment/DB_BACKUP_GATE_RUNBOOK.md) — verify the artifact by eye, do not assume.
+#
+# The rollback recreates the table structure only. The DATA IS GONE — that is what "irreversible" means
+# here; the rollback exists so a failed deploy can still roll the changelog back, not to restore rows.
+databaseChangeLog:
+
+  - changeSet:
+      id: 068-drop-order-item
+      author: oclyx
+      comment: "FEATURE_2609_26: drop order_item (replaced by orders + order_shipment + order_line + coupang_order_line)."
+      changes:
+        - dropTable:
+            tableName: order_item
+      rollback:
+        - createTable:
+            tableName: order_item
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: marketplace_account_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: platform, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: external_order_id, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: external_box_id, type: VARCHAR(100) }
+              - column: { name: external_item_id, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: order_count, type: INT, constraints: { nullable: false } }
+              - column: { name: cancel_count, type: INT, constraints: { nullable: false } }
+              - column: { name: hold_count, type: INT, constraints: { nullable: false } }
+              - column: { name: status, type: VARCHAR(30), constraints: { nullable: false } }
+              - column: { name: paid_at, type: TIMESTAMP }
+              - column: { name: item_name, type: VARCHAR(500) }
+              - column: { name: orderer_name, type: VARCHAR(100) }
+              - column: { name: receiver_name, type: VARCHAR(100) }
+              - column: { name: raw, type: CLOB }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }

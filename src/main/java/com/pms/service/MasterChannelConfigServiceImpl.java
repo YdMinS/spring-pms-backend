@@ -5,6 +5,7 @@ import com.pms.domain.Category;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.Package;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.repository.CategoryMappingRepository;
@@ -46,19 +47,19 @@ public class MasterChannelConfigServiceImpl implements MasterChannelConfigServic
     }
 
     @Override
-    public String resolvePlatformCategoryCode(MasterProduct master, String platform) {
+    public String resolvePlatformCategoryCode(MasterProduct master, Platform platform) {
         return resolvePlatformCategory(master, platform).getCode();
     }
 
     @Override
-    public String resolvePlatformCategoryCode(Long categoryId, String platform) {
+    public String resolvePlatformCategoryCode(Long categoryId, Platform platform) {
         Category standard = categoryRepository.findById(categoryId)
                 .orElseThrow(() -> new IllegalArgumentException("카테고리 없음"));
         return resolvePlatformCategory(standard, platform).getCode();
     }
 
     /** Master-arg overload: pulls the master's single standard category and delegates to the core. */
-    private PlatformCategory resolvePlatformCategory(MasterProduct master, String platform) {
+    private PlatformCategory resolvePlatformCategory(MasterProduct master, Platform platform) {
         return resolvePlatformCategory(master == null ? null : master.getCategory(), platform);
     }
 
@@ -68,7 +69,7 @@ public class MasterChannelConfigServiceImpl implements MasterChannelConfigServic
      * to a PlatformCategory (transition — the code/commission owner has not been seeded).
      * ⚠️ LAZY category / mapping.platformCategory — callers run inside a @Transactional boundary.
      */
-    private PlatformCategory resolvePlatformCategory(Category standard, String platform) {
+    private PlatformCategory resolvePlatformCategory(Category standard, Platform platform) {
         if (standard == null) {
             throw new IllegalArgumentException("표준 카테고리 미설정");
         }

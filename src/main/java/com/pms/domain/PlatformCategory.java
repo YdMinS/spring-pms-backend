@@ -52,9 +52,10 @@ public class PlatformCategory extends BaseEntity {
     @Column(name = "tenant_id", nullable = false)
     private Long tenantId;
 
-    /** Marketplace name (e.g. "COUPANG", "NAVER"). */
+    /** Marketplace (e.g. {@link Platform#COUPANG}, {@link Platform#NAVER}). */
     @Column(name = "platform", nullable = false, length = 50)
-    private String platform;
+    @Enumerated(EnumType.STRING)
+    private Platform platform;
 
     /** Mall category code. Leaf = the marketplace code; intermediate node = {@code null} (path segment). */
     @Column(name = "code", length = 100)

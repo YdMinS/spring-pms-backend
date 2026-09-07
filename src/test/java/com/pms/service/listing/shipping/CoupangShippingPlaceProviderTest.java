@@ -2,6 +2,7 @@ package com.pms.service.listing.shipping;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.service.coupang.CoupangApiClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -33,8 +34,8 @@ class CoupangShippingPlaceProviderTest {
     @InjectMocks private CoupangShippingPlaceProvider provider;
 
     private MarketplaceAccount acct() {
-        return MarketplaceAccount.builder()
-                .vendorId("V1").accessKey("ak").secretKey("sk").isActive(true).build();
+        return MarketplaceAccountFixture.coupangStubBuilder("V1", null)
+                .isActive(true).build();
     }
 
     @Test

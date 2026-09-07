@@ -7,6 +7,7 @@ import com.pms.domain.Category;
 import com.pms.domain.CategoryMapping;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.Package;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.service.MasterChannelConfigServiceImpl;
@@ -53,10 +54,10 @@ class MasterChannelConfigResolutionTest {
         // 52: the platform code comes from the mapping's linked PlatformCategory FK (tenant-scoped node that
         // owns the mall code + commission), not the deprecated string column.
         PlatformCategory platformCategory = em.persist(PlatformCategory.builder()
-                .platform("COUPANG").code("cat-1").name("운동화")
+                .platform(Platform.COUPANG).code("cat-1").name("운동화")
                 .commissionRate(new BigDecimal("0.10")).build());
         em.persist(CategoryMapping.builder()
-                .category(category).platform("COUPANG").platformCategoryId("legacy")
+                .category(category).platform(Platform.COUPANG).platformCategoryId("legacy")
                 .platformCategory(platformCategory).build());
         MasterProduct master = em.persist(MasterProduct.builder()
                 .name("마스터").active(true).category(category)
@@ -72,7 +73,7 @@ class MasterChannelConfigResolutionTest {
 
         // Reload the master (managed) and wrap it in a transient cell, as the real callers hold it.
         MasterProduct master = em.find(MasterProduct.class, masterId);
-        ProductListing cell = ProductListing.builder().platform("COUPANG").masterProduct(master).build();
+        ProductListing cell = ProductListing.builder().platform(Platform.COUPANG).masterProduct(master).build();
 
         // standard category = master.category; platform code = CategoryMapping; delivery = master default —
         // no LazyInit exception.

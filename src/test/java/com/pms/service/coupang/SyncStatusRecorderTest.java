@@ -1,7 +1,9 @@
 package com.pms.service.coupang;
 
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.domain.SyncStatus;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,9 +38,9 @@ class SyncStatusRecorderTest {
     @Mock private SyncStatusWriter writer;
 
     private MarketplaceAccount account() {
-        return MarketplaceAccount.builder()
-                .id(1L).platform("COUPANG").vendorId("V1")
-                .accessKey("ak").secretKey("sk").isActive(true)
+        return MarketplaceAccountFixture.coupangStubBuilder("V1", null)
+                .id(1L).platform(Platform.COUPANG)
+                .isActive(true)
                 .lastCancelSyncAt(PREVIOUS_CANCEL_SYNC)
                 .build();
     }
