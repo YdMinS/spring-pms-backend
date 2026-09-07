@@ -1,13 +1,13 @@
 package com.pms.service.listing.shipping;
 
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.MarketplaceShippingConfig;
+import com.pms.domain.CoupangShippingConfig;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.Seller;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.MarketplaceShippingConfigRepository;
+import com.pms.repository.CoupangShippingConfigRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -22,16 +22,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
 
 /**
- * {@link ShippingConfigResolver} (FEATURE_2608_06 / 75): field-wise 3-level resolution
+ * {@link CoupangShippingConfigResolver} (FEATURE_2608_06 / 75): field-wise 3-level resolution
  * {@code channel ?? master ?? account default}, with outbound place / return center resolved
  * {@code channel ?? account} only (master step skipped). Pure combination → Mockito unit test.
  */
 @ExtendWith(MockitoExtension.class)
-class ShippingConfigResolverTest {
+class CoupangShippingConfigResolverTest {
 
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
-    @Mock private MarketplaceShippingConfigRepository shippingConfigRepository;
-    @InjectMocks private ShippingConfigResolver resolver;
+    @Mock private CoupangShippingConfigRepository shippingConfigRepository;
+    @InjectMocks private CoupangShippingConfigResolver resolver;
 
     private static final Long SELLER_ID = 7L;
     private static final Long ACCOUNT_ID = 3L;
@@ -48,7 +48,7 @@ class ShippingConfigResolverTest {
     }
 
     /** Stub the (seller, platform) account + its stored base config. */
-    private void withBaseConfig(MarketplaceShippingConfig base) {
+    private void withBaseConfig(CoupangShippingConfig base) {
         MarketplaceAccount account = MarketplaceAccount.builder().id(ACCOUNT_ID).build();
         given(marketplaceAccountRepository.findBySeller_IdAndPlatform(SELLER_ID, Platform.COUPANG))
                 .willReturn(Optional.of(account));
@@ -56,8 +56,8 @@ class ShippingConfigResolverTest {
                 .willReturn(Optional.ofNullable(base));
     }
 
-    private MarketplaceShippingConfig baseConfig() {
-        return MarketplaceShippingConfig.builder()
+    private CoupangShippingConfig baseConfig() {
+        return CoupangShippingConfig.builder()
                 .outboundShippingPlaceCode("OUT-1")
                 .returnCenterCode("RC-1").returnChargeName("반품담당").returnContactNumber("021234567")
                 .returnZipCode("06000").returnAddress("서울시").returnAddressDetail("1층")

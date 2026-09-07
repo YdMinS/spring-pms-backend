@@ -1,14 +1,14 @@
 package com.pms.service;
 
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.MarketplaceShippingConfig;
+import com.pms.domain.CoupangShippingConfig;
 import com.pms.domain.Platform;
 import com.pms.dto.request.ShippingConfigRequest;
 import com.pms.dto.response.ShippingConfigResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.MarketplaceShippingConfigRepository;
+import com.pms.repository.CoupangShippingConfigRepository;
 import com.pms.service.listing.shipping.OutboundPlace;
 import com.pms.service.listing.shipping.ShippingPlaceProvider;
 import com.pms.service.listing.shipping.ShippingPlaceProviderResolver;
@@ -36,7 +36,7 @@ import static org.mockito.Mockito.verify;
 class ShippingConfigServiceTest {
 
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
-    @Mock private MarketplaceShippingConfigRepository shippingConfigRepository;
+    @Mock private CoupangShippingConfigRepository shippingConfigRepository;
     @Mock private ShippingPlaceProviderResolver providerResolver;
     @InjectMocks private ShippingConfigServiceImpl service;
 
@@ -84,9 +84,9 @@ class ShippingConfigServiceTest {
 
         ShippingConfigResponse response = service.upsertConfig(1L, req);
 
-        ArgumentCaptor<MarketplaceShippingConfig> captor = ArgumentCaptor.forClass(MarketplaceShippingConfig.class);
+        ArgumentCaptor<CoupangShippingConfig> captor = ArgumentCaptor.forClass(CoupangShippingConfig.class);
         verify(shippingConfigRepository).save(captor.capture());
-        MarketplaceShippingConfig saved = captor.getValue();
+        CoupangShippingConfig saved = captor.getValue();
         assertThat(saved.getId()).isNull();                         // fresh insert
         assertThat(saved.getMarketplaceAccount()).isSameAs(acct);
         assertThat(saved.getOutboundShippingPlaceCode()).isEqualTo("74010");
@@ -99,7 +99,7 @@ class ShippingConfigServiceTest {
     @Test
     void upsertConfig_update_keepsSameIdAndReflectsChange() {
         MarketplaceAccount acct = account(1L, Platform.COUPANG);
-        MarketplaceShippingConfig existing = MarketplaceShippingConfig.builder()
+        CoupangShippingConfig existing = CoupangShippingConfig.builder()
                 .id(99L).marketplaceAccount(acct)
                 .outboundShippingPlaceCode("OLD").build();
         given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acct));
@@ -108,9 +108,9 @@ class ShippingConfigServiceTest {
 
         service.upsertConfig(1L, ShippingConfigRequest.builder().outboundShippingPlaceCode("NEW").build());
 
-        ArgumentCaptor<MarketplaceShippingConfig> captor = ArgumentCaptor.forClass(MarketplaceShippingConfig.class);
+        ArgumentCaptor<CoupangShippingConfig> captor = ArgumentCaptor.forClass(CoupangShippingConfig.class);
         verify(shippingConfigRepository).save(captor.capture());
-        MarketplaceShippingConfig saved = captor.getValue();
+        CoupangShippingConfig saved = captor.getValue();
         assertThat(saved.getId()).isEqualTo(99L);                   // update, not a new insert
         assertThat(saved.getOutboundShippingPlaceCode()).isEqualTo("NEW");
     }

@@ -220,14 +220,14 @@ class LiquibaseChangelogApplyTest {
         // changeset 039: marketplace_shipping_config table + columns materialized (a successful count over the
         // key columns proves the table + outbound/return/delivery structure; 72).
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM marketplace_shipping_config "
+                "SELECT COUNT(*) FROM coupang_shipping_config "
                         + "WHERE outbound_shipping_place_code IS NULL AND return_center_code IS NULL "
                         + "AND remote_area_deliverable IS NULL",
                 Integer.class)).isZero();
 
         // changeset 042: marketplace_shipping_config.extra_info_message materialized (a successful count proves it; 75).
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM marketplace_shipping_config WHERE extra_info_message IS NULL",
+                "SELECT COUNT(*) FROM coupang_shipping_config WHERE extra_info_message IS NULL",
                 Integer.class)).isZero();
 
         // changeset 043: shipping_override materialized on master_product + product_listing (75; a successful
@@ -244,7 +244,7 @@ class LiquibaseChangelogApplyTest {
         // changeset 045: the FREE-shipping backfill applied (96 ⑧). No seeded rows here, so what this asserts
         // is that the two conditional UPDATEs ran without error and left no FREE row with a null charge.
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM marketplace_shipping_config "
+                "SELECT COUNT(*) FROM coupang_shipping_config "
                         + "WHERE delivery_charge_type = 'FREE' "
                         + "AND (delivery_charge IS NULL OR free_ship_over_amount IS NULL)",
                 Integer.class)).isZero();

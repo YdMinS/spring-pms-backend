@@ -25,7 +25,7 @@ import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.service.listing.ListingChannelResolver;
 import com.pms.service.listing.ListingStockPolicy;
-import com.pms.service.listing.shipping.ShippingConfigResolver;
+import com.pms.service.listing.shipping.CoupangShippingConfigResolver;
 import com.pms.service.listing.shipping.ShippingOverrideKeys;
 import com.pms.dto.response.ShippingConfigResponse;
 import java.util.function.Function;
@@ -83,7 +83,7 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     private final PriceCalculator priceCalculator;
     private final DetailContentGenerator detailContentGenerator;
     private final com.pms.service.listing.TagMergeService tagMergeService;
-    private final ShippingConfigResolver shippingConfigResolver;
+    private final CoupangShippingConfigResolver shippingConfigResolver;
 
     /**
      * 77: resolves the channel adapter that owns the {@code shippingReady} judgement.

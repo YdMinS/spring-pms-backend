@@ -21,7 +21,7 @@ import com.pms.service.listing.category.CategoryMetaSchema;
 import com.pms.service.listing.category.CategoryNotice;
 import com.pms.service.listing.category.CoupangCategoryMeta;
 import com.pms.service.listing.shipping.ResolvedShippingConfig;
-import com.pms.service.listing.shipping.ShippingConfigResolver;
+import com.pms.service.listing.shipping.CoupangShippingConfigResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -65,7 +65,7 @@ class CoupangListingAdapterTest {
     @Mock private RegistrationNameGenerator registrationNameGenerator;
     @Mock private com.pms.service.OptionCheckSuffixResolver optionCheckSuffixResolver;
     @Mock private MasterProductService masterProductService;
-    @Mock private ShippingConfigResolver shippingConfigResolver;
+    @Mock private CoupangShippingConfigResolver shippingConfigResolver;
     @org.mockito.Spy private ObjectMapper objectMapper = new ObjectMapper();
     @InjectMocks private CoupangListingAdapter adapter;
 

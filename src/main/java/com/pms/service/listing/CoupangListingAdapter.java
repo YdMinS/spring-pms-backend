@@ -25,7 +25,7 @@ import com.pms.service.listing.category.CategoryNotice;
 import com.pms.service.listing.category.CoupangCategoryMeta;
 import com.pms.service.listing.category.OptionCategoryMeta;
 import com.pms.service.listing.shipping.ResolvedShippingConfig;
-import com.pms.service.listing.shipping.ShippingConfigResolver;
+import com.pms.service.listing.shipping.CoupangShippingConfigResolver;
 import com.pms.service.listing.shipping.ShippingReadiness;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -103,7 +103,7 @@ public class CoupangListingAdapter implements ListingChannel {
     private final MasterProductService masterProductService;
     // 75: resolves the shipping config field-wise (channel ?? master ?? account default) instead of reading
     // the raw account config directly. The adapter consumes the resolved record only.
-    private final ShippingConfigResolver shippingConfigResolver;
+    private final CoupangShippingConfigResolver shippingConfigResolver;
 
     @Override
     public Platform platform() {

@@ -1,11 +1,11 @@
 package com.pms.service.listing.shipping;
 
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.MarketplaceShippingConfig;
+import com.pms.domain.CoupangShippingConfig;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.ProductListing;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.MarketplaceShippingConfigRepository;
+import com.pms.repository.CoupangShippingConfigRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -32,10 +32,10 @@ import java.util.Map;
  */
 @Component
 @RequiredArgsConstructor
-public class ShippingConfigResolver {
+public class CoupangShippingConfigResolver {
 
     private final MarketplaceAccountRepository marketplaceAccountRepository;
-    private final MarketplaceShippingConfigRepository shippingConfigRepository;
+    private final CoupangShippingConfigRepository shippingConfigRepository;
 
     public ResolvedShippingConfig resolve(ProductListing cell) {
         return build(cell.getShippingOverride(), masterMap(cell), baseConfig(cell));
@@ -51,7 +51,7 @@ public class ShippingConfigResolver {
     }
 
     /** Account default (72): the (seller, platform) account's stored config; absent → null (all-null base). */
-    private MarketplaceShippingConfig baseConfig(ProductListing cell) {
+    private CoupangShippingConfig baseConfig(ProductListing cell) {
         MarketplaceAccount account = marketplaceAccountRepository
                 .findBySeller_IdAndPlatform(cell.getSeller().getId(), cell.getPlatform())
                 .orElse(null);
@@ -64,7 +64,7 @@ public class ShippingConfigResolver {
     }
 
     private static ResolvedShippingConfig build(Map<String, String> listing, Map<String, String> master,
-                                                MarketplaceShippingConfig base) {
+                                                CoupangShippingConfig base) {
         return new ResolvedShippingConfig(
                 // outbound place + return center = channel ?? account (master skipped)
                 pick2(listing, ShippingOverrideKeys.OUTBOUND_SHIPPING_PLACE_CODE,

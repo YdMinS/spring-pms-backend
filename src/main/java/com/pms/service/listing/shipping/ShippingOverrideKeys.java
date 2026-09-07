@@ -6,7 +6,7 @@ import java.util.Set;
 
 /**
  * The whitelist of shipping-override keys (FEATURE_2608_06 / 75) — the single source shared by storage
- * (master/listing PATCH) and resolution ({@link ShippingConfigResolver}). Values are stored as strings
+ * (master/listing PATCH) and resolution ({@link CoupangShippingConfigResolver}). Values are stored as strings
  * (BigDecimal/enum too, parsed at resolve time); {@code null} on the entity = no override.
  *
  * <p>⚠️ <b>Level constraint — outbound place / return center are channel-level only.</b> Those center codes

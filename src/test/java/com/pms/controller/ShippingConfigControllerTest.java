@@ -8,7 +8,7 @@ import com.pms.dto.request.ShippingConfigRequest;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.MarketplaceShippingConfigRepository;
+import com.pms.repository.CoupangShippingConfigRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import org.junit.jupiter.api.AfterEach;
@@ -38,7 +38,7 @@ class ShippingConfigControllerTest extends BaseIntegrationTest {
     @Autowired private SellerRepository sellerRepository;
     @Autowired private MarketplaceAccountRepository marketplaceAccountRepository;
     @Autowired private CoupangAccountCredentialRepository credentialRepository;
-    @Autowired private MarketplaceShippingConfigRepository shippingConfigRepository;
+    @Autowired private CoupangShippingConfigRepository shippingConfigRepository;
 
     @MockBean private CoupangApiClient coupangApiClient;
 

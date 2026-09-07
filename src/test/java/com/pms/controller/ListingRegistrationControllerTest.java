@@ -8,7 +8,7 @@ import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.MarketplaceShippingConfig;
+import com.pms.domain.CoupangShippingConfig;
 import com.pms.domain.CategoryMapping;
 import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
@@ -24,7 +24,7 @@ import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.MarketplaceShippingConfigRepository;
+import com.pms.repository.CoupangShippingConfigRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
@@ -67,7 +67,7 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
     @Autowired private ProductListingTagRevisionRepository productListingTagRevisionRepository;
     @Autowired private MarketplaceAccountRepository marketplaceAccountRepository;
     @Autowired private CoupangAccountCredentialRepository credentialRepository;
-    @Autowired private MarketplaceShippingConfigRepository marketplaceShippingConfigRepository;
+    @Autowired private CoupangShippingConfigRepository marketplaceShippingConfigRepository;
 
     @MockBean private CoupangApiClient coupangApiClient;
 
@@ -113,7 +113,7 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
         // 73: WING login id (register-required) — 자격증명은 별도 행이다(2609_26).
         MarketplaceAccountFixture.saveCredential(credentialRepository, account, "V1", "wing-user");
         // 73: register payload needs a complete per-account shipping config (72) → 400 otherwise.
-        marketplaceShippingConfigRepository.save(MarketplaceShippingConfig.builder()
+        marketplaceShippingConfigRepository.save(CoupangShippingConfig.builder()
                 .marketplaceAccount(account)
                 .outboundShippingPlaceCode("OUT-1")
                 .returnCenterCode("RC-1").returnChargeName("반품담당").returnContactNumber("021234567")
