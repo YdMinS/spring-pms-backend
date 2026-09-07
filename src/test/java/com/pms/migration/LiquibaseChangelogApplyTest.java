@@ -458,6 +458,57 @@ class LiquibaseChangelogApplyTest {
     }
 
     @Test
+    void orderModelApplied() {
+        // changeset 066: the neutral order core (3 tables) + the Coupang extension materialized.
+        // The MySQL-only backfills are skipped on this empty H2 DB, so an empty count is what proves
+        // the tables + their structure exist (FEATURE_2609_26).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM orders WHERE tenant_id IS NULL AND marketplace_account_id IS NULL "
+                        + "AND platform IS NULL AND external_order_id IS NULL AND ordered_at IS NULL "
+                        + "AND orderer_name IS NULL AND receiver_name IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM order_shipment WHERE tenant_id IS NULL AND order_id IS NULL "
+                        + "AND external_shipment_id IS NULL AND shipping_fee IS NULL AND remote_fee IS NULL "
+                        + "AND tracking_available IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM order_line WHERE tenant_id IS NULL AND order_id IS NULL "
+                        + "AND order_shipment_id IS NULL AND status IS NULL AND item_name IS NULL "
+                        + "AND order_qty IS NULL AND cancel_qty IS NULL AND hold_qty IS NULL "
+                        + "AND unit_price IS NULL AND line_amount IS NULL AND discount_amount IS NULL "
+                        + "AND platform_discount_amount IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM coupang_order_line WHERE tenant_id IS NULL AND order_line_id IS NULL "
+                        + "AND marketplace_account_id IS NULL AND shipment_box_id IS NULL "
+                        + "AND order_id_raw IS NULL AND vendor_item_id IS NULL AND platform_status IS NULL "
+                        + "AND raw IS NULL", Integer.class)).isZero();
+
+        // tenant_id is NOT NULL on all four (PLAN D25 — the extension/child tables carry it too).
+        for (String table : new String[]{"ORDERS", "ORDER_SHIPMENT", "ORDER_LINE", "COUPANG_ORDER_LINE"}) {
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+                            + "WHERE TABLE_NAME = '" + table + "' AND COLUMN_NAME = 'TENANT_ID'", String.class))
+                    .as("tenant_id NOT NULL on %s", table)
+                    .isEqualTo("NO");
+        }
+
+        // 🔴 the line's natural key lives on the extension, not on the core (D3); the core order keeps
+        // its own (account, orderId) uniqueness.
+        List<String> coupangConstraints = jdbcTemplate.queryForList(
+                "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
+                        + "WHERE TABLE_NAME = 'COUPANG_ORDER_LINE'", String.class);
+        assertThat(coupangConstraints).contains("UQ_COUPANG_ORDER_LINE", "UQ_COUPANG_ORDER_LINE_LINE");
+        assertThat(jdbcTemplate.queryForList(
+                "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE TABLE_NAME = 'ORDERS'",
+                String.class)).contains("UQ_ORDERS_ACCOUNT_ORDER");
+        assertThat(jdbcTemplate.queryForList(
+                "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
+                        + "WHERE TABLE_NAME = 'ORDER_SHIPMENT'", String.class)).contains("UQ_ORDER_SHIPMENT");
+
+        // order_item survives this changeset — the read paths still use it until 04.
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM order_item", Integer.class)).isZero();
+    }
+
+    @Test
     void tenantDimensionApplied() {
         // changeset 002: tenant table created + seeded with the default tenant (id=1).
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tenant", Integer.class)).isEqualTo(1);

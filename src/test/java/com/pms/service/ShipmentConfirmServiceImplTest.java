@@ -12,7 +12,7 @@ import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderItemRepository;
 import com.pms.service.coupang.CoupangApiClient;
-import com.pms.service.coupang.OrderItemUpserter;
+import com.pms.service.coupang.OrderUpserter;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -67,7 +67,7 @@ class ShipmentConfirmServiceImplTest {
     @Mock
     private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock
-    private OrderItemUpserter orderItemUpserter;
+    private OrderUpserter orderUpserter;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private ShipmentConfirmServiceImpl service;
@@ -76,7 +76,7 @@ class ShipmentConfirmServiceImplTest {
     void setUp() {
         service = new ShipmentConfirmServiceImpl(
                 coupangApiClient, coupangProperties, orderItemRepository,
-                marketplaceAccountRepository, carrierCodeService, objectMapper, orderItemUpserter);
+                marketplaceAccountRepository, carrierCodeService, objectMapper, orderUpserter);
     }
 
     @Test
@@ -397,7 +397,7 @@ class ShipmentConfirmServiceImplTest {
         service.confirm(xlsx(new Object[][]{{4000019469460L, "123456789"}}));
 
         // 이미 받아온 응답이라 추가 API 호출 없이 저장된다(PLAN 2609_13 D1).
-        verify(orderItemUpserter).upsertBox(eq(account), any());
+        verify(orderUpserter).upsertBox(eq(account), any());
     }
 
     @Test
@@ -411,7 +411,7 @@ class ShipmentConfirmServiceImplTest {
         ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{"4000", "123"}}));
 
         // 배송지시 이상이라 전송에선 빠지지만, 그 상태가 정확한 값이라 저장 가치가 있다(D9).
-        verify(orderItemUpserter).upsertBox(eq(account), any());
+        verify(orderUpserter).upsertBox(eq(account), any());
         assertThat(result.skipped()).hasSize(1);
         verify(coupangApiClient, never()).post(anyString(), anyString(), any());
     }
@@ -427,7 +427,7 @@ class ShipmentConfirmServiceImplTest {
         given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
         given(coupangApiClient.post(anyString(), anyString(), any()))
                 .willReturn(responseAllSuccess("302012345678", "302012345678"));
-        willThrow(new RuntimeException("boom")).given(orderItemUpserter).upsertBox(any(), any());
+        willThrow(new RuntimeException("boom")).given(orderUpserter).upsertBox(any(), any());
 
         ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{4000019469460L, "123456789"}}));
 

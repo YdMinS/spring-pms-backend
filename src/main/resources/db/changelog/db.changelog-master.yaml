@@ -129,3 +129,5 @@ databaseChangeLog:
       file: db/changelog/changes/064-order-cancel-action.yaml
   - include:
       file: db/changelog/changes/065-coupang-account-credential.yaml
+  - include:
+      file: db/changelog/changes/066-order-model.yaml

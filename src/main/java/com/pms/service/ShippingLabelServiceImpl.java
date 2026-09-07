@@ -13,7 +13,7 @@ import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderItemRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangCredentials;
-import com.pms.service.coupang.OrderItemUpserter;
+import com.pms.service.coupang.OrderUpserter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.Row;
@@ -32,7 +32,7 @@ import java.util.List;
  * {@link ShippingLabelService} 구현 — 쿠팡 ordersheets(INSTRUCT) 조회 → 행 펼침 → xlsx.
  *
  * 쿼리 빌드는 {@code CoupangOrderSyncServiceImpl} 패턴을 따른다(status=INSTRUCT 고정).
- * 조회분은 {@code OrderItemUpserter} 로 order_item 에 upsert 한다(PLAN 2609_13 D1) — best-effort 라
+ * 조회분은 {@code OrderUpserter} 로 주문 3층에 upsert 한다(PLAN 2609_13 D1) — best-effort 라
  * 저장이 실패해도 시트는 그대로 나간다(D6). 이 서비스에 @Transactional 을 붙이면 안 된다(D3).
  * 계정·seller 는 리포지토리에서 {@code @EntityGraph} 로 eager fetch 하므로, 외부 HTTP 루프를
  * 도는 이 서비스는 @Transactional 없이도 seller.sellerName 접근이 안전하다(open-in-view=false).
@@ -61,7 +61,7 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final ObjectMapper objectMapper;
     private final OrderItemRepository orderItemRepository;
-    private final OrderItemUpserter orderItemUpserter;
+    private final OrderUpserter orderUpserter;
 
     public List<ShippingLabelRow> collectRows(Long sellerId) {
         List<MarketplaceAccount> accounts = (sellerId == null)
@@ -181,7 +181,7 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
             // 시트에 실린 주문은 정의상 DB 에 있어야 한다 — 발송처리 매칭이 폴백에 기대지 않게 한다(PLAN 2609_13 D1).
             // ⚠️ 다운로드가 우선이다(D6). 저장 실패가 시트를 막으면 안 되므로 페이지 단위로 삼킨다(D4·D5).
             try {
-                orderItemUpserter.upsertBoxes(account, parsed.path("data"));
+                orderUpserter.upsertBoxes(account, parsed.path("data"));
             } catch (Exception e) {
                 log.warn("송장시트 주문 적재 실패(시트는 계속 생성): account={} page={}", account.getId(), pages, e);
             }

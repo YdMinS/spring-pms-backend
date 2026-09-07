@@ -2,18 +2,27 @@ package com.pms.service.coupang;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
+import com.pms.domain.CoupangOrderLine;
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.OrderItem;
+import com.pms.domain.Order;
+import com.pms.domain.OrderLine;
+import com.pms.domain.OrderShipment;
+import com.pms.domain.OrderStatus;
 import com.pms.domain.Platform;
 import com.pms.fixture.MarketplaceAccountFixture;
-import com.pms.repository.OrderItemRepository;
+import com.pms.repository.CoupangOrderLineRepository;
+import com.pms.repository.OrderLineRepository;
+import com.pms.repository.OrderRepository;
+import com.pms.repository.OrderShipmentRepository;
 import com.pms.service.coupang.CoupangOrderStatusSyncer.StatusSyncResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.quality.Strictness;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -32,9 +41,9 @@ import static org.mockito.Mockito.verify;
 /**
  * CoupangOrderStatusSyncer 멱등성·매핑·페이징 테스트.
  *
- * (이 검증들은 로직이 CoupangOrderSyncServiceImpl 에서 이 클래스로 옮겨오며 함께 이동했다.)
  * CoupangApiClient 는 @Mock 으로 캔드 JSON 을 반환하고, ObjectMapper 는 실제 인스턴스를 쓴다.
- * OrderItemRepository 는 in-memory 맵으로 find/save 의미를 흉내내 2회 동기화의 멱등성을 검증한다.
+ * 리포지토리 4개는 in-memory 맵으로 find/save 의미를 흉내내 2회 동기화의 멱등성을 검증한다
+ * (FEATURE_2609_26 로 주문 3층 + 쿠팡 extension 구조가 되며 함께 이동했다).
  */
 @ExtendWith(MockitoExtension.class)
 class CoupangOrderStatusSyncerTest {
@@ -42,14 +51,18 @@ class CoupangOrderStatusSyncerTest {
     @Mock
     private CoupangApiClient coupangApiClient;
 
-    // CoupangApiClient 외 나머지는 실제 인스턴스/in-memory 스텁으로 직접 조립
-    private OrderItemRepository orderItemRepository;
     private CoupangOrderStatusSyncer syncer;
 
     private MarketplaceAccount account;
 
-    /** external 4키 → 저장된 OrderItem (실 DB 의 UNIQUE 제약을 흉내). */
-    private Map<String, OrderItem> store;
+    /** 쿠팡 4키 → 저장된 extension 행 (실 DB 의 UNIQUE 제약을 흉내). */
+    private Map<String, CoupangOrderLine> store;
+    /** order_line.id → 최신 라인 (갱신은 새 인스턴스를 저장하므로 id 로 되찾는다). */
+    private Map<Long, OrderLine> lines;
+    /** (계정|주문번호) → 주문 헤더. */
+    private Map<String, Order> orders;
+    /** (주문 id|박스 id) → 배송 묶음. */
+    private Map<String, OrderShipment> shipments;
 
     /** 조회 창은 호출자가 만든다(D6) — 이 클래스는 받은 창을 그대로 쿼리에 싣는다. */
     private static final SyncWindow WINDOW =
@@ -64,24 +77,30 @@ class CoupangOrderStatusSyncerTest {
                 .build();
 
         store = new HashMap<>();
-        orderItemRepository = inMemoryRepository(store);
+        lines = new HashMap<>();
+        orders = new HashMap<>();
+        shipments = new HashMap<>();
 
         CoupangProperties props = new CoupangProperties();
         props.setOrdersheetsPath("/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/ordersheets");
         props.setSyncDays(5);
 
-        // 목이 아니라 진짜 upserter 를 넣는다(그래야 저장 동작이 추출 전 그대로 검증된다).
+        // 목이 아니라 진짜 upserter 를 넣는다(그래야 저장 동작이 그대로 검증된다).
         syncer = new CoupangOrderStatusSyncer(
-                coupangApiClient, new OrderItemUpserter(orderItemRepository), props, new ObjectMapper());
+                coupangApiClient,
+                new OrderUpserter(orderRepository(), shipmentRepository(), lineRepository(), mirrorRepository()),
+                props, new ObjectMapper());
     }
 
     @Test
-    void syncStatus_insertsNewOrderItems() {
+    void syncStatus_insertsNewOrderLines() {
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(twoBoxesThreeLines());
 
         StatusSyncResult result = syncer.syncStatus(account, CoupangOrderStatus.ACCEPT, WINDOW);
 
         assertThat(store).hasSize(3);
+        assertThat(orders).hasSize(2);            // 주문 2건
+        assertThat(shipments).hasSize(2);         // 박스 2개
         assertThat(result.newCount()).isEqualTo(3);
         assertThat(result.updatedCount()).isZero();
 
@@ -95,12 +114,15 @@ class CoupangOrderStatusSyncerTest {
                 .contains("createdAtFrom=2026-06-10%2B09:00")
                 .contains("createdAtTo=2026-06-15%2B09:00");
 
-        // paidAt: 오프셋 포함 ISO-8601 → KST 로컬시각 (2026-06-15T01:00:00+09:00 == 2026-06-15T01:00)
-        OrderItem line = store.get(key(1L, "B1", "O1", "I1"));
-        assertThat(line.getPaidAt()).isEqualTo(LocalDateTime.of(2026, 6, 15, 1, 0, 0));
+        // paidAt: 오프셋 포함 ISO-8601 → KST 로컬시각, 주문 헤더에 저장된다.
+        assertThat(order("O1").getOrderedAt()).isEqualTo(LocalDateTime.of(2026, 6, 15, 1, 0, 0));
+
+        OrderLine line = line(key(1L, "B1", "O1", "I1"));
         assertThat(line.getItemName()).isEqualTo("양말A");
-        assertThat(line.getOrderCount()).isEqualTo(3);
-        assertThat(line.getHoldCount()).isEqualTo(1);
+        assertThat(line.getOrderQty()).isEqualTo(3);
+        assertThat(line.getHoldQty()).isEqualTo(1);
+        assertThat(line.getStatus()).isEqualTo(OrderStatus.PAID);       // ACCEPT → PAID
+        assertThat(store.get(key(1L, "B1", "O1", "I1")).getPlatformStatus()).isEqualTo("ACCEPT");
     }
 
     @Test
@@ -111,6 +133,9 @@ class CoupangOrderStatusSyncerTest {
         StatusSyncResult second = syncer.syncStatus(account, CoupangOrderStatus.ACCEPT, WINDOW); // 2회차: 모두 update
 
         assertThat(store).hasSize(3);                 // 중복 안 쌓임 ★
+        assertThat(lines).hasSize(3);
+        assertThat(orders).hasSize(2);
+        assertThat(shipments).hasSize(2);
         assertThat(second.newCount()).isZero();
         assertThat(second.updatedCount()).isEqualTo(3);
     }
@@ -123,11 +148,11 @@ class CoupangOrderStatusSyncerTest {
         syncer.syncStatus(account, CoupangOrderStatus.ACCEPT, WINDOW);   // 1회차: cancelCount=0
         syncer.syncStatus(account, CoupangOrderStatus.ACCEPT, WINDOW);   // 2회차: line(order=O1, box=B1, item=I1) cancelCount=2
 
-        OrderItem changed = store.get(key(1L, "B1", "O1", "I1"));
-        assertThat(changed.getCancelCount()).isEqualTo(2);
-        assertThat(changed.getHoldCount()).isEqualTo(1);
+        OrderLine changed = line(key(1L, "B1", "O1", "I1"));
+        assertThat(changed.getCancelQty()).isEqualTo(2);
+        assertThat(changed.getHoldQty()).isEqualTo(1);
         // 다른 줄은 그대로
-        assertThat(store.get(key(1L, "B1", "O1", "I2")).getCancelCount()).isZero();
+        assertThat(line(key(1L, "B1", "O1", "I2")).getCancelQty()).isZero();
     }
 
     @Test
@@ -145,23 +170,22 @@ class CoupangOrderStatusSyncerTest {
 
     @Test
     void purchasableQty_subtractsCancelAndHold() {
-        assertThat(orderItem(10, 2, 1).purchasableQty()).isEqualTo(7);
-        assertThat(orderItem(5, 5, 0).purchasableQty()).isZero();   // 음수면 0
+        assertThat(orderLine(10, 2, 1).purchasableQty()).isEqualTo(7);
+        assertThat(orderLine(5, 5, 0).purchasableQty()).isZero();   // 음수면 0
     }
 
     @Test
-    void syncStatus_storesCustomerNames_fromBoxLevel() {
+    void syncStatus_storesCustomerNames_onOrderHeader() {
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(twoBoxesThreeLines());
 
         syncer.syncStatus(account, CoupangOrderStatus.ACCEPT, WINDOW);
 
-        // 박스 레벨 값이 그 박스의 모든 라인에 복제된다 (B1 = I1, I2)
-        assertThat(store.get(key(1L, "B1", "O1", "I1")).getOrdererName()).isEqualTo("홍길동");
-        assertThat(store.get(key(1L, "B1", "O1", "I1")).getReceiverName()).isEqualTo("김철수");
-        assertThat(store.get(key(1L, "B1", "O1", "I2")).getReceiverName()).isEqualTo("김철수");
-        // 이름 필드가 없는 박스는 null 로 남는다 (D7)
-        assertThat(store.get(key(1L, "B2", "O2", "I3")).getOrdererName()).isNull();
-        assertThat(store.get(key(1L, "B2", "O2", "I3")).getReceiverName()).isNull();
+        // 박스 레벨 값은 주문 헤더에 1번만 저장된다(라인 복제 없음).
+        assertThat(order("O1").getOrdererName()).isEqualTo("홍길동");
+        assertThat(order("O1").getReceiverName()).isEqualTo("김철수");
+        // 이름 필드가 없는 박스는 null 로 남는다 (2609_13 D7)
+        assertThat(order("O2").getOrdererName()).isNull();
+        assertThat(order("O2").getReceiverName()).isNull();
     }
 
     @Test
@@ -170,44 +194,90 @@ class CoupangOrderStatusSyncerTest {
                 .willReturn(singleLine(false), singleLine(true));
 
         syncer.syncStatus(account, CoupangOrderStatus.ACCEPT, WINDOW);          // 1회차: 이름 없는 응답
-        assertThat(store.get(key(1L, "B1", "O1", "I1")).getReceiverName()).isNull();
+        assertThat(order("O1").getReceiverName()).isNull();
 
         syncer.syncStatus(account, CoupangOrderStatus.ACCEPT, WINDOW);          // 2회차: 이름 있는 응답
 
         assertThat(store).hasSize(1);                                   // 행이 늘지 않는다(멱등 유지)
-        assertThat(store.get(key(1L, "B1", "O1", "I1")).getOrdererName()).isEqualTo("홍길동");
-        assertThat(store.get(key(1L, "B1", "O1", "I1")).getReceiverName()).isEqualTo("김철수");
+        assertThat(orders).hasSize(1);
+        assertThat(order("O1").getOrdererName()).isEqualTo("홍길동");
+        assertThat(order("O1").getReceiverName()).isEqualTo("김철수");
     }
 
     // --- helpers ---
 
-    private static OrderItem orderItem(int order, int cancel, int hold) {
-        return OrderItem.builder().orderCount(order).cancelCount(cancel).holdCount(hold).build();
+    private static OrderLine orderLine(int order, int cancel, int hold) {
+        return OrderLine.builder().orderQty(order).cancelQty(cancel).holdQty(hold).build();
     }
 
     private static String key(Long accountId, String box, String order, String item) {
         return accountId + "|" + box + "|" + order + "|" + item;
     }
 
-    /** save/find 를 4키 맵으로 처리하는 in-memory OrderItemRepository (Mockito Answer 기반). */
-    private OrderItemRepository inMemoryRepository(Map<String, OrderItem> store) {
-        // lenient: 순수 단위 테스트(purchasableQty)는 이 스텁을 안 써서 strict stubbing 위반을 피한다.
-        OrderItemRepository repo = org.mockito.Mockito.mock(OrderItemRepository.class,
-                org.mockito.Mockito.withSettings().strictness(org.mockito.quality.Strictness.LENIENT));
-        AtomicLong seq = new AtomicLong(0);
+    private OrderLine line(String storeKey) {
+        return lines.get(store.get(storeKey).getOrderLine().getId());
+    }
 
-        given(repo.save(any(OrderItem.class))).willAnswer(inv -> {
-            OrderItem oi = inv.getArgument(0);
-            OrderItem persisted = oi.getId() == null
-                    ? oi.toBuilder().id(seq.incrementAndGet()).build()
-                    : oi;
-            store.put(key(persisted.getMarketplaceAccount().getId(),
-                    persisted.getExternalBoxId(), persisted.getExternalOrderId(),
-                    persisted.getExternalItemId()), persisted);
+    private Order order(String externalOrderId) {
+        return orders.get("1|" + externalOrderId);
+    }
+
+    private OrderRepository orderRepository() {
+        // lenient: 순수 단위 테스트(purchasableQty)는 이 스텁을 안 써서 strict stubbing 위반을 피한다.
+        OrderRepository repo = Mockito.mock(OrderRepository.class,
+                Mockito.withSettings().strictness(Strictness.LENIENT));
+        AtomicLong seq = new AtomicLong(0);
+        given(repo.save(any(Order.class))).willAnswer(inv -> {
+            Order o = inv.getArgument(0);
+            Order persisted = o.getId() == null ? o.toBuilder().id(seq.incrementAndGet()).build() : o;
+            orders.put(persisted.getMarketplaceAccount().getId() + "|" + persisted.getExternalOrderId(), persisted);
             return persisted;
         });
+        given(repo.findByMarketplaceAccount_IdAndExternalOrderId(any(), anyString()))
+                .willAnswer(inv -> Optional.ofNullable(orders.get(inv.getArgument(0) + "|" + inv.getArgument(1))));
+        return repo;
+    }
 
-        given(repo.findByMarketplaceAccount_IdAndExternalBoxIdAndExternalOrderIdAndExternalItemId(
+    private OrderShipmentRepository shipmentRepository() {
+        OrderShipmentRepository repo = Mockito.mock(OrderShipmentRepository.class,
+                Mockito.withSettings().strictness(Strictness.LENIENT));
+        AtomicLong seq = new AtomicLong(0);
+        given(repo.save(any(OrderShipment.class))).willAnswer(inv -> {
+            OrderShipment s = inv.getArgument(0);
+            OrderShipment persisted = s.getId() == null ? s.toBuilder().id(seq.incrementAndGet()).build() : s;
+            shipments.put(persisted.getOrder().getId() + "|" + persisted.getExternalShipmentId(), persisted);
+            return persisted;
+        });
+        given(repo.findByOrder_IdAndExternalShipmentId(any(), anyString()))
+                .willAnswer(inv -> Optional.ofNullable(shipments.get(inv.getArgument(0) + "|" + inv.getArgument(1))));
+        return repo;
+    }
+
+    private OrderLineRepository lineRepository() {
+        OrderLineRepository repo = Mockito.mock(OrderLineRepository.class,
+                Mockito.withSettings().strictness(Strictness.LENIENT));
+        AtomicLong seq = new AtomicLong(0);
+        given(repo.save(any(OrderLine.class))).willAnswer(inv -> {
+            OrderLine l = inv.getArgument(0);
+            OrderLine persisted = l.getId() == null ? l.toBuilder().id(seq.incrementAndGet()).build() : l;
+            lines.put(persisted.getId(), persisted);
+            return persisted;
+        });
+        return repo;
+    }
+
+    private CoupangOrderLineRepository mirrorRepository() {
+        CoupangOrderLineRepository repo = Mockito.mock(CoupangOrderLineRepository.class,
+                Mockito.withSettings().strictness(Strictness.LENIENT));
+        AtomicLong seq = new AtomicLong(0);
+        given(repo.save(any(CoupangOrderLine.class))).willAnswer(inv -> {
+            CoupangOrderLine m = inv.getArgument(0);
+            CoupangOrderLine persisted = m.getId() == null ? m.toBuilder().id(seq.incrementAndGet()).build() : m;
+            store.put(key(persisted.getMarketplaceAccount().getId(), persisted.getShipmentBoxId(),
+                    persisted.getOrderIdRaw(), persisted.getVendorItemId()), persisted);
+            return persisted;
+        });
+        given(repo.findByMarketplaceAccount_IdAndShipmentBoxIdAndOrderIdRawAndVendorItemId(
                 any(), anyString(), anyString(), anyString()))
                 .willAnswer(inv -> Optional.ofNullable(store.get(
                         key(inv.getArgument(0), inv.getArgument(1),

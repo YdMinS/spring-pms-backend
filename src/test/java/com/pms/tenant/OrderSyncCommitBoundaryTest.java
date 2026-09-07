@@ -32,7 +32,7 @@ import static org.mockito.BDDMockito.given;
  * 동기화 커밋 경계 회귀 테스트 (PLAN D15, 2026-09-02 사고).
  *
  * <p>상태 루프가 한 트랜잭션에 묶여 있으면 뒤쪽 상태의 쿠팡 실패가 앞쪽 상태의 upsert 까지 롤백시켜
- * 그 계정 주문이 order_item 에 한 건도 남지 않는다 → 시트에는 나오는데 발송처리는 전량 미매칭.
+ * 그 계정 주문이 한 건도 남지 않는다 → 시트에는 나오는데 발송처리는 전량 미매칭.
  * 이 테스트가 없으면 누군가 {@code CoupangOrderSyncServiceImpl} 에 클래스 {@code @Transactional} 을
  * 되돌려도 아무도 모른다. 그래서 여기서는 {@code CoupangOrderSyncService} 를 mock 하지 않는다 —
  * 그게 검증 대상이다. mock 은 {@link CoupangApiClient} 뿐.</p>
@@ -71,7 +71,11 @@ class OrderSyncCommitBoundaryTest {
     @AfterEach
     void cleanup() {
         TenantContext.clear();
-        jdbcTemplate.execute("delete from order_item");            // FK child first
+        jdbcTemplate.execute("delete from coupang_order_line");     // FK children first
+        jdbcTemplate.execute("delete from order_line");
+        jdbcTemplate.execute("delete from order_shipment");
+        jdbcTemplate.execute("delete from orders");
+        jdbcTemplate.execute("delete from order_item");
         jdbcTemplate.execute("delete from coupang_account_credential");
         jdbcTemplate.execute("delete from marketplace_account");
         jdbcTemplate.execute("delete from seller");
@@ -104,7 +108,8 @@ class OrderSyncCommitBoundaryTest {
 
         assertThat(result.failedStatuses()).containsExactly(CoupangOrderStatus.FINAL_DELIVERY);
         Integer rows = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM order_item WHERE marketplace_account_id = ?",
+                "SELECT COUNT(*) FROM order_line l JOIN orders o ON o.id = l.order_id "
+                        + "WHERE o.marketplace_account_id = ?",
                 Integer.class, account.getId());
         assertThat(rows).isGreaterThanOrEqualTo(1);   // ★ 앞 상태 커밋이 살아있다
     }

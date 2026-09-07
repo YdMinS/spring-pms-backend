@@ -9,7 +9,7 @@ import com.pms.exception.CoupangRateLimitedException;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangCredentials;
-import com.pms.service.coupang.OrderItemUpserter;
+import com.pms.service.coupang.OrderUpserter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -24,8 +24,8 @@ import java.util.Map;
  * {@link ClaimOrderBackfillService} 구현.
  *
  * ⚠️ <b>클래스 레벨 {@code @Transactional} 을 붙이지 않는다.</b> 이 서비스는 외부 HTTP 루프다 —
- * 트랜잭션을 열면 {@link OrderItemUpserter#upsertBox} 가 REQUIRED 로 합류해 루프 전체가 한 경계로
- * 묶인다(2026-09-02 사고와 동형). DB 쓰기는 전부 {@code OrderItemUpserter}·{@link ClaimUpserter} 의
+ * 트랜잭션을 열면 {@link OrderUpserter#upsertBox} 가 REQUIRED 로 합류해 루프 전체가 한 경계로
+ * 묶인다(2026-09-02 사고와 동형). DB 쓰기는 전부 {@code OrderUpserter}·{@link ClaimUpserter} 의
  * 자기 트랜잭션에서 일어난다.
  *
  * ⚠️ 재시도·백오프·sleep 을 만들지 말 것 — 429 쿨다운은 {@code CoupangRateLimitGuard} 가 처리한다.
@@ -40,7 +40,7 @@ public class ClaimOrderBackfillServiceImpl implements ClaimOrderBackfillService 
 
     private final OrderClaimRepository orderClaimRepository;
     private final CoupangApiClient coupangApiClient;
-    private final OrderItemUpserter orderItemUpserter;
+    private final OrderUpserter orderUpserter;
     private final ClaimUpserter claimUpserter;
     private final CoupangProperties coupangProperties;
     private final ObjectMapper objectMapper;
@@ -108,7 +108,7 @@ public class ClaimOrderBackfillServiceImpl implements ClaimOrderBackfillService 
     }
 
     /**
-     * 단건 발주서 조회 → 모든 박스를 {@code order_item} 에 적재.
+     * 단건 발주서 조회 → 모든 박스를 주문 3층에 적재.
      *
      * <p>상태 필터가 없다 — 발송처리 폴백과 달리 여기서는 전송이 없고, 취소·배송완료 박스도 매칭 대상이다.</p>
      */
@@ -124,7 +124,7 @@ public class ClaimOrderBackfillServiceImpl implements ClaimOrderBackfillService 
             throw new IllegalStateException("쿠팡 발주서 단건 응답 이상: code=" + parsed.path("code").asText());
         }
         for (JsonNode box : data) {
-            orderItemUpserter.upsertBox(account, box);   // 박스마다 자기 트랜잭션 = 커밋 단위
+            orderUpserter.upsertBox(account, box);   // 박스마다 자기 트랜잭션 = 커밋 단위
         }
     }
 

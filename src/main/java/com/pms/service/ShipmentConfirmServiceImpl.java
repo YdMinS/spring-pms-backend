@@ -14,7 +14,7 @@ import com.pms.service.ShipmentConfirmResult.SkippedOrder;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangCredentials;
 import com.pms.service.coupang.CoupangOrderStatus;
-import com.pms.service.coupang.OrderItemUpserter;
+import com.pms.service.coupang.OrderUpserter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.Cell;
@@ -92,7 +92,7 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final CarrierCodeService carrierCodeService;
     private final ObjectMapper objectMapper;
-    private final OrderItemUpserter orderItemUpserter;
+    private final OrderUpserter orderUpserter;
 
     @Override
     public ShipmentConfirmResult confirm(MultipartFile file) {
@@ -438,7 +438,7 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
             // 조회 응답은 이미 정확하다 — 전송 대상에서 빠지는 박스도 저장한다(PLAN 2609_13 D9).
             // ⚠️ 전송이 우선이다(D6). 저장 실패가 발송처리를 막으면 안 되므로 박스 단위로 삼킨다(D4·D5).
             try {
-                orderItemUpserter.upsertBox(account, box);
+                orderUpserter.upsertBox(account, box);
             } catch (Exception e) {
                 log.warn("발송처리 폴백 주문 적재 실패(전송은 계속): orderId={} account={}",
                         orderId, account.getId(), e);

@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
-import com.pms.service.coupang.OrderItemUpserter.UpsertCount;
+import com.pms.service.coupang.OrderUpserter.UpsertCount;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -33,12 +33,12 @@ public class CoupangOrderStatusSyncer {
     private static final String KST_OFFSET = "%2B09:00";        // +09:00, URL-encoded (+ → %2B)
 
     private final CoupangApiClient coupangApiClient;
-    private final OrderItemUpserter orderItemUpserter;
+    private final OrderUpserter orderUpserter;
     private final CoupangProperties coupangProperties;
     private final ObjectMapper objectMapper;
 
     /**
-     * 상태 1개를 nextToken 이 빌 때까지 페이징 조회해 order_item 에 멱등 upsert 한다.
+     * 상태 1개를 nextToken 이 빌 때까지 페이징 조회해 주문 3층에 멱등 upsert 한다.
      *
      * 조회 창({@link SyncWindow})은 <b>호출자가 만들어 넘긴다</b>(FEATURE_2609_10 D6) — 정기 동기화는
      * 기본 창(오늘 − sync-days), 기간 백필은 사용자가 고른 창이다. 이 클래스는 창을 계산하지 않는다.
@@ -67,7 +67,7 @@ public class CoupangOrderStatusSyncer {
 
             // 적재는 단일 진입점을 통한다(PLAN 2609_13 D1·D2) — 시트·폴백 경로와 같은 규칙으로 저장된다.
             // 이 호출은 syncStatus 의 트랜잭션에 REQUIRED 로 합류한다(의도된 동작 — 커밋 경계는 여전히 상태 1개, D15).
-            UpsertCount counted = orderItemUpserter.upsertBoxes(account, parsed.path("data"));
+            UpsertCount counted = orderUpserter.upsertBoxes(account, parsed.path("data"));
             newCount += counted.newCount();
             updatedCount += counted.updatedCount();
             nextToken = parsed.path("nextToken").asText("");

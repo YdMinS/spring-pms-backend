@@ -12,7 +12,7 @@ import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderItemRepository;
 import com.pms.service.coupang.CoupangApiClient;
-import com.pms.service.coupang.OrderItemUpserter;
+import com.pms.service.coupang.OrderUpserter;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -53,7 +53,7 @@ class ShippingLabelServiceImplTest {
     @Mock
     private OrderItemRepository orderItemRepository;
     @Mock
-    private OrderItemUpserter orderItemUpserter;
+    private OrderUpserter orderUpserter;
 
     private ShippingLabelServiceImpl service;
     private MarketplaceAccount coupangAccount;
@@ -70,7 +70,7 @@ class ShippingLabelServiceImplTest {
 
         service = new ShippingLabelServiceImpl(
                 coupangApiClient, props, marketplaceAccountRepository, new ObjectMapper(),
-                orderItemRepository, orderItemUpserter);
+                orderItemRepository, orderUpserter);
     }
 
     @Test
@@ -104,14 +104,14 @@ class ShippingLabelServiceImplTest {
         service.collectRows(null);
 
         // 시트에 실린 주문은 DB 에도 남는다 — 발송처리가 폴백에 기대지 않게 한다(PLAN 2609_13 D1).
-        verify(orderItemUpserter).upsertBoxes(eq(coupangAccount), any());
+        verify(orderUpserter).upsertBoxes(eq(coupangAccount), any());
     }
 
     @Test
     void 적재실패해도시트생성은계속된다() {
         given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(coupangAccount));
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(oneBoxThreeLines());
-        willThrow(new RuntimeException("boom")).given(orderItemUpserter).upsertBoxes(any(), any());
+        willThrow(new RuntimeException("boom")).given(orderUpserter).upsertBoxes(any(), any());
 
         List<ShippingLabelRow> rows = service.collectRows(null);
 
