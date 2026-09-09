@@ -46,6 +46,9 @@ public class ProductControllerTest extends BaseIntegrationTest {
     private ProductRepository productRepository;
 
     @Autowired
+    private com.pms.repository.PriceChangeLogRepository priceChangeLogRepository;
+
+    @Autowired
     private ObjectMapper objectMapper;
 
     @BeforeEach
@@ -56,7 +59,9 @@ public class ProductControllerTest extends BaseIntegrationTest {
 
     @AfterEach
     public void tearDown() {
-        // Cleanup after each test
+        // Cleanup after each test. Price history rows FK-reference the product a PATCH repriced
+        // (2609_28) — delete the child rows first.
+        priceChangeLogRepository.deleteAll();
         productRepository.deleteAll();
     }
 

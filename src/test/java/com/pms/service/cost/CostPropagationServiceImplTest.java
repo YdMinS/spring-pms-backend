@@ -20,7 +20,9 @@ import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
+import com.pms.domain.PriceChangeReason;
 import com.pms.service.listing.MasterPropagationService;
+import com.pms.service.price.PriceHistoryRecorder;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -60,6 +62,7 @@ class CostPropagationServiceImplTest {
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private GeneratedProductDataRepository generatedProductDataRepository;
     @Mock private MasterPropagationService masterPropagationService;
+    @Mock private PriceHistoryRecorder priceHistoryRecorder;
 
     @InjectMocks private CostPropagationServiceImpl service;
 
@@ -115,6 +118,27 @@ class CostPropagationServiceImplTest {
         verify(productRepository).save(captor.capture());
         assertThat(captor.getValue().getId()).isEqualTo(33L);
         assertThat(captor.getValue().getPrice()).isEqualByComparingTo("4000");
+    }
+
+    @Test
+    void testPurchaseUpdateRecordsWithPurchaseRecordId() {
+        // 훅 ① (PLAN D23): 매입기록 id 가 함께 남아야 "왜 기준가가 올랐나"가 매입까지 이어진다.
+        Product product = product(33L, new BigDecimal("3000.00"));
+
+        service.updateBasePrice(purchase(product, new BigDecimal("4000.0000"), 3, true, TODAY));
+
+        verify(priceHistoryRecorder).recordProductCost(eq(product),
+                eq(new BigDecimal("3000.00")), eq(new BigDecimal("4000.00")),
+                eq(PriceChangeReason.PURCHASE_UPDATE), eq(1L));
+    }
+
+    @Test
+    void testPromotionalPurchaseRecordsNothing() {
+        // 프로모션 매입은 기준가를 안 건드리므로(D3) 남길 변동 자체가 없다.
+        service.updateBasePrice(purchase(product(33L, new BigDecimal("3000.00")),
+                new BigDecimal("1000.0000"), 3, false, TODAY));
+
+        verifyNoInteractions(priceHistoryRecorder);
     }
 
     @Test

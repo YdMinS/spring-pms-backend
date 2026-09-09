@@ -153,3 +153,5 @@ databaseChangeLog:
       file: db/changelog/changes/080-drop-stock-log.yaml
   - include:
       file: db/changelog/changes/081-order-line-cost-snapshot.yaml
+  - include:
+      file: db/changelog/changes/082-price-change-log.yaml

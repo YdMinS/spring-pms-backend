@@ -1,0 +1,52 @@
+# Price change history for cost and selling price (FEATURE_2609_28 / PLAN D23).
+#   Cost is only partially recoverable from purchase_record (a direct PATCH /api/products/{id} edit
+#   leaves no trace) and the selling price is not recoverable at all — it is overwritten in place.
+#   Without this table a later margin alert can never answer "since when has this cell been thin".
+# ⚠️ Numbered 082, not the 075 the prompt reserved: 076~081 were taken while this piece waited
+#    (FEATURE_2609_29 + prompts 05/08/10). The master include order must keep climbing.
+# ⚠️ One of product_id / product_listing_option_id is set, never both. Which one is decided by
+#    target_type; the DB cannot express that constraint, so the recorder enforces it.
+# ⚠️ NO UNIQUE constraint: the same option can be repriced many times.
+# ⚠️ No platform / listing_id / master_product_id columns on purpose — they are reached by joining
+#    product_listing_option -> product_listing at read time. Copied here they would go stale the
+#    moment a cell is moved to another master.
+databaseChangeLog:
+
+  - changeSet:
+      id: 082-price-change-log
+      author: oclyx
+      comment: "FEATURE_2609_28: price_change_log (cost + selling price history)."
+      changes:
+        - createTable:
+            tableName: price_change_log
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: target_type, type: VARCHAR(30), constraints: { nullable: false } }
+              - column: { name: product_id, type: BIGINT }
+              - column: { name: product_listing_option_id, type: BIGINT }
+              - column: { name: old_price, type: "DECIMAL(15,4)", constraints: { nullable: false } }
+              - column: { name: new_price, type: "DECIMAL(15,4)", constraints: { nullable: false } }
+              - column: { name: reason, type: VARCHAR(30), constraints: { nullable: false } }
+              - column: { name: purchase_record_id, type: BIGINT }
+              - column: { name: created_by, type: VARCHAR(100) }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint: { constraintName: fk_pricechangelog_tenant,   baseTableName: price_change_log, baseColumnNames: tenant_id,                 referencedTableName: tenant,                 referencedColumnNames: id }
+        - addForeignKeyConstraint: { constraintName: fk_pricechangelog_product,  baseTableName: price_change_log, baseColumnNames: product_id,                referencedTableName: products,               referencedColumnNames: id }
+        - addForeignKeyConstraint: { constraintName: fk_pricechangelog_option,   baseTableName: price_change_log, baseColumnNames: product_listing_option_id, referencedTableName: product_listing_option, referencedColumnNames: id }
+        - addForeignKeyConstraint: { constraintName: fk_pricechangelog_purchase, baseTableName: price_change_log, baseColumnNames: purchase_record_id,        referencedTableName: purchase_record,        referencedColumnNames: id }
+        - createIndex:
+            tableName: price_change_log
+            indexName: idx_pricechangelog_product_created
+            columns:
+              - column: { name: product_id }
+              - column: { name: created_date }
+        - createIndex:
+            tableName: price_change_log
+            indexName: idx_pricechangelog_option_created
+            columns:
+              - column: { name: product_listing_option_id }
+              - column: { name: created_date }
+      rollback:
+        - dropTable: { tableName: price_change_log }

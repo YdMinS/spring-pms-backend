@@ -5,6 +5,7 @@ import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
+import com.pms.domain.PriceChangeReason;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -24,6 +25,7 @@ import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.service.listing.ListingChannelResolver;
+import com.pms.service.price.PriceHistoryRecorder;
 import com.pms.service.listing.ListingStockPolicy;
 import com.pms.service.listing.shipping.CoupangShippingConfigResolver;
 import com.pms.service.listing.shipping.ShippingOverrideKeys;
@@ -41,6 +43,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -84,6 +87,7 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     private final DetailContentGenerator detailContentGenerator;
     private final com.pms.service.listing.TagMergeService tagMergeService;
     private final CoupangShippingConfigResolver shippingConfigResolver;
+    private final PriceHistoryRecorder priceHistoryRecorder;
 
     /**
      * 77: resolves the channel adapter that owns the {@code shippingReady} judgement.
@@ -362,6 +366,11 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         // 2609_22/D1: match each listing option to its master option by the FK (one query, outside the loop —
         // no N+1); a channel-only option (FK null) means "no master defaults" → the price engine falls back.
         Map<Long, MasterProductOption> masterOptionsById = masterOptionsById(cell);
+        // 🔴 Price history hook ③ (PLAN 2609_28 D23). It sits INSIDE this seam and not inside
+        // regenerateAssets on purpose: MasterProductServiceImpl calls this method directly, so a hook
+        // placed one level up would miss every "master edited → channels repriced" change. Rows are
+        // collected and written with ONE saveAll — a propagation touches hundreds of options.
+        List<PriceHistoryRecorder.SellingPriceChange> priceChanges = new ArrayList<>();
         for (ProductListingOption option : productListingOptionRepository.findByProductListingId(cell.getId())) {
             // 2609_19/D2: a price the user set for this channel only is not touched by a regeneration
             // (same rule as the MANUAL_OVERRIDE detail HTML above).
@@ -370,11 +379,15 @@ public class ListingAssetServiceImpl implements ListingAssetService {
             }
             MasterProductOption mo = linkedMaster(option, masterOptionsById);
             PriceCalculator.PriceResult price = quote(cell, option, mo);
+            priceChanges.add(new PriceHistoryRecorder.SellingPriceChange(
+                    option, option.getSellingPrice(), price.salePrice()));
             productListingOptionRepository.save(option.toBuilder()
                     .sellingPrice(price.salePrice())
                     .originalPrice(price.originalPrice())
                     .build());
         }
+        // Unchanged options and DRAFT cells are filtered by the recorder, not here.
+        priceHistoryRecorder.recordSellingPrices(cell, priceChanges, PriceChangeReason.PROPAGATION);
     }
 
     @Override

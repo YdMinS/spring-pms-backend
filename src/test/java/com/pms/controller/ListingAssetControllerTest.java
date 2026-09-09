@@ -68,6 +68,8 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
     @Autowired private MarginPolicyRepository marginPolicyRepository;
     @Autowired private CommissionRateRepository commissionRateRepository;
     @Autowired private GeneratedProductDataRepository generatedProductDataRepository;
+    @Autowired
+    private com.pms.repository.PriceChangeLogRepository priceChangeLogRepository;
     @Autowired private CategoryRepository categoryRepository;
     @Autowired private MasterProductRepository masterProductRepository;
     @Autowired private CategoryMappingRepository categoryMappingRepository;
@@ -168,6 +170,8 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
      */
     @AfterEach
     void cleanupListingGraph() {
+        // Price history rows FK-reference the options a regeneration repriced (2609_28) — child first.
+        priceChangeLogRepository.deleteAll();
         generatedProductDataRepository.deleteAll();
         productListingProductRepository.deleteAll();
         productListingOptionRepository.deleteAll();

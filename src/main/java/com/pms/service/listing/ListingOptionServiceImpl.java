@@ -5,6 +5,7 @@ import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
+import com.pms.domain.PriceChangeReason;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.dto.request.SetOptionNamesRequest;
@@ -21,6 +22,7 @@ import com.pms.service.ListingAssetService;
 import com.pms.service.OptionCheckSuffixResolver;
 import com.pms.service.PriceCalculator;
 import com.pms.service.RegistrationNameGenerator;
+import com.pms.service.price.PriceHistoryRecorder;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -57,6 +59,7 @@ public class ListingOptionServiceImpl implements ListingOptionService {
     private final ListingAssetService listingAssetService;
     private final ListingChannelResolver resolver;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
+    private final PriceHistoryRecorder priceHistoryRecorder;
 
     @Override
     public ListingOptionsResponse getOptions(Long listingId) {
@@ -263,6 +266,16 @@ public class ListingOptionServiceImpl implements ListingOptionService {
             }
         }
         productListingOptionRepository.saveAll(List.copyOf(toSave.values()));
+
+        // Price history hook ④ (PLAN 2609_28 D23). Only what was actually saved is recorded — an option the
+        // market rejected keeps its old price, so it is not a change. Dropping a manual price back to AUTO
+        // is a movement too and belongs to this path, hence MANUAL for both directions.
+        priceHistoryRecorder.recordSellingPrices(listing,
+                toSave.values().stream()
+                        .map(saved -> new PriceHistoryRecorder.SellingPriceChange(saved,
+                                byId.get(saved.getId()).getSellingPrice(), saved.getSellingPrice()))
+                        .toList(),
+                PriceChangeReason.MANUAL);
 
         // Return the full option set with the saved rows swapped in (setOptionStocks' closing block).
         List<ProductListingOption> merged = options.stream()
