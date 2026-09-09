@@ -266,6 +266,26 @@ public class CoupangProperties {
     /** 이 일수를 넘긴 미답변 문의는 STALE 로 강제 종결한다(D9). 조회 앵커의 하한을 실질적으로 결정한다. */
     private int inquiryStaleDays = 30;
 
+    /**
+     * 매출내역(revenue-history) 조회 경로. {@code vendorId} 는 <b>쿼리 파라미터</b>다 — 경로 치환이 아니다
+     * (FEATURE_2609_30 / PLAN D5).
+     *
+     * <p>⚠️ 실계정 미검증이라 상수가 아니라 설정으로 뺀다(ordersheet-by-order-path 와 같은 판단).
+     */
+    private String revenueHistoryPath = "/v2/providers/openapi/apis/api/v1/revenue-history";
+
+    /** 매출인식일 조회 창의 상한(일). 쿠팡 제한이 31일이라 넘기지 말 것 — 초과 요청은 어댑터가 잘라서 여러 번 호출한다. */
+    private int revenueWindowMaxDays = 31;
+
+    /** 매출내역 페이지 크기. ⚠️ 쿠팡 상한이 50 이다 — 올리면 400. */
+    private int revenueMaxPerPage = 50;
+
+    /**
+     * 스케줄·수동 갱신의 delta 창(일). 정산은 확정 후 <b>정정</b>되므로 어제 하루만 보면 정정분을 놓친다 —
+     * 며칠을 겹쳐 읽고 멱등 upsert 가 흡수하게 한다(D10).
+     */
+    private int revenueDeltaDays = 3;
+
     /** 쿠팡 API connect 타임아웃(ms). 미설정 시 무제한 → 게이트웨이 지연이 요청 스레드를 무한 점유한다. */
     private int connectTimeoutMs = 10_000;
 
