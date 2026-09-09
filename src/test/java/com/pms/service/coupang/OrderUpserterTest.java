@@ -9,11 +9,13 @@ import com.pms.domain.OrderLine;
 import com.pms.domain.OrderShipment;
 import com.pms.domain.OrderStatus;
 import com.pms.domain.Platform;
+import com.pms.domain.ProductListingOption;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.OrderRepository;
 import com.pms.repository.OrderShipmentRepository;
+import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.coupang.OrderUpserter.UpsertCount;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -58,6 +60,8 @@ class OrderUpserterTest {
     private OrderLineRepository orderLineRepository;
     @Mock
     private CoupangOrderLineRepository coupangOrderLineRepository;
+    @Mock
+    private ProductListingOptionRepository productListingOptionRepository;
 
     @InjectMocks
     private OrderUpserter upserter;
@@ -77,6 +81,9 @@ class OrderUpserterTest {
         lenient().when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
         lenient().when(orderShipmentRepository.save(any(OrderShipment.class))).thenAnswer(i -> i.getArgument(0));
         lenient().when(orderLineRepository.save(any(OrderLine.class))).thenAnswer(i -> i.getArgument(0));
+        // 옵션 매칭은 기본적으로 실패로 둔다 — 미매핑이 적재를 막지 않는 것이 계약이다(FEATURE_2609_28 / D15).
+        lenient().when(productListingOptionRepository.findByPlatformOptionId(any()))
+                .thenReturn(Optional.empty());
     }
 
     @Test
@@ -158,6 +165,47 @@ class OrderUpserterTest {
         assertThat(line.getValue().getLineAmount()).isEqualByComparingTo("1000");
         assertThat(line.getValue().getDiscountAmount()).isEqualByComparingTo("0");
         assertThat(line.getValue().getPlatformDiscountAmount()).isEqualByComparingTo("0");
+    }
+
+    /** D15: 적재 시점에 플랫폼 어댑터가 중립 링크를 해석한다 — 하류는 거울 행을 뒤지지 않아도 된다. */
+    @Test
+    void 신규라인은옵션중립링크를채운다() {
+        givenNothingExists();
+        ProductListingOption option = ProductListingOption.builder().id(55L).platformOptionId(ITEM_ID).build();
+        given(productListingOptionRepository.findByPlatformOptionId(ITEM_ID)).willReturn(Optional.of(option));
+
+        upserter.upsertBox(account, box(oneLineBox()));
+
+        ArgumentCaptor<OrderLine> line = ArgumentCaptor.forClass(OrderLine.class);
+        verify(orderLineRepository).save(line.capture());
+        assertThat(line.getValue().getProductListingOption()).isSameAs(option);
+    }
+
+    /** 매칭 실패는 예외가 아니다 — 예외로 만들면 미매핑 옵션 하나가 주문 동기화 전체를 멈춘다. */
+    @Test
+    void 옵션매칭에실패해도적재는계속된다() {
+        givenNothingExists();
+
+        UpsertCount result = upserter.upsertBox(account, box(oneLineBox()));
+
+        ArgumentCaptor<OrderLine> line = ArgumentCaptor.forClass(OrderLine.class);
+        verify(orderLineRepository).save(line.capture());
+        assertThat(line.getValue().getProductListingOption()).isNull();
+        assertThat(result).isEqualTo(new UpsertCount(1, 0));
+    }
+
+    /** 🔴 이미 값이 있는 라인은 재동기화가 덮지 않는다 — WING 수정으로 깨진 매칭이 멀쩡한 값을 밀어낸다. */
+    @Test
+    void 기존라인의중립링크는덮어쓰지않는다() {
+        ProductListingOption stored = ProductListingOption.builder().id(55L).build();
+        givenLineExists(existingLine().toBuilder().productListingOption(stored).build());
+
+        upserter.upsertBox(account, box(oneLineBox()));
+
+        ArgumentCaptor<OrderLine> line = ArgumentCaptor.forClass(OrderLine.class);
+        verify(orderLineRepository).save(line.capture());
+        assertThat(line.getValue().getProductListingOption()).isSameAs(stored);
+        verify(productListingOptionRepository, never()).findByPlatformOptionId(any());
     }
 
     @Test

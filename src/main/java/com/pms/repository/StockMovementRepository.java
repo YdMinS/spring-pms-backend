@@ -4,6 +4,7 @@ import com.pms.domain.StockMovement;
 import com.pms.dto.response.PurchaseCandidateView;
 import com.pms.dto.response.ReturnCandidateView;
 import com.pms.dto.response.StockBalanceView;
+import com.pms.dto.response.StockOutSumView;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -11,6 +12,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -62,6 +64,26 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
                                     @Param("sellerId") Long sellerId,
                                     @Param("from") LocalDate from,
                                     @Param("to") LocalDate to);
+
+    /**
+     * Already-confirmed outbound quantity per (order line × product) (FEATURE_2609_28 / PLAN D12).
+     *
+     * <p>🔴 This sum is the ONE source of truth for "how much of this line already left"
+     * ({@code STOCK_OUT} rows). It is deliberately NOT derived from {@code order_line.cancel_qty}:
+     * the return sync raises that column ({@code CoupangReturnSyncServiceImpl:369}), so a cancel-based
+     * calculation would silently restore stock nobody put back on a shelf.
+     *
+     * <p>⚠️ The quantity comes back NEGATIVE, exactly as stored. The service flips it for the screen.
+     */
+    @Query("""
+            select new com.pms.dto.response.StockOutSumView(
+                m.orderLine.id, m.product.id, coalesce(sum(m.quantity), 0L))
+            from StockMovement m
+            where m.movementType = com.pms.domain.StockMovementType.STOCK_OUT
+              and m.orderLine.id in :orderLineIds
+            group by m.orderLine.id, m.product.id
+            """)
+    List<StockOutSumView> findStockOutSums(@Param("orderLineIds") Collection<Long> orderLineIds);
 
     /**
      * Purchases still waiting to be checked in (Step 6-1), rebuilt on the purchase ledger itself

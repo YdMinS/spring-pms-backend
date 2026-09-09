@@ -23,6 +23,17 @@ public interface MasterProductOptionItemRepository extends JpaRepository<MasterP
     List<MasterProductOptionItem> findByOptionIdIn(Collection<Long> optionIds);
 
     /**
+     * Same batch, with {@code product} and {@code option} fetched (FEATURE_2609_28 / PLAN D13).
+     *
+     * <p>BOM expansion reads the component's NAME for every item, and the parent option's id to group
+     * the rows back per option. With {@code open-in-view=false} and a plain LAZY item that is one extra
+     * query per component — the join fetch keeps a whole outbound screen at a single statement.
+     */
+    @Query("select i from MasterProductOptionItem i "
+            + "join fetch i.product join fetch i.option where i.option.id in :optionIds")
+    List<MasterProductOptionItem> findWithProductByOptionIdIn(@Param("optionIds") Collection<Long> optionIds);
+
+    /**
      * Drop every item row of one option (96 / ⑦). ⚠️ <b>Bulk JPQL on purpose</b> — the derived
      * {@code deleteByOptionId} loaded the rows and queued {@code em.remove}, and Hibernate's ActionQueue runs
      * INSERTs before DELETEs on flush, so the "replace = delete + re-insert" contract above blew up on
