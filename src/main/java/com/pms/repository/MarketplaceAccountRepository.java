@@ -5,6 +5,7 @@ import com.pms.domain.Platform;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -38,4 +39,16 @@ public interface MarketplaceAccountRepository extends JpaRepository<MarketplaceA
     // 카테고리 조회(FEATURE_2608_06 / 45): sellerId 미지정 시 플랫폼의 임의 활성 계정 1건(HMAC 자격증명용).
     // @TenantId 로 현재 테넌트 자동 스코프.
     Optional<MarketplaceAccount> findFirstByPlatformAndIsActiveTrue(Platform platform);
+
+    /**
+     * 매출·정산 화면의 채널 축 — 판매자 필터만 받고 <b>비활성 계정도 포함</b>한다
+     * (FEATURE_2609_30 / 03 ②).
+     *
+     * <p>⚠️ {@code findByIsActiveTrue} 를 재사용하지 않는 이유: 계정을 비활성으로 돌려도 그 채널로 판
+     * 과거 매출과 아직 받지 못한 정산은 사라지지 않는다. 활성만 걸면 그 돈이 화면에서 조용히 증발한다.
+     */
+    @EntityGraph(attributePaths = "seller")
+    @Query("select a from MarketplaceAccount a where (:sellerId is null or a.seller.id = :sellerId) "
+            + "order by a.id asc")
+    List<MarketplaceAccount> findAllWithSeller(@Param("sellerId") Long sellerId);
 }

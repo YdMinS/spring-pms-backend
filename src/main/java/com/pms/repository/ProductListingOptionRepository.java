@@ -1,6 +1,7 @@
 package com.pms.repository;
 
 import com.pms.domain.ProductListingOption;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -54,4 +55,16 @@ public interface ProductListingOptionRepository extends JpaRepository<ProductLis
      * @param productListingId ID of the parent ProductListing
      */
     void deleteByProductListingId(Long productListingId);
+
+    /**
+     * Bulk-load options with everything the channel-config resolver needs, in ONE query
+     * (FEATURE_2609_30 / 03 Step 3).
+     *
+     * <p>⚠️ Commission / delivery / box are resolved per cell, and the sales report touches many options at
+     * once. Loading them one by one — or letting {@code productListing} / {@code masterProductOption} lazy-load
+     * per row — is an immediate N+1 on a report that already scans a whole month.
+     */
+    @EntityGraph(attributePaths = {"productListing", "productListing.masterProduct",
+            "masterProductOption", "masterProductOption.masterProduct"})
+    List<ProductListingOption> findWithConfigByIdIn(Collection<Long> ids);
 }

@@ -2,7 +2,10 @@ package com.pms.repository;
 
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.SettlementPayout;
+import com.pms.domain.SettlementPayoutStatus;
+import com.pms.domain.SettlementReconStatus;
 import com.pms.domain.SettlementType;
+import com.pms.dto.response.PayoutAggregate;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -49,4 +52,38 @@ public interface SettlementPayoutRepository extends JpaRepository<SettlementPayo
     /** 계정 단위 존재 확인(적재 로그·테스트용). */
     List<SettlementPayout> findByMarketplaceAccountAndRevenueRecognitionMonth(
             MarketplaceAccount marketplaceAccount, String revenueRecognitionMonth);
+
+    /**
+     * 채널(계정)별 지급 묶음 집계 — 매출 화면의 "받을 돈" · 입금 확정 · 배지 (FEATURE_2609_30 / 03 ①②).
+     *
+     * <p>🔴 {@code pendingPayout} 에 <b>기간 조건이 없다</b>(D4). 지급 묶음의 축은 매출인식일이라 판매일
+     * 기간과 겹치지 않는다 — 판매일 기간으로 자르면 "받을 돈"이 실제 받을 금액보다 작게 나온다.
+     * 기간을 타는 것은 {@code paidAmount}(현금주의) 하나뿐이고, 기준일도 {@code finalSettlementDate} 다.
+     *
+     * <p>⚠️ {@code recon_status = AMOUNT_ONLY}(추가정산·유보금)를 제외하지 않는다 — 라인이 없을 뿐
+     * 실제로 받을 돈이다(D5-4·D5-5).
+     *
+     * <p>⚠️ {@code case ... then p.finalAmount end}(else 없음)로 두는 이유: {@code else 0} 을 쓰면
+     * 정수 리터럴과 DECIMAL 이 한 CASE 에 섞인다. 합계가 없으면 {@code coalesce} 가 0 으로 받는다.
+     */
+    @Query("""
+            select new com.pms.dto.response.PayoutAggregate(
+                a.id,
+                coalesce(sum(case when p.status = :scheduled then p.finalAmount end), 0),
+                coalesce(sum(case when p.status = :paid
+                                   and p.finalSettlementDate >= :from
+                                   and p.finalSettlementDate <= :to then p.finalAmount end), 0),
+                sum(case when p.reconStatus = :unreconciled then 1 else 0 end),
+                sum(case when p.reconStatus = :amountOnly then 1 else 0 end))
+            from SettlementPayout p join p.marketplaceAccount a
+            where (:sellerId is null or a.seller.id = :sellerId)
+            group by a.id
+            """)
+    List<PayoutAggregate> aggregateByAccount(@Param("sellerId") Long sellerId,
+                                             @Param("from") LocalDate from,
+                                             @Param("to") LocalDate to,
+                                             @Param("scheduled") SettlementPayoutStatus scheduled,
+                                             @Param("paid") SettlementPayoutStatus paid,
+                                             @Param("unreconciled") SettlementReconStatus unreconciled,
+                                             @Param("amountOnly") SettlementReconStatus amountOnly);
 }

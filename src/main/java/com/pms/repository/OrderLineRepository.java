@@ -3,6 +3,7 @@ package com.pms.repository;
 import com.pms.domain.OrderLine;
 import com.pms.domain.OrderStatus;
 import com.pms.dto.response.CostBasisBreakdown;
+import com.pms.dto.response.SalesLineGroup;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -150,4 +151,54 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
             """)
     List<CostBasisBreakdown> findCostBasisBreakdown(@Param("from") LocalDateTime from,
                                                     @Param("to") LocalDateTime to);
+
+    // ── 매출 집계 (FEATURE_2609_30 / PLAN D14 · 03) ─────────────────────────
+
+    /**
+     * 기간 매출을 <b>계정 × 채널 옵션</b> 단위로 접어서 돌려준다 — 매출 API 3개가 공유하는 유일한 집계 경로.
+     *
+     * <p>🔴 <b>라인을 자바로 가져와 더하지 않는다.</b> 주문량은 계속 늘지만 팔린 옵션 수는 그렇지 않다.
+     * 판매자/채널/상품 축은 전부 이 결과를 메모리에서 다시 접어 만든다(그룹 키만 바뀐다).
+     *
+     * <p>정의(PLAN D14 · 03 Step 1):
+     * <pre>
+     *   netQty  = orderQty − cancelQty        🔴 holdQty(환불대기)는 <b>빼지 않는다</b>
+     *   gross   = Σ (unitPrice × netQty)      할인 <b>전</b>
+     *   discount= Σ (discountAmount × netQty / orderQty)   유효수량 비례 안분
+     * </pre>
+     *
+     * <p>⚠️ {@code left join} 이 세 개인 이유: 채널 옵션이 없는 라인(백필 누락·WING 수정분)을 <b>버리지 않기</b>
+     * 위해서다. inner join 으로 바꾸면 이 목록의 합계가 판매자 요약과 조용히 어긋난다.
+     *
+     * <p>⚠️ {@code nullif(l.orderQty, 0)} 는 0으로 나누는 것을 막는다 — 안분의 분모가 데이터에 달려 있다.
+     * {@code missingCostLines} 는 <b>유효수량이 남은</b> 라인만 센다: 전량 취소된 라인은 애초에 나가지 않아
+     * 원가 스냅샷이 없는 것이 정상인데, 그것까지 세면 취소 한 건에 순이익 전체가 {@code null} 이 된다.
+     *
+     * @param toExclusive 상한 <b>배타</b>. 종료일의 23:59:59 를 만들지 않기 위해 다음 날 00:00 을 넘긴다
+     */
+    @Query("""
+            select new com.pms.dto.response.SalesLineGroup(
+                s.id, s.sellerName, a.id, plo.id, mp.id, mp.name,
+                sum(l.orderQty - l.cancelQty),
+                sum(l.holdQty),
+                sum(coalesce(l.unitPrice, 0) * (l.orderQty - l.cancelQty)),
+                sum(coalesce(l.discountAmount, 0) * (l.orderQty - l.cancelQty)
+                        / coalesce(nullif(l.orderQty, 0), 1)),
+                sum(coalesce(l.costAmount, 0) * (l.orderQty - l.cancelQty)
+                        / coalesce(nullif(l.orderQty, 0), 1)),
+                sum(case when l.costAmount is null and l.orderQty > l.cancelQty then 1 else 0 end))
+            from OrderLine l
+              join l.order o
+              join o.marketplaceAccount a
+              join a.seller s
+              left join l.productListingOption plo
+              left join plo.masterProductOption mpo
+              left join mpo.masterProduct mp
+            where o.orderedAt >= :from and o.orderedAt < :toExclusive
+              and (:sellerId is null or s.id = :sellerId)
+            group by s.id, s.sellerName, a.id, plo.id, mp.id, mp.name
+            """)
+    List<SalesLineGroup> aggregateSales(@Param("from") LocalDateTime from,
+                                        @Param("toExclusive") LocalDateTime toExclusive,
+                                        @Param("sellerId") Long sellerId);
 }
