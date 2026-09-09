@@ -13,6 +13,7 @@ import com.pms.domain.PurchaseRecord;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.ShoppingListItem;
 import com.pms.dto.request.ManualItemRequest;
+import com.pms.dto.request.PurchaseRecordRequest;
 import com.pms.dto.response.PurchaseListResponse;
 import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.OrderLineRepository;
@@ -28,12 +29,14 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -216,5 +219,100 @@ class PurchaseListServiceTest {
         verify(shoppingListItemRepository).save(captor.capture());
         assertThat(captor.getValue().getManualQty()).isEqualTo(7);   // 4 + 3
         verify(productRepository, never()).findById(anyLong());      // 신규 product 조회 없음
+    }
+
+    // --- 매입 금액 (FEATURE_2609_28 / PLAN D1~D3) ---
+
+    private ShoppingListItem purchaseItem() {
+        return ShoppingListItem.builder()
+                .id(1L).orderLine(paidLine(10L, 8)).product(product(100L, "A"))
+                .autoQty(8).manualQty(0).build();
+    }
+
+    /** addPurchase 를 태우고 저장된 PurchaseRecord 를 잡아 온다 — 계산 결과는 save() 인자로만 확인 가능하다. */
+    private PurchaseRecord savedPurchase(PurchaseRecordRequest request) {
+        given(shoppingListItemRepository.findById(1L)).willReturn(Optional.of(purchaseItem()));
+
+        service.addPurchase(1L, request);
+
+        ArgumentCaptor<PurchaseRecord> captor = ArgumentCaptor.forClass(PurchaseRecord.class);
+        verify(purchaseRecordRepository).save(captor.capture());
+        return captor.getValue();
+    }
+
+    private PurchaseRecordRequest req(int quantity, String total, String unit, Boolean reflect) {
+        return new PurchaseRecordRequest(LocalDate.now(), quantity,
+                total == null ? null : new BigDecimal(total),
+                unit == null ? null : new BigDecimal(unit),
+                reflect);
+    }
+
+    @Test
+    void testAddPurchaseWithTotalDerivesUnitPrice() {
+        PurchaseRecord saved = savedPurchase(req(3, "12000", null, null));
+
+        assertThat(saved.getTotalAmount()).isEqualByComparingTo("12000.00");
+        assertThat(saved.getUnitPrice()).isEqualByComparingTo("4000.0000");
+    }
+
+    @Test
+    void testAddPurchaseWithUnitDerivesTotal() {
+        PurchaseRecord saved = savedPurchase(req(3, null, "4000", null));
+
+        assertThat(saved.getTotalAmount()).isEqualByComparingTo("12000.00");
+        assertThat(saved.getUnitPrice()).isEqualByComparingTo("4000.0000");
+    }
+
+    /** 요점: 나눠떨어지지 않아도 실지불액(총액)은 흔들리지 않는다(D1). */
+    @Test
+    void testAddPurchaseWithIndivisibleTotalKeepsTotalExact() {
+        PurchaseRecord saved = savedPurchase(req(3, "10000", null, null));
+
+        assertThat(saved.getTotalAmount()).isEqualByComparingTo("10000.00");
+        assertThat(saved.getUnitPrice()).isEqualByComparingTo("3333.3333");
+    }
+
+    @Test
+    void testAddPurchaseWithBothAmountsRejected() {
+        given(shoppingListItemRepository.findById(1L)).willReturn(Optional.of(purchaseItem()));
+
+        assertThatThrownBy(() -> service.addPurchase(1L, req(3, "12000", "4000", null)))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(purchaseRecordRepository, never()).save(any());
+    }
+
+    @Test
+    void testAddPurchaseWithZeroQuantityRejected() {
+        given(shoppingListItemRepository.findById(1L)).willReturn(Optional.of(purchaseItem()));
+
+        assertThatThrownBy(() -> service.addPurchase(1L, req(0, "12000", null, null)))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(purchaseRecordRepository, never()).save(any());
+    }
+
+    /** 정정 행: 수량·금액 모두 음수 → 단가는 양수로 남는다. */
+    @Test
+    void testAddPurchaseWithNegativeQuantityKeepsPositiveUnitPrice() {
+        PurchaseRecord saved = savedPurchase(req(-3, "-12000", null, null));
+
+        assertThat(saved.getQuantity()).isEqualTo(-3);
+        assertThat(saved.getTotalAmount()).isEqualByComparingTo("-12000.00");
+        assertThat(saved.getUnitPrice()).isEqualByComparingTo("4000.0000");
+    }
+
+    @Test
+    void testAddPurchaseDefaultsReflectToBasePriceTrue() {
+        assertThat(savedPurchase(req(3, "12000", null, null)).getReflectToBasePrice()).isTrue();
+        assertThat(PurchaseRecord.of(purchaseItem(), req(3, "12000", null, false)).getReflectToBasePrice()).isFalse();
+    }
+
+    /** 금액 미상 행: null 을 0 으로 치환하지 않는다. */
+    @Test
+    void testAddPurchaseWithoutAmountSaves() {
+        PurchaseRecord saved = savedPurchase(req(5, null, null, null));
+
+        assertThat(saved.getQuantity()).isEqualTo(5);
+        assertThat(saved.getTotalAmount()).isNull();
+        assertThat(saved.getUnitPrice()).isNull();
     }
 }

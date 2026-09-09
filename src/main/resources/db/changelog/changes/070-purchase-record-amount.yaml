@@ -1,0 +1,40 @@
+# Purchase amount (FEATURE_2609_28 / PLAN D1~D3).
+#   total_amount is the SOURCE OF TRUTH — it is what was actually paid. unit_price is derived
+#   (total / quantity) and stored only so FIFO and base-price propagation can read it directly.
+#   Deriving the other way round breaks the sum: 10,000 / 3 -> 3,333 * 3 = 9,999.
+# ⚠️ Both are nullable: rows recorded before this feature have no amount, and backfilling them
+#    would be inventing data. Consumers must treat null as "unknown", not as zero.
+# ⚠️ reflect_to_base_price is BOOLEAN here and re-typed to BIT(1) for MySQL below — Liquibase's
+#    abstract BOOLEAN materializes as TINYINT while Hibernate 6 expects BIT, and ddl-auto: validate
+#    then crashes the app at boot. Same 006/058/064 pattern.
+databaseChangeLog:
+
+  - changeSet:
+      id: 070-purchase-record-amount
+      author: oclyx
+      comment: "FEATURE_2609_28: purchase_record total_amount + unit_price + reflect_to_base_price."
+      changes:
+        - addColumn:
+            tableName: purchase_record
+            columns:
+              - column: { name: total_amount, type: "DECIMAL(15,2)" }
+              - column: { name: unit_price, type: "DECIMAL(15,4)" }
+              - column: { name: reflect_to_base_price, type: BOOLEAN, defaultValueBoolean: true, constraints: { nullable: false } }
+      rollback:
+        - dropColumn: { tableName: purchase_record, columnNames: total_amount, unit_price, reflect_to_base_price }
+
+  - changeSet:
+      id: 070-purchase-record-boolean-bit-type
+      author: oclyx
+      dbms: mysql
+      comment: "purchase_record.reflect_to_base_price TINYINT -> BIT(1) for Hibernate validation."
+      changes:
+        - modifyDataType: { tableName: purchase_record, columnName: reflect_to_base_price, newDataType: BIT(1) }
+        # MySQL MODIFY drops NOT NULL and the default, so re-declare both.
+        - addNotNullConstraint:
+            tableName: purchase_record
+            columnName: reflect_to_base_price
+            columnDataType: BIT(1)
+            defaultNullValue: "1"
+      rollback:
+        - modifyDataType: { tableName: purchase_record, columnName: reflect_to_base_price, newDataType: BOOLEAN }

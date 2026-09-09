@@ -137,3 +137,5 @@ databaseChangeLog:
       file: db/changelog/changes/068-drop-order-item.yaml
   - include:
       file: db/changelog/changes/069-coupang-shipping-config.yaml
+  - include:
+      file: db/changelog/changes/070-purchase-record-amount.yaml
