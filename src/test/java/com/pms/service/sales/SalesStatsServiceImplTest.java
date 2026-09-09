@@ -123,7 +123,7 @@ class SalesStatsServiceImplTest {
         givenAccounts(coupang);
         given(settlementPayoutRepository.aggregateByAccount(any(), any(), any(), any(), any(), any(), any()))
                 .willReturn(List.of(new PayoutAggregate(10L, new BigDecimal("1804000"),
-                        BigDecimal.ZERO, 2L, 1L)));
+                        BigDecimal.ZERO, 2L, 1L, 5L)));
         given(orderLineRepository.aggregateSales(any(), any(), any())).willReturn(List.of());
 
         SellerSalesResponse wide = service.summary(FROM, TO, null).get(0);
@@ -140,7 +140,7 @@ class SalesStatsServiceImplTest {
         givenAccounts(coupang);
         given(settlementPayoutRepository.aggregateByAccount(any(), any(), any(), any(), any(), any(), any()))
                 .willReturn(List.of(new PayoutAggregate(10L, new BigDecimal("1804000"),
-                        new BigDecimal("900000"), 2L, 1L)));
+                        new BigDecimal("900000"), 2L, 1L, 5L)));
         given(orderLineRepository.aggregateSales(any(), any(), any())).willReturn(List.of());
 
         assertThat(service.byChannel(FROM, TO, null)).singleElement()
@@ -149,6 +149,31 @@ class SalesStatsServiceImplTest {
                     assertThat(row.pendingPayout()).isEqualByComparingTo("1804000");
                     assertThat(row.amountOnlyPayouts()).isEqualTo(1L);
                     assertThat(row.platform()).isEqualTo(Platform.COUPANG);
+                    assertThat(row.payoutCount()).isEqualTo(5L);
+                });
+    }
+
+    /**
+     * 🔴 정산 묶음이 하나도 없는 채널은 {@code payoutCount = 0} 이어야 한다.
+     *
+     * <p>없으면 화면이 "금액 일치"(전부 맞음)와 "정산 이력 없음"(아직 안 들어옴)을 구분하지 못한다 —
+     * 둘 다 {@code unreconciledPayouts = 0} 이라 정산 전 채널에 초록 배지가 뜬다.
+     * 집계 쿼리는 {@code group by} 라 묶음이 없는 계정의 행을 아예 내주지 않으므로, 그 빈자리를
+     * {@link PayoutAggregate#empty} 가 0 으로 메운다.
+     */
+    @Test
+    void channelWithNoPayoutsReportsZeroCount() {
+        givenAccounts(coupang);
+        given(settlementPayoutRepository.aggregateByAccount(any(), any(), any(), any(), any(), any(), any()))
+                .willReturn(List.of());
+        given(orderLineRepository.aggregateSales(any(), any(), any())).willReturn(List.of());
+
+        assertThat(service.byChannel(FROM, TO, null)).singleElement()
+                .satisfies(row -> {
+                    assertThat(row.payoutCount()).isZero();
+                    // 정산이 없다는 것과 차이가 없다는 것은 다르다 — 둘을 같은 값으로 뭉개면 안 된다.
+                    assertThat(row.unreconciledPayouts()).isZero();
+                    assertThat(row.pendingPayout()).isEqualByComparingTo("0");
                 });
     }
 

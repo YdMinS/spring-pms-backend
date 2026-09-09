@@ -74,7 +74,8 @@ public interface SettlementPayoutRepository extends JpaRepository<SettlementPayo
                                    and p.finalSettlementDate >= :from
                                    and p.finalSettlementDate <= :to then p.finalAmount end), 0),
                 sum(case when p.reconStatus = :unreconciled then 1 else 0 end),
-                sum(case when p.reconStatus = :amountOnly then 1 else 0 end))
+                sum(case when p.reconStatus = :amountOnly then 1 else 0 end),
+                count(p))
             from SettlementPayout p join p.marketplaceAccount a
             where (:sellerId is null or a.seller.id = :sellerId)
             group by a.id
