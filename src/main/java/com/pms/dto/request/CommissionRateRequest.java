@@ -35,7 +35,8 @@ public class CommissionRateRequest {
 
     @NotBlank(message = "Platform is required")
     @Schema(
-        description = "Platform name (e.g., COUPANG, GMARKET, NAVER)",
+        // Only the Platform enum constants are accepted; anything else is a 400 from Platform.from.
+        description = "Platform name (COUPANG or NAVER)",
         example = "COUPANG",
         required = true
     )
