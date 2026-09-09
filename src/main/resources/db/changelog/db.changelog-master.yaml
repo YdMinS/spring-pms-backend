@@ -147,3 +147,11 @@ databaseChangeLog:
       file: db/changelog/changes/077-purchase-record-product-seller.yaml
   - include:
       file: db/changelog/changes/078-stock-movement-seller.yaml
+  - include:
+      file: db/changelog/changes/079-order-line-listing-option.yaml
+  - include:
+      file: db/changelog/changes/080-drop-stock-log.yaml
+  - include:
+      file: db/changelog/changes/081-order-line-cost-snapshot.yaml
+  - include:
+      file: db/changelog/changes/082-price-change-log.yaml

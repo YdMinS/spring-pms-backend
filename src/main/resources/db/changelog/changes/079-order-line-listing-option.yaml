@@ -1,0 +1,109 @@
+# Neutral link from an order line to the channel listing option (FEATURE_2609_28 / PLAN D15).
+#   Until now the option match key was read from CoupangOrderLine.vendorItemId, which inverts the
+#   ownership direction: the neutral object had to know about a platform mirror row. Orders from any
+#   other platform have no mirror row, so BOM expansion silently skipped them — tolerable while it
+#   only hid rows from the purchase list, NOT tolerable once stock deduction depends on it.
+#
+# ⚠️ Numbered 079, not the 072 the plan reserved: FEATURE_2609_29 already took 076~078, and a 072
+#    included after 078 would make the master changelog order unreadable (PLAN "Changeset" note).
+#
+# ⚠️ Nullable on purpose. Rows that predate this column and rows whose option cannot be matched stay
+#    null, and callers fall back to the old path. Making it NOT NULL would block order sync.
+# ⚠️ The backfill FILLS ONLY, never overwrites: WING-side product edits can break name/id matching
+#    (project_wing_edit_desync), and overwriting a good value with a bad match is unrecoverable.
+# ⚠️ Only additive DDL here — no baseline-created constraint is dropped by name, so the
+#    information_schema split that 077 needed does not apply (PLAN "baseline 제약 이름" warning).
+#
+# ⚠️ Run these BEFORE applying, on the target DB:
+#     -- duplicates would make the backfill pick an arbitrary option:
+#     SELECT platform_option_id, COUNT(*) FROM product_listing_option
+#      WHERE platform_option_id IS NOT NULL GROUP BY 1 HAVING COUNT(*) > 1;
+#     -- how many rows the backfill will fill (0 means the matching rule is wrong, NOT "nothing to do"):
+#     SELECT COUNT(*) FROM order_line ol JOIN coupang_order_line col ON col.order_line_id = ol.id
+#       JOIN product_listing_option plo ON plo.platform_option_id = col.vendor_item_id
+#       JOIN product_listing pl ON pl.id = plo.product_listing_id AND pl.tenant_id = ol.tenant_id
+#      WHERE ol.product_listing_option_id IS NULL;
+#
+# ⚠️ The tenant guard goes through product_listing: product_listing_option carries NO tenant_id of its
+#    own (isolation flows through its parent listing). Matching on the option alone would let one
+#    tenant's vendorItemId fill another tenant's order line.
+databaseChangeLog:
+
+  - changeSet:
+      id: 079-order-line-listing-option
+      author: oclyx
+      comment: "FEATURE_2609_28: order_line.product_listing_option_id (neutral option link)."
+      changes:
+        - addColumn:
+            tableName: order_line
+            columns:
+              - column: { name: product_listing_option_id, type: BIGINT }
+        - addForeignKeyConstraint:
+            constraintName: fk_orderline_listingoption
+            baseTableName: order_line
+            baseColumnNames: product_listing_option_id
+            referencedTableName: product_listing_option
+            referencedColumnNames: id
+        - createIndex:
+            tableName: order_line
+            indexName: idx_orderline_listingoption
+            columns:
+              - column: { name: product_listing_option_id }
+      rollback:
+        - dropColumn: { tableName: order_line, columnName: product_listing_option_id }
+
+  - changeSet:
+      id: 079-order-line-listing-option-backfill
+      author: oclyx
+      dbms: mysql
+      comment: "One-off backfill from the Coupang mirror row. Fills only — never overwrites."
+      changes:
+        - sql:
+            sql: |
+              UPDATE order_line ol
+                 JOIN coupang_order_line col ON col.order_line_id = ol.id
+                 JOIN product_listing_option plo ON plo.platform_option_id = col.vendor_item_id
+                 JOIN product_listing pl ON pl.id = plo.product_listing_id
+                    AND pl.tenant_id = ol.tenant_id
+                 SET ol.product_listing_option_id = plo.id
+               WHERE ol.product_listing_option_id IS NULL
+      rollback:
+        - sql:
+            sql: "UPDATE order_line SET product_listing_option_id = NULL"
+
+  # The MySQL multi-table UPDATE above is not valid H2 syntax, so the empty-H2 apply check
+  # (LiquibaseChangelogApplyTest) needs the same backfill written as a correlated subquery.
+  # ⚠️ MIN(plo.id): platform_option_id carries NO unique constraint. A duplicate would blow the
+  #    subquery up with "Scalar subquery contains more than one row" and stop the migration —
+  #    forcing a deterministic pick keeps the apply moving (the duplicate count is measured above).
+  - changeSet:
+      id: 079-order-line-listing-option-backfill-h2
+      author: oclyx
+      dbms: h2
+      comment: "Same backfill, correlated-subquery form for H2."
+      changes:
+        - sql:
+            sql: |
+              UPDATE order_line ol
+                 SET ol.product_listing_option_id = (
+                       SELECT MIN(plo.id)
+                         FROM coupang_order_line col
+                         JOIN product_listing_option plo
+                           ON plo.platform_option_id = col.vendor_item_id
+                         JOIN product_listing pl
+                           ON pl.id = plo.product_listing_id
+                          AND pl.tenant_id = ol.tenant_id
+                        WHERE col.order_line_id = ol.id)
+               WHERE ol.product_listing_option_id IS NULL
+                 AND EXISTS (
+                       SELECT 1
+                         FROM coupang_order_line col
+                         JOIN product_listing_option plo
+                           ON plo.platform_option_id = col.vendor_item_id
+                         JOIN product_listing pl
+                           ON pl.id = plo.product_listing_id
+                          AND pl.tenant_id = ol.tenant_id
+                        WHERE col.order_line_id = ol.id)
+      rollback:
+        - sql:
+            sql: "UPDATE order_line SET product_listing_option_id = NULL"

@@ -8,10 +8,12 @@ import com.pms.domain.OrderLine;
 import com.pms.domain.OrderShipment;
 import com.pms.domain.OrderStatus;
 import com.pms.domain.Platform;
+import com.pms.domain.ProductListingOption;
 import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.OrderRepository;
 import com.pms.repository.OrderShipmentRepository;
+import com.pms.repository.ProductListingOptionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -64,6 +66,7 @@ public class OrderUpserter {
     private final OrderShipmentRepository orderShipmentRepository;
     private final OrderLineRepository orderLineRepository;
     private final CoupangOrderLineRepository coupangOrderLineRepository;
+    private final ProductListingOptionRepository productListingOptionRepository;
 
     /** box 1개의 orderItems 전부를 upsert. 반환 = (신규, 갱신) 건수. */
     @Transactional
@@ -200,6 +203,11 @@ public class OrderUpserter {
                     .cancelQty(cancelCount)
                     .holdQty(holdCount)
                     .itemName(itemName)
+                    // 🔴 비어 있을 때만 채운다(D15) — 재동기화가 덮으면 WING 수정으로 깨진 매칭이
+                    //    멀쩡한 값을 밀어낸다. 백필이 못 채운 과거 라인을 여기서 주워 담는 경로이기도 하다.
+                    .productListingOption(line.getProductListingOption() != null
+                            ? line.getProductListingOption()
+                            : resolveListingOption(vendorItemId))
                     .build());
             coupangOrderLineRepository.save(mirror.toBuilder()
                     .platformStatus(platformStatus)
@@ -221,6 +229,8 @@ public class OrderUpserter {
                 .lineAmount(CoupangMoney.parse(item.get("orderPrice")))
                 .discountAmount(CoupangMoney.parse(item.get("discountPrice")))
                 .platformDiscountAmount(CoupangMoney.parse(item.get("coupangDiscount")))
+                // 중립 링크는 플랫폼 어댑터가 해석한다 — 하류(BOM 전개·재고)는 거울 행을 보지 않는다(D15).
+                .productListingOption(resolveListingOption(vendorItemId))
                 .build());
 
         coupangOrderLineRepository.save(CoupangOrderLine.builder()
@@ -233,6 +243,19 @@ public class OrderUpserter {
                 .raw(rawJson)
                 .build());
         return true;
+    }
+
+    /**
+     * vendorItemId → 채널 옵션(FEATURE_2609_28 / PLAN D15). 못 찾으면 <b>null 로 두고 계속 진행</b>한다.
+     *
+     * <p>⚠️ 매칭 실패를 예외로 만들지 않는다 — 주문 동기화 전체가 멈춘다. 미매핑은 구매목록의
+     * {@code unmapped} 축과 출고 화면의 {@code unexpanded} 축이 이미 사람에게 보여준다.
+     */
+    private ProductListingOption resolveListingOption(String vendorItemId) {
+        if (vendorItemId == null || vendorItemId.isBlank()) {
+            return null;
+        }
+        return productListingOptionRepository.findByPlatformOptionId(vendorItemId).orElse(null);
     }
 
     /** 컬럼 상한(100자)을 넘는 이름은 잘라서 저장한다 — MySQL 은 초과 시 INSERT 자체가 실패한다. */

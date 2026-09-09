@@ -548,6 +548,47 @@ class LiquibaseChangelogApplyTest {
                         + "AND COLUMN_NAME = 'SELLER_ID'", String.class)).isEqualTo("NO");
     }
 
+    /** changeset 079: the order line carries its own option link, and both backfill dialects applied. */
+    @Test
+    void orderLineListingOptionApplied() {
+        // The column exists (a successful count proves it) and stays NULLABLE — a NOT NULL here would
+        // block order sync for every line whose option cannot be matched (D15).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM order_line WHERE product_listing_option_id IS NULL",
+                Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ORDER_LINE' "
+                        + "AND COLUMN_NAME = 'PRODUCT_LISTING_OPTION_ID'", String.class)).isEqualTo("YES");
+
+        // The H2 twin of the MySQL-only backfill really ran — without it this apply check would be
+        // proving nothing about the statement that moves the data (the MySQL one is skipped here).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID = "
+                        + "'079-order-line-listing-option-backfill-h2'", Integer.class)).isEqualTo(1);
+    }
+
+    /** changeset 082: price history table exists with the NOT NULL previous price that keeps creation out. */
+    @Test
+    void priceChangeLogApplied() {
+        // The table and its reference columns exist (a successful count proves them).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM price_change_log WHERE product_id IS NULL "
+                        + "AND product_listing_option_id IS NULL AND purchase_record_id IS NULL",
+                Integer.class)).isZero();
+
+        // 🔴 old_price NOT NULL is the schema-level half of "a first price is not a change": a nullable
+        // column would quietly re-open recording creations.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'PRICE_CHANGE_LOG' "
+                        + "AND COLUMN_NAME = 'OLD_PRICE'", String.class)).isEqualTo("NO");
+
+        // Deliberately absent: the channel of a selling-price row is joined at read time, never stored.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'PRICE_CHANGE_LOG' "
+                        + "AND COLUMN_NAME IN ('PLATFORM', 'LISTING_ID', 'MASTER_PRODUCT_ID')",
+                Integer.class)).isZero();
+    }
+
     @Test
     void tenantDimensionApplied() {
         // changeset 002: tenant table created + seeded with the default tenant (id=1).

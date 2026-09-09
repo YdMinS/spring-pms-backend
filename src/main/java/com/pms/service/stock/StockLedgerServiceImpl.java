@@ -4,7 +4,6 @@ import com.pms.domain.OrderClaim;
 import com.pms.domain.Product;
 import com.pms.domain.PurchaseRecord;
 import com.pms.domain.Seller;
-import com.pms.domain.StockLocation;
 import com.pms.domain.StockMovement;
 import com.pms.domain.StockMovementType;
 import com.pms.domain.StockReason;
@@ -69,7 +68,7 @@ public class StockLedgerServiceImpl implements StockLedgerService {
                 .seller(seller)
                 .movementType(type)
                 .quantity(signedQuantity(type, request.quantity()))
-                .location(resolveLocation(product))
+                .location(StockLocationPolicy.resolve(product))
                 .reason(request.reason())
                 .reasonNote(request.reasonNote())
                 .unitPrice(resolveUnitPrice(request, type, purchaseRecord))
@@ -106,15 +105,6 @@ public class StockLedgerServiceImpl implements StockLedgerService {
     @Override
     public List<ReturnCandidateView> returnCandidates() {
         return stockMovementRepository.findReturnCandidates();
-    }
-
-    /**
-     * Which fulfilment path this movement belongs to (PLAN 2609_28 D17).
-     * Today everything is our own warehouse. 3PL and supplier direct shipping will branch HERE and
-     * nowhere else — keeping the decision in one function is the entire point.
-     */
-    private StockLocation resolveLocation(Product product) {
-        return StockLocation.OWN;
     }
 
     /**

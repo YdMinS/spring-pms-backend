@@ -1,11 +1,13 @@
 package com.pms.service;
 
+import com.pms.domain.PriceChangeReason;
 import com.pms.domain.Product;
 import com.pms.dto.request.CreateProductRequest;
 import com.pms.dto.request.UpdateProductRequest;
 import com.pms.dto.response.ProductResponse;
 import com.pms.fixture.ProductTestFixture;
 import com.pms.repository.ProductRepository;
+import com.pms.service.price.PriceHistoryRecorder;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,6 +37,9 @@ public class ProductServiceTest {
 
     @Mock
     private ProductRepository productRepository;
+
+    @Mock
+    private PriceHistoryRecorder priceHistoryRecorder;
 
     @InjectMocks
     private ProductServiceImpl productService;
@@ -622,6 +627,44 @@ public class ProductServiceTest {
 
         verify(productRepository).findById(productId);
         verify(productRepository).save(any(Product.class));
+    }
+
+    // ==================== 가격 변경 이력 훅 ② (PLAN 2609_28 D23) ====================
+
+    /**
+     * 🔴 역산 불가 구멍을 메우는 훅: 화면에서 직접 고친 원가는 purchase_record 로 되짚을 수 없다.
+     */
+    @Test
+    @DisplayName("Should record a PRODUCT_EDIT cost change when the price field is sent")
+    public void testProductEditRecordsProductEdit() {
+        Long productId = 1L;
+        Product existingProduct = ProductTestFixture.createProduct(productId);   // price 999.99
+        UpdateProductRequest updateRequest = ProductTestFixture.createUpdateRequest();   // price 1299.99
+
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(existingProduct));
+        when(productRepository.save(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        productService.updateProduct(productId, updateRequest);
+
+        verify(priceHistoryRecorder).recordProductCost(any(Product.class),
+                eq(new BigDecimal("999.99")), eq(new BigDecimal("1299.99")),
+                eq(PriceChangeReason.PRODUCT_EDIT), isNull());
+    }
+
+    @Test
+    @DisplayName("Should record nothing when the update never mentions the price")
+    public void testProductEditWithoutPriceChangeRecordsNothing() {
+        Long productId = 1L;
+        Product existingProduct = ProductTestFixture.createProduct(productId);
+        UpdateProductRequest nameOnly = UpdateProductRequest.builder()
+                .productName(java.util.Optional.of("이름만 변경")).build();
+
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(existingProduct));
+        when(productRepository.save(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        productService.updateProduct(productId, nameOnly);
+
+        verifyNoInteractions(priceHistoryRecorder);
     }
 
     // ==================== Phase 2-3 Cycle 2: testUpdateProduct_PartialUpdate ====================

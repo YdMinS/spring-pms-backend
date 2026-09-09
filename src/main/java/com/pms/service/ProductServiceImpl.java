@@ -1,11 +1,13 @@
 package com.pms.service;
 
+import com.pms.domain.PriceChangeReason;
 import com.pms.domain.Product;
 import com.pms.dto.request.CreateProductRequest;
 import com.pms.dto.request.UpdateProductRequest;
 import com.pms.dto.response.ProductResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.ProductRepository;
+import com.pms.service.price.PriceHistoryRecorder;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -33,6 +35,7 @@ import java.math.BigDecimal;
 @Transactional(readOnly = true)
 public class ProductServiceImpl implements ProductService {
     private final ProductRepository productRepository;
+    private final PriceHistoryRecorder priceHistoryRecorder;
     private static final String[] VALID_NET_CONTENT_UNITS = {"KG", "G", "L", "ML"};
     private static final int DEFAULT_PAGE_SIZE = 20;
 
@@ -114,6 +117,11 @@ public class ProductServiceImpl implements ProductService {
         // Validate updates
         request.getPrice().ifPresent(this::validatePrice);
 
+        // Price history hook ② (PLAN 2609_28 D23) — captured BEFORE the immutable rebuild below.
+        // This is the hole that purchase_record cannot fill: a cost edited by hand here leaves no
+        // other trace at all.
+        BigDecimal oldPrice = product.getPrice();
+
         // Get final unit and net content after merging with existing product
         String finalUnit = request.getNetContentUnit().orElse(product.getNetContentUnit());
         String finalNetContent = request.getNetContent().orElse(product.getNetContent());
@@ -136,6 +144,10 @@ public class ProductServiceImpl implements ProductService {
 
         // Save updated product
         Product saved = productRepository.save(updated);
+        // ⚠️ Only when `price` was actually sent: Optional.empty() = field omitted, and an edit that
+        // never mentions the price is not a price change (the recorder also drops equal values).
+        request.getPrice().ifPresent(newPrice -> priceHistoryRecorder.recordProductCost(
+                saved, oldPrice, newPrice, PriceChangeReason.PRODUCT_EDIT, null));
         return mapToResponse(saved);
     }
 

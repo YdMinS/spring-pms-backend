@@ -2,6 +2,7 @@ package com.pms.repository;
 
 import com.pms.domain.OrderLine;
 import com.pms.domain.OrderStatus;
+import com.pms.dto.response.CostBasisBreakdown;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -9,6 +10,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -69,6 +71,36 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
             "order.marketplaceAccount.seller", "orderShipment"})
     Optional<OrderLine> findWithAccountAndSellerById(Long id);
 
+    // ── 출고 확인 (FEATURE_2609_28 / PLAN D11) ─────────────────────────────
+
+    /**
+     * 아직 안 나간 주문 라인 — 출고 대상 목록.
+     *
+     * <p>🔴 {@code status} 는 {@code PAID}/{@code PREPARING} 만 넘어온다(종결 상태는 작업 대상이 아니다).
+     * 전량 취소는 저장되는 상태가 아니라 파생값이므로({@code effectiveStatus()}) 서비스가 한 번 더 거른다.
+     *
+     * <p>⚠️ 판매자 필터는 {@code order → marketplaceAccount → seller} 로 해석한다(PLAN 2609_29 D4) —
+     * 재고가 판매자별로 갈리므로 출고 화면도 같은 축을 가진다.
+     *
+     * <p>⚠️ {@code @EntityGraph} 로 옵션까지 끌고 온다: {@code open-in-view=false} 라 BOM 전개가
+     * {@code productListingOption → masterProductOption} 을 라인마다 지연로딩하면 N+1 이 된다.
+     */
+    @EntityGraph(attributePaths = {"order", "order.marketplaceAccount", "order.marketplaceAccount.seller",
+            "productListingOption", "productListingOption.masterProductOption"})
+    @Query("""
+            SELECT l FROM OrderLine l
+             WHERE l.status IN :statuses
+               AND (:sellerId IS NULL OR l.order.marketplaceAccount.seller.id = :sellerId)
+             ORDER BY l.order.orderedAt ASC, l.id ASC
+            """)
+    List<OrderLine> findOutboundTargets(@Param("statuses") Collection<OrderStatus> statuses,
+                                        @Param("sellerId") Long sellerId);
+
+    /** 출고 확인 대상 단건 — 전개(옵션·마스터 옵션)와 판매자 유도에 필요한 것을 전부 즉시 로딩한다. */
+    @EntityGraph(attributePaths = {"order", "order.marketplaceAccount", "order.marketplaceAccount.seller",
+            "productListingOption", "productListingOption.masterProductOption"})
+    Optional<OrderLine> findWithListingOptionById(Long id);
+
     /**
      * id 목록으로 주문 라인 조회 — 발주처리·주문취소 전개용.
      *
@@ -76,4 +108,25 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
      */
     @EntityGraph(attributePaths = {"order", "order.marketplaceAccount", "orderShipment"})
     List<OrderLine> findWithAccountByIdIn(List<Long> ids);
+
+    /**
+     * 기간별 원가 근거 구성비 (FEATURE_2609_28 / PLAN D20) — 예: {@code 최근매입가 70% · 기준가 30%}.
+     *
+     * <p>🔴 <b>이 숫자가 FIFO 투자 여부를 결정한다.</b> 추정 등급 비중이 낮으면 FIFO 를 만들 이유가 없다.
+     *
+     * <p>⚠️ 기간 축은 주문일이 아니라 {@code costSnapshotAt}(구운 시각)이다 — 스냅샷이 없는 라인은
+     * 애초에 나가지 않은 라인이라 집계 대상이 아니고, 이 조건이 그것을 자동으로 걸러 준다.
+     *
+     * <p>⚠️ 생성자 projection 이다. {@code select l.costBasis, count(l), ...} 로 두면 {@code Object[]} 가
+     * 돌아와 record 로 받히지 않는다. {@code count(l)} 이 {@code Long} 이므로 record 필드도 {@code long}.
+     */
+    @Query("""
+            select new com.pms.dto.response.CostBasisBreakdown(
+                l.costBasis, count(l), coalesce(sum(l.costAmount), 0))
+            from OrderLine l
+            where l.costSnapshotAt between :from and :to
+            group by l.costBasis
+            """)
+    List<CostBasisBreakdown> findCostBasisBreakdown(@Param("from") LocalDateTime from,
+                                                    @Param("to") LocalDateTime to);
 }

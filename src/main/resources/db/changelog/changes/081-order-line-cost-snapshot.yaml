@@ -1,0 +1,28 @@
+# Per-line cost snapshot (FEATURE_2609_28 / PLAN D20).
+#   Cost is frozen onto the order line when goods actually leave. Joining Product.price at report
+#   time would make past profit move whenever a purchase price is edited — a June report changing
+#   in September destroys trust in every report.
+# ⚠️ All three columns are nullable: a line that never shipped has no cost yet, and that is correct —
+#    nothing left the warehouse, so nothing was consumed. There is no backfill of past lines either;
+#    the cost at that moment cannot be known now, and an invented number in a report is worse than a gap.
+# ⚠️ addColumn only — no constraint of the baseline is touched by name (PLAN 2609_28 changeset trap).
+databaseChangeLog:
+
+  - changeSet:
+      id: 081-order-line-cost-snapshot
+      author: oclyx
+      comment: "FEATURE_2609_28: order_line cost_basis + cost_amount + cost_snapshot_at."
+      changes:
+        - addColumn:
+            tableName: order_line
+            columns:
+              - column: { name: cost_basis, type: VARCHAR(20) }
+              - column: { name: cost_amount, type: "DECIMAL(15,4)" }
+              - column: { name: cost_snapshot_at, type: TIMESTAMP }
+      rollback:
+        - dropColumn:
+            tableName: order_line
+            columns:
+              - column: { name: cost_basis }
+              - column: { name: cost_amount }
+              - column: { name: cost_snapshot_at }

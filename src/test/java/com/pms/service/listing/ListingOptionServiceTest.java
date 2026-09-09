@@ -59,7 +59,15 @@ class ListingOptionServiceTest {
     @Mock private ListingChannelResolver resolver;
     @Mock private com.pms.repository.MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock private ListingChannel adapter;
+    // 2609_28/D23: real recorder over a mocked repository — the skip rules run end-to-end from the hook.
+    @Mock private com.pms.repository.PriceChangeLogRepository priceChangeLogRepository;
     @InjectMocks private ListingOptionServiceImpl service;
+
+    @org.junit.jupiter.api.BeforeEach
+    void injectPriceHistoryRecorder() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "priceHistoryRecorder",
+                new com.pms.service.price.PriceHistoryRecorder(priceChangeLogRepository));
+    }
 
     private static final Long LISTING_ID = 100L;
 
@@ -514,6 +522,37 @@ class ListingOptionServiceTest {
         ArgumentCaptor<List<ProductListingOption>> captor = ArgumentCaptor.forClass(List.class);
         verify(productListingOptionRepository).saveAll(captor.capture());
         return captor.getValue();
+    }
+
+    /** A live cell (SELLING) — a DRAFT one is skipped by the price-history recorder on purpose. */
+    private ProductListing livePricingListing() {
+        return ProductListing.builder().id(LISTING_ID).platform(Platform.COUPANG).name("셀")
+                .status(ListingStatus.SELLING)
+                .seller(com.pms.domain.Seller.builder().id(7L).sellerName("행복상회").build())
+                .build();
+    }
+
+    // 0. 가격 변경 이력 훅 ④ (PLAN 2609_28 D23): 수동 지정은 seam 밖이라 여기서만 남길 수 있다.
+    @Test
+    @SuppressWarnings("unchecked")
+    void testManualPriceRecordsManual() {
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(livePricingListing()));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, null)));
+        given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("18750.00"));
+        given(resolver.resolveOptional(Platform.COUPANG)).willReturn(Optional.of(adapter));
+
+        service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, new BigDecimal("15000"))));
+
+        ArgumentCaptor<List<com.pms.domain.PriceChangeLog>> captor = ArgumentCaptor.forClass(List.class);
+        verify(priceChangeLogRepository).saveAll(captor.capture());
+        assertThat(captor.getValue()).hasSize(1);
+        com.pms.domain.PriceChangeLog row = captor.getValue().get(0);
+        assertThat(row.getTargetType()).isEqualTo(com.pms.domain.PriceTargetType.LISTING_SELLING);
+        assertThat(row.getReason()).isEqualTo(com.pms.domain.PriceChangeReason.MANUAL);
+        assertThat(row.getOldPrice()).isEqualByComparingTo("6000");
+        assertThat(row.getNewPrice()).isEqualByComparingTo("15000");
+        assertThat(row.getListingOption().getId()).isEqualTo(1L);
     }
 
     // 1. A hand-set price is stored as-is and flagged MANUAL_OVERRIDE (so a regeneration will skip it).

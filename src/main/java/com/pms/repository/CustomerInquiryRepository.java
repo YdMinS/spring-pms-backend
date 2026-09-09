@@ -54,8 +54,8 @@ public interface CustomerInquiryRepository extends JpaRepository<CustomerInquiry
      * 목록 조회 — GET /api/inquiries. 필터 6개를 <b>nullable 파라미터 쿼리 1개</b>로 조립한다.
      *
      * ⚠️ 조합별 명명 메서드({@code findInPeriodBySellerAndAccountAndType}…)를 만들지 말 것 —
-     * 필터가 6개라 조합이 폭발한다. {@code StockLogRepository} 의 {@code (:param IS NULL OR ...)}
-     * 패턴을 그대로 쓴다(저장소에 {@code JpaSpecificationExecutor} 선례가 없다).
+     * 필터가 6개라 조합이 폭발한다. {@code (:param is null or ...)} 패턴 한 개로 조립한다
+     * (저장소에 {@code JpaSpecificationExecutor} 선례가 없다).
      *
      * @param start 문의일 하한(포함)
      * @param end   문의일 상한(<b>배타적</b>) — 당일 마지막 초에 들어온 문의를 놓치지 않기 위함
