@@ -52,4 +52,24 @@ public interface SettlementLineRepository extends JpaRepository<SettlementLine, 
     List<SettlementLine> findBySettlementPayout_IdOrderByRecognitionDateAscIdAsc(Long settlementPayoutId);
 
     long countBySettlementPayout_Id(Long settlementPayoutId);
+
+    /**
+     * 실측 수수료율 피드백의 입력 (FEATURE_2609_30 / 06 · PLAN D16) — 인식일 구간 안에서 <b>셀 옵션에
+     * 매칭된</b> 라인.
+     *
+     * <p>🔴 {@code join fetch} 라 미분류(UNMATCHED) 라인은 애초에 빠진다 — 붙일 셀이 없으면 어느
+     * 카테고리의 수수료인지 말할 수 없다. 여기서 버리는 것이 아니라 <b>제안 대상이 아닐 뿐</b>이고,
+     * 미분류는 대사 리포트(02)가 건수로 드러낸다.
+     *
+     * <p>⚠️ {@code REFUND} 를 SQL 에서 거르지 않는다 — 제외 규칙은 집계 서비스가 소유한다(같은 규칙이
+     * 쿼리와 서비스 두 곳에 있으면 한쪽만 바뀐다).
+     */
+    @Query("SELECT l FROM SettlementLine l "
+            + "JOIN FETCH l.productListingOption o "
+            + "JOIN FETCH o.productListing cell "
+            + "WHERE l.recognitionDate BETWEEN :from AND :to "
+            + "AND (:sellerId IS NULL OR l.marketplaceAccount.seller.id = :sellerId)")
+    List<SettlementLine> findMatchedForCommissionFeedback(@Param("sellerId") Long sellerId,
+                                                          @Param("from") LocalDate from,
+                                                          @Param("to") LocalDate to);
 }

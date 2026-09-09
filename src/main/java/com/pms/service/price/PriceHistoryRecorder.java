@@ -3,6 +3,7 @@ package com.pms.service.price;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.PriceChangeLog;
 import com.pms.domain.PriceChangeReason;
+import com.pms.domain.PlatformCategory;
 import com.pms.domain.PriceTargetType;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
@@ -138,6 +139,36 @@ public class PriceHistoryRecorder {
                     .build());
         }
         save(rows);
+    }
+
+    /**
+     * {@code PlatformCategory.commissionRate} moved — corrected from the ratio the marketplace
+     * actually charged (FEATURE_2609_30 / PLAN D16).
+     *
+     * <p>🔴 This records the <b>commission</b> only. It does not, and must not, touch a single
+     * selling price: the reverse-calc runs with the new rate from here on, and existing cells are
+     * repriced by the cost/price propagation screen when a person triggers it (PLAN 2609_28 D4).
+     *
+     * <p>⚠️ No reference column is written — {@code price_change_log} has no
+     * {@code platform_category_id} (see {@link PriceTargetType#PLATFORM_COMMISSION}). The category
+     * is logged so the row is still traceable through the application log.
+     *
+     * <p>⚠️ A seeding gap ({@code oldRate == null}) writes nothing: filling a missing value is a
+     * first setting, and {@code old_price} is NOT NULL for exactly that reason.
+     */
+    public void recordCommissionRate(PlatformCategory category, BigDecimal oldRate, BigDecimal newRate) {
+        if (category == null || !isMovement(oldRate, newRate)) {
+            return;
+        }
+        log.info("[PRICE-HISTORY] commission {} ({}) {} -> {}",
+                category.getId(), category.getCode(), oldRate, newRate);
+        save(List.of(PriceChangeLog.builder()
+                .targetType(PriceTargetType.PLATFORM_COMMISSION)
+                .oldPrice(oldRate)
+                .newPrice(newRate)
+                .reason(PriceChangeReason.SETTLEMENT_FEEDBACK)
+                .createdBy(currentUsername())
+                .build()));
     }
 
     /**
