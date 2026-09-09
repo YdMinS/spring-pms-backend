@@ -4,7 +4,7 @@
 #   "this order's share": when the order is cancelled or never existed (manual restock), the
 #   attribution must survive.
 #
-# 🔴 IRREVERSIBLE: 077-pr-drop-line-fk throws the order attribution away for good. The rollback
+# 🔴 IRREVERSIBLE: 077-pr-drop-line-col throws the order attribution away for good. The rollback
 #    below only recreates the column — the values CANNOT be restored.
 #
 # ⚠️ Split into 4 changesets on purpose: the backfill is MySQL-only (dbms: mysql), and a single
@@ -86,14 +86,51 @@ databaseChangeLog:
         - dropNotNullConstraint: { tableName: purchase_record, columnName: product_id, columnDataType: BIGINT }
         - dropNotNullConstraint: { tableName: purchase_record, columnName: seller_id, columnDataType: BIGINT }
 
+  # ⚠️ The FK on shopping_list_item_id carries a DIFFERENT name per environment (same trap as 002):
+  #   - empty H2 (LiquibaseChangelogApplyTest): baseline 001 really runs -> fk_purchase_record_sli.
+  #   - dev/prod MySQL: baseline was changelogSync'd (NOT executed), so the constraint was created
+  #     earlier by Hibernate ddl-auto under a generated name -> dropping by the baseline name fails
+  #     with "Can't DROP 'fk_purchase_record_sli'; check that column/key exists". The MySQL path
+  #     therefore drops by the ACTUAL name discovered from information_schema, and drops nothing
+  #     when the column carries no FK at all.
   - changeSet:
-      id: 077-pr-drop-line-fk
+      id: 077-pr-drop-line-fk-mysql
       author: oclyx
-      comment: "Drop the order-line link (D3). IRREVERSIBLE — the rollback cannot restore the values."
+      dbms: mysql
+      comment: "Drop the order-line FK by its discovered name (MySQL: the baseline name is fictional)."
+      preConditions:
+        - onFail: MARK_RAN
+        - columnExists: { tableName: purchase_record, columnName: shopping_list_item_id }
+      changes:
+        - sql: >-
+            SET @old_fk := (SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'purchase_record'
+            AND COLUMN_NAME = 'shopping_list_item_id' AND REFERENCED_TABLE_NAME IS NOT NULL LIMIT 1)
+        - sql: "SET @ddl := IF(@old_fk IS NULL, 'DO 0', CONCAT('ALTER TABLE purchase_record DROP FOREIGN KEY `', @old_fk, '`'))"
+        - sql: "PREPARE stmt FROM @ddl"
+        - sql: "EXECUTE stmt"
+        - sql: "DEALLOCATE PREPARE stmt"
+      rollback: [] # the attribution is discarded by the column drop below; nothing to restore here
+
+  - changeSet:
+      id: 077-pr-drop-line-fk-h2
+      author: oclyx
+      dbms: h2
+      comment: "Drop the order-line FK (H2 empty-DB apply check: the baseline name is the real one)."
       changes:
         - dropForeignKeyConstraint:
             baseTableName: purchase_record
             constraintName: fk_purchase_record_sli
+      rollback: []
+
+  - changeSet:
+      id: 077-pr-drop-line-col
+      author: oclyx
+      comment: "Drop the order-line link (D3). IRREVERSIBLE — the rollback cannot restore the values."
+      preConditions:
+        - onFail: MARK_RAN
+        - columnExists: { tableName: purchase_record, columnName: shopping_list_item_id }
+      changes:
         - dropColumn:
             tableName: purchase_record
             columnName: shopping_list_item_id
