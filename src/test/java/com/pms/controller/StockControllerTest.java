@@ -2,11 +2,13 @@ package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.Product;
+import com.pms.domain.Seller;
 import com.pms.domain.StockLocation;
 import com.pms.domain.StockMovement;
 import com.pms.domain.StockMovementType;
 import com.pms.domain.StockReason;
 import com.pms.repository.ProductRepository;
+import com.pms.repository.SellerRepository;
 import com.pms.repository.StockMovementRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,23 +35,34 @@ class StockControllerTest extends BaseIntegrationTest {
 
     @Autowired private ProductRepository productRepository;
     @Autowired private StockMovementRepository stockMovementRepository;
+    @Autowired private SellerRepository sellerRepository;
 
     private Long productId;
+    private Long sellerId;
 
     @BeforeEach
     void seedProduct() {
         productId = productRepository.saveAndFlush(Product.builder().productName("양말A").build()).getId();
+        sellerId = sellerRepository.saveAndFlush(Seller.builder()
+                .sellerName("셀러A").businessRegistration("111-11-11111").build()).getId();
     }
 
     private void ledger(StockMovementType type, StockReason reason, int quantity, LocalDate movedOn) {
+        ledger(sellerId, type, reason, quantity, movedOn);
+    }
+
+    private void ledger(Long owner, StockMovementType type, StockReason reason, int quantity,
+                        LocalDate movedOn) {
         stockMovementRepository.saveAndFlush(StockMovement.builder()
                 .product(productRepository.findById(productId).orElseThrow())
+                .seller(sellerRepository.findById(owner).orElseThrow())
                 .movementType(type).quantity(quantity).location(StockLocation.OWN)
                 .reason(reason).movedOn(movedOn).createdBy(ADMIN_EMAIL).build());
     }
 
     private String stockInBody() {
-        return "{\"productId\":" + productId + ",\"movementType\":\"STOCK_IN\",\"quantity\":5,"
+        return "{\"productId\":" + productId + ",\"sellerId\":" + sellerId
+                + ",\"movementType\":\"STOCK_IN\",\"quantity\":5,"
                 + "\"reason\":\"FREE\",\"movedOn\":\"" + DAY + "\"}";
     }
 
@@ -61,6 +74,7 @@ class StockControllerTest extends BaseIntegrationTest {
                         .content(stockInBody()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.quantity").value(5))
+                .andExpect(jsonPath("$.data.sellerName").value("셀러A"))
                 .andExpect(jsonPath("$.data.createdBy").value(ADMIN_EMAIL));
     }
 
@@ -113,6 +127,25 @@ class StockControllerTest extends BaseIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].productName").value("양말A"));
+    }
+
+    /** 🔴 Stock is not shared (PLAN 2609_29 D4·D5): the same product split across two sellers = 2 rows. */
+    @Test
+    void testBalancesSplitBySeller() throws Exception {
+        Long other = sellerRepository.saveAndFlush(Seller.builder()
+                .sellerName("셀러B").businessRegistration("222-22-22222").build()).getId();
+        ledger(StockMovementType.STOCK_IN, StockReason.FREE, 5, DAY);
+        ledger(other, StockMovementType.STOCK_IN, StockReason.FREE, 2, DAY);
+
+        mockMvc.perform(get(PATH + "/balances").header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2));
+
+        mockMvc.perform(get(PATH + "/balances").param("sellerId", other.toString())
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].onHand").value(2));
     }
 
     @Test

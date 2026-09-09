@@ -3,6 +3,7 @@ package com.pms.service.stock;
 import com.pms.domain.OrderClaim;
 import com.pms.domain.Product;
 import com.pms.domain.PurchaseRecord;
+import com.pms.domain.Seller;
 import com.pms.domain.StockLocation;
 import com.pms.domain.StockMovement;
 import com.pms.domain.StockMovementType;
@@ -16,6 +17,7 @@ import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
+import com.pms.repository.SellerRepository;
 import com.pms.repository.StockMovementRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
@@ -48,6 +50,7 @@ public class StockLedgerServiceImpl implements StockLedgerService {
     private final ProductRepository productRepository;
     private final PurchaseRecordRepository purchaseRecordRepository;
     private final OrderClaimRepository orderClaimRepository;
+    private final SellerRepository sellerRepository;
 
     @Override
     @Transactional
@@ -59,9 +62,11 @@ public class StockLedgerServiceImpl implements StockLedgerService {
                 .orElseThrow(() -> new ResourceNotFoundException("Product", request.productId()));
         PurchaseRecord purchaseRecord = resolvePurchaseRecord(request, type);
         OrderClaim orderClaim = resolveOrderClaim(request, type);
+        Seller seller = resolveSeller(request, type, orderClaim, purchaseRecord);
 
         StockMovement saved = stockMovementRepository.save(StockMovement.builder()
                 .product(product)
+                .seller(seller)
                 .movementType(type)
                 .quantity(signedQuantity(type, request.quantity()))
                 .location(resolveLocation(product))
@@ -77,17 +82,18 @@ public class StockLedgerServiceImpl implements StockLedgerService {
     }
 
     @Override
-    public List<StockBalanceView> balances(Long productId, String keyword) {
+    public List<StockBalanceView> balances(Long productId, Long sellerId, String keyword) {
         // Blank -> null: "%%" would look like a broken filter and is indistinguishable from
         // "user typed only spaces", which then gets reported as a bug.
-        return stockMovementRepository.findBalances(productId, blankToNull(keyword));
+        // The (product × seller) grouping itself lives in the JPQL (2609_29 D5) — this is a delegation.
+        return stockMovementRepository.findBalances(productId, sellerId, blankToNull(keyword));
     }
 
     @Override
-    public List<StockMovementView> history(Long productId, LocalDate from, LocalDate to) {
+    public List<StockMovementView> history(Long productId, Long sellerId, LocalDate from, LocalDate to) {
         LocalDate end = (to != null) ? to : LocalDate.now();
         LocalDate start = (from != null) ? from : end.minusDays(DEFAULT_HISTORY_DAYS);
-        return stockMovementRepository.findHistory(productId, start, end).stream()
+        return stockMovementRepository.findHistory(productId, sellerId, start, end).stream()
                 .map(this::toView)
                 .toList();
     }
@@ -206,6 +212,50 @@ public class StockLedgerServiceImpl implements StockLedgerService {
         };
     }
 
+    /**
+     * Whose stock moved (PLAN 2609_29 D4·D22).
+     *
+     * <table>
+     *   <tr><th>type</th><th>seller</th></tr>
+     *   <tr><td>RETURN_IN</td><td>derived from the claim's order — the screen never asks</td></tr>
+     *   <tr><td>everything else</td><td>the request's {@code sellerId}, mandatory</td></tr>
+     * </table>
+     *
+     * <p>🔴 A RETURN_IN claim can be order-unmatched ({@code orderLine == null}), and then there is
+     * nothing to derive from — the request must carry the seller instead.
+     *
+     * <p>🔴 For a PURCHASE check-in the request seller must equal the purchase record's. If the two
+     * ledgers are allowed to disagree, nobody can decide afterwards which one was right.
+     *
+     * @throws IllegalArgumentException seller missing or contradicting the purchase record (-> 400)
+     */
+    private Seller resolveSeller(StockMovementRequest request, StockMovementType type,
+                                 OrderClaim orderClaim, PurchaseRecord purchaseRecord) {
+        if (type == StockMovementType.RETURN_IN) {
+            Seller derived = sellerOfClaim(orderClaim);
+            if (derived != null) {
+                return derived;
+            }
+        }
+        if (request.sellerId() == null) {
+            throw new IllegalArgumentException("판매자를 선택하세요");
+        }
+        Seller seller = sellerRepository.findById(request.sellerId())
+                .orElseThrow(() -> new ResourceNotFoundException("Seller", request.sellerId()));
+        if (purchaseRecord != null && !purchaseRecord.getSeller().getId().equals(seller.getId())) {
+            throw new IllegalArgumentException("구매기록의 판매자와 입고 판매자가 다릅니다");
+        }
+        return seller;
+    }
+
+    /** claim -> orderLine -> order -> marketplaceAccount -> seller. null when the claim is unmatched. */
+    private Seller sellerOfClaim(OrderClaim orderClaim) {
+        if (orderClaim == null || orderClaim.getOrderLine() == null) {
+            return null;
+        }
+        return orderClaim.getOrderLine().getOrder().getMarketplaceAccount().getSeller();
+    }
+
     private PurchaseRecord resolvePurchaseRecord(StockMovementRequest request, StockMovementType type) {
         if (type != StockMovementType.STOCK_IN || request.reason() != StockReason.PURCHASE) {
             return null;
@@ -227,6 +277,8 @@ public class StockLedgerServiceImpl implements StockLedgerService {
                 m.getId(),
                 m.getProduct().getId(),
                 m.getProduct().getProductName(),
+                m.getSeller().getId(),
+                m.getSeller().getSellerName(),
                 m.getMovementType(),
                 m.getQuantity(),
                 m.getReason(),

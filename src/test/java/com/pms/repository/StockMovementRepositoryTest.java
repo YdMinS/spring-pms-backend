@@ -12,7 +12,6 @@ import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.PurchaseRecord;
 import com.pms.domain.Seller;
-import com.pms.domain.ShoppingListItem;
 import com.pms.domain.StockLocation;
 import com.pms.domain.StockMovement;
 import com.pms.domain.StockMovementType;
@@ -36,14 +35,15 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 /**
  * StockMovementRepository — the aggregate and the two "waiting to be checked in" lists.
  *
  * <p>These queries cannot be verified with mocks: what matters is the SQL itself (SUM aggregation,
- * correlated sub-queries, and above all the LEFT joins). An inner join would silently delete
- * stock-replenishment purchases and order-unmatched claims from the pickers, and then the goods
- * that physically arrived could never be entered.
+ * correlated sub-queries, the seller grouping and above all the LEFT join on the claim). An inner
+ * join would silently delete order-unmatched claims from the picker, and then the goods that
+ * physically came back could never be entered.
  */
 @DataJpaTest
 @ActiveProfiles("test")
@@ -56,10 +56,11 @@ class StockMovementRepositoryTest {
     @Autowired private TestEntityManager em;
 
     private MarketplaceAccount account;
+    private Seller seller;
 
     @BeforeEach
     void setUp() {
-        Seller seller = em.persist(Seller.builder().sellerName("셀러A").businessRegistration("111-11-11111").build());
+        seller = em.persist(Seller.builder().sellerName("셀러A").businessRegistration("111-11-11111").build());
         account = MarketplaceAccountFixture.coupangAccount(em, seller);
     }
 
@@ -73,7 +74,7 @@ class StockMovementRepositoryTest {
         em.flush();
         em.clear();
 
-        List<StockBalanceView> balances = stockMovementRepository.findBalances(null, null);
+        List<StockBalanceView> balances = stockMovementRepository.findBalances(null, null, null);
 
         assertThat(balances).singleElement()
                 .extracting(StockBalanceView::productName, StockBalanceView::onHand)
@@ -88,8 +89,38 @@ class StockMovementRepositoryTest {
         em.clear();
 
         // A negative balance means "an entry is missing" — it is a signal, not something to hide.
-        assertThat(stockMovementRepository.findBalances(null, null))
+        assertThat(stockMovementRepository.findBalances(null, null, null))
                 .singleElement().extracting(StockBalanceView::onHand).isEqualTo(-1L);
+    }
+
+    /** 🔴 Stock is not shared between sellers (2609_29 D4·D5): one product, two sellers, two rows. */
+    @Test
+    void findBalances_splitsBySeller() {
+        Product product = product("양말A");
+        Seller other = em.persist(Seller.builder()
+                .sellerName("셀러B").businessRegistration("222-22-22222").build());
+        movement(product, seller, StockMovementType.STOCK_IN, 5);
+        movement(product, other, StockMovementType.STOCK_IN, 2);
+        em.flush();
+        em.clear();
+
+        assertThat(stockMovementRepository.findBalances(null, null, null))
+                .extracting(StockBalanceView::sellerName, StockBalanceView::onHand)
+                .containsExactlyInAnyOrder(tuple("셀러A", 5L), tuple("셀러B", 2L));
+    }
+
+    @Test
+    void findBalances_filtersBySeller() {
+        Product product = product("양말A");
+        Seller other = em.persist(Seller.builder()
+                .sellerName("셀러B").businessRegistration("222-22-22222").build());
+        movement(product, seller, StockMovementType.STOCK_IN, 5);
+        movement(product, other, StockMovementType.STOCK_IN, 2);
+        em.flush();
+        em.clear();
+
+        assertThat(stockMovementRepository.findBalances(null, other.getId(), null))
+                .singleElement().extracting(StockBalanceView::onHand).isEqualTo(2L);
     }
 
     @Test
@@ -99,7 +130,7 @@ class StockMovementRepositoryTest {
         em.flush();
         em.clear();
 
-        assertThat(stockMovementRepository.findBalances(null, "양말"))
+        assertThat(stockMovementRepository.findBalances(null, null, "양말"))
                 .singleElement().extracting(StockBalanceView::productName).isEqualTo("양말A");
     }
 
@@ -108,7 +139,7 @@ class StockMovementRepositoryTest {
     @Test
     void findPurchaseCandidates_excludesFullyReceived() {
         Product product = product("양말A");
-        PurchaseRecord record = purchase(orderedItem(product), 3, new BigDecimal("4000"));
+        PurchaseRecord record = purchase(product, 3, new BigDecimal("4000"));
         received(product, record, 3);
         em.flush();
         em.clear();
@@ -119,7 +150,7 @@ class StockMovementRepositoryTest {
     @Test
     void findPurchaseCandidates_showsPartialRemaining() {
         Product product = product("양말A");
-        PurchaseRecord record = purchase(orderedItem(product), 3, new BigDecimal("4000"));
+        PurchaseRecord record = purchase(product, 3, new BigDecimal("4000"));
         received(product, record, 2);
         em.flush();
         em.clear();
@@ -133,30 +164,33 @@ class StockMovementRepositoryTest {
     @Test
     void findPurchaseCandidates_excludesCorrectionRows() {
         Product product = product("양말A");
-        purchase(orderedItem(product), -2, new BigDecimal("4000"));   // reversed purchase
+        purchase(product, -2, new BigDecimal("4000"));   // reversed purchase
         em.flush();
         em.clear();
 
         assertThat(stockMovementRepository.findPurchaseCandidates(null)).isEmpty();
     }
 
-    /** Regression: {@code shopping_list_item.order_line} is nullable (stock replenishment). */
+    /**
+     * 🔴 Regression for D3·D20: the query must stand on the purchase ledger alone. A purchase has no
+     * order at all any more, and the row still has to be pickable — with its seller as identity.
+     */
     @Test
-    void findPurchaseCandidates_includesPurchaseWithoutOrder() {
+    void findPurchaseCandidates_standsOnPurchaseRecordAlone() {
         Product product = product("양말A");
-        purchase(manualItem(product), 4, new BigDecimal("4000"));
+        purchase(product, 4, new BigDecimal("4000"));
         em.flush();
         em.clear();
 
         assertThat(stockMovementRepository.findPurchaseCandidates(null)).singleElement()
-                .extracting(PurchaseCandidateView::remainingQty, PurchaseCandidateView::externalOrderId)
-                .containsExactly(4, null);
+                .extracting(PurchaseCandidateView::remainingQty, PurchaseCandidateView::sellerName)
+                .containsExactly(4, "셀러A");
     }
 
     @Test
     void findPurchaseCandidates_keepsUnknownAmount() {
         Product product = product("양말A");
-        purchase(orderedItem(product), 2, null);
+        purchase(product, 2, null);
         em.flush();
         em.clear();
 
@@ -219,16 +253,6 @@ class StockMovementRepositoryTest {
         return em.persist(Product.builder().productName(name).price(new BigDecimal("1000")).build());
     }
 
-    private ShoppingListItem orderedItem(Product product) {
-        return em.persist(ShoppingListItem.builder()
-                .orderLine(orderLine()).product(product).autoQty(3).manualQty(0).build());
-    }
-
-    private ShoppingListItem manualItem(Product product) {
-        return em.persist(ShoppingListItem.builder()
-                .orderLine(null).product(product).autoQty(0).manualQty(4).build());
-    }
-
     private OrderLine orderLine() {
         Order order = em.persist(Order.builder()
                 .marketplaceAccount(account).platform(Platform.COUPANG)
@@ -238,9 +262,9 @@ class StockMovementRepositoryTest {
                 .orderQty(3).cancelQty(0).holdQty(0).build());
     }
 
-    private PurchaseRecord purchase(ShoppingListItem item, int quantity, BigDecimal unitPrice) {
+    private PurchaseRecord purchase(Product product, int quantity, BigDecimal unitPrice) {
         return em.persist(PurchaseRecord.builder()
-                .item(item).purchasedOn(DAY).quantity(quantity)
+                .product(product).seller(seller).purchasedOn(DAY).quantity(quantity)
                 .totalAmount(unitPrice == null ? null : unitPrice.multiply(BigDecimal.valueOf(quantity)))
                 .unitPrice(unitPrice).reflectToBasePrice(true).build());
     }
@@ -258,8 +282,12 @@ class StockMovementRepositoryTest {
     }
 
     private void movement(Product product, StockMovementType type, int quantity) {
+        movement(product, seller, type, quantity);
+    }
+
+    private void movement(Product product, Seller owner, StockMovementType type, int quantity) {
         em.persist(StockMovement.builder()
-                .product(product).movementType(type).quantity(quantity)
+                .product(product).seller(owner).movementType(type).quantity(quantity)
                 .location(StockLocation.OWN)
                 .reason(type == StockMovementType.STOCK_IN ? StockReason.FREE : StockReason.DAMAGED)
                 .movedOn(DAY).createdBy("admin@test.com").build());
@@ -267,14 +295,14 @@ class StockMovementRepositoryTest {
 
     private void received(Product product, PurchaseRecord record, int quantity) {
         em.persist(StockMovement.builder()
-                .product(product).movementType(StockMovementType.STOCK_IN).quantity(quantity)
+                .product(product).seller(seller).movementType(StockMovementType.STOCK_IN).quantity(quantity)
                 .location(StockLocation.OWN).reason(StockReason.PURCHASE).purchaseRecord(record)
                 .movedOn(DAY).createdBy("admin@test.com").build());
     }
 
     private void returned(Product product, OrderClaim claim, int quantity) {
         em.persist(StockMovement.builder()
-                .product(product).movementType(StockMovementType.RETURN_IN).quantity(quantity)
+                .product(product).seller(seller).movementType(StockMovementType.RETURN_IN).quantity(quantity)
                 .location(StockLocation.OWN).orderClaim(claim)
                 .movedOn(DAY).createdBy("admin@test.com").build());
     }

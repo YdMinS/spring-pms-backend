@@ -2,7 +2,11 @@ package com.pms.service.stock;
 
 import com.pms.domain.OrderClaim;
 import com.pms.domain.Product;
+import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Order;
+import com.pms.domain.OrderLine;
 import com.pms.domain.PurchaseRecord;
+import com.pms.domain.Seller;
 import com.pms.domain.StockLocation;
 import com.pms.domain.StockMovement;
 import com.pms.domain.StockMovementType;
@@ -11,6 +15,7 @@ import com.pms.dto.request.StockMovementRequest;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
+import com.pms.repository.SellerRepository;
 import com.pms.repository.StockMovementRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -49,12 +54,14 @@ import static org.mockito.Mockito.verify;
 class StockLedgerServiceImplTest {
 
     private static final Long PRODUCT_ID = 7L;
+    private static final Long SELLER_ID = 3L;
     private static final LocalDate MOVED_ON = LocalDate.of(2026, 9, 9);
 
     @Mock private StockMovementRepository stockMovementRepository;
     @Mock private ProductRepository productRepository;
     @Mock private PurchaseRecordRepository purchaseRecordRepository;
     @Mock private OrderClaimRepository orderClaimRepository;
+    @Mock private SellerRepository sellerRepository;
 
     @InjectMocks private StockLedgerServiceImpl service;
 
@@ -64,9 +71,18 @@ class StockLedgerServiceImplTest {
     }
 
     private static final Product PRODUCT = Product.builder().id(PRODUCT_ID).productName("양말A").build();
+    private static final Seller SELLER = Seller.builder().id(SELLER_ID).sellerName("셀러A").build();
 
-    /** Stubs the write path: product lookup + save echoing its argument back. */
+    /** Stubs the write path: product + seller lookup and save echoing its argument back. */
     private void stubSave() {
+        given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(PRODUCT));
+        given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(SELLER));
+        given(stockMovementRepository.save(any(StockMovement.class)))
+                .willAnswer(invocation -> invocation.getArgument(0));
+    }
+
+    /** Same, for the RETURN_IN path where the seller is derived instead of looked up. */
+    private void stubSaveWithoutSeller() {
         given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(PRODUCT));
         given(stockMovementRepository.save(any(StockMovement.class)))
                 .willAnswer(invocation -> invocation.getArgument(0));
@@ -80,15 +96,19 @@ class StockLedgerServiceImplTest {
 
     private StockMovementRequest stockIn(StockReason reason, int qty, BigDecimal unitPrice,
                                          Long purchaseRecordId) {
-        return new StockMovementRequest(PRODUCT_ID, StockMovementType.STOCK_IN, qty, reason, null,
-                unitPrice, null, purchaseRecordId, MOVED_ON);
+        return new StockMovementRequest(PRODUCT_ID, SELLER_ID, StockMovementType.STOCK_IN, qty, reason,
+                null, unitPrice, null, purchaseRecordId, MOVED_ON);
+    }
+
+    private PurchaseRecord purchaseRecord(Long id, Seller owner, BigDecimal unitPrice) {
+        return PurchaseRecord.builder().id(id).quantity(3).seller(owner).unitPrice(unitPrice).build();
     }
 
     @Test
     void testStockInPurchaseInheritsUnitPriceFromPurchaseRecord() {
         stubSave();
-        given(purchaseRecordRepository.findById(11L)).willReturn(Optional.of(
-                PurchaseRecord.builder().id(11L).quantity(3).unitPrice(new BigDecimal("4000.0000")).build()));
+        given(purchaseRecordRepository.findById(11L))
+                .willReturn(Optional.of(purchaseRecord(11L, SELLER, new BigDecimal("4000.0000"))));
 
         // The request carries a bogus price on purpose: the purchase ledger is the source of truth.
         service.record(stockIn(StockReason.PURCHASE, 3, new BigDecimal("99999"), 11L));
@@ -101,8 +121,8 @@ class StockLedgerServiceImplTest {
     @Test
     void testStockInPurchaseWithUnknownAmountSavesNullUnitPrice() {
         stubSave();
-        given(purchaseRecordRepository.findById(11L)).willReturn(Optional.of(
-                PurchaseRecord.builder().id(11L).quantity(3).unitPrice(null).build()));
+        given(purchaseRecordRepository.findById(11L))
+                .willReturn(Optional.of(purchaseRecord(11L, SELLER, null)));
 
         service.record(stockIn(StockReason.PURCHASE, 3, null, 11L));
 
@@ -130,7 +150,7 @@ class StockLedgerServiceImplTest {
     void testDisposalStoresNegativeQuantity() {
         stubSave();
 
-        service.record(new StockMovementRequest(PRODUCT_ID, StockMovementType.DISPOSAL, 3,
+        service.record(new StockMovementRequest(PRODUCT_ID, SELLER_ID, StockMovementType.DISPOSAL, 3,
                 StockReason.DAMAGED, null, null, null, null, MOVED_ON));
 
         // Entered as "3 discarded" — the client never sends the sign.
@@ -141,7 +161,7 @@ class StockLedgerServiceImplTest {
     void testAdjustAcceptsNegativeQuantity() {
         stubSave();
 
-        service.record(new StockMovementRequest(PRODUCT_ID, StockMovementType.ADJUST, -2,
+        service.record(new StockMovementRequest(PRODUCT_ID, SELLER_ID, StockMovementType.ADJUST, -2,
                 StockReason.COUNT_DIFF, null, null, null, null, MOVED_ON));
 
         assertThat(captureSaved().getQuantity()).isEqualTo(-2);
@@ -149,7 +169,7 @@ class StockLedgerServiceImplTest {
 
     @Test
     void testAdjustRejectsZeroQuantity() {
-        assertThatThrownBy(() -> service.record(new StockMovementRequest(PRODUCT_ID,
+        assertThatThrownBy(() -> service.record(new StockMovementRequest(PRODUCT_ID, SELLER_ID,
                 StockMovementType.ADJUST, 0, StockReason.COUNT_DIFF, null, null, null, null, MOVED_ON)))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(stockMovementRepository, never()).save(any());
@@ -164,7 +184,7 @@ class StockLedgerServiceImplTest {
 
     @Test
     void testEtcReasonRequiresNote() {
-        assertThatThrownBy(() -> service.record(new StockMovementRequest(PRODUCT_ID,
+        assertThatThrownBy(() -> service.record(new StockMovementRequest(PRODUCT_ID, SELLER_ID,
                 StockMovementType.DISPOSAL, 1, StockReason.ETC, "   ", null, null, null, MOVED_ON)))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(stockMovementRepository, never()).save(any());
@@ -172,7 +192,7 @@ class StockLedgerServiceImplTest {
 
     @Test
     void testReturnInRequiresClaimId() {
-        assertThatThrownBy(() -> service.record(new StockMovementRequest(PRODUCT_ID,
+        assertThatThrownBy(() -> service.record(new StockMovementRequest(PRODUCT_ID, SELLER_ID,
                 StockMovementType.RETURN_IN, 1, null, null, null, null, null, MOVED_ON)))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(stockMovementRepository, never()).save(any());
@@ -184,7 +204,7 @@ class StockLedgerServiceImplTest {
         given(orderClaimRepository.findById(21L))
                 .willReturn(Optional.of(OrderClaim.builder().id(21L).quantity(2).build()));
 
-        service.record(new StockMovementRequest(PRODUCT_ID, StockMovementType.RETURN_IN, 2,
+        service.record(new StockMovementRequest(PRODUCT_ID, SELLER_ID, StockMovementType.RETURN_IN, 2,
                 null, null, null, 21L, null, MOVED_ON));
 
         StockMovement saved = captureSaved();
@@ -200,7 +220,7 @@ class StockLedgerServiceImplTest {
      */
     @Test
     void testStockInRejectsOrderLineReference() {
-        assertThatThrownBy(() -> service.record(new StockMovementRequest(PRODUCT_ID,
+        assertThatThrownBy(() -> service.record(new StockMovementRequest(PRODUCT_ID, SELLER_ID,
                 StockMovementType.STOCK_IN, 1, StockReason.FREE, null, null, 21L, null, MOVED_ON)))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(stockMovementRepository, never()).save(any());
@@ -208,7 +228,7 @@ class StockLedgerServiceImplTest {
 
     @Test
     void testStockOutRejectedOnThisEndpoint() {
-        assertThatThrownBy(() -> service.record(new StockMovementRequest(PRODUCT_ID,
+        assertThatThrownBy(() -> service.record(new StockMovementRequest(PRODUCT_ID, SELLER_ID,
                 StockMovementType.STOCK_OUT, 1, null, null, null, null, null, MOVED_ON)))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(stockMovementRepository, never()).save(any());
@@ -232,5 +252,73 @@ class StockLedgerServiceImplTest {
         service.record(stockIn(StockReason.FREE, 1, null, null));
 
         assertThat(captureSaved().getLocation()).isEqualTo(StockLocation.OWN);
+    }
+
+    // --- seller axis (PLAN 2609_29 D4·D5·D22) ---
+
+    @Test
+    void testRecordStampsSeller() {
+        stubSave();
+
+        service.record(stockIn(StockReason.FREE, 1, null, null));
+
+        assertThat(captureSaved().getSeller().getId()).isEqualTo(SELLER_ID);
+    }
+
+    @Test
+    void testRecordRequiresSeller() {
+        given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(PRODUCT));
+
+        assertThatThrownBy(() -> service.record(new StockMovementRequest(PRODUCT_ID, null,
+                StockMovementType.STOCK_IN, 1, StockReason.FREE, null, null, null, null, MOVED_ON)))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(stockMovementRepository, never()).save(any());
+    }
+
+    /**
+     * 🔴 If the two ledgers may disagree on the owner, nobody can decide afterwards which one was
+     * right — so a mismatch is rejected instead of stored.
+     */
+    @Test
+    void testRecordRejectsSellerMismatch() {
+        given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(PRODUCT));
+        given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(SELLER));
+        Seller other = Seller.builder().id(99L).sellerName("셀러B").build();
+        given(purchaseRecordRepository.findById(11L))
+                .willReturn(Optional.of(purchaseRecord(11L, other, new BigDecimal("4000.0000"))));
+
+        assertThatThrownBy(() -> service.record(stockIn(StockReason.PURCHASE, 3, null, 11L)))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(stockMovementRepository, never()).save(any());
+    }
+
+    /** D22: the screen never asks who a return belongs to — the claim's order already says it. */
+    @Test
+    void testReturnInDerivesSellerFromClaim() {
+        stubSaveWithoutSeller();
+        Seller orderSeller = Seller.builder().id(42L).sellerName("셀러C").build();
+        MarketplaceAccount account = MarketplaceAccount.builder().id(1L).seller(orderSeller).build();
+        OrderLine line = OrderLine.builder().id(5L)
+                .order(Order.builder().id(50L).marketplaceAccount(account).build()).build();
+        given(orderClaimRepository.findById(21L))
+                .willReturn(Optional.of(OrderClaim.builder().id(21L).quantity(2).orderLine(line).build()));
+
+        service.record(new StockMovementRequest(PRODUCT_ID, null, StockMovementType.RETURN_IN, 2,
+                null, null, null, 21L, null, MOVED_ON));
+
+        assertThat(captureSaved().getSeller().getId()).isEqualTo(42L);
+    }
+
+    /** An order-unmatched claim has nothing to derive from — then the request must carry the seller. */
+    @Test
+    void testReturnInWithoutOrderLineRequiresSeller() {
+        given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(PRODUCT));
+        given(orderClaimRepository.findById(21L))
+                .willReturn(Optional.of(OrderClaim.builder().id(21L).quantity(2).orderLine(null).build()));
+
+        assertThatThrownBy(() -> service.record(new StockMovementRequest(PRODUCT_ID, null,
+                StockMovementType.RETURN_IN, 2, null, null, null, 21L, null, MOVED_ON)))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(stockMovementRepository, never()).save(any());
     }
 }

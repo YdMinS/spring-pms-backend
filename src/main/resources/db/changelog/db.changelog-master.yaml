@@ -143,3 +143,7 @@ databaseChangeLog:
       file: db/changelog/changes/071-stock-movement.yaml
   - include:
       file: db/changelog/changes/076-platform-legacy-values.yaml
+  - include:
+      file: db/changelog/changes/077-purchase-record-product-seller.yaml
+  - include:
+      file: db/changelog/changes/078-stock-movement-seller.yaml
