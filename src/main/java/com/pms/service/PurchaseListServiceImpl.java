@@ -33,6 +33,7 @@ import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.ShoppingListItemRepository;
+import com.pms.service.cost.CostPropagationService;
 import com.pms.service.stock.StockLedgerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -74,6 +75,7 @@ public class PurchaseListServiceImpl implements PurchaseListService {
     private final SellerRepository sellerRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final StockLedgerService stockLedgerService;
+    private final CostPropagationService costPropagationService;
     private final CoupangProperties coupangProperties;
 
     @Override
@@ -202,8 +204,11 @@ public class PurchaseListServiceImpl implements PurchaseListService {
                 .orElseThrow(() -> new ResourceNotFoundException("Seller", request.sellerId()));
 
         // 금액 계산 규칙은 엔티티 팩토리 하나에 모여 있다(FEATURE_2609_28 / PLAN D1·D2).
-        // ⚠️ reflectToBasePrice 는 저장만 한다 — Product.price 파급은 별도 기능이 소유(2609_28 D4).
         PurchaseRecord saved = purchaseRecordRepository.save(PurchaseRecord.of(product, seller, request));
+
+        // ① 기준가 갱신(2609_28 D4). reflectToBasePrice·단가·수량 조건은 서비스가 소유한다.
+        // ⚠️ 여기서 파급(②=셀 판매가 재계산)은 일어나지 않는다 — 사용자가 preview → apply 로 확정한다.
+        costPropagationService.updateBasePrice(saved);
 
         // D19: 기본은 즉시 반영. false 면 구매기록만 남고 입고대기로 간다(화면은 아직 스위치를 못 끈다).
         // D17: 음수 정정은 "금액을 잘못 적었다"이지 "물건이 나갔다"가 아니다 — STOCK_IN 이 거부한다.
