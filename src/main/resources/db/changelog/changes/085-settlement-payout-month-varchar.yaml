@@ -1,0 +1,20 @@
+databaseChangeLog:
+  - changeSet:
+      id: 085-settlement-payout-month-varchar
+      author: oclyx
+      comment: >
+        settlement_payout.revenue_recognition_month was created as CHAR(7) in 083, but the entity maps it
+        as a String of length 7 (VARCHAR(7)), so Hibernate schema validation fails at boot on MySQL:
+        "found [char (Types#CHAR)], but expecting [varchar(7) (Types#VARCHAR)]".
+        CHAR is an outlier here — every other string column in this changelog is VARCHAR.
+        The column is nullable and carries no default, so MODIFY drops nothing that must be restored.
+      changes:
+        - modifyDataType:
+            tableName: settlement_payout
+            columnName: revenue_recognition_month
+            newDataType: VARCHAR(7)
+      rollback:
+        - modifyDataType:
+            tableName: settlement_payout
+            columnName: revenue_recognition_month
+            newDataType: CHAR(7)
