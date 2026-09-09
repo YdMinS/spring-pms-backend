@@ -286,6 +286,26 @@ public class CoupangProperties {
      */
     private int revenueDeltaDays = 3;
 
+    /**
+     * 지급내역(settlement-histories) 조회 경로 (FEATURE_2609_30 / PLAN D5-2).
+     *
+     * <p>🔴 <b>게이트웨이 경로가 매출내역과 다르다</b> — {@code marketplace_openapi} 다({@link #revenueHistoryPath}
+     * 는 {@code openapi}). 오타가 아니므로 "통일"하지 말 것.
+     *
+     * <p>⚠️ 호출은 {@code revenueRecognitionYearMonth=yyyy-MM} 축 하나뿐이고 <b>페이징이 없다</b>.
+     * 당월을 넘는 월을 물으면 400 이다.
+     */
+    private String settlementHistoriesPath =
+            "/v2/providers/marketplace_openapi/apis/api/v1/settlement-histories";
+
+    /**
+     * 지급내역을 한 번도 적재한 적 없는 계정이 최초 실행에서 거슬러 올라갈 개월 수(당월 포함).
+     *
+     * <p>지급내역은 월 집계라 과거 월을 다시 물어야 이미 입금된 묶음이 화면에 생긴다. 이미 적재한 적이
+     * 있는 계정은 <b>당월 + 직전월</b>만 다시 읽는다 — 정정이 직전월까지 흔히 들어오기 때문이다.
+     */
+    private int payoutBackfillMonths = 3;
+
     /** 쿠팡 API connect 타임아웃(ms). 미설정 시 무제한 → 게이트웨이 지연이 요청 스레드를 무한 점유한다. */
     private int connectTimeoutMs = 10_000;
 

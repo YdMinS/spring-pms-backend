@@ -1,5 +1,6 @@
 package com.pms.service.settlement;
 
+import com.pms.dto.response.SettlementPayoutSyncResponse;
 import com.pms.dto.response.SettlementSyncResponse;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.security.TenantContext;
@@ -11,7 +12,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * 매출내역 일 1회 delta 적재 (FEATURE_2609_30 / PLAN D11).
+ * 정산 스케줄 — 매출내역 일 1회 delta · 지급내역 주 1회 (FEATURE_2609_30 / PLAN D11).
  *
  * <p>🔴 <b>cron 은 프로퍼티다</b>({@code oclyx.settlement.revenue-sync-cron}). dev 에서 5분 주기 cron
  * 으로 낮춰 스케줄이 실제로 도는 것을 확인하고 prod 는 일 1회를 유지한다(사용자 요청 항목).
@@ -30,6 +31,7 @@ import java.util.List;
 public class SettlementSyncScheduler {
 
     private final SettlementSyncService settlementSyncService;
+    private final SettlementPayoutSyncService settlementPayoutSyncService;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
 
     @Scheduled(cron = "${oclyx.settlement.revenue-sync-cron:0 30 4 * * *}")
@@ -46,6 +48,33 @@ public class SettlementSyncScheduler {
             } catch (Exception e) {
                 // 한 테넌트의 실패가 나머지를 멈추면 안 된다. 계정 단위 격리는 서비스가 이미 한다.
                 log.warn("Scheduled settlement revenue sync failed: tenant={}", tenantId, e);
+            } finally {
+                TenantContext.clear();
+            }
+        }
+    }
+
+    /**
+     * 지급내역(지급 묶음) 주 1회 적재 (FEATURE_2609_30 / 02 · PLAN D11).
+     *
+     * <p>매출내역과 달리 <b>주 1회</b>인 이유 = 지급내역은 월 집계라 하루에 여러 번 읽어도 값이 바뀌지 않는다.
+     * 🔴 이 작업이 지급 묶음을 만들고 라인 귀속·대사를 수행한다 — 돌지 않으면 정산 화면이 영영 비어 있다.
+     *
+     * <p>⚠️ 매출내역 스케줄과 같은 주의사항(테넌트 명시 순회 · 다중화 시 중복 실행)이 그대로 적용된다.
+     */
+    @Scheduled(cron = "${oclyx.settlement.payout-sync-cron:0 0 5 * * MON}")
+    public void syncPayoutsWeekly() {
+        List<Long> tenantIds = marketplaceAccountRepository.findDistinctTenantIds();
+        for (Long tenantId : tenantIds) {
+            try {
+                TenantContext.set(tenantId);
+                SettlementPayoutSyncResponse result = settlementPayoutSyncService.syncPayouts(null, null);
+                log.info("Scheduled settlement payout sync: tenant={} accounts={} payouts={} "
+                                + "attributedLines={} adjustments={} failed={}",
+                        tenantId, result.accounts(), result.payouts(), result.attributedLines(),
+                        result.adjustments(), result.failedAccounts());
+            } catch (Exception e) {
+                log.warn("Scheduled settlement payout sync failed: tenant={}", tenantId, e);
             } finally {
                 TenantContext.clear();
             }

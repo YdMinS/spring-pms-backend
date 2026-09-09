@@ -6,9 +6,14 @@ import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.domain.SaleType;
+import com.pms.domain.SettlementAdjustmentType;
+import com.pms.domain.SettlementPayoutStatus;
+import com.pms.domain.SettlementType;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangCredentials;
+import com.pms.service.settlement.SettlementAdjustmentDraft;
 import com.pms.service.settlement.SettlementLineDraft;
+import com.pms.service.settlement.SettlementPayoutDraft;
 import com.pms.service.settlement.SettlementSource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,13 +21,20 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 
 /**
- * 쿠팡 매출내역(revenue-history) 조회 (FEATURE_2609_30 / PLAN D5).
+ * 쿠팡 정산 조회 — 매출내역(revenue-history) + 지급내역(settlement-histories) (FEATURE_2609_30 / PLAN D5).
+ *
+ * <p>🔴 <b>두 피드는 게이트웨이 경로도 응답 모양도 다르다</b>: 매출내역은 {@code openapi} + {@code {data:[...]}}
+ * + 페이징, 지급내역은 {@code marketplace_openapi} + <b>최상위 배열</b> + 페이징 없음. 파서를 공유하지 말 것.
  *
  * <p>⚠️ 클래스 레벨 {@code @Transactional} 을 붙이지 않는다 — 외부 HTTP 루프다. 저장은 전부 중립
  * 서비스가 한다({@code CoupangInquiryAdapter} 와 같은 자세).
@@ -46,6 +58,19 @@ public class CoupangSettlementSource implements SettlementSource {
 
     /** 매출/환불 판정: 이 조각이 들어 있으면 환불이다. 모르는 값은 SALE 로 흡수한다. */
     private static final List<String> REFUND_TOKENS = List.of("REFUND", "RETURN", "CANCEL", "환불", "반품", "취소");
+
+    /**
+     * 지급내역 응답에서 우리가 <b>의미를 아는</b> 필드. 여기 없는 금액성 필드는 조정 {@code OTHER} 로
+     * 흘려보내고 필드명을 note 에 남긴다 — 모르는 돈을 조용히 버리면 검증식이 영영 맞지 않는다(D8·D13).
+     */
+    private static final Set<String> KNOWN_PAYOUT_FIELDS = Set.of(
+            "settlementType", "settlementDate", "finalSettlementDate", "revenueRecognitionYearMonth",
+            "revenueRecognitionDateFrom", "revenueRecognitionDateTo", "totalSale", "totalSaleAmount",
+            "serviceFee", "serviceFeeAmount", "finalAmount", "status", "deductionAmount",
+            "debtOfLastWeek", "pendingReleasedAmount", "vendorId", "settlementYearMonth");
+
+    /** 금액성 필드 판정(이름 기준). 날짜·식별자를 금액으로 오해하지 않게 접미사로 좁힌다. */
+    private static final List<String> AMOUNT_SUFFIXES = List.of("Amount", "amount", "Fee", "fee", "Sale", "sale");
 
     private final CoupangApiClient coupangApiClient;
     private final CoupangProperties coupangProperties;
@@ -121,6 +146,121 @@ public class CoupangSettlementSource implements SettlementSource {
                 break;
             }
         }
+    }
+
+    /**
+     * 지급내역(settlement-histories) 조회 — 인식월 1개, <b>페이징 없음</b> (FEATURE_2609_30 / 02).
+     *
+     * <p>🔴 매출내역과 <b>게이트웨이 경로가 다르고</b>({@code marketplace_openapi}) <b>응답 최상위가 배열</b>이라
+     * {@link #parseLines} 파서를 재사용하지 않는다. 같은 파서를 쓰면 {@code data} 를 찾다가 0건으로 조용히
+     * 지나간다.
+     *
+     * <p>⚠️ 당월을 넘는 월은 쿠팡이 400 을 준다 — 호출자가 미래 월을 넘기지 않는다.
+     */
+    @Override
+    public List<SettlementPayoutDraft> fetchPayouts(MarketplaceAccount account, YearMonth month) {
+        if (month == null) {
+            throw new IllegalArgumentException("매출인식월(month)을 지정해야 합니다.");
+        }
+        // vendorId 는 지급 묶음의 소유 축(계정)이라 함께 보낸다 — 계정별 응답을 받기 위한 것이지
+        // 페이징 파라미터가 아니다.
+        String query = "vendorId=" + CoupangCredentials.of(account).getVendorId()
+                + "&revenueRecognitionYearMonth=" + month;
+        return parsePayouts(readTree(coupangApiClient.get(
+                coupangProperties.getSettlementHistoriesPath(), query, account)));
+    }
+
+    /**
+     * 지급 묶음 배열 파싱. 🔴 <b>원소를 합치지 않는다</b> — 같은 인식월에 주정산·월정산·추가정산·유보금이
+     * 함께 오고, 합치면 실제 입금 건수와 화면 건수가 달라진다(D5-3).
+     *
+     * <p>최상위 배열이 정상이며, 방어적으로 {@code data} 래핑도 받는다(쿠팡 문서가 틀린 전례).
+     */
+    List<SettlementPayoutDraft> parsePayouts(JsonNode root) {
+        JsonNode array = root.isArray() ? root : root.path("data");
+        if (!array.isArray()) {
+            return List.of();
+        }
+        List<SettlementPayoutDraft> drafts = new ArrayList<>();
+        for (JsonNode node : array) {
+            drafts.add(toPayoutDraft(node));
+        }
+        return drafts;
+    }
+
+    private SettlementPayoutDraft toPayoutDraft(JsonNode node) {
+        return new SettlementPayoutDraft(
+                SettlementType.from(text(node, "settlementType")),
+                text(node, "revenueRecognitionYearMonth", "settlementYearMonth"),
+                date(node, "revenueRecognitionDateFrom"),
+                date(node, "revenueRecognitionDateTo"),
+                date(node, "settlementDate"),
+                date(node, "finalSettlementDate"),
+                decimal(node, "totalSale", "totalSaleAmount"),
+                decimal(node, "serviceFee", "serviceFeeAmount"),
+                decimal(node, "finalAmount"),
+                payoutStatus(text(node, "status")),
+                adjustments(node));
+    }
+
+    /**
+     * 배치 레벨 금액 → 조정 draft (D8).
+     *
+     * <p>🔴 값은 전부 양수로 오고 부호는 타입이 결정한다 — 여기서 −1 을 곱하지 않는다.
+     * 🔴 {@code PENDING_RELEASE} 는 "보류 해제 후 <b>앞으로</b> 정산에 포함될 금액"이라 이번 지급액이
+     * 아니다. 행으로는 남기되 합산에서 뺀다({@link com.pms.service.settlement.SettlementReconciler}).
+     */
+    private List<SettlementAdjustmentDraft> adjustments(JsonNode node) {
+        List<SettlementAdjustmentDraft> adjustments = new ArrayList<>();
+        addAdjustment(adjustments, SettlementAdjustmentType.DEDUCTION, decimal(node, "deductionAmount"), null);
+        addAdjustment(adjustments, SettlementAdjustmentType.DEBT_CARRIED, decimal(node, "debtOfLastWeek"), null);
+        addAdjustment(adjustments, SettlementAdjustmentType.PENDING_RELEASE,
+                decimal(node, "pendingReleasedAmount"), "정보성 — 이번 지급액이 아닙니다");
+
+        // 우리가 매핑하지 않은 금액 필드는 버리지 않고 OTHER 한 행으로 모은다(필드명은 note 에).
+        BigDecimal other = null;
+        List<String> names = new ArrayList<>();
+        for (Iterator<Map.Entry<String, JsonNode>> it = node.fields(); it.hasNext(); ) {
+            Map.Entry<String, JsonNode> field = it.next();
+            String name = field.getKey();
+            if (KNOWN_PAYOUT_FIELDS.contains(name) || !looksLikeAmount(name)) {
+                continue;
+            }
+            BigDecimal value = decimal(node, name);
+            if (value == null || value.signum() == 0) {
+                continue;
+            }
+            other = sum(other, value);
+            names.add(name);
+        }
+        if (other != null) {
+            adjustments.add(new SettlementAdjustmentDraft(SettlementAdjustmentType.OTHER, other,
+                    "미매핑 필드: " + String.join(", ", names)));
+        }
+        return adjustments;
+    }
+
+    private static void addAdjustment(List<SettlementAdjustmentDraft> target, SettlementAdjustmentType type,
+                                      BigDecimal amount, String note) {
+        if (amount != null && amount.signum() != 0) {
+            target.add(new SettlementAdjustmentDraft(type, amount, note));
+        }
+    }
+
+    private static boolean looksLikeAmount(String fieldName) {
+        return AMOUNT_SUFFIXES.stream().anyMatch(fieldName::endsWith);
+    }
+
+    /** {@code DONE → PAID}, {@code SUBJECT → SCHEDULED}. 모르는 값은 UNKNOWN 으로 흡수한다(돈은 이미 움직였다). */
+    static SettlementPayoutStatus payoutStatus(String raw) {
+        if (raw == null) {
+            return SettlementPayoutStatus.UNKNOWN;
+        }
+        return switch (raw.trim().toUpperCase()) {
+            case "DONE" -> SettlementPayoutStatus.PAID;
+            case "SUBJECT" -> SettlementPayoutStatus.SCHEDULED;
+            default -> SettlementPayoutStatus.UNKNOWN;
+        };
     }
 
     /** 라인 배열 위치 — {@code data} 래핑과 최상위 배열을 모두 받는다. */

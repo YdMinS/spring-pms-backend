@@ -1,20 +1,31 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.response.PayoutSummary;
+import com.pms.dto.response.ReconLineView;
+import com.pms.dto.response.ReconReportResponse;
+import com.pms.dto.response.SettlementPayoutDetailResponse;
+import com.pms.dto.response.SettlementPayoutSyncResponse;
 import com.pms.dto.response.SettlementSyncResponse;
 import com.pms.dto.response.SettlementSyncTargetResponse;
+import com.pms.service.settlement.SettlementPayoutSyncService;
+import com.pms.service.settlement.SettlementReconciliationService;
 import com.pms.service.settlement.SettlementSyncService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.List;
 
 /**
@@ -22,8 +33,8 @@ import java.util.List;
  *
  * <p>정산·손익은 경영 데이터라 구매목록·재고와 같은 등급이다({@code PurchaseListController} 미러).
  *
- * <p>⚠️ 조회 API 는 여기 없다 — 이 조각은 <b>받아서 저장</b>까지만이고, 지급 묶음·대사·차이 리포트는
- * 다음 조각(02)이 소유한다.
+ * <p>지급 묶음 조회·차이 리포트·엑셀은 FEATURE_2609_30 / 02 가 더한 것이다. 조회는 전부 로컬 DB 라
+ * 마켓을 부르지 않는다 — 화면 진입이 API 호출이 되지 않게 <b>자동 갱신을 걸지 않는다</b>(PLAN D11).
  *
  * <p>⚠️ {@code IllegalArgumentException} 은 {@code GlobalExceptionHandler} 가 400 으로 매핑한다 —
  * 여기서 다시 잡지 말 것.
@@ -34,7 +45,13 @@ import java.util.List;
 @PreAuthorize("hasRole('ADMIN')")
 public class SettlementController {
 
+    /** 엑셀 MIME — {@code ShippingLabelController} 와 같은 값을 쓴다(다운로드 관례 통일). */
+    private static final MediaType XLSX = MediaType.parseMediaType(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+
     private final SettlementSyncService settlementSyncService;
+    private final SettlementPayoutSyncService settlementPayoutSyncService;
+    private final SettlementReconciliationService settlementReconciliationService;
 
     /**
      * 수동 갱신 — delta 창만 다시 읽는다. 우선순위: accountId &gt; sellerId &gt; 전체.
@@ -65,5 +82,63 @@ public class SettlementController {
     public ResponseEntity<ResponseDTO<List<SettlementSyncTargetResponse>>> syncTargets(
             @RequestParam(required = false) Long sellerId) {
         return ResponseEntity.ok(ResponseDTO.success(settlementSyncService.targets(sellerId)));
+    }
+
+    /**
+     * 지급내역 수동 갱신 — 지급 묶음 생성 + 라인 귀속 + 대사 (FEATURE_2609_30 / 02).
+     *
+     * <p>{@code month} 를 비우면 계정별로 자동 결정한다(최초 실행이면 백필 개월수, 아니면 당월+직전월).
+     * 당월 이후를 요청하면 400 이다 — 플랫폼이 거절하는 요청을 우리가 먼저 막는다.
+     */
+    @PostMapping("/payout/sync")
+    public ResponseEntity<ResponseDTO<SettlementPayoutSyncResponse>> syncPayouts(
+            @RequestParam(required = false) Long accountId,
+            @RequestParam(required = false)
+            @DateTimeFormat(pattern = "yyyy-MM") YearMonth month) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                settlementPayoutSyncService.syncPayouts(accountId, month)));
+    }
+
+    /** 지급 묶음 목록. 🔴 {@code lineCount == 0} 인 묶음도 그대로 내려간다 — 정상 상태다(PLAN D5-4). */
+    @GetMapping("/payouts")
+    public ResponseEntity<ResponseDTO<List<PayoutSummary>>> payouts(
+            @RequestParam(required = false) Long sellerId,
+            @RequestParam(required = false) Long accountId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                settlementReconciliationService.payouts(sellerId, accountId, from, to)));
+    }
+
+    /** 묶음 1건 + 조정 행 + 검증식 요약 금액. 없는 id 는 400. */
+    @GetMapping("/payouts/{id}")
+    public ResponseEntity<ResponseDTO<SettlementPayoutDetailResponse>> payout(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(settlementReconciliationService.payout(id)));
+    }
+
+    /** 묶음의 라인 목록 — 원인 라벨 필터 · 미분류만 보기. */
+    @GetMapping("/payouts/{id}/lines")
+    public ResponseEntity<ResponseDTO<List<ReconLineView>>> payoutLines(
+            @PathVariable Long id,
+            @RequestParam(required = false) String label,
+            @RequestParam(required = false) Boolean unmatched) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                settlementReconciliationService.lines(id, label, unmatched)));
+    }
+
+    /** 차이 리포트 2단 (PLAN D12). */
+    @GetMapping("/payouts/{id}/report")
+    public ResponseEntity<ResponseDTO<ReconReportResponse>> payoutReport(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(settlementReconciliationService.report(id)));
+    }
+
+    /** 리포트 ①의 라인 목록을 xlsx 로 내려받는다. */
+    @GetMapping("/payouts/{id}/export")
+    public ResponseEntity<byte[]> payoutExport(@PathVariable Long id) {
+        return ResponseEntity.ok()
+                .contentType(XLSX)
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"settlement-payout-" + id + ".xlsx\"")
+                .body(settlementReconciliationService.export(id));
     }
 }
