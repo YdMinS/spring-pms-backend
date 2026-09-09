@@ -141,3 +141,5 @@ databaseChangeLog:
       file: db/changelog/changes/070-purchase-record-amount.yaml
   - include:
       file: db/changelog/changes/071-stock-movement.yaml
+  - include:
+      file: db/changelog/changes/076-platform-legacy-values.yaml
