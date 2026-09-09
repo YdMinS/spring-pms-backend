@@ -5,6 +5,9 @@ import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.domain.SaleType;
+import com.pms.domain.SettlementAdjustmentType;
+import com.pms.domain.SettlementPayoutStatus;
+import com.pms.domain.SettlementType;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.settlement.coupang.CoupangSettlementSource;
@@ -16,6 +19,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,7 +32,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /**
- * 쿠팡 매출내역 어댑터 — 페이징 가드 · 31일 창 분할 · 방어적 파싱.
+ * 쿠팡 정산 어댑터 — 매출내역(페이징 가드 · 31일 창 분할 · 방어적 파싱) + 지급내역(최상위 배열 · 조정 분해).
  *
  * 쿠팡 호출은 {@link CoupangApiClient} 목이다(HTTP 없음).
  */
@@ -145,5 +149,63 @@ class CoupangSettlementSourceTest {
                 + "\"sellerDiscountCoupon\":\"500\",\"downloadableCoupon\":\"300\","
                 + "\"deliveryFee\":\"0\",\"settlementAmount\":\"8834\","
                 + "\"settlementDate\":\"2026-08-20\"}";
+    }
+
+    // ---- 지급내역(settlement-histories) ----
+
+    @Test
+    void fetchPayoutsParsesTopLevelArrayAndKeepsElementsSeparate() {
+        // 🔴 매출내역과 달리 최상위가 배열이다. 같은 파서를 쓰면 data 를 찾다가 0건으로 조용히 지나간다.
+        //    같은 인식월의 원소를 합치지도 않는다(D5-3).
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn("""
+                [{"settlementType":"WEEKLY","settlementDate":"2026-09-04",
+                  "revenueRecognitionYearMonth":"2026-08","revenueRecognitionDateFrom":"2026-08-01",
+                  "revenueRecognitionDateTo":"2026-08-07","totalSale":1000000,"serviceFee":106000,
+                  "finalAmount":880000,"status":"DONE"},
+                 {"settlementType":"ADDITIONAL","settlementDate":"2026-09-08",
+                  "revenueRecognitionYearMonth":"2026-08","finalAmount":12000,"status":"SUBJECT"}]""");
+
+        List<SettlementPayoutDraft> drafts = source.fetchPayouts(account, YearMonth.of(2026, 8));
+
+        assertThat(drafts).hasSize(2);
+        assertThat(drafts.get(0).settlementType()).isEqualTo(SettlementType.WEEKLY);
+        assertThat(drafts.get(0).status()).isEqualTo(SettlementPayoutStatus.PAID);
+        assertThat(drafts.get(0).recognitionFrom()).isEqualTo(LocalDate.of(2026, 8, 1));
+        assertThat(drafts.get(1).settlementType()).isEqualTo(SettlementType.ADDITIONAL);
+        assertThat(drafts.get(1).status()).isEqualTo(SettlementPayoutStatus.SCHEDULED);
+    }
+
+    @Test
+    void fetchPayoutsMapsAdjustmentsAndKeepsUnknownAmountsAsOther() {
+        // 값은 전부 양수로 오고 부호는 타입이 결정한다. 모르는 금액 필드는 버리지 않고 OTHER 로 남긴다(D8).
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn("""
+                [{"settlementType":"MONTHLY","settlementDate":"2026-09-15",
+                  "revenueRecognitionYearMonth":"2026-08","finalAmount":880000,"status":"DONE",
+                  "deductionAmount":85000,"debtOfLastWeek":12000,"pendingReleasedAmount":500000,
+                  "mysteryFee":7000}]""");
+
+        List<SettlementAdjustmentDraft> adjustments =
+                source.fetchPayouts(account, YearMonth.of(2026, 8)).get(0).adjustments();
+
+        assertThat(adjustments).extracting(SettlementAdjustmentDraft::type)
+                .containsExactly(SettlementAdjustmentType.DEDUCTION, SettlementAdjustmentType.DEBT_CARRIED,
+                        SettlementAdjustmentType.PENDING_RELEASE, SettlementAdjustmentType.OTHER);
+        assertThat(adjustments.get(0).amount()).isEqualByComparingTo("85000");   // 양수 그대로
+        assertThat(adjustments.get(3).note()).contains("mysteryFee");
+    }
+
+    @Test
+    void fetchPayoutsUsesTheSettlementHistoriesPathWithTheRecognitionMonth() {
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn("[]");
+
+        source.fetchPayouts(account, YearMonth.of(2026, 8));
+
+        ArgumentCaptor<String> path = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient).get(path.capture(), query.capture(), any());
+        // ⚠️ 게이트웨이 경로가 매출내역과 다르다(marketplace_openapi) — 오타가 아니다.
+        assertThat(path.getValue()).isEqualTo(coupangProperties.getSettlementHistoriesPath());
+        assertThat(path.getValue()).contains("marketplace_openapi");
+        assertThat(query.getValue()).contains("revenueRecognitionYearMonth=2026-08");
     }
 }

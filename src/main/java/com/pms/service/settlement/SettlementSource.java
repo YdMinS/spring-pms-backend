@@ -4,6 +4,7 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -44,4 +45,14 @@ public interface SettlementSource {
      */
     void fetchRevenue(MarketplaceAccount account, LocalDate from, LocalDate to,
                       Consumer<List<SettlementLineDraft>> pageConsumer);
+
+    /**
+     * 이 계정의 {@code month}(매출인식월) 지급 묶음 전부 (FEATURE_2609_30 / 02 · PLAN D5-2).
+     *
+     * <p>🔴 매출내역과 <b>다른 피드</b>다: 축이 인식월 하나이고 페이징이 없으며, 한 원소가 지급 묶음 1건이다.
+     * 같은 달에 여러 건이 오므로 구현은 원소를 <b>합치지 않는다</b>(D5-3).
+     *
+     * <p>⚠️ 당월을 넘는 월은 플랫폼이 400 을 준다 — 호출자가 미래 월을 넘기지 않는다.
+     */
+    List<SettlementPayoutDraft> fetchPayouts(MarketplaceAccount account, YearMonth month);
 }

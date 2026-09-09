@@ -152,6 +152,21 @@ oclyx:
     # Daily revenue-history load, 04:30 KST. Kept as a property so dev can lower it (e.g. "0 */5 * * * *")
     # to verify the schedule actually fires without a redeploy.
     revenue-sync-cron: "0 30 4 * * *"
+    # Weekly payment-history (payout) load, Monday 05:00 KST (PLAN D11). Property for the same reason
+    # as revenue-sync-cron: dev lowers it to watch the schedule actually fire.
+    payout-sync-cron: "0 0 5 * * MON"
+    # Reconciliation tolerance in KRW PER LINE (PLAN D9). The effective tolerance is
+    # max(10, this x lineCount): truncation error accumulates per line, so a flat 10 KRW turns into a
+    # false alarm on payouts with many lines. A payout with zero lines still gets the 10 KRW floor.
+    recon-tolerance-per-line: 1
+
+  pricing:
+    # Commission VAT rate (PLAN 2609_30 D19). Coupang charges the commission PLUS 10% VAT on that
+    # commission, so the fee we should expect is commission x (1 + this). The settlement difference
+    # report (02) uses it as the estimation base, and the selling-price reverse-calc (07) uses the same
+    # key — 🔴 one rate, one place. Not a constant because a tax-exempt (taxType) exception is possible.
+    fee-vat-rate: 0.1
+
 
 image:
   storage:

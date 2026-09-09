@@ -35,4 +35,20 @@ public class SettlementSyncStatusWriter {
                 // 기록 대상이 사라진 것이 적재를 깨면 안 된다 — 예외 대신 로그만.
                 () -> log.warn("Settlement sync anchor skipped: account={} not found", accountId));
     }
+
+    /**
+     * 지급내역(지급 묶음) 적재 앵커 (FEATURE_2609_30 / 02).
+     *
+     * <p>⚠️ {@code lastSettlementSyncAt}(매출내역)과 <b>다른 컬럼</b>이다. 하나로 합치면 주 1회 지급내역
+     * 적재가 일 1회 매출내역의 delta 창을 밀어버리고, 수동 갱신 최소 간격 가드까지 엉킨다.
+     * 이 값은 "최초 실행 여부" 판정에도 쓰인다(백필 개월수).
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void writePayoutSyncAt(Long accountId) {
+        marketplaceAccountRepository.findById(accountId).ifPresentOrElse(
+                account -> marketplaceAccountRepository.save(account.toBuilder()
+                        .lastPayoutSyncAt(LocalDateTime.now())
+                        .build()),
+                () -> log.warn("Settlement payout anchor skipped: account={} not found", accountId));
+    }
 }
