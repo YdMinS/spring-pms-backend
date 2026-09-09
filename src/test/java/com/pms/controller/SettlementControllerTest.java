@@ -1,8 +1,14 @@
 package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
+import com.pms.domain.Category;
+import com.pms.domain.CategoryMapping;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.MasterProduct;
 import com.pms.domain.Platform;
+import com.pms.domain.PlatformCategory;
+import com.pms.domain.ProductListing;
+import com.pms.domain.ProductListingOption;
 import com.pms.domain.SaleType;
 import com.pms.domain.Seller;
 import com.pms.domain.SettlementAdjustment;
@@ -13,8 +19,14 @@ import com.pms.domain.SettlementPayoutStatus;
 import com.pms.domain.SettlementReconStatus;
 import com.pms.domain.SettlementType;
 import com.pms.fixture.MarketplaceAccountFixture;
+import com.pms.repository.CategoryMappingRepository;
+import com.pms.repository.CategoryRepository;
 import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.MasterProductRepository;
+import com.pms.repository.PlatformCategoryRepository;
+import com.pms.repository.ProductListingOptionRepository;
+import com.pms.repository.ProductListingRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.SettlementAdjustmentRepository;
 import com.pms.repository.SettlementLineRepository;
@@ -25,10 +37,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.http.MediaType;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -51,6 +65,8 @@ class SettlementControllerTest extends BaseIntegrationTest {
     private static final String TARGETS = "/api/admin/settlement/sync/targets";
     private static final String PAYOUT_SYNC = "/api/admin/settlement/payout/sync";
     private static final String PAYOUTS = "/api/admin/settlement/payouts";
+    private static final String SUGGESTIONS = "/api/admin/settlement/commission-suggestions";
+    private static final String SUGGESTIONS_APPLY = SUGGESTIONS + "/apply";
     private static final String XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
     @Autowired private SellerRepository sellerRepository;
@@ -59,11 +75,19 @@ class SettlementControllerTest extends BaseIntegrationTest {
     @Autowired private SettlementPayoutRepository settlementPayoutRepository;
     @Autowired private SettlementLineRepository settlementLineRepository;
     @Autowired private SettlementAdjustmentRepository settlementAdjustmentRepository;
+    @Autowired private CategoryRepository categoryRepository;
+    @Autowired private PlatformCategoryRepository platformCategoryRepository;
+    @Autowired private CategoryMappingRepository categoryMappingRepository;
+    @Autowired private MasterProductRepository masterProductRepository;
+    @Autowired private ProductListingRepository productListingRepository;
+    @Autowired private ProductListingOptionRepository productListingOptionRepository;
 
     @MockBean private CoupangApiClient coupangApiClient;
 
     private Long accountId;
     private Long payoutId;
+    /** 06 의 제안 대상 = 실측 라인이 붙은 카테고리. */
+    private Long platformCategoryId;
 
     @BeforeEach
     void seed() {
@@ -106,6 +130,42 @@ class SettlementControllerTest extends BaseIntegrationTest {
                 .adjustmentType(SettlementAdjustmentType.DEDUCTION)
                 .amount(new BigDecimal("85000"))
                 .build());
+
+        seedCommissionFeedback(seller, account);
+    }
+
+    /**
+     * 06 — 실측 수수료율 제안이 성립하려면 라인이 셀 옵션에 붙고, 그 셀이 카테고리 매핑을 타고
+     * {@link PlatformCategory} 에 닿아야 한다(수수료 기준의 단일 출처).
+     *
+     * <p>기준표 5% vs 실측 10.6%(+ 부가세) 로 크게 벌려 둔다 — 0.1%p 문턱에 걸리지 않게.
+     */
+    private void seedCommissionFeedback(Seller seller, MarketplaceAccount account) {
+        Category standard = categoryRepository.save(Category.builder().name("김치").build());
+        PlatformCategory platformCategory = platformCategoryRepository.save(PlatformCategory.builder()
+                .platform(Platform.COUPANG).code("cat-kimchi").name("김치")
+                .commissionRate(new BigDecimal("0.05")).build());
+        platformCategoryId = platformCategory.getId();
+        categoryMappingRepository.save(CategoryMapping.builder()
+                .category(standard).platform(Platform.COUPANG).platformCategoryId("cat-kimchi")
+                .platformCategory(platformCategory).build());
+        MasterProduct master = masterProductRepository.save(MasterProduct.builder()
+                .name("행복 김치").active(true).category(standard).build());
+        ProductListing cell = productListingRepository.save(ProductListing.builder()
+                .name("행복 김치 / 쿠팡").platform(Platform.COUPANG).seller(seller).masterProduct(master)
+                .build());
+        ProductListingOption option = productListingOptionRepository.save(ProductListingOption.builder()
+                .productListing(cell).optionName("1kg").sellingPrice(new BigDecimal("12000")).build());
+        for (int i = 0; i < 5; i++) {
+            settlementLineRepository.save(SettlementLine.builder()
+                    .marketplaceAccount(account).productListingOption(option)
+                    .externalOrderId("OC" + i).platformOptionId("VC" + i).saleType(SaleType.SALE)
+                    .recognitionDate(LocalDate.of(2026, 8, 10))
+                    .saleAmount(new BigDecimal("100000"))
+                    .serviceFee(new BigDecimal("10600")).serviceFeeVat(new BigDecimal("1060"))
+                    .settlementAmount(new BigDecimal("88340"))
+                    .build());
+        }
     }
 
     @AfterEach
@@ -113,6 +173,12 @@ class SettlementControllerTest extends BaseIntegrationTest {
         settlementAdjustmentRepository.deleteAll();   // FK child first
         settlementLineRepository.deleteAll();
         settlementPayoutRepository.deleteAll();
+        productListingOptionRepository.deleteAll();   // 06 시드 — 셀은 판매자를 참조한다
+        productListingRepository.deleteAll();
+        masterProductRepository.deleteAll();
+        categoryMappingRepository.deleteAll();
+        platformCategoryRepository.deleteAll();
+        categoryRepository.deleteAll();
         credentialRepository.deleteAll();
         marketplaceAccountRepository.deleteAll();
         sellerRepository.deleteAll();
@@ -259,6 +325,64 @@ class SettlementControllerTest extends BaseIntegrationTest {
     private String[] reconPaths() {
         return new String[]{PAYOUTS, PAYOUTS + "/" + payoutId, PAYOUTS + "/" + payoutId + "/lines",
                 PAYOUTS + "/" + payoutId + "/report", PAYOUTS + "/" + payoutId + "/export"};
+    }
+
+    // ---- 실측 수수료율 피드백 (06) — 401/403/200 ----
+
+    @Test
+    void commissionSuggestions_noTokenOrUserToken_areRejected() throws Exception {
+        mockMvc.perform(get(SUGGESTIONS)).andExpect(status().isUnauthorized());
+        mockMvc.perform(post(SUGGESTIONS_APPLY).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get(SUGGESTIONS).header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post(SUGGESTIONS_APPLY).header("Authorization", "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void commissionSuggestions_adminToken_returnsMeasuredGap() throws Exception {
+        mockMvc.perform(get(SUGGESTIONS)
+                        .param("from", "2026-08-01").param("to", "2026-08-31")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.suggestions[0].platformCategoryId").value(platformCategoryId))
+                .andExpect(jsonPath("$.data.suggestions[0].samples").value(5))
+                // 실측 11.66% vs 기준 5.5%(부가세 포함 기준으로 맞춘 값)
+                .andExpect(jsonPath("$.data.suggestions[0].measuredRatio").value(0.1166))
+                .andExpect(jsonPath("$.data.suggestions[0].currentRatio").value(0.055))
+                .andExpect(jsonPath("$.data.suggestions[0].suggestedRate").value(0.11));
+    }
+
+    @Test
+    void commissionApply_adminToken_updatesRateAndKeepsPricesUntouched() throws Exception {
+        BigDecimal before = productListingOptionRepository.findAll().get(0).getSellingPrice();
+
+        mockMvc.perform(post(SUGGESTIONS_APPLY)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"from\":\"2026-08-01\",\"to\":\"2026-08-31\",\"items\":[{"
+                                + "\"platformCategoryId\":" + platformCategoryId + ",\"newRate\":0.106}]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.updated").value(1))
+                .andExpect(jsonPath("$.data.affectedListings").value(1));
+
+        assertThat(platformCategoryRepository.findById(platformCategoryId).orElseThrow()
+                .getCommissionRate()).isEqualByComparingTo("0.11");
+        // 🔴 판매가는 그대로다 — 반영은 원가/가격 반영이 소유한다(PLAN 2609_28 D4).
+        assertThat(productListingOptionRepository.findAll().get(0).getSellingPrice())
+                .isEqualByComparingTo(before);
+    }
+
+    @Test
+    void commissionApply_staleRate_returns409() throws Exception {
+        mockMvc.perform(post(SUGGESTIONS_APPLY)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"from\":\"2026-08-01\",\"to\":\"2026-08-31\",\"items\":[{"
+                                + "\"platformCategoryId\":" + platformCategoryId + ",\"newRate\":0.30}]}"))
+                .andExpect(status().isConflict());
     }
 
     @Test

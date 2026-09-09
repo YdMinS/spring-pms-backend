@@ -1,6 +1,9 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.CommissionApplyRequest;
+import com.pms.dto.response.CommissionApplyResponse;
+import com.pms.dto.response.CommissionSuggestionResponse;
 import com.pms.dto.response.PayoutSummary;
 import com.pms.dto.response.ReconLineView;
 import com.pms.dto.response.ReconReportResponse;
@@ -8,9 +11,11 @@ import com.pms.dto.response.SettlementPayoutDetailResponse;
 import com.pms.dto.response.SettlementPayoutSyncResponse;
 import com.pms.dto.response.SettlementSyncResponse;
 import com.pms.dto.response.SettlementSyncTargetResponse;
+import com.pms.service.settlement.CommissionFeedbackService;
 import com.pms.service.settlement.SettlementPayoutSyncService;
 import com.pms.service.settlement.SettlementReconciliationService;
 import com.pms.service.settlement.SettlementSyncService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpHeaders;
@@ -20,6 +25,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -52,6 +58,7 @@ public class SettlementController {
     private final SettlementSyncService settlementSyncService;
     private final SettlementPayoutSyncService settlementPayoutSyncService;
     private final SettlementReconciliationService settlementReconciliationService;
+    private final CommissionFeedbackService commissionFeedbackService;
 
     /**
      * 수동 갱신 — delta 창만 다시 읽는다. 우선순위: accountId &gt; sellerId &gt; 전체.
@@ -140,5 +147,36 @@ public class SettlementController {
                 .header(HttpHeaders.CONTENT_DISPOSITION,
                         "attachment; filename=\"settlement-payout-" + id + ".xlsx\"")
                 .body(settlementReconciliationService.export(id));
+    }
+
+    /**
+     * 실측 수수료율 제안 목록 (FEATURE_2609_30 / 06 · PLAN D16).
+     *
+     * <p>기간을 비우면 최근 3개월이다. 표본이 {@code minSamples}(기본 5) 미만이거나 차이가 0.1%p 미만인
+     * 카테고리는 목록에 없다 — 제안이 아니라 소음이라서다. 시드 누락({@code commissionRate = null})은
+     * 성격이 달라 {@code seedingGaps} 로 따로 내려간다.
+     */
+    @GetMapping("/commission-suggestions")
+    public ResponseEntity<ResponseDTO<CommissionSuggestionResponse>> commissionSuggestions(
+            @RequestParam(required = false) Long sellerId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) Integer minSamples) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                commissionFeedbackService.suggestions(sellerId, from, to, minSamples)));
+    }
+
+    /**
+     * 사용자가 고른 카테고리의 수수료율 확정 반영.
+     *
+     * <p>🔴 요청에 실린 항목만 바꾼다. 🔴 셀 판매가는 건드리지 않는다 — 응답의 {@code notice} 가
+     * [원가/가격 반영]으로 넘긴다(PLAN 2609_28 D4).
+     *
+     * <p>범위를 벗어난 비율은 400, 화면을 열어둔 사이 실측이 0.5%p 넘게 움직였으면 409 다.
+     */
+    @PostMapping("/commission-suggestions/apply")
+    public ResponseEntity<ResponseDTO<CommissionApplyResponse>> applyCommissionSuggestions(
+            @Valid @RequestBody CommissionApplyRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(commissionFeedbackService.apply(request)));
     }
 }
