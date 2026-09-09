@@ -589,6 +589,34 @@ class LiquibaseChangelogApplyTest {
                 Integer.class)).isZero();
     }
 
+    /** changeset 083·084: the settlement ledger applies and keeps the two nullable links it depends on. */
+    @Test
+    void settlementLedgerApplied() {
+        // The three neutral tables and the mirror exist (a successful count proves them).
+        for (String table : new String[]{
+                "settlement_payout", "settlement_line", "settlement_adjustment", "coupang_settlement_line"}) {
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM " + table, Integer.class))
+                    .as("table %s created", table)
+                    .isZero();
+        }
+
+        // 🔴 settlement_payout_id MUST stay nullable: prompt 01 loads lines with no payout at all, and a
+        // NOT NULL here would make the revenue load impossible until prompt 02 ships (PLAN D5-2).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'SETTLEMENT_LINE' "
+                        + "AND COLUMN_NAME = 'SETTLEMENT_PAYOUT_ID'", String.class)).isEqualTo("YES");
+        // order_line_id nullable = UNMATCHED is a normal state, not a defect (PLAN D7).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'SETTLEMENT_LINE' "
+                        + "AND COLUMN_NAME = 'ORDER_LINE_ID'", String.class)).isEqualTo("YES");
+
+        // The per-channel sync anchors landed on the account (nullable, no backfill: NULL = never synced).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM marketplace_account WHERE last_settlement_sync_at IS NULL "
+                        + "AND last_payout_sync_at IS NULL", Integer.class)).isZero();
+    }
+
     @Test
     void tenantDimensionApplied() {
         // changeset 002: tenant table created + seeded with the default tenant (id=1).

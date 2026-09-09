@@ -109,6 +109,27 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
     @EntityGraph(attributePaths = {"order", "order.marketplaceAccount", "orderShipment"})
     List<OrderLine> findWithAccountByIdIn(List<Long> ids);
 
+    // ── 정산 라인 매핑 (FEATURE_2609_30 / PLAN D7) ──────────────────────────
+
+    /**
+     * 주문번호 + 채널 옵션으로 주문 라인 조회 — 정산 라인 매핑의 도착지.
+     *
+     * <p>매칭 실패(0건)는 결함이 아니라 {@code UNMATCHED} 라는 정상 상태다 — 광고비 상계·기간 밖 주문은
+     * 애초에 매칭될 수 없다. 2건 이상(합포장 분할)이면 호출자가 매핑을 포기한다: 틀린 라인에 붙이면
+     * 상품별 수익성이 조용히 오염되므로, 모르는 채로 두는 편이 낫다.
+     *
+     * <p>⚠️ {@code product_listing_option_id} 는 2609_28(079)이 백필한 컬럼이라 비어 있는 라인이 있을 수
+     * 있다 — 그 경우 이 조회는 0건이 되고 정산 라인은 UNMATCHED 로 남는다(PLAN "남는 위험").
+     */
+    @Query("""
+            SELECT l FROM OrderLine l
+             WHERE l.order.externalOrderId = :externalOrderId
+               AND l.productListingOption.id = :productListingOptionId
+            """)
+    List<OrderLine> findByExternalOrderIdAndListingOptionId(
+            @Param("externalOrderId") String externalOrderId,
+            @Param("productListingOptionId") Long productListingOptionId);
+
     /**
      * 기간별 원가 근거 구성비 (FEATURE_2609_28 / PLAN D20) — 예: {@code 최근매입가 70% · 기준가 30%}.
      *

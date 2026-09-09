@@ -1,0 +1,128 @@
+# Settlement ledger, platform-neutral part (FEATURE_2609_30 / PLAN D5·D5-2·D5-3·D7·D8).
+#   settlement_payout      = one payout unit the marketplace decided (NOT our batch job — PLAN D5-1).
+#   settlement_line        = one revenue/refund line the marketplace confirmed.
+#   settlement_adjustment  = payout-level amounts that belong to no line (ad cost, carried debt...).
+# 🔴 settlement_line.settlement_payout_id is NULLABLE on purpose (D5-2): the revenue-history feed
+#    (01) has no settlementType, so it cannot know which payout a line will be paid in. Prompt 02
+#    (settlement-histories) is what fills the payout rows and the attribution. A line sitting with a
+#    NULL payout is the NORMAL state after 01, not a defect.
+# 🔴 The line unique key deliberately does NOT contain settlement_payout_id — it is null at load time.
+#    account + order + option + sale/refund + recognition date identifies a line on its own (D10).
+# 🔴 settlement_payout's unique key contains settlement_date: several ADDITIONAL/RESERVE payouts land
+#    inside the same recognition month, so month + type alone collides (D5-3).
+# ⚠️ No BOOLEAN column anywhere here -> the MySQL BIT(1) re-type follow-up (006/070 pattern) is
+#    deliberately not needed. Adding one later REQUIRES that follow-up changeSet.
+# ⚠️ H2 constraint names are schema-global unique -> distinct prefixes (fk_settlement*_).
+databaseChangeLog:
+
+  - changeSet:
+      id: 083-settlement-ledger
+      author: oclyx
+      comment: "FEATURE_2609_30: settlement_payout / settlement_line / settlement_adjustment + account sync anchors."
+      changes:
+
+        # ---- 1. payout unit (rows are created by prompt 02, not by 01) ----
+        - createTable:
+            tableName: settlement_payout
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: marketplace_account_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: settlement_type, type: VARCHAR(20) }
+              - column: { name: revenue_recognition_month, type: CHAR(7) }
+              - column: { name: recognition_from, type: DATE }
+              - column: { name: recognition_to, type: DATE }
+              - column: { name: settlement_date, type: DATE }
+              - column: { name: final_settlement_date, type: DATE }
+              - column: { name: total_sale, type: "DECIMAL(15,2)" }
+              - column: { name: service_fee, type: "DECIMAL(15,2)" }
+              - column: { name: final_amount, type: "DECIMAL(15,2)" }
+              - column: { name: status, type: VARCHAR(20) }
+              - column: { name: recon_status, type: VARCHAR(20) }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint: { constraintName: fk_settlementpayout_tenant,  baseTableName: settlement_payout, baseColumnNames: tenant_id,              referencedTableName: tenant,              referencedColumnNames: id }
+        - addForeignKeyConstraint: { constraintName: fk_settlementpayout_account, baseTableName: settlement_payout, baseColumnNames: marketplace_account_id, referencedTableName: marketplace_account, referencedColumnNames: id }
+        - addUniqueConstraint:
+            constraintName: uq_settlement_payout
+            tableName: settlement_payout
+            columnNames: marketplace_account_id, revenue_recognition_month, settlement_type, settlement_date
+
+        # ---- 2. confirmed revenue / refund lines ----
+        - createTable:
+            tableName: settlement_line
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: settlement_payout_id, type: BIGINT }
+              - column: { name: marketplace_account_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: order_line_id, type: BIGINT }
+              - column: { name: product_listing_option_id, type: BIGINT }
+              - column: { name: external_order_id, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: platform_option_id, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: sale_type, type: VARCHAR(10) }
+              - column: { name: quantity, type: INT }
+              - column: { name: sale_amount, type: "DECIMAL(15,2)" }
+              - column: { name: service_fee, type: "DECIMAL(15,2)" }
+              - column: { name: service_fee_vat, type: "DECIMAL(15,2)" }
+              - column: { name: service_fee_ratio, type: "DECIMAL(7,4)" }
+              - column: { name: coupon_amount, type: "DECIMAL(15,2)" }
+              - column: { name: delivery_fee_amount, type: "DECIMAL(15,2)" }
+              - column: { name: settlement_amount, type: "DECIMAL(15,2)" }
+              - column: { name: recognition_date, type: DATE, constraints: { nullable: false } }
+              - column: { name: sale_date, type: DATE }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint: { constraintName: fk_settlementline_tenant,  baseTableName: settlement_line, baseColumnNames: tenant_id,                 referencedTableName: tenant,                 referencedColumnNames: id }
+        - addForeignKeyConstraint: { constraintName: fk_settlementline_payout,  baseTableName: settlement_line, baseColumnNames: settlement_payout_id,      referencedTableName: settlement_payout,      referencedColumnNames: id }
+        - addForeignKeyConstraint: { constraintName: fk_settlementline_account, baseTableName: settlement_line, baseColumnNames: marketplace_account_id,    referencedTableName: marketplace_account,    referencedColumnNames: id }
+        - addForeignKeyConstraint: { constraintName: fk_settlementline_orderline, baseTableName: settlement_line, baseColumnNames: order_line_id,           referencedTableName: order_line,             referencedColumnNames: id }
+        - addForeignKeyConstraint: { constraintName: fk_settlementline_option,  baseTableName: settlement_line, baseColumnNames: product_listing_option_id, referencedTableName: product_listing_option, referencedColumnNames: id }
+        - addUniqueConstraint:
+            constraintName: uq_settlement_line
+            tableName: settlement_line
+            columnNames: marketplace_account_id, external_order_id, platform_option_id, sale_type, recognition_date
+        # Attribution lookup (02) and the account/period reads the settlement screen does (05).
+        - createIndex:
+            tableName: settlement_line
+            indexName: idx_settlementline_payout
+            columns:
+              - column: { name: settlement_payout_id }
+        - createIndex:
+            tableName: settlement_line
+            indexName: idx_settlementline_account_recognition
+            columns:
+              - column: { name: marketplace_account_id }
+              - column: { name: recognition_date }
+
+        # ---- 3. payout-level amounts that belong to no line (D8) ----
+        - createTable:
+            tableName: settlement_adjustment
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: settlement_payout_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: adjustment_type, type: VARCHAR(30), constraints: { nullable: false } }
+              - column: { name: amount, type: "DECIMAL(15,2)", constraints: { nullable: false } }
+              - column: { name: note, type: VARCHAR(500) }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint: { constraintName: fk_settlementadj_tenant, baseTableName: settlement_adjustment, baseColumnNames: tenant_id,            referencedTableName: tenant,            referencedColumnNames: id }
+        - addForeignKeyConstraint: { constraintName: fk_settlementadj_payout, baseTableName: settlement_adjustment, baseColumnNames: settlement_payout_id, referencedTableName: settlement_payout, referencedColumnNames: id }
+
+        # ---- 4. per-channel sync anchors ----
+        # Same semantics as last_order_sync_at / last_inquiry_sync_at (063): the time that stage
+        # COMPLETED, not the time it was last attempted. A partial run must leave them untouched so
+        # the next run's window widens by itself. NULL = never completed a run.
+        - addColumn:
+            tableName: marketplace_account
+            columns:
+              - column: { name: last_settlement_sync_at, type: TIMESTAMP }
+              - column: { name: last_payout_sync_at, type: TIMESTAMP }
+
+      rollback:
+        - dropColumn: { tableName: marketplace_account, columnName: last_payout_sync_at }
+        - dropColumn: { tableName: marketplace_account, columnName: last_settlement_sync_at }
+        - dropTable: { tableName: settlement_adjustment }
+        - dropTable: { tableName: settlement_line }
+        - dropTable: { tableName: settlement_payout }

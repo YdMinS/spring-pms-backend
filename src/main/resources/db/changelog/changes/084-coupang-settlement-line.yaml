@@ -1,0 +1,49 @@
+# Coupang settlement line mirror (FEATURE_2609_30 / PLAN D6).
+#   Individual columns AND raw, never raw alone: reconciliation's whole value is answering "which
+#   item ate the 30,000 won", and a JSON blob cannot be aggregated per item.
+#   Precedent = coupang_order_line (raw + explicit columns), changeset 066.
+# ⚠️ 1:1 with the neutral line — a second mirror row for the same line is a bug, not a variant.
+# ⚠️ tax_type is here (not in the prompt's column list) because the "구현 후 dev 검증" step reads
+#    service_fee_vat / service_fee grouped by tax_type; without the column that check cannot run.
+# ⚠️ raw is CLOB (MySQL TEXT / JDBC LONGVARCHAR) -> the entity maps it with @JdbcTypeCode(LONGVARCHAR),
+#    not @Lob, exactly like coupang_order_line.raw.
+databaseChangeLog:
+
+  - changeSet:
+      id: 084-coupang-settlement-line
+      author: oclyx
+      comment: "FEATURE_2609_30: coupang_settlement_line mirror (per-item fee breakdown + raw)."
+      changes:
+        - createTable:
+            tableName: coupang_settlement_line
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: settlement_line_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: marketplace_account_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: order_id_raw, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: platform_option_id, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: platform_product_id, type: VARCHAR(100) }
+              - column: { name: product_name, type: VARCHAR(500) }
+              - column: { name: tax_type, type: VARCHAR(20) }
+              - column: { name: courantee_fee, type: "DECIMAL(15,2)" }
+              - column: { name: courantee_fee_vat, type: "DECIMAL(15,2)" }
+              - column: { name: store_fee_discount, type: "DECIMAL(15,2)" }
+              - column: { name: downloadable_coupon, type: "DECIMAL(15,2)" }
+              - column: { name: seller_discount_coupon, type: "DECIMAL(15,2)" }
+              - column: { name: coupang_discount_coupon, type: "DECIMAL(15,2)" }
+              - column: { name: external_seller_sku_code, type: VARCHAR(100) }
+              - column: { name: settlement_date, type: DATE }
+              - column: { name: final_settlement_date, type: DATE }
+              - column: { name: raw, type: CLOB }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint: { constraintName: fk_coupangsettlementline_tenant,  baseTableName: coupang_settlement_line, baseColumnNames: tenant_id,              referencedTableName: tenant,              referencedColumnNames: id }
+        - addForeignKeyConstraint: { constraintName: fk_coupangsettlementline_line,    baseTableName: coupang_settlement_line, baseColumnNames: settlement_line_id,     referencedTableName: settlement_line,     referencedColumnNames: id }
+        - addForeignKeyConstraint: { constraintName: fk_coupangsettlementline_account, baseTableName: coupang_settlement_line, baseColumnNames: marketplace_account_id, referencedTableName: marketplace_account, referencedColumnNames: id }
+        - addUniqueConstraint:
+            constraintName: uq_coupang_settlement_line
+            tableName: coupang_settlement_line
+            columnNames: settlement_line_id
+      rollback:
+        - dropTable: { tableName: coupang_settlement_line }

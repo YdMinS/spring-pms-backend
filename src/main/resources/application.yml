@@ -125,11 +125,33 @@ oklyx:
     # Unanswered inquiries older than this are force-closed as STALE (D9). This is what stops the query anchor
     # (oldest unanswered inquiry) from drifting backwards forever.
     inquiry-stale-days: 30
+    # Revenue-history (settlement lines, FEATURE_2609_30). vendorId is a QUERY parameter here, not a
+    # path token. Unverified against a live account -> kept overridable.
+    revenue-history-path: /v2/providers/openapi/apis/api/v1/revenue-history
+    # Coupang caps the recognition-date range at 31 days and the page size at 50. A wider request is
+    # split into several calls by the adapter instead of surfacing a 400 to the user.
+    revenue-window-max-days: 31
+    revenue-max-per-page: 50
+    # Delta window (days) for the scheduled/manual refresh. Settlement lines are CORRECTED after they are
+    # confirmed, so reading only yesterday would miss the corrections; we overlap a few days and let the
+    # idempotent upsert absorb the repeats.
+    revenue-delta-days: 3
     # HTTP timeouts for every Coupang call. Without them a slow gateway pins the request thread forever,
     # so one hung call stalls the whole sync. Connect is short (TCP handshake); read is generous because
     # some queries (shipping-label sheets) legitimately take a while — generous, never unbounded.
     connect-timeout-ms: 10000
     read-timeout-ms: 60000
+
+oclyx:
+  settlement:
+    # Server-side minimum interval (minutes) between two MANUAL settlement refreshes of the same channel.
+    # The settlement screen is opened often and the [갱신] button is easy to spam; this keeps that from
+    # turning into marketplace traffic. Distinct from CoupangRateLimitGuard (429 cooldown, their side) —
+    # this one throttles our side, and both are needed.
+    manual-min-interval-minutes: 10
+    # Daily revenue-history load, 04:30 KST. Kept as a property so dev can lower it (e.g. "0 */5 * * * *")
+    # to verify the schedule actually fires without a redeploy.
+    revenue-sync-cron: "0 30 4 * * *"
 
 image:
   storage:
