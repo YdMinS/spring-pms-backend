@@ -77,6 +77,27 @@ public class PurchaseRecord extends BaseEntity {
     @Column(name = "reflect_to_base_price", nullable = false)
     private Boolean reflectToBasePrice;
 
+    /**
+     * 이 매입이 {@code Product.price}(기준 원가)를 움직이는가 — <b>이 판정의 유일한 자리</b>
+     * (FEATURE_2609_28 / PLAN D3·D4 ①).
+     *
+     * <p>세 조건 전부여야 한다:
+     * <ul>
+     *   <li>{@code reflectToBasePrice} — 프로모션·1회성 매입은 기준가를 움직이면 안 된다(D3)</li>
+     *   <li>{@code unitPrice != null} — 금액 미상 매입은 기준가의 근거가 못 된다</li>
+     *   <li>{@code quantity > 0} — 정정(음수) 행은 기준가를 정의하지 않는다</li>
+     * </ul>
+     *
+     * <p>🔴 갱신하는 쪽({@code CostPropagationService.updateBasePrice})과 파급 대상을 찾는 쪽
+     * ({@code preview})이 <b>같은 이 메서드</b>를 쓴다. 조건을 한쪽에만 적어 두면 "기준가는 갱신됐는데
+     * 파급 대상에는 안 뜨는" 유령 상품이 생긴다.
+     */
+    public boolean movesBasePrice() {
+        return Boolean.TRUE.equals(reflectToBasePrice)
+                && unitPrice != null
+                && quantity != null && quantity > 0;
+    }
+
     /** total_amount scale — KRW actually paid (PLAN 2609_28 D1). */
     private static final int TOTAL_SCALE = 2;
     /** unit_price scale — 10,000 / 3 must not collapse to 3,333.33 (PLAN 2609_28 D1). */

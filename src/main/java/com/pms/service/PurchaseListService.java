@@ -48,6 +48,10 @@ public interface PurchaseListService {
     /**
      * 입고 1회 — 구매기록 저장 + (조건부) 재고 입고를 같은 트랜잭션에서 (D1·D17·D19).
      * 음수 정정이거나 {@code recordStock=false} 면 재고는 기록하지 않고 결과로 알린다.
+     *
+     * <p>매입가가 기준가를 움직이는 조건이면 {@code Product.price} 도 함께 갱신된다(2609_28 D4 ①,
+     * {@link com.pms.service.cost.CostPropagationService#updateBasePrice}). ⚠️ <b>셀 판매가는 여기서
+     * 바뀌지 않는다</b> — 그것은 사용자가 원가 파급을 확정할 때만 일어난다.
      */
     PurchaseRecordResult addPurchase(PurchaseRecordRequest request);
 

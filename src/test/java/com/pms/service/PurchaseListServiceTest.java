@@ -32,6 +32,7 @@ import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.ShoppingListItemRepository;
+import com.pms.service.cost.CostPropagationService;
 import com.pms.service.stock.StockLedgerService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -74,6 +75,8 @@ class PurchaseListServiceTest {
     @Mock private SellerRepository sellerRepository;
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock private StockLedgerService stockLedgerService;
+    /** ① 기준가 갱신(2609_28 D4) — 이 테스트는 위임만 확인하고 조건은 CostPropagationServiceImplTest 가 본다. */
+    @Mock private CostPropagationService costPropagationService;
     @Mock private CoupangProperties coupangProperties;
 
     @InjectMocks private PurchaseListServiceImpl service;
@@ -411,6 +414,18 @@ class PurchaseListServiceTest {
         assertThat(movement.movedOn()).isEqualTo(TODAY);
         assertThat(result.stockRecorded()).isTrue();
         assertThat(result.purchaseRecordId()).isEqualTo(77L);
+    }
+
+    /** 2609_28 D4 ①: 매입 저장 직후 기준가 갱신에 위임한다(조건 판정은 그 서비스가 소유). */
+    @Test
+    void testAddPurchaseDelegatesBasePriceUpdate() {
+        stubAddPurchase();
+
+        service.addPurchase(req(4, "12000", null, null, null));
+
+        ArgumentCaptor<PurchaseRecord> captor = ArgumentCaptor.forClass(PurchaseRecord.class);
+        verify(costPropagationService).updateBasePrice(captor.capture());
+        assertThat(captor.getValue().getId()).isEqualTo(77L);   // 저장된 행이 그대로 넘어간다
     }
 
     /** D16: 단가 승계 규칙은 원장 하나가 소유한다 — 여기서 계산하면 규칙이 두 벌이 된다. */

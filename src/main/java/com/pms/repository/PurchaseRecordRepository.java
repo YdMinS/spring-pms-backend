@@ -61,4 +61,21 @@ public interface PurchaseRecordRepository extends JpaRepository<PurchaseRecord, 
                                           @Param("sellerId") Long sellerId,
                                           @Param("asOf") LocalDate asOf,
                                           Pageable pageable);
+    /**
+     * 그 날짜 이후의 매입 전부, 최신순 (FEATURE_2609_28 / PLAN D4 ①·②).
+     *
+     * <p>🔴 <b>세 조건(반영 여부·단가·수량)을 SQL 에 적지 않는다.</b> 기준가를 움직이는 판정은
+     * {@link PurchaseRecord#movesBasePrice()} 하나가 소유하고, 호출자가 그 메서드로 거른다 —
+     * 여기에 같은 조건을 다시 쓰면 갱신 조건과 대상 산출 조건이 갈려 "기준가는 갱신됐는데 파급
+     * 대상에는 안 뜨는" 유령 상품이 생긴다. 창(window)만 DB 가 좁힌다.
+     *
+     * <p>{@code join fetch r.product}: 호출자가 물품 id·이름·기준가를 전부 읽는다.
+     * {@code open-in-view=false} 라 LAZY 프록시면 행마다 쿼리가 나간다.
+     */
+    @Query("""
+            select r from PurchaseRecord r join fetch r.product
+            where r.purchasedOn >= :since
+            order by r.purchasedOn desc, r.id desc
+            """)
+    List<PurchaseRecord> findPurchasedOnOrAfter(@Param("since") LocalDate since);
 }
