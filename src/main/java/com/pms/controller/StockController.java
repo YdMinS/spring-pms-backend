@@ -23,8 +23,9 @@ import java.util.List;
  * <p>⚠️ Path is {@code /api/admin/stock}, not {@code /api/stock}: the legacy {@code StockLog}
  * feature still owns the latter. This path stays even after that one is removed.
  *
- * <p>⚠️ This controller is the <b>only</b> caller of {@link StockLedgerService} (D18). Nothing
- * automatic may write to the ledger.
+ * <p>⚠️ Nothing automatic may write to the ledger (D18, revised by PLAN 2609_29 D2). Besides this
+ * controller the only caller is {@code PurchaseListService}, because the [입고] click is itself the
+ * human confirmation.
  *
  * @see StockLedgerService
  */
@@ -43,21 +44,28 @@ public class StockController {
         return ResponseEntity.ok(ResponseDTO.success(stockLedgerService.record(request)));
     }
 
-    /** On-hand per product (ledger sum). keyword = product name partial match. */
+    /**
+     * On-hand per (product × seller) — the ledger sum (PLAN 2609_29 D5).
+     * keyword = product name partial match; sellerId optional (omitted = every seller).
+     */
     @GetMapping("/balances")
     public ResponseEntity<ResponseDTO<List<StockBalanceView>>> balances(
             @RequestParam(required = false) Long productId,
+            @RequestParam(required = false) Long sellerId,
             @RequestParam(required = false) String keyword) {
-        return ResponseEntity.ok(ResponseDTO.success(stockLedgerService.balances(productId, keyword)));
+        return ResponseEntity.ok(ResponseDTO.success(
+                stockLedgerService.balances(productId, sellerId, keyword)));
     }
 
-    /** Ledger history. from/to optional (defaults to the last 30 days). */
+    /** Ledger history. sellerId optional; from/to optional (defaults to the last 30 days). */
     @GetMapping("/movements")
     public ResponseEntity<ResponseDTO<List<StockMovementView>>> history(
             @RequestParam(required = false) Long productId,
+            @RequestParam(required = false) Long sellerId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
-        return ResponseEntity.ok(ResponseDTO.success(stockLedgerService.history(productId, from, to)));
+        return ResponseEntity.ok(ResponseDTO.success(
+                stockLedgerService.history(productId, sellerId, from, to)));
     }
 
     /** Purchases awaiting check-in — the picker behind STOCK_IN + PURCHASE. */

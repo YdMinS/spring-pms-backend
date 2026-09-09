@@ -49,13 +49,6 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
     List<OrderLine> findRecentByStatus(@Param("status") OrderStatus status,
                                        @Param("from") LocalDateTime from);
 
-    /** 셀러 + 상태별 주문 라인, from 이후(ordered_at) — 셀러 필터 구매 목록 추출. */
-    @Query("SELECT l FROM OrderLine l JOIN l.order o WHERE l.status = :status "
-            + "AND o.marketplaceAccount.seller.id = :sellerId AND o.orderedAt >= :from")
-    List<OrderLine> findRecentByStatusAndSeller(@Param("status") OrderStatus status,
-                                                @Param("sellerId") Long sellerId,
-                                                @Param("from") LocalDateTime from);
-
     // ── 전송 레그 (트랜잭션 밖 · @EntityGraph 필수) ─────────────────────────
 
     /**

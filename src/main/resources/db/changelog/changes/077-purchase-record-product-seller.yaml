@@ -1,0 +1,106 @@
+# Purchase attribution (FEATURE_2609_29 / PLAN D3).
+#   purchase_record stops hanging off a shopping_list_item (order line) and carries its own
+#   product_id + seller_id. A purchase is "this seller bought this many of this item", not
+#   "this order's share": when the order is cancelled or never existed (manual restock), the
+#   attribution must survive.
+#
+# 🔴 IRREVERSIBLE: 077-pr-drop-line-fk throws the order attribution away for good. The rollback
+#    below only recreates the column — the values CANNOT be restored.
+#
+# ⚠️ Split into 4 changesets on purpose: the backfill is MySQL-only (dbms: mysql), and a single
+#    changeset would make the empty-H2 apply-check fail at the NOT NULL step. Same 009 pattern.
+#
+# ⚠️ Run these BEFORE applying, on the target DB:
+#     -- rows that cannot be backfilled (manual lines have no order -> no seller):
+#     SELECT SUM(sli.order_line_id IS NULL) AS manual, COUNT(*) AS total
+#     FROM purchase_record pr JOIN shopping_list_item sli ON sli.id = pr.shopping_list_item_id;
+#    🔴 If `manual` > 0 the NOT NULL step WILL fail. That is intended — STOP and report.
+#       Never paper over it by filling an arbitrary seller: a wrong attribution is worse than none.
+#    prod measurement 2026-09-09: 1 row, all order-derived -> backfill covers everything.
+databaseChangeLog:
+
+  - changeSet:
+      id: 077-pr-columns
+      author: oclyx
+      comment: "FEATURE_2609_29: purchase_record product_id + seller_id (nullable first, backfilled below)."
+      changes:
+        - addColumn:
+            tableName: purchase_record
+            columns:
+              - column: { name: product_id, type: BIGINT }
+              - column: { name: seller_id, type: BIGINT }
+      rollback:
+        - dropColumn: { tableName: purchase_record, columnNames: product_id, seller_id }
+
+  - changeSet:
+      id: 077-pr-backfill
+      author: oclyx
+      dbms: mysql
+      comment: "Backfill product/seller from the line the record used to hang off (order path)."
+      preConditions:
+        - onFail: MARK_RAN
+        - sqlCheck:
+            expectedResult: 0
+            sql: "SELECT count(*) FROM purchase_record WHERE product_id IS NOT NULL"
+      changes:
+        - sql: >-
+            UPDATE purchase_record pr
+              JOIN shopping_list_item sli ON sli.id = pr.shopping_list_item_id
+              JOIN order_line ol         ON ol.id = sli.order_line_id
+              JOIN orders o              ON o.id = ol.order_id
+              JOIN marketplace_account a ON a.id = o.marketplace_account_id
+            SET pr.product_id = sli.product_id,
+                pr.seller_id  = a.seller_id
+            WHERE pr.product_id IS NULL
+      rollback:
+        - sql: "UPDATE purchase_record SET product_id = NULL, seller_id = NULL"
+
+  - changeSet:
+      id: 077-pr-notnull
+      author: oclyx
+      comment: "product_id / seller_id become mandatory + FKs."
+      changes:
+        - addNotNullConstraint:
+            tableName: purchase_record
+            columnName: product_id
+            columnDataType: BIGINT
+        - addNotNullConstraint:
+            tableName: purchase_record
+            columnName: seller_id
+            columnDataType: BIGINT
+        - addForeignKeyConstraint:
+            constraintName: fk_pr_product
+            baseTableName: purchase_record
+            baseColumnNames: product_id
+            referencedTableName: products
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_pr_seller
+            baseTableName: purchase_record
+            baseColumnNames: seller_id
+            referencedTableName: seller
+            referencedColumnNames: id
+      rollback:
+        - dropForeignKeyConstraint: { baseTableName: purchase_record, constraintName: fk_pr_product }
+        - dropForeignKeyConstraint: { baseTableName: purchase_record, constraintName: fk_pr_seller }
+        - dropNotNullConstraint: { tableName: purchase_record, columnName: product_id, columnDataType: BIGINT }
+        - dropNotNullConstraint: { tableName: purchase_record, columnName: seller_id, columnDataType: BIGINT }
+
+  - changeSet:
+      id: 077-pr-drop-line-fk
+      author: oclyx
+      comment: "Drop the order-line link (D3). IRREVERSIBLE — the rollback cannot restore the values."
+      changes:
+        - dropForeignKeyConstraint:
+            baseTableName: purchase_record
+            constraintName: fk_purchase_record_sli
+        - dropColumn:
+            tableName: purchase_record
+            columnName: shopping_list_item_id
+      rollback:
+        # Column shape only. 🔴 The per-row order attribution is GONE and cannot be rebuilt —
+        # purchase_record no longer knows which line it belonged to.
+        - addColumn:
+            tableName: purchase_record
+            columns:
+              - column: { name: shopping_list_item_id, type: BIGINT }

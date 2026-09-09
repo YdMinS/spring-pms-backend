@@ -1,0 +1,64 @@
+# Stock attribution (FEATURE_2609_29 / PLAN D4 — revises 2609_28 D5).
+#   Stock is not shared between sellers. Without this axis the on-hand balance and the purchase
+#   cost cannot be attributed, and "A's goods used for B's order" stays invisible instead of
+#   becoming an internal transfer (TRANSFER_OUT/IN, separate feature).
+#
+# ⚠️ Included AFTER 077 on purpose — the backfill reads purchase_record.seller_id.
+#
+# ⚠️ Run this BEFORE applying, on the target DB:
+#     SELECT movement_type, COUNT(*) FROM stock_movement GROUP BY movement_type;
+#    🔴 Rows with no purchase_record (OPENING / DISPOSAL / ADJUST / RETURN_IN) have no source to
+#       backfill from and WILL fail 078-sm-seller-notnull. That is intended — STOP and report.
+#       2609_28's 04 merged only days ago and the stock screens (06/07) do not exist yet, so the
+#       table is expected to be empty.
+databaseChangeLog:
+
+  - changeSet:
+      id: 078-sm-seller-column
+      author: oclyx
+      comment: "FEATURE_2609_29: stock_movement.seller_id (nullable first, backfilled below)."
+      changes:
+        - addColumn:
+            tableName: stock_movement
+            columns:
+              - column: { name: seller_id, type: BIGINT }
+      rollback:
+        - dropColumn: { tableName: stock_movement, columnName: seller_id }
+
+  - changeSet:
+      id: 078-sm-seller-backfill
+      author: oclyx
+      dbms: mysql
+      comment: "Backfill seller from the purchase record this check-in fulfils."
+      preConditions:
+        - onFail: MARK_RAN
+        - sqlCheck:
+            expectedResult: 0
+            sql: "SELECT count(*) FROM stock_movement WHERE seller_id IS NOT NULL"
+      changes:
+        - sql: >-
+            UPDATE stock_movement sm
+              JOIN purchase_record pr ON pr.id = sm.purchase_record_id
+            SET sm.seller_id = pr.seller_id
+            WHERE sm.seller_id IS NULL
+      rollback:
+        - sql: "UPDATE stock_movement SET seller_id = NULL"
+
+  - changeSet:
+      id: 078-sm-seller-notnull
+      author: oclyx
+      comment: "seller_id becomes mandatory + FK."
+      changes:
+        - addNotNullConstraint:
+            tableName: stock_movement
+            columnName: seller_id
+            columnDataType: BIGINT
+        - addForeignKeyConstraint:
+            constraintName: fk_stockmovement_seller
+            baseTableName: stock_movement
+            baseColumnNames: seller_id
+            referencedTableName: seller
+            referencedColumnNames: id
+      rollback:
+        - dropForeignKeyConstraint: { baseTableName: stock_movement, constraintName: fk_stockmovement_seller }
+        - dropNotNullConstraint: { tableName: stock_movement, columnName: seller_id, columnDataType: BIGINT }

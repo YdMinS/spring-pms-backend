@@ -527,6 +527,27 @@ class LiquibaseChangelogApplyTest {
                 .isInstanceOf(DataAccessException.class);
     }
 
+    /** changesets 077 + 078: purchase and stock both carry their own (product, seller) attribution. */
+    @Test
+    void purchaseAndStockSellerAxisApplied() {
+        // 077: purchase_record gained product_id + seller_id (a successful count proves both columns).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM purchase_record WHERE product_id IS NULL AND seller_id IS NULL",
+                Integer.class)).isZero();
+
+        // 🔴 077-pr-drop-line-fk: the order-line link is gone for good (D3) — querying it must fail.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'PURCHASE_RECORD' "
+                        + "AND COLUMN_NAME = 'SHOPPING_LIST_ITEM_ID'", Integer.class)).isZero();
+
+        // 078: stock_movement gained seller_id, and it is mandatory (stock is not shared, D4).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM stock_movement WHERE seller_id IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'STOCK_MOVEMENT' "
+                        + "AND COLUMN_NAME = 'SELLER_ID'", String.class)).isEqualTo("NO");
+    }
+
     @Test
     void tenantDimensionApplied() {
         // changeset 002: tenant table created + seeded with the default tenant (id=1).
