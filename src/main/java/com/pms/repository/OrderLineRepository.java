@@ -2,6 +2,7 @@ package com.pms.repository;
 
 import com.pms.domain.OrderLine;
 import com.pms.domain.OrderStatus;
+import com.pms.dto.response.CostBasisBreakdown;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -107,4 +108,25 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
      */
     @EntityGraph(attributePaths = {"order", "order.marketplaceAccount", "orderShipment"})
     List<OrderLine> findWithAccountByIdIn(List<Long> ids);
+
+    /**
+     * 기간별 원가 근거 구성비 (FEATURE_2609_28 / PLAN D20) — 예: {@code 최근매입가 70% · 기준가 30%}.
+     *
+     * <p>🔴 <b>이 숫자가 FIFO 투자 여부를 결정한다.</b> 추정 등급 비중이 낮으면 FIFO 를 만들 이유가 없다.
+     *
+     * <p>⚠️ 기간 축은 주문일이 아니라 {@code costSnapshotAt}(구운 시각)이다 — 스냅샷이 없는 라인은
+     * 애초에 나가지 않은 라인이라 집계 대상이 아니고, 이 조건이 그것을 자동으로 걸러 준다.
+     *
+     * <p>⚠️ 생성자 projection 이다. {@code select l.costBasis, count(l), ...} 로 두면 {@code Object[]} 가
+     * 돌아와 record 로 받히지 않는다. {@code count(l)} 이 {@code Long} 이므로 record 필드도 {@code long}.
+     */
+    @Query("""
+            select new com.pms.dto.response.CostBasisBreakdown(
+                l.costBasis, count(l), coalesce(sum(l.costAmount), 0))
+            from OrderLine l
+            where l.costSnapshotAt between :from and :to
+            group by l.costBasis
+            """)
+    List<CostBasisBreakdown> findCostBasisBreakdown(@Param("from") LocalDateTime from,
+                                                    @Param("to") LocalDateTime to);
 }

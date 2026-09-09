@@ -17,7 +17,9 @@ import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.StockMovementRepository;
+import com.pms.service.cost.CostBasisResolver;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -48,6 +50,7 @@ import java.util.Map;
  *
  * <p>⚠️ 클래스 기본 readOnly, {@link #confirm} 만 쓰기 트랜잭션. 원장은 append-only 다.
  */
+@Slf4j
 @Service
 @Transactional(readOnly = true)
 @RequiredArgsConstructor
@@ -60,6 +63,7 @@ public class StockOutServiceImpl implements StockOutService {
     private final StockMovementRepository stockMovementRepository;
     private final ProductRepository productRepository;
     private final OrderLineExpander orderLineExpander;
+    private final CostBasisResolver costBasisResolver;
 
     @Override
     public OutboundResponse outbound(Long sellerId, OrderStatus status) {
@@ -168,6 +172,16 @@ public class StockOutServiceImpl implements StockOutService {
                     .createdBy(currentUsername())
                     .build());
             saved.add(toView(movement, seller));
+        }
+
+        // 물건이 실제로 나간 이 순간의 원가를 라인에 굽는다(D20). 첫 출고에서만 굽고, 부분 출고의
+        // 나머지에서는 resolver 가 스스로 빠진다 — 출고 횟수만큼 원가가 흔들리면 안 된다.
+        try {
+            costBasisResolver.snapshot(line, expansion.products());
+        } catch (RuntimeException e) {
+            // 🔴 스냅샷 실패가 출고 확인을 막지 않는다. 실물은 이미 나갔고 원가는 나중에 채울 수 있지만
+            // 재고는 되돌릴 수 없다. 조용히 삼키지 않도록 경고는 남긴다.
+            log.warn("cost snapshot failed for order line {} — stock out is kept", line.getId(), e);
         }
         return saved;
     }
