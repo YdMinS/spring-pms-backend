@@ -50,10 +50,6 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.PUT, "/api/products/*/image").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.GET, "/api/products/*/image").authenticated()
                         .requestMatchers(HttpMethod.DELETE, "/api/products/*/image").hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.POST, "/api/stock").hasAnyRole("USER", "ADMIN")
-                        .requestMatchers(HttpMethod.POST, "/api/stock/batch").hasAnyRole("USER", "ADMIN")
-                        .requestMatchers(HttpMethod.GET, "/api/stock").hasAnyRole("USER", "ADMIN")
-                        .requestMatchers(HttpMethod.GET, "/api/stock/**").hasAnyRole("USER", "ADMIN")
                         // Carrier master: GET readable by any authenticated user (dropdown source),
                         // writes ADMIN only. More specific rules must precede the /api/admin/** globals.
                         .requestMatchers(HttpMethod.GET, "/api/admin/carriers").authenticated()

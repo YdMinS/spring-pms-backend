@@ -21,9 +21,8 @@ import java.util.List;
  * <p>⚠️ The on-hand balance is <b>aggregated in SQL</b>, never by loading every movement and summing
  * in Java — a ledger only grows.
  *
- * <p>⚠️ Nullable filters follow this project's {@code (:param is null or ...)} convention
- * (see {@link StockLogRepository}); the caller normalises blank strings to null so {@code like '%%'}
- * cannot silently disable the filter.
+ * <p>⚠️ Nullable filters follow this project's {@code (:param is null or ...)} convention. The caller
+ * normalises blank strings to null so {@code like '%%'} cannot silently disable the filter.
  */
 @Repository
 public interface StockMovementRepository extends JpaRepository<StockMovement, Long> {

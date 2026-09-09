@@ -20,8 +20,8 @@ import java.util.List;
 /**
  * Physical stock ledger API — ADMIN only (FEATURE_2609_28 / PLAN D19).
  *
- * <p>⚠️ Path is {@code /api/admin/stock}, not {@code /api/stock}: the legacy {@code StockLog}
- * feature still owns the latter. This path stays even after that one is removed.
+ * <p>⚠️ Path is {@code /api/admin/stock}. The legacy {@code /api/stock} stack was removed
+ * (PLAN 2609_28 D21) and must not be revived here — old clients would bind to it and misbehave.
  *
  * <p>⚠️ Nothing automatic may write to the ledger (D18, revised by PLAN 2609_29 D2). Besides this
  * controller the only caller is {@code PurchaseListService}, because the [입고] click is itself the
