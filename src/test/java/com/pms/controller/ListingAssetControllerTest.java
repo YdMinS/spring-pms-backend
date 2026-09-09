@@ -207,8 +207,9 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.optionPrices.length()").value(1))
                 // option name surfaced so the matrix shows the label without cross-referencing master ids
                 .andExpect(jsonPath("$.data.optionPrices[0].optionName").value("기본"))
-                // (1500 + 2500 + 500) / 0.75 = 6000, rounded to nearest 10 won
-                .andExpect(jsonPath("$.data.optionPrices[0].sellingPrice").value(6000.00))
+                // (1500 + 2500 + 500) / 0.74 = 6081.08 → 6080, rounded to nearest 10 won
+                // (PLAN 2609_30 D19: the denominator now subtracts the commission VAT; was 0.75 → 6000)
+                .andExpect(jsonPath("$.data.optionPrices[0].sellingPrice").value(6080.00))
                 // per-channel active flag (42) surfaced so the matrix can render inline (43)
                 .andExpect(jsonPath("$.data.optionPrices[0].active").value(true))
                 // 87: option-axis market flag so the front can lock the checkbox (DRAFT cell → not on the market)
@@ -308,7 +309,7 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.fieldValues.brandName").value("직접입력"))
                 // regeneration still runs: option price recomputed, thumbnail written.
                 .andExpect(jsonPath("$.data.thumbnailUrl").value("thumbnails/generated.jpg"))
-                .andExpect(jsonPath("$.data.optionPrices[0].sellingPrice").value(6000.00));
+                .andExpect(jsonPath("$.data.optionPrices[0].sellingPrice").value(6080.00));   // D19
     }
 
     @Test

@@ -19,5 +19,15 @@ public enum PriceChangeReason {
     PROPAGATION,
 
     /** Per-channel selling price set by hand (FEATURE_2609_19). */
-    MANUAL
+    MANUAL,
+
+    /**
+     * A commission rate corrected from what the marketplace actually charged, confirmed by a person
+     * on the settlement suggestion screen (FEATURE_2609_30 / PLAN D16).
+     *
+     * <p>⚠️ Only {@link PriceTargetType#PLATFORM_COMMISSION} rows carry this reason. It is never
+     * automatic: measured ratios wobble (promotional fee discounts, mis-mapped categories, one-line
+     * samples), so the log records a human decision, not a batch.
+     */
+    SETTLEMENT_FEEDBACK
 }

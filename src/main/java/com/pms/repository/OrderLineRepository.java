@@ -3,6 +3,7 @@ package com.pms.repository;
 import com.pms.domain.OrderLine;
 import com.pms.domain.OrderStatus;
 import com.pms.dto.response.CostBasisBreakdown;
+import com.pms.dto.response.SalesLineGroup;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -109,6 +110,27 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
     @EntityGraph(attributePaths = {"order", "order.marketplaceAccount", "orderShipment"})
     List<OrderLine> findWithAccountByIdIn(List<Long> ids);
 
+    // ── 정산 라인 매핑 (FEATURE_2609_30 / PLAN D7) ──────────────────────────
+
+    /**
+     * 주문번호 + 채널 옵션으로 주문 라인 조회 — 정산 라인 매핑의 도착지.
+     *
+     * <p>매칭 실패(0건)는 결함이 아니라 {@code UNMATCHED} 라는 정상 상태다 — 광고비 상계·기간 밖 주문은
+     * 애초에 매칭될 수 없다. 2건 이상(합포장 분할)이면 호출자가 매핑을 포기한다: 틀린 라인에 붙이면
+     * 상품별 수익성이 조용히 오염되므로, 모르는 채로 두는 편이 낫다.
+     *
+     * <p>⚠️ {@code product_listing_option_id} 는 2609_28(079)이 백필한 컬럼이라 비어 있는 라인이 있을 수
+     * 있다 — 그 경우 이 조회는 0건이 되고 정산 라인은 UNMATCHED 로 남는다(PLAN "남는 위험").
+     */
+    @Query("""
+            SELECT l FROM OrderLine l
+             WHERE l.order.externalOrderId = :externalOrderId
+               AND l.productListingOption.id = :productListingOptionId
+            """)
+    List<OrderLine> findByExternalOrderIdAndListingOptionId(
+            @Param("externalOrderId") String externalOrderId,
+            @Param("productListingOptionId") Long productListingOptionId);
+
     /**
      * 기간별 원가 근거 구성비 (FEATURE_2609_28 / PLAN D20) — 예: {@code 최근매입가 70% · 기준가 30%}.
      *
@@ -129,4 +151,54 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
             """)
     List<CostBasisBreakdown> findCostBasisBreakdown(@Param("from") LocalDateTime from,
                                                     @Param("to") LocalDateTime to);
+
+    // ── 매출 집계 (FEATURE_2609_30 / PLAN D14 · 03) ─────────────────────────
+
+    /**
+     * 기간 매출을 <b>계정 × 채널 옵션</b> 단위로 접어서 돌려준다 — 매출 API 3개가 공유하는 유일한 집계 경로.
+     *
+     * <p>🔴 <b>라인을 자바로 가져와 더하지 않는다.</b> 주문량은 계속 늘지만 팔린 옵션 수는 그렇지 않다.
+     * 판매자/채널/상품 축은 전부 이 결과를 메모리에서 다시 접어 만든다(그룹 키만 바뀐다).
+     *
+     * <p>정의(PLAN D14 · 03 Step 1):
+     * <pre>
+     *   netQty  = orderQty − cancelQty        🔴 holdQty(환불대기)는 <b>빼지 않는다</b>
+     *   gross   = Σ (unitPrice × netQty)      할인 <b>전</b>
+     *   discount= Σ (discountAmount × netQty / orderQty)   유효수량 비례 안분
+     * </pre>
+     *
+     * <p>⚠️ {@code left join} 이 세 개인 이유: 채널 옵션이 없는 라인(백필 누락·WING 수정분)을 <b>버리지 않기</b>
+     * 위해서다. inner join 으로 바꾸면 이 목록의 합계가 판매자 요약과 조용히 어긋난다.
+     *
+     * <p>⚠️ {@code nullif(l.orderQty, 0)} 는 0으로 나누는 것을 막는다 — 안분의 분모가 데이터에 달려 있다.
+     * {@code missingCostLines} 는 <b>유효수량이 남은</b> 라인만 센다: 전량 취소된 라인은 애초에 나가지 않아
+     * 원가 스냅샷이 없는 것이 정상인데, 그것까지 세면 취소 한 건에 순이익 전체가 {@code null} 이 된다.
+     *
+     * @param toExclusive 상한 <b>배타</b>. 종료일의 23:59:59 를 만들지 않기 위해 다음 날 00:00 을 넘긴다
+     */
+    @Query("""
+            select new com.pms.dto.response.SalesLineGroup(
+                s.id, s.sellerName, a.id, plo.id, mp.id, mp.name,
+                sum(l.orderQty - l.cancelQty),
+                sum(l.holdQty),
+                sum(coalesce(l.unitPrice, 0) * (l.orderQty - l.cancelQty)),
+                sum(coalesce(l.discountAmount, 0) * (l.orderQty - l.cancelQty)
+                        / coalesce(nullif(l.orderQty, 0), 1)),
+                sum(coalesce(l.costAmount, 0) * (l.orderQty - l.cancelQty)
+                        / coalesce(nullif(l.orderQty, 0), 1)),
+                sum(case when l.costAmount is null and l.orderQty > l.cancelQty then 1 else 0 end))
+            from OrderLine l
+              join l.order o
+              join o.marketplaceAccount a
+              join a.seller s
+              left join l.productListingOption plo
+              left join plo.masterProductOption mpo
+              left join mpo.masterProduct mp
+            where o.orderedAt >= :from and o.orderedAt < :toExclusive
+              and (:sellerId is null or s.id = :sellerId)
+            group by s.id, s.sellerName, a.id, plo.id, mp.id, mp.name
+            """)
+    List<SalesLineGroup> aggregateSales(@Param("from") LocalDateTime from,
+                                        @Param("toExclusive") LocalDateTime toExclusive,
+                                        @Param("sellerId") Long sellerId);
 }

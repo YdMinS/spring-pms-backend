@@ -109,6 +109,19 @@ public class MarketplaceAccount extends BaseEntity {
     @Column(name = "last_inquiry_sync_at")
     private LocalDateTime lastInquirySyncAt;
 
+    // Settlement sync anchors (FEATURE_2609_30 / changeset 083, PLAN D11). Same semantics as
+    // lastOrderSyncAt / lastInquirySyncAt: the time that stage COMPLETED, never "when we last tried".
+    // A partial load must leave them untouched so the next run's window widens by itself.
+    // NULL = never completed a run.
+    // ⚠️ lastSettlementSyncAt also drives the manual [갱신] minimum-interval guard (10 min default),
+    //    so writing it on a failed run would suppress the retry the user is asking for.
+    @Column(name = "last_settlement_sync_at")
+    private LocalDateTime lastSettlementSyncAt;    // 매출내역(revenue-history) 적재가 완료된 시각
+
+    /** 지급내역(settlement-histories) 적재가 완료된 시각 — 채우는 것은 2609_30 의 02 다. */
+    @Column(name = "last_payout_sync_at")
+    private LocalDateTime lastPayoutSyncAt;
+
     @Column(name = "last_sync_error", length = 500)
     private String lastSyncError;                  // 실패 사유 요약 (응답 바디 미포함 — PII·자격증명)
 }
