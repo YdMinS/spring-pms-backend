@@ -617,6 +617,27 @@ class LiquibaseChangelogApplyTest {
                         + "AND last_payout_sync_at IS NULL", Integer.class)).isZero();
     }
 
+    /**
+     * changeset 085: revenue_recognition_month must be VARCHAR, not CHAR.
+     *
+     * <p>083 created it as CHAR(7) while the entity maps a String of length 7, so Hibernate's schema
+     * validation refused to start on MySQL ("found [char], but expecting [varchar(7)]"). CHAR was the
+     * only such column in the whole changelog. Boot failure is the real regression this guards.
+     */
+    @Test
+    void settlementPayoutMonthIsVarchar() {
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'SETTLEMENT_PAYOUT' "
+                        + "AND COLUMN_NAME = 'REVENUE_RECOGNITION_MONTH'", String.class))
+                .isEqualTo("CHARACTER VARYING");
+
+        // The unique key that spans this column survived the type change.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
+                        + "WHERE TABLE_NAME = 'SETTLEMENT_PAYOUT' AND CONSTRAINT_NAME = 'UQ_SETTLEMENT_PAYOUT'",
+                Integer.class)).isEqualTo(1);
+    }
+
     @Test
     void tenantDimensionApplied() {
         // changeset 002: tenant table created + seeded with the default tenant (id=1).
