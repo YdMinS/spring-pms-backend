@@ -31,7 +31,7 @@ public class SettlementReportExporter {
     public byte[] toXlsx(List<ReconLineView> lines) {
         try (XSSFWorkbook workbook = new XSSFWorkbook();
              ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-            Sheet sheet = workbook.createSheet("정산대사");
+            Sheet sheet = workbook.createSheet("정산금액확인");
 
             Row header = sheet.createRow(0);
             for (int c = 0; c < HEADERS.length; c++) {
@@ -58,7 +58,7 @@ public class SettlementReportExporter {
             workbook.write(out);
             return out.toByteArray();
         } catch (Exception e) {
-            throw new IllegalStateException("정산 대사 리포트 xlsx 생성 실패", e);
+            throw new IllegalStateException("정산 금액 확인 리포트 xlsx 생성 실패", e);
         }
     }
 

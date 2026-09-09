@@ -146,7 +146,7 @@ public class SalesStatsServiceImpl implements SalesStatsService {
                     scale(sales.estFee), sales.profit(), sales.profitReady(),
                     scale(nz(payout.pendingPayout())), scale(nz(payout.paidAmount())),
                     account.getLastSettlementSyncAt(),
-                    payout.unreconciledPayouts(), payout.amountOnlyPayouts()));
+                    payout.unreconciledPayouts(), payout.amountOnlyPayouts(), payout.payoutCount()));
         }
         rows.sort(Comparator.comparing(ChannelSalesResponse::grossSales).reversed());
         return rows;
