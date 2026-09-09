@@ -1,0 +1,38 @@
+# Clear legacy platform values that predate the Platform enum (regression from FEATURE_2609_26 / D16).
+#   2609_26 retyped every `platform` column from String to the Platform enum, which declares COUPANG
+#   and NAVER only. Rows still holding an older marketplace name (dev: GMARKET) now break Hibernate at
+#   HYDRATION time — `No enum constant com.pms.domain.Platform.GMARKET` — so GET /api/admin/category
+#   returns 500 even though no read path touches the column.
+# ⚠️ The enum is deliberately NOT widened. Platform means "channel this system supports"; adding a value
+#    with no adapter spreads an unusable constant through every resolver (see Platform javadoc).
+# ⚠️ Scope is exactly two columns because those were the only ones carrying legacy values (dev sweep of
+#    all 11 Platform tables: category 1 row, category_mapping 1 row). Both filter on the value, so a
+#    database without such rows is untouched.
+# ⚠️ Not reversible: the discarded value cannot be reconstructed from the remaining columns.
+databaseChangeLog:
+
+  # ---- category.platform: @deprecated (44), nullable, never read by new logic -> blank it ----
+  - changeSet:
+      id: 076-category-legacy-platform
+      author: oclyx
+      comment: "FEATURE_2609_28: null out category.platform values outside the Platform enum."
+      changes:
+        - update:
+            tableName: category
+            columns:
+              - column: { name: platform, value: null }
+            where: platform IS NOT NULL AND platform NOT IN ('COUPANG', 'NAVER')
+      rollback: [] # the old value is gone; nothing to restore it from
+
+  # ---- category_mapping.platform: NOT NULL and a live lookup -> the row itself is unusable ----
+  # A mapping row exists to answer "standard category X on platform Y has code Z". With no adapter for
+  # Y the answer can never be requested, so the row is dropped rather than repointed at a real platform.
+  - changeSet:
+      id: 076-category-mapping-legacy-platform
+      author: oclyx
+      comment: "FEATURE_2609_28: delete category_mapping rows for platforms outside the Platform enum."
+      changes:
+        - delete:
+            tableName: category_mapping
+            where: platform IS NOT NULL AND platform NOT IN ('COUPANG', 'NAVER')
+      rollback: [] # the mapping targeted an unsupported platform; re-creating it would re-break reads
