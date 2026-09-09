@@ -140,7 +140,8 @@ class ChannelAddControllerTest {
         marginPolicyRepository.save(MarginPolicy.builder()
                 .seller(seller).platform(Platform.COUPANG).marginRate(new BigDecimal("0.1500")).build());
 
-        // (1500 + 2500 + 500) / 0.75 = 6000.
+        // (1500 + 2500 + 500) / 0.74 = 6081.08 → 6080 (PLAN 2609_30 D19: commission carries its own VAT,
+        // so the denominator is 1 − 0.10 × 1.1 − 0.15; it was 0.75 → 6000 before).
         Carrier carrier = carrierRepository.save(Carrier.builder().name("CJ").isActive(true).build());
         CarrierRate delivery = carrierRateRepository.save(CarrierRate.builder()
                 .carrier(carrier).type("STANDARD").cost(new BigDecimal("2500"))
@@ -244,8 +245,8 @@ class ChannelAddControllerTest {
                 .andExpect(jsonPath("$.data.status").value("DRAFT"))
                 .andExpect(jsonPath("$.data.productListingId").isNumber())
                 .andExpect(jsonPath("$.data.generated.optionPrices.length()").value(1))
-                // (1500 + 2500 + 500) / 0.75 = 6000, rounded to nearest 10 won
-                .andExpect(jsonPath("$.data.generated.optionPrices[0].sellingPrice").value(6000.00));
+                // (1500 + 2500 + 500) / 0.74 = 6081.08 → 6080, rounded to nearest 10 won (D19)
+                .andExpect(jsonPath("$.data.generated.optionPrices[0].sellingPrice").value(6080.00));
     }
 
     // ---- duplicate channel (409) ----
