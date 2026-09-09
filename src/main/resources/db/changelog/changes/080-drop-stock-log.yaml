@@ -1,0 +1,27 @@
+# Drop the legacy stock_log table (FEATURE_2609_28 / PLAN D21).
+#   Superseded by stock_movement (071/078). Not migrated on purpose: stock_log has no tenant_id
+#   (missed by changeset 009) and its barcode_id is BIGINT while product.barcode_id is VARCHAR,
+#   so it never joined to product in the first place. There is nothing to carry over.
+# ⚠️ Verify SELECT COUNT(*) FROM stock_log = 0 on dev AND prod before applying. The deploy-time
+#    backup gate runs because this changeset is pending, but a count is cheaper than a restore.
+# ⚠️ 001-baseline.yaml is NOT edited — an applied changeset must keep its checksum.
+#    stock_log has no foreign keys, so the baseline constraint-name trap (PLAN 2609_28) does not apply.
+databaseChangeLog:
+
+  - changeSet:
+      id: 080-drop-stock-log
+      author: oclyx
+      comment: "FEATURE_2609_28: drop legacy stock_log (superseded by stock_movement)."
+      changes:
+        - dropTable: { tableName: stock_log }
+      rollback:
+        - createTable:
+            tableName: stock_log
+            columns:
+              - column: { name: stock_id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP, constraints: { nullable: false } }
+              - column: { name: barcode_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: in_stock, type: INT }
+              - column: { name: name, type: VARCHAR(255) }
+              - column: { name: stock_add, type: INT }
+              - column: { name: stock_sub, type: INT }

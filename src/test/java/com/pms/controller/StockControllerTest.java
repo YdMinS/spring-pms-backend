@@ -25,8 +25,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * StockController 통합 테스트 — ADMIN 권한(401/403/200) + 잔량/이력 조회.
  *
- * 경로는 {@code /api/admin/stock} 이다 — {@code /api/stock} 은 레거시 StockLog 가 아직 점유 중이며,
- * 그쪽이 제거된 뒤에도 이 경로를 유지한다.
+ * 경로는 {@code /api/admin/stock} 이다 — 레거시 {@code /api/stock} 스택은 제거됐고(PLAN 2609_28 D21)
+ * 그 경로를 되살리지 않는다.
  */
 class StockControllerTest extends BaseIntegrationTest {
 
