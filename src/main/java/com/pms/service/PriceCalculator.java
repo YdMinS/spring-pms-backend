@@ -5,7 +5,7 @@ import com.pms.domain.MasterProductOption;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.repository.MarginPolicyRepository;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -17,7 +17,7 @@ import java.math.RoundingMode;
  * <p>Per option, given the option's cost sum (Σ product.price × quantity), its parent cell and its matched
  * master option:</p>
  * <pre>
- *   sellingPrice = (costSum + delivery + box) / (1 − commissionRate − marginRate)
+ *   sellingPrice = (costSum + delivery + box) / (1 − commissionRate × (1 + feeVatRate) − marginRate)
  * </pre>
  * where commissionRate = {@code resolvePlatformCategory(cell).getCommissionRate()} (the mapped
  * {@link PlatformCategory} owns the commission — 52), delivery = {@code resolveDelivery(cell, option).cost},
@@ -27,14 +27,34 @@ import java.math.RoundingMode;
  *
  * <p>400 ({@link IllegalArgumentException}) when: category/mapping/delivery/box unset (raised by the
  * resolver), commission unset on the mapped PlatformCategory (seeding gap — no runtime tree fallback), margin
- * preset missing, or the denominator {@code (1 − commission − margin) ≤ 0}.</p>
+ * preset missing, or the denominator {@code (1 − commission × (1 + feeVat) − margin) ≤ 0}.</p>
  */
 @Service
-@RequiredArgsConstructor
 public class PriceCalculator {
 
     private final MarginPolicyRepository marginPolicyRepository;
     private final MasterChannelConfigService masterChannelConfigService;
+
+    /**
+     * VAT rate charged on top of the marketplace commission. Korean VAT 10% = {@code 0.1} (PLAN 2609_30 D19).
+     * Configurable rather than a constant because a tax-exempt ({@code taxType}) exception is still unmeasured.
+     * Must be within {@code [0, 1]}; {@code 0} = the legacy formula.
+     */
+    private final BigDecimal feeVatRate;
+
+    public PriceCalculator(MarginPolicyRepository marginPolicyRepository,
+                           MasterChannelConfigService masterChannelConfigService,
+                           @Value("${oclyx.pricing.fee-vat-rate:0.1}") BigDecimal feeVatRate) {
+        this.marginPolicyRepository = marginPolicyRepository;
+        this.masterChannelConfigService = masterChannelConfigService;
+        BigDecimal rate = feeVatRate == null ? BigDecimal.ZERO : feeVatRate;
+        // Range check at startup (the @ConfigurationProperties equivalent of @DecimalMin("0.0") @DecimalMax("1.0")):
+        // a typo such as 10 instead of 0.1 would silently flip every recommended price, so fail fast.
+        if (rate.compareTo(BigDecimal.ZERO) < 0 || rate.compareTo(BigDecimal.ONE) > 0) {
+            throw new IllegalArgumentException("oclyx.pricing.fee-vat-rate 는 0 이상 1 이하여야 합니다: " + rate);
+        }
+        this.feeVatRate = rate;
+    }
 
     /**
      * Compute the rounded selling price for one option of {@code cell}.
@@ -72,9 +92,14 @@ public class PriceCalculator {
                 .findBySellerIdAndPlatform(cell.getSeller().getId(), cell.getPlatform())
                 .orElseThrow(() -> new IllegalArgumentException("마진 프리셋 없음"));
 
-        BigDecimal denominator = BigDecimal.ONE.subtract(commissionRate).subtract(margin.getMarginRate());
+        // The commission is settled together with its own VAT (D19), so the reverse-calc must subtract both.
+        BigDecimal effectiveCommission = commissionRate.multiply(BigDecimal.ONE.add(feeVatRate));
+        BigDecimal denominator = BigDecimal.ONE.subtract(effectiveCommission).subtract(margin.getMarginRate());
         if (denominator.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new IllegalArgumentException("수수료+마진이 100% 이상");
+            // The effective rate is in the message because the VAT shrinks the denominator: a combination that
+            // used to pass can now trip this guard, and the raw commission alone would not explain why.
+            throw new IllegalArgumentException("수수료+마진이 100% 이상 — 실효 수수료율 " + effectiveCommission
+                    + "(수수료 " + commissionRate + " × VAT " + feeVatRate + " 포함) + 마진 " + margin.getMarginRate());
         }
 
         BigDecimal numerator = costSum.add(delivery).add(box);
