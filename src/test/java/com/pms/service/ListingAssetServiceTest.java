@@ -73,6 +73,8 @@ class ListingAssetServiceTest {
     @Mock private PriceCalculator priceCalculator;
     @Mock private DetailContentGenerator detailContentGenerator;
     @Mock private com.pms.service.listing.ListingChannelResolver listingChannelResolver;
+    // 2609_28/D23: the recorder is wired for real (below) so the skip rules run end-to-end from the seam.
+    @Mock private com.pms.repository.PriceChangeLogRepository priceChangeLogRepository;
     @InjectMocks private ListingAssetServiceImpl service;
 
     /**
@@ -82,6 +84,9 @@ class ListingAssetServiceTest {
     @BeforeEach
     void injectLazyResolver() {
         ReflectionTestUtils.setField(service, "listingChannelResolver", listingChannelResolver);
+        // A mocked recorder would prove only that the hook is called; the real one proves WHAT is written.
+        ReflectionTestUtils.setField(service, "priceHistoryRecorder",
+                new com.pms.service.price.PriceHistoryRecorder(priceChangeLogRepository));
     }
 
     private static final Long CELL_ID = 100L;
@@ -567,6 +572,82 @@ class ListingAssetServiceTest {
                 org.mockito.ArgumentCaptor.forClass(MasterProductOption.class);
         verify(priceCalculator).calculatePrices(eq(cell), passed.capture(), any());
         assertThat(passed.getValue()).isSameAs(masterOption);
+    }
+
+    // ---- 가격 변경 이력 훅 ③ (PLAN 2609_28 D23) ----
+
+    private ProductListingOption autoOption(Long id, String sellingPrice) {
+        return ProductListingOption.builder().id(id).optionName("옵션" + id)
+                .sellingPrice(new BigDecimal(sellingPrice))
+                .priceSource(com.pms.domain.GeneratedContentSource.AUTO).build();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<com.pms.domain.PriceChangeLog> capturePriceHistory() {
+        org.mockito.ArgumentCaptor<List<com.pms.domain.PriceChangeLog>> captor =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(priceChangeLogRepository).saveAll(captor.capture());
+        return captor.getValue();
+    }
+
+    @Test
+    void testPropagationRecordsPerOption() {
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀")
+                .status(com.pms.domain.ListingStatus.SELLING).build();
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(
+                autoOption(50L, "6000"), autoOption(51L, "7000"), autoOption(52L, "10670")));
+        given(priceCalculator.calculatePrices(any(), any(), any()))
+                .willReturn(new PriceCalculator.PriceResult(new BigDecimal("10670"), new BigDecimal("13340")));
+
+        service.recalculateOptionPrices(cell);
+
+        // 값이 그대로인 옵션(52)은 행을 만들지 않는다. saveAll 은 파급 전체에 1회다(행마다 save 금지).
+        List<com.pms.domain.PriceChangeLog> rows = capturePriceHistory();
+        assertThat(rows).hasSize(2);
+        assertThat(rows).extracting(r -> r.getListingOption().getId())
+                .containsExactlyInAnyOrder(50L, 51L);
+        assertThat(rows).allSatisfy(r -> {
+            assertThat(r.getTargetType()).isEqualTo(com.pms.domain.PriceTargetType.LISTING_SELLING);
+            assertThat(r.getReason()).isEqualTo(com.pms.domain.PriceChangeReason.PROPAGATION);
+            assertThat(r.getNewPrice()).isEqualByComparingTo("10670");
+        });
+    }
+
+    /**
+     * 🔴 훅 위치 회귀: 마스터 수정 → 전파는 {@code regenerateAssets} 를 거치지 않고 이 seam 을 직접 부른다.
+     * 훅이 재생성 안쪽에 있으면 그 경로가 통째로 빠진다.
+     */
+    @Test
+    void testMasterEditPropagationRecorded() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀")
+                .status(com.pms.domain.ListingStatus.SELLING).masterProduct(master).build();
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(productListingOptionRepository.findByProductListingId(CELL_ID))
+                .willReturn(List.of(autoOption(50L, "6000")));
+        given(priceCalculator.calculatePrices(any(), any(), any()))
+                .willReturn(new PriceCalculator.PriceResult(new BigDecimal("10670"), new BigDecimal("13340")));
+
+        service.recalculateOptionPrices(cell);
+
+        assertThat(capturePriceHistory()).hasSize(1);
+        // 재생성(썸네일·상세)은 이 경로에 없다 — 훅이 그 안쪽이 아니라는 증거.
+        verify(generatedProductDataRepository, never()).save(any());
+    }
+
+    @Test
+    void testChannelAddRecordsNothing() {
+        // 채널 추가·임포트가 만드는 셀이 DRAFT 다 — 생성은 변동이 아니므로 이력이 0행이어야 한다.
+        ProductListing draft = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀")
+                .status(com.pms.domain.ListingStatus.DRAFT).build();
+        given(productListingOptionRepository.findByProductListingId(CELL_ID))
+                .willReturn(List.of(autoOption(50L, "6000")));
+        given(priceCalculator.calculatePrices(any(), any(), any()))
+                .willReturn(new PriceCalculator.PriceResult(new BigDecimal("10670"), new BigDecimal("13340")));
+
+        service.recalculateOptionPrices(draft);
+
+        org.mockito.Mockito.verifyNoInteractions(priceChangeLogRepository);
     }
 
     // ---- detail-template preview + pin (2609_20) ----

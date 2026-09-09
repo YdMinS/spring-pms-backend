@@ -3,6 +3,7 @@ package com.pms.service.cost;
 import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MasterProductOptionItem;
+import com.pms.domain.PriceChangeReason;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -18,6 +19,7 @@ import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.service.listing.MasterPropagationService;
+import com.pms.service.price.PriceHistoryRecorder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -72,6 +74,7 @@ public class CostPropagationServiceImpl implements CostPropagationService {
     private final ProductListingOptionRepository productListingOptionRepository;
     private final GeneratedProductDataRepository generatedProductDataRepository;
     private final MasterPropagationService masterPropagationService;
+    private final PriceHistoryRecorder priceHistoryRecorder;
 
     // ---------------------------------------------------------------- ① 기준가 갱신
 
@@ -85,10 +88,15 @@ public class CostPropagationServiceImpl implements CostPropagationService {
         Product product = record.getProduct();
         // The purchase price becomes the new base cost — nothing else is touched here (PLAN 2609_28 D4 ①).
         // ⚠️ 파급(②)을 부르지 않는다. 여기서 부르면 구매기록 저장이 파급 실패에 끌려 롤백된다.
-        // 🔴 원가 변경 이력(D23)의 훅 지점 ① 이 여기다 — 이전 값(product.getPrice())과 매입기록 id 를
-        //    둘 다 알 수 있는 유일한 자리다.
+        BigDecimal oldPrice = product.getPrice();
         BigDecimal newPrice = record.getUnitPrice().setScale(BASE_PRICE_SCALE, RoundingMode.HALF_UP);
         productRepository.save(product.toBuilder().price(newPrice).build());
+        // 🔴 원가 변경 이력 훅 ① (D23). 이전 값과 매입기록 id 를 둘 다 아는 유일한 자리다 —
+        //    여기서 안 남기면 "왜 기준가가 올랐나"는 나중에 어디서도 답이 나오지 않는다.
+        //    프로모션 매입(reflect_to_base_price=false)은 위 early return 에서 이미 빠졌으므로
+        //    기준가를 안 건드리고 이력도 안 남는다.
+        priceHistoryRecorder.recordProductCost(product, oldPrice, newPrice,
+                PriceChangeReason.PURCHASE_UPDATE, record.getId());
     }
 
     // ---------------------------------------------------------------- ② dry-run
