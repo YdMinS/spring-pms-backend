@@ -186,11 +186,9 @@ public class PurchaseListServiceImpl implements PurchaseListService {
     public void addPurchase(Long itemId, PurchaseRecordRequest request) {
         ShoppingListItem item = shoppingListItemRepository.findById(itemId)
                 .orElseThrow(() -> new ResourceNotFoundException("ShoppingListItem", itemId));
-        purchaseRecordRepository.save(PurchaseRecord.builder()
-                .item(item)
-                .purchasedOn(request.purchasedOn())
-                .quantity(request.quantity())   // 음수 허용(정정)
-                .build());
+        // 금액 계산 규칙은 엔티티 팩토리 하나에 모여 있다(FEATURE_2609_28 / PLAN D1·D2).
+        // ⚠️ reflectToBasePrice 는 저장만 한다 — Product.price 파급은 별도 기능이 소유(D4).
+        purchaseRecordRepository.save(PurchaseRecord.of(item, request));
     }
 
     @Override
@@ -252,7 +250,8 @@ public class PurchaseListServiceImpl implements PurchaseListService {
     private PurchaseLine toLine(ShoppingListItem li, int linePurchased, List<PurchaseRecord> recs) {
         OrderLine line = li.getOrderLine();
         List<PurchaseRecordView> recordViews = recs.stream()
-                .map(r -> new PurchaseRecordView(r.getId(), r.getPurchasedOn(), r.getQuantity()))
+                .map(r -> new PurchaseRecordView(r.getId(), r.getPurchasedOn(), r.getQuantity(),
+                        r.getTotalAmount(), r.getUnitPrice(), Boolean.TRUE.equals(r.getReflectToBasePrice())))
                 .toList();
         return new PurchaseLine(
                 li.getId(),

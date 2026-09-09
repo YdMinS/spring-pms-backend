@@ -1,0 +1,75 @@
+# Physical stock ledger (FEATURE_2609_28 / PLAN D5~D10, D14).
+#   Every row is a HUMAN-CONFIRMED physical movement. Balance is DERIVED from the sum of this
+#   table (D14) — there is deliberately no stock column on product: a state column drifts and
+#   needs hooks and locks, a ledger can always be recomputed.
+# ⚠️ order_line_id / order_claim_id / purchase_record_id are ALL nullable at the DB level.
+#    Which one is required is decided per movement_type in the service (D6) — the DB cannot
+#    express "required only when type = STOCK_OUT".
+# ⚠️ No UNIQUE constraint: the same product moves many times a day, and a corrected count must
+#    be able to pile up rows.
+# ⚠️ No BOOLEAN column here -> no MySQL BIT re-type follow-up changeSet is needed (cf. 064).
+# ⚠️ H2 constraint names are schema-global unique -> distinct names (fk_stockmovement_*).
+databaseChangeLog:
+
+  - changeSet:
+      id: 071-stock-movement
+      author: oclyx
+      comment: "FEATURE_2609_28: stock_movement ledger (human-confirmed physical moves only)."
+      changes:
+        - createTable:
+            tableName: stock_movement
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: product_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: movement_type, type: VARCHAR(20), constraints: { nullable: false } }
+              - column: { name: quantity, type: INT, constraints: { nullable: false } }
+              - column: { name: location, type: VARCHAR(20), constraints: { nullable: false } }
+              - column: { name: reason, type: VARCHAR(30) }
+              - column: { name: reason_note, type: VARCHAR(500) }
+              - column: { name: unit_price, type: "DECIMAL(15,4)" }
+              - column: { name: order_line_id, type: BIGINT }
+              - column: { name: order_claim_id, type: BIGINT }
+              - column: { name: purchase_record_id, type: BIGINT }
+              - column: { name: moved_on, type: DATE, constraints: { nullable: false } }
+              - column: { name: created_by, type: VARCHAR(100) }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_stockmovement_tenant
+            baseTableName: stock_movement
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_stockmovement_product
+            baseTableName: stock_movement
+            baseColumnNames: product_id
+            referencedTableName: products
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_stockmovement_orderline
+            baseTableName: stock_movement
+            baseColumnNames: order_line_id
+            referencedTableName: order_line
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_stockmovement_claim
+            baseTableName: stock_movement
+            baseColumnNames: order_claim_id
+            referencedTableName: order_claim
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_stockmovement_purchase
+            baseTableName: stock_movement
+            baseColumnNames: purchase_record_id
+            referencedTableName: purchase_record
+            referencedColumnNames: id
+        - createIndex:
+            tableName: stock_movement
+            indexName: idx_stockmovement_product_moved
+            columns:
+              - column: { name: product_id }
+              - column: { name: moved_on }
+      rollback:
+        - dropTable: { tableName: stock_movement }
