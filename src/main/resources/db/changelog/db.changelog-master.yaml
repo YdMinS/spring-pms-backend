@@ -159,3 +159,5 @@ databaseChangeLog:
       file: db/changelog/changes/083-settlement-ledger.yaml
   - include:
       file: db/changelog/changes/084-coupang-settlement-line.yaml
+  - include:
+      file: db/changelog/changes/085-settlement-payout-month-varchar.yaml
