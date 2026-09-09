@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -68,6 +69,36 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
     @EntityGraph(attributePaths = {"order", "order.marketplaceAccount",
             "order.marketplaceAccount.seller", "orderShipment"})
     Optional<OrderLine> findWithAccountAndSellerById(Long id);
+
+    // ── 출고 확인 (FEATURE_2609_28 / PLAN D11) ─────────────────────────────
+
+    /**
+     * 아직 안 나간 주문 라인 — 출고 대상 목록.
+     *
+     * <p>🔴 {@code status} 는 {@code PAID}/{@code PREPARING} 만 넘어온다(종결 상태는 작업 대상이 아니다).
+     * 전량 취소는 저장되는 상태가 아니라 파생값이므로({@code effectiveStatus()}) 서비스가 한 번 더 거른다.
+     *
+     * <p>⚠️ 판매자 필터는 {@code order → marketplaceAccount → seller} 로 해석한다(PLAN 2609_29 D4) —
+     * 재고가 판매자별로 갈리므로 출고 화면도 같은 축을 가진다.
+     *
+     * <p>⚠️ {@code @EntityGraph} 로 옵션까지 끌고 온다: {@code open-in-view=false} 라 BOM 전개가
+     * {@code productListingOption → masterProductOption} 을 라인마다 지연로딩하면 N+1 이 된다.
+     */
+    @EntityGraph(attributePaths = {"order", "order.marketplaceAccount", "order.marketplaceAccount.seller",
+            "productListingOption", "productListingOption.masterProductOption"})
+    @Query("""
+            SELECT l FROM OrderLine l
+             WHERE l.status IN :statuses
+               AND (:sellerId IS NULL OR l.order.marketplaceAccount.seller.id = :sellerId)
+             ORDER BY l.order.orderedAt ASC, l.id ASC
+            """)
+    List<OrderLine> findOutboundTargets(@Param("statuses") Collection<OrderStatus> statuses,
+                                        @Param("sellerId") Long sellerId);
+
+    /** 출고 확인 대상 단건 — 전개(옵션·마스터 옵션)와 판매자 유도에 필요한 것을 전부 즉시 로딩한다. */
+    @EntityGraph(attributePaths = {"order", "order.marketplaceAccount", "order.marketplaceAccount.seller",
+            "productListingOption", "productListingOption.masterProductOption"})
+    Optional<OrderLine> findWithListingOptionById(Long id);
 
     /**
      * id 목록으로 주문 라인 조회 — 발주처리·주문취소 전개용.

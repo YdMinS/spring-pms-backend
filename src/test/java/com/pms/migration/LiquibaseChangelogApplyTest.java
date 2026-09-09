@@ -548,6 +548,25 @@ class LiquibaseChangelogApplyTest {
                         + "AND COLUMN_NAME = 'SELLER_ID'", String.class)).isEqualTo("NO");
     }
 
+    /** changeset 079: the order line carries its own option link, and both backfill dialects applied. */
+    @Test
+    void orderLineListingOptionApplied() {
+        // The column exists (a successful count proves it) and stays NULLABLE — a NOT NULL here would
+        // block order sync for every line whose option cannot be matched (D15).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM order_line WHERE product_listing_option_id IS NULL",
+                Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ORDER_LINE' "
+                        + "AND COLUMN_NAME = 'PRODUCT_LISTING_OPTION_ID'", String.class)).isEqualTo("YES");
+
+        // The H2 twin of the MySQL-only backfill really ran — without it this apply check would be
+        // proving nothing about the statement that moves the data (the MySQL one is skipped here).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID = "
+                        + "'079-order-line-listing-option-backfill-h2'", Integer.class)).isEqualTo(1);
+    }
+
     @Test
     void tenantDimensionApplied() {
         // changeset 002: tenant table created + seeded with the default tenant (id=1).

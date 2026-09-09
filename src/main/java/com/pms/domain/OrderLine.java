@@ -55,6 +55,23 @@ public class OrderLine extends BaseEntity {
     private OrderShipment orderShipment;
 
     /**
+     * 이 라인이 팔린 채널 옵션 — 중립 링크(FEATURE_2609_28 / PLAN D15, changeset 079).
+     *
+     * <p>🔴 <b>방향이 여기서 뒤집힌다.</b> 이전에는 옵션 매칭키를 {@link CoupangOrderLine#getVendorItemId()}
+     * 에서 읽었다 — 중립 객체가 플랫폼 거울 행을 알아야 하는 구조였고, 거울 행이 없는 플랫폼(네이버) 주문은
+     * BOM 전개에서 조용히 빠졌다. 구매목록에서 행이 안 보이는 정도일 때는 견딜 수 있었지만
+     * <b>재고 차감이 이 전개에 얹히는 순간</b>부터는 견딜 수 없다.
+     *
+     * <p>⚠️ nullable 이다 — 컬럼 이전 라인과 옵션 매칭에 실패한 라인은 null 로 남고, 소비자는 거울 행
+     * 폴백({@code OrderLineExpander})으로 내려간다. NOT NULL 로 만들면 주문 동기화가 막힌다.
+     * ⚠️ 적재는 <b>비어 있을 때만 채운다</b> — 재동기화가 값을 덮으면 WING 수정으로 깨진 매칭이
+     * 멀쩡한 값을 밀어낸다([[project_wing_edit_desync]]).
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "product_listing_option_id")
+    private ProductListingOption productListingOption;
+
+    /**
      * 정규화 상태. 매핑 실패(모르는 플랫폼 상태)는 적재 자체를 스킵하므로 신규 행은 항상 값이 있다 —
      * nullable 인 것은 백필이 매핑하지 못한 과거 값을 <b>숨기지 않고 드러내기</b> 위해서다(PLAN D7).
      */

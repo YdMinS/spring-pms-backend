@@ -14,6 +14,7 @@ import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.OrderRepository;
 import com.pms.repository.OrderShipmentRepository;
+import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.coupang.CoupangOrderStatusSyncer.StatusSyncResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -88,7 +89,8 @@ class CoupangOrderStatusSyncerTest {
         // 목이 아니라 진짜 upserter 를 넣는다(그래야 저장 동작이 그대로 검증된다).
         syncer = new CoupangOrderStatusSyncer(
                 coupangApiClient,
-                new OrderUpserter(orderRepository(), shipmentRepository(), lineRepository(), mirrorRepository()),
+                new OrderUpserter(orderRepository(), shipmentRepository(), lineRepository(), mirrorRepository(),
+                        listingOptionRepository()),
                 props, new ObjectMapper());
     }
 
@@ -263,6 +265,17 @@ class CoupangOrderStatusSyncerTest {
             lines.put(persisted.getId(), persisted);
             return persisted;
         });
+        return repo;
+    }
+
+    /**
+     * 옵션 중립 링크(FEATURE_2609_28 / D15)는 이 테스트의 관심사가 아니다 — 매칭 실패는 예외가 아니라
+     * null 이며 적재는 그대로 진행된다는 계약을 빈 Optional 로 그대로 재현한다.
+     */
+    private ProductListingOptionRepository listingOptionRepository() {
+        ProductListingOptionRepository repo = Mockito.mock(ProductListingOptionRepository.class,
+                Mockito.withSettings().strictness(Strictness.LENIENT));
+        given(repo.findByPlatformOptionId(anyString())).willReturn(Optional.empty());
         return repo;
     }
 
