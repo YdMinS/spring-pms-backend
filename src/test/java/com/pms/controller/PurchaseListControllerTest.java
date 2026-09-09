@@ -142,4 +142,52 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.items[0].purchasedQty").value(4))
                 .andExpect(jsonPath("$.data.items[0].remainingQty").value(2));
     }
+
+    @Test
+    void addPurchase_권한_401_403() throws Exception {
+        String body = "{\"purchasedOn\":\"" + LocalDate.now() + "\",\"quantity\":1}";
+        mockMvc.perform(post(PATH + "/items/1/purchases")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post(PATH + "/items/1/purchases")
+                        .header("Authorization", "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+    }
+
+    /** 총액이 정본이고 단가는 파생 — 나눠떨어지지 않아도 총액은 그대로 조회된다(FEATURE_2609_28 / PLAN D1). */
+    @Test
+    void addPurchase_금액저장_조회응답에총액단가반영플래그노출() throws Exception {
+        mockMvc.perform(post(PATH + "/extract").header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+        Long itemId = shoppingListItemRepository.findAll().get(0).getId();
+
+        String body = "{\"purchasedOn\":\"" + LocalDate.now()
+                + "\",\"quantity\":3,\"totalAmount\":10000,\"reflectToBasePrice\":false}";
+        mockMvc.perform(post(PATH + "/items/" + itemId + "/purchases")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(get(PATH).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].lines[0].records[0].totalAmount").value(10000.00))
+                .andExpect(jsonPath("$.data.items[0].lines[0].records[0].unitPrice").value(3333.3333))
+                .andExpect(jsonPath("$.data.items[0].lines[0].records[0].reflectToBasePrice").value(false));
+    }
+
+    /** 총액과 단가를 동시에 보내면 무엇이 정본인지 모호해진다 → 400. */
+    @Test
+    void addPurchase_총액과단가동시입력_400() throws Exception {
+        mockMvc.perform(post(PATH + "/extract").header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+        Long itemId = shoppingListItemRepository.findAll().get(0).getId();
+
+        String body = "{\"purchasedOn\":\"" + LocalDate.now()
+                + "\",\"quantity\":3,\"totalAmount\":10000,\"unitPrice\":3333}";
+        mockMvc.perform(post(PATH + "/items/" + itemId + "/purchases")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest());
+    }
 }
