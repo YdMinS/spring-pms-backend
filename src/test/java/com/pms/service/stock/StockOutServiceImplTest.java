@@ -14,6 +14,7 @@ import com.pms.dto.response.StockOutSumView;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.StockMovementRepository;
+import com.pms.service.cost.CostBasisResolver;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -32,6 +33,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -57,6 +59,7 @@ class StockOutServiceImplTest {
     @Mock private StockMovementRepository stockMovementRepository;
     @Mock private ProductRepository productRepository;
     @Mock private OrderLineExpander orderLineExpander;
+    @Mock private CostBasisResolver costBasisResolver;
 
     @InjectMocks private StockOutServiceImpl service;
 
@@ -156,6 +159,40 @@ class StockOutServiceImplTest {
                 .containsExactly(
                         org.assertj.core.groups.Tuple.tuple(PRODUCT_ID, -2),
                         org.assertj.core.groups.Tuple.tuple(OTHER_PRODUCT_ID, -1));
+    }
+
+    /** 물건이 나간 그 순간의 원가를 라인에 굽는다(D20) — 굽는 규칙 자체는 CostBasisResolverTest 가 본다. */
+    @Test
+    void testConfirmSnapshotsLineCost() {
+        OrderLine line = line(OrderStatus.PAID, 3, 0);
+        given(orderLineRepository.findWithListingOptionById(LINE_ID)).willReturn(Optional.of(line));
+        givenExpansion(expansion(LINE_ID, 3));
+        givenStockOutSums();
+        given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(product(PRODUCT_ID, "양말A")));
+        givenSaveEchoes();
+
+        service.confirm(confirmRequest(PRODUCT_ID, 3));
+
+        verify(costBasisResolver).snapshot(eq(line), anyList());
+    }
+
+    /**
+     * 🔴 스냅샷 실패가 출고 확인을 막지 않는다. 실물은 이미 나갔고 원가는 나중에 채울 수 있지만
+     * 재고는 되돌릴 수 없다.
+     */
+    @Test
+    void testSnapshotFailureDoesNotBlockStockOut() {
+        OrderLine line = line(OrderStatus.PAID, 3, 0);
+        given(orderLineRepository.findWithListingOptionById(LINE_ID)).willReturn(Optional.of(line));
+        givenExpansion(expansion(LINE_ID, 3));
+        givenStockOutSums();
+        given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(product(PRODUCT_ID, "양말A")));
+        givenSaveEchoes();
+        org.mockito.BDDMockito.willThrow(new IllegalStateException("boom"))
+                .given(costBasisResolver).snapshot(any(), anyList());
+
+        assertThat(service.confirm(confirmRequest(PRODUCT_ID, 3))).hasSize(1);
+        verify(stockMovementRepository).save(any(StockMovement.class));
     }
 
     @Test

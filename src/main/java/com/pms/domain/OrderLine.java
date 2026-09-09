@@ -5,6 +5,7 @@ import lombok.*;
 import org.hibernate.annotations.TenantId;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 /**
  * 주문 라인 — oclyx 소유 중립 core (FEATURE_2609_26 / PLAN D2·D9·D10·D11).
@@ -111,6 +112,28 @@ public class OrderLine extends BaseEntity {
      */
     @Column(name = "platform_discount_amount", precision = 12, scale = 2)
     private BigDecimal platformDiscountAmount;
+
+    /**
+     * 원가 스냅샷 3컬럼 — 물건이 <b>실제로 나갈 때</b> 굽는다 (FEATURE_2609_28 / PLAN D20, changeset 081).
+     *
+     * <p>🔴 리포트 시점에 {@code Product.price} 나 매입 이력을 조인해 과거 손익을 계산하지 않는다.
+     * 6월 매입가를 9월에 고치면 6월 리포트 숫자가 달라지고, 그러면 아무도 리포트를 믿지 않는다.
+     *
+     * <p>⚠️ 전부 nullable 이다. 값이 비었다는 것은 <b>아직 안 나갔다</b>는 뜻이고 그것이 정상이다.
+     * 첫 {@code STOCK_OUT} 에서만 굽고 두 번째 출고에서 <b>덮지 않는다</b> — 부분 출고마다 다시 구우면
+     * 같은 라인의 원가가 출고 횟수만큼 흔들린다. 출고 뒤 취소·반품에도 되돌리지 않는다.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "cost_basis", length = 20)
+    private CostBasis costBasis;
+
+    /** Σ(구성 물품 단가 × 소진 수량). 단가를 하나도 못 구하면 <b>0 이 아니라 null</b> — 모르는 것은 모르는 채로 둔다. */
+    @Column(name = "cost_amount", precision = 15, scale = 4)
+    private BigDecimal costAmount;
+
+    /** 스냅샷을 구운 시각. 구성비 집계({@code CostBasisBreakdown})의 기간 축이다. */
+    @Column(name = "cost_snapshot_at")
+    private LocalDateTime costSnapshotAt;
 
     /** 발주가능수량 = orderQty − (cancelQty + holdQty), 음수면 0. */
     public int purchasableQty() {
