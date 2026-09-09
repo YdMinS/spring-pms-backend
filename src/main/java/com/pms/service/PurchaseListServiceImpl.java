@@ -1,31 +1,41 @@
 package com.pms.service;
 
 import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderLine;
 import com.pms.domain.OrderStatus;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
 import com.pms.domain.PurchaseRecord;
+import com.pms.domain.Seller;
 import com.pms.domain.ShoppingListItem;
+import com.pms.domain.StockMovementType;
+import com.pms.domain.StockReason;
 import com.pms.dto.request.ManualAdjustRequest;
 import com.pms.dto.request.ManualItemRequest;
 import com.pms.dto.request.PurchaseRecordRequest;
+import com.pms.dto.request.StockMovementRequest;
 import com.pms.dto.response.PurchaseLine;
 import com.pms.dto.response.PurchaseListResponse;
 import com.pms.dto.response.PurchaseProductGroup;
+import com.pms.dto.response.PurchaseRecordResult;
 import com.pms.dto.response.PurchaseRecordView;
 import com.pms.dto.response.UnmappedOrder;
 import com.pms.config.CoupangProperties;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CoupangOrderLineRepository;
+import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
+import com.pms.repository.SellerRepository;
 import com.pms.repository.ShoppingListItemRepository;
+import com.pms.service.stock.StockLedgerService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,12 +45,13 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
-import java.util.function.Predicate;
+import java.util.function.BiPredicate;
 import java.util.stream.Collectors;
 
 /**
- * {@link PurchaseListService} 구현. 추출/조회/구매기록/수동추가/조정.
+ * {@link PurchaseListService} 구현. 추출/조회/입고/수동추가/조정.
  *
  * 클래스 기본 readOnly, 쓰기 메서드만 @Transactional 오버라이드.
  * Entity 는 @Setter 금지 — 갱신은 toBuilder 로 새 객체 생성.
@@ -60,17 +71,21 @@ public class PurchaseListServiceImpl implements PurchaseListService {
     private final ProductListingOptionRepository productListingOptionRepository;
     private final ProductListingProductRepository productListingProductRepository;
     private final ProductRepository productRepository;
+    private final SellerRepository sellerRepository;
+    private final MarketplaceAccountRepository marketplaceAccountRepository;
+    private final StockLedgerService stockLedgerService;
     private final CoupangProperties coupangProperties;
 
     @Override
     @Transactional
-    public void extract(Long sellerId) {
+    public void extract() {
         // 1) 주문 연결 라인 autoQty 전체 리셋 → 출고/취소된 주문 라인은 아래 재적재에서 제외돼 자연히 빠짐.
         //    ⚠️ 수동 추가 라인(order_line_id IS NULL)은 건드리지 않는다.
+        //    리셋 범위(전체)와 재적재 범위(전체)가 일치한다 — 판매자 스코프가 없어졌기 때문이다(PLAN 2609_29 D11).
         shoppingListItemRepository.resetAllAutoQty();
 
         // 2) 결제완료 주문을 옵션→BOM 전개해 (order_line, product) 라인 upsert.
-        List<OrderLine> lines = purchaseTargetLines(sellerId);
+        List<OrderLine> lines = purchaseTargetLines();
         Map<Long, String> vendorItemIds = vendorItemIdsByLine(lines);
         for (OrderLine line : lines) {
             int q = line.purchasableQty();
@@ -102,79 +117,76 @@ public class PurchaseListServiceImpl implements PurchaseListService {
     }
 
     @Override
-    public PurchaseListResponse getList(Long sellerId) {
+    public PurchaseListResponse getList() {
         // 아직 사야 할 것: 잔여 > 0.
-        List<PurchaseProductGroup> groups = buildGroups(i -> true, g -> g.remainingQty() > 0);
-        return new PurchaseListResponse(groups, buildUnmapped(sellerId));
+        List<PurchaseProductGroup> groups = buildGroups((group, records) -> group.remainingQty() > 0);
+        return new PurchaseListResponse(groups, buildUnmapped());
     }
 
     @Override
-    public List<PurchaseProductGroup> getCompletedList(Long sellerId, LocalDate from, LocalDate to) {
-        // 판매자 필터: 주문 라인의 판매자가 일치하는 라인만(수동 라인은 판매자 없으므로 제외).
-        Predicate<ShoppingListItem> itemFilter = sellerId == null
-                ? i -> true
-                : i -> i.getOrderLine() != null
-                        && i.getOrderLine().getOrder().getMarketplaceAccount() != null
-                        && sellerId.equals(i.getOrderLine().getOrder().getMarketplaceAccount().getSeller().getId());
-
+    public List<PurchaseProductGroup> getCompletedList(LocalDate from, LocalDate to) {
         // 구매 완료: 잔여 <= 0 이면서 실제 구매가 있었던 것만. (필요=0 & 구매=0 유령 라인 제외.)
-        // 기간 필터: 그룹 안에 구매일이 [from, to] 에 드는 구매 기록이 하나라도 있으면 포함.
-        Predicate<PurchaseProductGroup> keep = g -> g.remainingQty() <= 0
-                && g.purchasedQty() > 0
-                && hasRecordInRange(g, from, to);
-
-        return buildGroups(itemFilter, keep);
+        // 기간 필터: 그 물품의 구매 기록 중 구매일이 [from, to] 에 드는 것이 하나라도 있으면 포함.
+        // 🔴 판정 조건은 그대로다(PLAN 2609_29 D21) — 완료 = 구매가 필요를 채웠다.
+        //    판정 재료만 "라인에 묶인 기록"에서 "물품의 기록"으로 바뀌었다(D3 이 라인 FK 를 없앴다).
+        return buildGroups((group, records) -> group.remainingQty() <= 0
+                && group.purchasedQty() > 0
+                && hasRecordInRange(records, from, to));
     }
 
-    /** 그룹의 구매 기록 중 구매일이 [from, to](경계 포함)에 드는 것이 있는지. 둘 다 null 이면 항상 통과. */
-    private boolean hasRecordInRange(PurchaseProductGroup g, LocalDate from, LocalDate to) {
+    /** 구매 기록 중 구매일이 [from, to](경계 포함)에 드는 것이 있는지. 둘 다 null 이면 항상 통과. */
+    private boolean hasRecordInRange(List<PurchaseRecord> records, LocalDate from, LocalDate to) {
         if (from == null && to == null) return true;
-        return g.lines().stream()
-                .flatMap(l -> l.records().stream())
-                .anyMatch(r -> (from == null || !r.purchasedOn().isBefore(from))
-                        && (to == null || !r.purchasedOn().isAfter(to)));
+        return records.stream()
+                .anyMatch(r -> (from == null || !r.getPurchasedOn().isBefore(from))
+                        && (to == null || !r.getPurchasedOn().isAfter(to)));
     }
 
     /**
-     * shopping_list_item 중 {@code itemFilter} 통과분을 product 로 합산해 그룹을 만들고
-     * {@code keep} 을 통과한 것만 반환.
-     * 필요수량 = Σ(autoQty+manualQty), 구매수량 = Σ(purchase_record.quantity), 잔여 = 필요 − 구매.
+     * shopping_list_item 전체를 product 로 합산해 그룹을 만들고 {@code keep} 을 통과한 것만 반환.
+     *
+     * <p>필요수량 = Σ(autoQty+manualQty), 구매수량 = Σ(그 <b>물품</b>의 purchase_record.quantity),
+     * 잔여 = 필요 − 구매. 🔴 세 숫자 모두 전체 기준이다 — 그룹 키는 물품이고 판매자로 쪼개지 않는다
+     * (PLAN 2609_29 D6). 구매기록은 주문을 모르므로(D3) 라인별 구매수량은 존재할 수 없다(D7).
+     *
+     * <p>{@code keep} 은 그룹과 <b>그 물품의 구매기록</b>을 함께 받는다 — 완료탭의 기간 판정이 라인이 아니라
+     * 물품 기록으로 서기 때문이다.
+     *
+     * <p>⚠️ N+1 금지: 물품명·채널 라벨은 루프 밖에서 id 묶음으로 한 번에 읽어 Map 으로 붙인다.
      */
     private List<PurchaseProductGroup> buildGroups(
-            Predicate<ShoppingListItem> itemFilter,
-            Predicate<PurchaseProductGroup> keep) {
-        List<ShoppingListItem> items = shoppingListItemRepository.findAll().stream()
-                .filter(itemFilter)
-                .toList();
+            BiPredicate<PurchaseProductGroup, List<PurchaseRecord>> keep) {
+        List<ShoppingListItem> items = shoppingListItemRepository.findAll();
+        if (items.isEmpty()) {
+            return List.of();
+        }
 
-        // itemId 별 구매수량 합 (records 도 함께 보유).
-        List<Long> itemIds = items.stream().map(ShoppingListItem::getId).toList();
-        Map<Long, List<PurchaseRecord>> recordsByItem = itemIds.isEmpty()
-                ? Map.of()
-                : purchaseRecordRepository.findByItem_IdIn(itemIds).stream()
-                        .collect(Collectors.groupingBy(r -> r.getItem().getId()));
+        List<Long> productIds = items.stream().map(i -> i.getProduct().getId()).distinct().toList();
+        Map<Long, List<PurchaseRecord>> recordsByProduct = purchaseRecordRepository
+                .findByProduct_IdIn(productIds).stream()
+                .collect(Collectors.groupingBy(r -> r.getProduct().getId()));
+        Map<Long, String> productNames = productRepository.findAllById(productIds).stream()
+                .collect(Collectors.toMap(Product::getId, Product::getProductName));
+        Map<Long, ChannelLabel> channels = channelLabels(items);
 
         // product 단위 그룹화 (입력 순서 보존).
         Map<Long, List<ShoppingListItem>> byProduct = items.stream()
                 .collect(Collectors.groupingBy(i -> i.getProduct().getId(), LinkedHashMap::new, Collectors.toList()));
 
         List<PurchaseProductGroup> groups = new ArrayList<>();
-        for (List<ShoppingListItem> lineItems : byProduct.values()) {
+        for (Map.Entry<Long, List<ShoppingListItem>> entry : byProduct.entrySet()) {
+            Long productId = entry.getKey();
+            List<ShoppingListItem> lineItems = entry.getValue();
+
             int needed = lineItems.stream().mapToInt(ShoppingListItem::neededQty).sum();
+            List<PurchaseRecord> records = recordsByProduct.getOrDefault(productId, List.of());
+            int purchased = records.stream().mapToInt(PurchaseRecord::getQuantity).sum();
 
-            int purchased = 0;
-            List<PurchaseLine> lines = new ArrayList<>();
-            for (ShoppingListItem li : lineItems) {
-                List<PurchaseRecord> recs = recordsByItem.getOrDefault(li.getId(), List.of());
-                int linePurchased = recs.stream().mapToInt(PurchaseRecord::getQuantity).sum();
-                purchased += linePurchased;
-                lines.add(toLine(li, linePurchased, recs));
-            }
+            List<PurchaseLine> lines = lineItems.stream().map(li -> toLine(li, channels)).toList();
 
-            Product p = lineItems.get(0).getProduct();
             PurchaseProductGroup group = new PurchaseProductGroup(
-                    p.getId(), p.getProductName(), needed, purchased, needed - purchased, lines);
-            if (keep.test(group)) {
+                    productId, productNames.get(productId), needed, purchased, needed - purchased, lines);
+            if (keep.test(group, records)) {
                 groups.add(group);
             }
         }
@@ -183,17 +195,52 @@ public class PurchaseListServiceImpl implements PurchaseListService {
 
     @Override
     @Transactional
-    public void addPurchase(Long itemId, PurchaseRecordRequest request) {
-        ShoppingListItem item = shoppingListItemRepository.findById(itemId)
-                .orElseThrow(() -> new ResourceNotFoundException("ShoppingListItem", itemId));
+    public PurchaseRecordResult addPurchase(PurchaseRecordRequest request) {
+        Product product = productRepository.findById(request.productId())
+                .orElseThrow(() -> new ResourceNotFoundException("Product", request.productId()));
+        Seller seller = sellerRepository.findById(request.sellerId())
+                .orElseThrow(() -> new ResourceNotFoundException("Seller", request.sellerId()));
+
         // 금액 계산 규칙은 엔티티 팩토리 하나에 모여 있다(FEATURE_2609_28 / PLAN D1·D2).
-        // ⚠️ reflectToBasePrice 는 저장만 한다 — Product.price 파급은 별도 기능이 소유(D4).
-        purchaseRecordRepository.save(PurchaseRecord.of(item, request));
+        // ⚠️ reflectToBasePrice 는 저장만 한다 — Product.price 파급은 별도 기능이 소유(2609_28 D4).
+        PurchaseRecord saved = purchaseRecordRepository.save(PurchaseRecord.of(product, seller, request));
+
+        // D19: 기본은 즉시 반영. false 면 구매기록만 남고 입고대기로 간다(화면은 아직 스위치를 못 끈다).
+        // D17: 음수 정정은 "금액을 잘못 적었다"이지 "물건이 나갔다"가 아니다 — STOCK_IN 이 거부한다.
+        boolean wantStock = (request.recordStock() == null) || request.recordStock();
+        boolean stockRecorded = wantStock && request.quantity() > 0;
+        if (stockRecorded) {
+            // ⚠️ record 는 @Transactional(REQUIRED) 이라 이 트랜잭션에 합류한다 → 재고 실패 시 구매기록도 롤백.
+            //    REQUIRES_NEW 로 바꾸면 "돈만 남고 물건은 없는" 행이 조용히 생긴다.
+            // ⚠️ 단가를 넘기지 않는다(D16): 원장이 구매기록에서 승계한다. 여기서 계산하면 규칙이 두 벌이 된다.
+            stockLedgerService.record(new StockMovementRequest(
+                    request.productId(),          // productId
+                    request.sellerId(),           // sellerId
+                    StockMovementType.STOCK_IN,   // movementType
+                    request.quantity(),           // quantity
+                    StockReason.PURCHASE,         // reason
+                    null,                         // reasonNote
+                    null,                         // unitPrice — 구매기록에서 승계
+                    null,                         // orderClaimId
+                    saved.getId(),                // purchaseRecordId
+                    request.purchasedOn()));      // movedOn
+        }
+        return new PurchaseRecordResult(saved.getId(), stockRecorded);
+    }
+
+    @Override
+    public List<PurchaseRecordView> recentPurchases(Long productId, int limit) {
+        return purchaseRecordRepository.findRecentByProduct(productId, PageRequest.of(0, limit)).stream()
+                .map(r -> new PurchaseRecordView(r.getId(), r.getPurchasedOn(), r.getQuantity(),
+                        r.getTotalAmount(), r.getUnitPrice(), Boolean.TRUE.equals(r.getReflectToBasePrice()),
+                        r.getSeller().getSellerName()))
+                .toList();
     }
 
     @Override
     @Transactional
     public void addManual(ManualItemRequest request) {
+        // ⚠️ 판매자가 없다(PLAN 2609_29 D13): 수동 추가는 "이 물품이 N개 더 필요"라는 수요이지 매입이 아니다.
         ShoppingListItem item = shoppingListItemRepository
                 .findByOrderLineIsNullAndProduct_Id(request.productId())
                 .map(existing -> existing.toBuilder()
@@ -224,13 +271,35 @@ public class PurchaseListServiceImpl implements PurchaseListService {
 
     // --- helpers ---
 
-    private List<OrderLine> purchaseTargetLines(Long sellerId) {
+    /** 라인 토글의 채널 칩 라벨 = 판매자 × 플랫폼 ("A상사/쿠팡"). 수동 라인은 이 값이 없다. */
+    private record ChannelLabel(Long marketplaceAccountId, String sellerName, String platform) {}
+
+    /**
+     * 계정 id → 채널 라벨. 계정 수만큼만 조회한다 — 라인마다 LAZY 프록시의 getSellerName() 을 부르면
+     * 라인 수만큼 쿼리가 나간다(PLAN 2609_29 D8 ⑤).
+     */
+    private Map<Long, ChannelLabel> channelLabels(List<ShoppingListItem> items) {
+        List<Long> accountIds = items.stream()
+                .map(ShoppingListItem::getOrderLine)
+                .filter(Objects::nonNull)
+                // Order.marketplaceAccount 는 nullable = false 라 주문 라인이면 항상 있다.
+                .map(line -> line.getOrder().getMarketplaceAccount().getId())
+                .distinct()
+                .toList();
+        if (accountIds.isEmpty()) {
+            return Map.of();
+        }
+        return marketplaceAccountRepository.findAllById(accountIds).stream()
+                .collect(Collectors.toMap(MarketplaceAccount::getId,
+                        a -> new ChannelLabel(a.getId(), a.getSeller().getSellerName(), a.getPlatform().name())));
+    }
+
+    private List<OrderLine> purchaseTargetLines() {
         // 동기화 윈도우(syncDays) 밖 주문은 상태가 갱신되지 않아 stale 결제완료로 남을 수 있으므로,
         // 구매목록 추출도 같은 윈도우(orders.ordered_at 기준)로 제한한다.
+        // 🔴 판매자 필터 없음 — 동기화는 항상 전체다(PLAN 2609_29 D11).
         LocalDateTime from = LocalDate.now().minusDays(coupangProperties.getSyncDays()).atStartOfDay();
-        return sellerId == null
-                ? orderLineRepository.findRecentByStatus(PURCHASE_TARGET_STATUS, from)
-                : orderLineRepository.findRecentByStatusAndSeller(PURCHASE_TARGET_STATUS, sellerId, from);
+        return orderLineRepository.findRecentByStatus(PURCHASE_TARGET_STATUS, from);
     }
 
     /**
@@ -247,26 +316,27 @@ public class PurchaseListServiceImpl implements PurchaseListService {
                         (a, b) -> a));
     }
 
-    private PurchaseLine toLine(ShoppingListItem li, int linePurchased, List<PurchaseRecord> recs) {
+    private PurchaseLine toLine(ShoppingListItem li, Map<Long, ChannelLabel> channels) {
         OrderLine line = li.getOrderLine();
-        List<PurchaseRecordView> recordViews = recs.stream()
-                .map(r -> new PurchaseRecordView(r.getId(), r.getPurchasedOn(), r.getQuantity(),
-                        r.getTotalAmount(), r.getUnitPrice(), Boolean.TRUE.equals(r.getReflectToBasePrice())))
-                .toList();
+        ChannelLabel channel = line == null
+                ? null
+                : channels.get(line.getOrder().getMarketplaceAccount().getId());
         return new PurchaseLine(
                 li.getId(),
                 line != null ? line.getId() : null,
                 line != null ? "ORDER" : "MANUAL",
                 line != null ? line.getOrder().getExternalOrderId() : null,
+                channel != null ? channel.marketplaceAccountId() : null,
+                channel != null ? channel.sellerName() : null,
+                channel != null ? channel.platform() : null,
                 li.getAutoQty(),
                 li.getManualQty(),
-                linePurchased,
-                recordViews);
+                li.neededQty());
     }
 
     /** 결제완료인데 옵션 미매핑이거나 BOM 이 빈 주문을 vendorItemId 단위로 집계. */
-    private List<UnmappedOrder> buildUnmapped(Long sellerId) {
-        List<OrderLine> lines = purchaseTargetLines(sellerId);
+    private List<UnmappedOrder> buildUnmapped() {
+        List<OrderLine> lines = purchaseTargetLines();
         Map<Long, String> vendorItemIds = vendorItemIdsByLine(lines);
         Map<String, List<OrderLine>> byItem = new LinkedHashMap<>();
         for (OrderLine line : lines) {

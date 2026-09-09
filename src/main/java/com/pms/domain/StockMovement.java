@@ -18,9 +18,10 @@ import java.time.LocalDate;
  * There is deliberately no stock column on {@link Product} — a state column drifts, needs hooks and
  * locks, and cannot be repaired once wrong; a ledger can always be recomputed.
  *
- * <p>⚠️ <b>Nothing automatic writes here</b> (D18). Sync jobs, schedulers and shipment hooks must not
- * call the ledger service — the only caller is the controller. If a hook ever writes a row, the
- * ledger stops matching the warehouse and the whole feature loses its meaning.
+ * <p>⚠️ <b>Nothing automatic writes here</b> (2609_28 D18, revised by PLAN 2609_29 D2): no row may be
+ * written without a person confirming it. Sync jobs, schedulers and shipment hooks are still
+ * forbidden; the [입고] click on the purchase list IS that confirmation, so
+ * {@code PurchaseListService -> StockLedgerService} is the one opened path.
  *
  * <p>⚠️ {@code movedOn} (the day a person confirmed the goods moved) and {@code createdAt} (the audit
  * timestamp of the row) are <b>different</b>. Yesterday's delivery can be entered this morning.
@@ -30,7 +31,7 @@ import java.time.LocalDate;
  * missing", which is a signal, not an error to reject (rejecting it makes people stop using the
  * ledger at all).
  *
- * <p>⚠️ ddl-auto=validate (dev/prod) → the @Column definitions below must match changeset 071.
+ * <p>⚠️ ddl-auto=validate (dev/prod) → the @Column definitions below must match changesets 071 + 078.
  *
  * @see StockMovementType movement kinds and their sign
  * @see StockReason reason codes and which type each belongs to
@@ -57,6 +58,18 @@ public class StockMovement extends BaseEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "product_id", nullable = false)
     private Product product;
+
+    /**
+     * Whose stock moved (PLAN 2609_29 D4). Stock is NOT shared between sellers — without this axis
+     * the purchase cost and the on-hand balance cannot be attributed to anyone, and using A's goods
+     * for B's order becomes invisible instead of an internal transfer.
+     *
+     * <p>Derived by the server for {@code RETURN_IN} (claim -> order -> account -> seller, D22);
+     * required in the request for every other type.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "seller_id", nullable = false)
+    private Seller seller;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "movement_type", nullable = false, length = 20)
