@@ -18,6 +18,12 @@ import java.time.LocalDateTime;
  * @param amountOnlyPayouts      라인 없이 금액만 있는 묶음 수(추가정산·유보금) — 0 이 아닌 것이 정상이다(D5-5)
  * @param payoutCount            전체 지급 묶음 수. 🔴 0 = 정산 이력 없음 — 화면이 "금액 일치"와 구분해서
  *                               표시한다. 이 필드가 없으면 정산 전 채널이 "전부 맞음"으로 보인다
+ * @param fixedCost              기간 고정비(FEATURE_2609_33 / PLAN 2609_33 D6). 🔴 <b>자기 필드로</b> 내려간다 —
+ *                               {@code estNetProfit} 에 녹이면 {@code costBasisReady = false} 인 채널에서
+ *                               고정비가 통째로 사라져 화면이 "고정비 0" 으로 읽는다. {@code estNetProfit} 에서는
+ *                               null 이 아닐 때만 빠져 있다
+ * @param fixedCostMonths        고정비가 실제로 부과된 <b>달 수</b>(항목 수가 아니다). 화면이 판정 근거를
+ *                               보여주는 데 쓴다(D11-2). 🔴 일할 계산은 없다 — 하루만 조회해도 그 달 전액이다(D4)
  */
 public record ChannelSalesResponse(
         Long accountId,
@@ -36,5 +42,7 @@ public record ChannelSalesResponse(
         LocalDateTime lastSettlementSyncAt,
         long unreconciledPayouts,
         long amountOnlyPayouts,
-        long payoutCount) {
+        long payoutCount,
+        BigDecimal fixedCost,
+        int fixedCostMonths) {
 }

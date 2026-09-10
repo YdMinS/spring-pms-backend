@@ -20,6 +20,10 @@ import java.math.BigDecimal;
  * @param estNetProfit    원가 스냅샷이 없는 라인이 하나라도 섞이면 {@code null} 이다. 🔴 {@code Product.price}
  *                        로 메우지 않는다 — 원가를 고칠 때마다 과거 순이익이 소급 변동한다
  * @param costBasisReady  {@code estNetProfit != null} 과 같은 뜻. 화면이 {@code —} 를 표시할 근거다
+ * @param fixedCost       기간 고정비 — 🔴 그 판매자 <b>채널들의 합</b>이다(FEATURE_2609_33 / PLAN 2609_33 D12).
+ *                        판매자 단위로 임계를 다시 판정하지 않는다: 플랫폼이 계정 단위로 청구하므로 합쳐서
+ *                        판정하면 채널 2개짜리 판매자가 실제보다 일찍 임계를 넘는다.
+ *                        {@code estNetProfit} 에서는 null 이 아닐 때만 빠져 있다(D6)
  */
 public record SellerSalesResponse(
         Long sellerId,
@@ -32,5 +36,6 @@ public record SellerSalesResponse(
         BigDecimal estNetProfit,
         boolean costBasisReady,
         BigDecimal pendingPayout,
-        long unreconciledPayouts) {
+        long unreconciledPayouts,
+        BigDecimal fixedCost) {
 }

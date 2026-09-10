@@ -1,20 +1,25 @@
 package com.pms.service.sales;
 
 import com.pms.domain.CarrierRate;
+import com.pms.domain.FixedCostChargeMode;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.MarketplaceAccountFixedCost;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.Package;
 import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
+import com.pms.domain.PlatformFixedCost;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
+import com.pms.dto.response.MonthlyChannelSales;
 import com.pms.dto.response.PayoutAggregate;
 import com.pms.dto.response.ProductProfitResponse;
 import com.pms.dto.response.SalesLineGroup;
 import com.pms.dto.response.SellerSalesResponse;
 import com.pms.fixture.MarketplaceAccountFixture;
+import com.pms.repository.MarketplaceAccountFixedCostRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -34,6 +39,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 /**
  * 매출 집계 서비스 — 세율·순이익·축 변환 (FEATURE_2609_30 / PLAN D4 · D14 · D19 · 03).
@@ -56,6 +63,7 @@ class SalesStatsServiceImplTest {
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private SettlementPayoutRepository settlementPayoutRepository;
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
+    @Mock private MarketplaceAccountFixedCostRepository fixedCostRepository;
     @Mock private MasterChannelConfigService masterChannelConfigService;
 
     private SalesStatsServiceImpl service;
@@ -66,8 +74,10 @@ class SalesStatsServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        // 🔴 계산기는 목이 아니라 실제 구현이다 — 판정 규칙이 갈리면 두 탭 합계가 어긋난다.
         service = new SalesStatsServiceImpl(orderLineRepository, productListingOptionRepository,
-                settlementPayoutRepository, marketplaceAccountRepository, masterChannelConfigService, VAT);
+                settlementPayoutRepository, marketplaceAccountRepository, fixedCostRepository,
+                masterChannelConfigService, new FixedCostCalculator(), VAT);
     }
 
     /** 🔴 D19: 쿠팡은 수수료 + 그 수수료의 부가세를 뗀다. 10.6% × 1.1 = 11.66% 가 추정 수수료다. */
@@ -255,7 +265,118 @@ class SalesStatsServiceImplTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+
+    // ── 고정비 (FEATURE_2609_33 / PLAN 2609_33 D6 · D12) ──────────────────
+
+    /** 임계를 넘은 달의 고정비는 채널 순이익에서 빠지고, 그 값이 자기 필드로도 내려간다. */
+    @Test
+    void testByChannelSubtractsFixedCost() {
+        givenAccounts(coupang);
+        givenNoPayouts();
+        givenSales(group(coupang, 100L, 100L, "100000", "0", "40000", 0, 10L));
+        givenOption(100L, 500L, "0.106", "2500", "500");
+        givenFixedCostLinks(link(coupang));
+        givenMonthlySales(monthlySales(coupang, 9, "2000000"));
+
+        assertThat(service.byChannel(FROM, TO, null)).singleElement()
+                .satisfies(row -> {
+                    assertThat(row.fixedCost()).isEqualByComparingTo("55000");
+                    assertThat(row.fixedCostMonths()).isEqualTo(1);
+                    // 고정비 없을 때의 순이익 18,340 에서 55,000 을 뺀 값.
+                    assertThat(row.estNetProfit()).isEqualByComparingTo("-36660");
+                });
+    }
+
+    /**
+     * 🔴 D6 의 방어선: 원가가 확정되지 않아 순이익이 {@code null} 이어도 <b>고정비는 그대로 내려간다</b>.
+     *
+     * <p>{@code estNetProfit} 에 녹이면 원가 미확정 채널에서 고정비가 통째로 사라져 화면이 "고정비 0" 으로 읽는다.
+     */
+    @Test
+    void testByChannelKeepsFixedCostWhenProfitNull() {
+        givenAccounts(coupang);
+        givenNoPayouts();
+        givenSales(group(coupang, 100L, 100L, "100000", "0", "0", 1));
+        givenOption(100L, 500L, "0.106", "2500", "500");
+        givenFixedCostLinks(link(coupang));
+        givenMonthlySales(monthlySales(coupang, 9, "2000000"));
+
+        assertThat(service.byChannel(FROM, TO, null)).singleElement()
+                .satisfies(row -> {
+                    assertThat(row.costBasisReady()).isFalse();
+                    assertThat(row.estNetProfit()).isNull();
+                    assertThat(row.fixedCost()).isEqualByComparingTo("55000");
+                });
+    }
+
+    /**
+     * 고정비를 쓰지 않는 채널은 0 이고 순이익이 종전과 같다.
+     *
+     * <p>🔴 연결이 0건이면 <b>월별 집계 쿼리를 아예 부르지 않는다</b> — 고정비를 안 쓰는 테넌트가
+     * 매출 화면을 열 때마다 집계를 한 번 더 돌 이유가 없다.
+     */
+    @Test
+    void testByChannelWithoutLinkIsZero() {
+        givenAccounts(coupang);
+        givenNoPayouts();
+        givenSales(group(coupang, 100L, 100L, "100000", "0", "40000", 0, 10L));
+        givenOption(100L, 500L, "0.106", "2500", "500");
+
+        assertThat(service.byChannel(FROM, TO, null)).singleElement()
+                .satisfies(row -> {
+                    assertThat(row.fixedCost()).isEqualByComparingTo("0");
+                    assertThat(row.fixedCostMonths()).isZero();
+                    assertThat(row.estNetProfit()).isEqualByComparingTo("18340");
+                });
+        verify(orderLineRepository, never()).aggregateMonthlySales(any(), any(), any());
+    }
+
+    /** 🔴 D12: 판매자 행은 채널 결과의 <b>합</b>이다 — 판매자 단위로 임계를 다시 판정하지 않는다. */
+    @Test
+    void testSummarySumsChannelFixedCost() {
+        givenAccounts(coupang, naver);
+        givenNoPayouts();
+        givenSales(group(coupang, 100L, 100L, "100000", "0", "0", 0),
+                group(naver, 200L, 100L, "60000", "0", "0", 0));
+        givenOptions(option(100L, 500L), option(200L, 500L));
+        givenCommissionAndShipping("0.106", "2500", "500");
+        givenFixedCostLinks(link(coupang), link(naver));
+        givenMonthlySales(monthlySales(coupang, 9, "2000000"), monthlySales(naver, 9, "2000000"));
+
+        assertThat(service.summary(FROM, TO, null)).singleElement()
+                .extracting(SellerSalesResponse::fixedCost)
+                .satisfies(fixedCost -> assertThat((BigDecimal) fixedCost).isEqualByComparingTo("110000"));
+    }
+
     // ------------------------------------------------------------- fixtures
+
+
+    private void givenFixedCostLinks(MarketplaceAccountFixedCost... links) {
+        given(fixedCostRepository.findByMarketplaceAccount_IdIn(any())).willReturn(List.of(links));
+    }
+
+    private void givenMonthlySales(MonthlyChannelSales... rows) {
+        given(orderLineRepository.aggregateMonthlySales(any(), any(), any())).willReturn(List.of(rows));
+    }
+
+    /** 쿠팡 판매자서비스이용료 미러: 55,000원 · 임계 1,000,000원 · AUTO. */
+    private MarketplaceAccountFixedCost link(MarketplaceAccount account) {
+        return MarketplaceAccountFixedCost.builder()
+                .marketplaceAccount(account)
+                .platformFixedCost(PlatformFixedCost.builder()
+                        .platform(Platform.COUPANG)
+                        .name("판매자서비스이용료")
+                        .amount(new BigDecimal("55000"))
+                        .thresholdAmount(new BigDecimal("1000000"))
+                        .active(true)
+                        .build())
+                .chargeMode(FixedCostChargeMode.AUTO)
+                .build();
+    }
+
+    private MonthlyChannelSales monthlySales(MarketplaceAccount account, int month, String netSales) {
+        return new MonthlyChannelSales(account.getId(), 2026, month, new BigDecimal(netSales));
+    }
 
     private static BigDecimal sum(List<ProductProfitResponse> rows,
                                   java.util.function.Function<ProductProfitResponse, BigDecimal> field) {

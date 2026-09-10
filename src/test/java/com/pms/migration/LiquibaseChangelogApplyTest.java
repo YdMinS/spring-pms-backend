@@ -638,6 +638,28 @@ class LiquibaseChangelogApplyTest {
                 Integer.class)).isEqualTo(1);
     }
 
+    /**
+     * changeset 086: 고정비 카탈로그 + 채널 연결 (FEATURE_2609_33).
+     *
+     * <p>🔴 두 테이블 모두 {@code tenant_id}·{@code created_date}·{@code modified_date} 가 있어야 한다 —
+     * 엔티티가 {@code BaseEntity} 를 상속하므로 빠지면 {@code ddl-auto: validate} 가 dev 부팅을 죽인다.
+     */
+    @Test
+    void channelFixedCostApplied() {
+        for (String table : new String[]{"platform_fixed_cost", "marketplace_account_fixed_cost"}) {
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM " + table + " WHERE tenant_id IS NULL "
+                            + "OR created_date IS NULL OR modified_date IS NULL", Integer.class))
+                    .as("tenant_id / audit columns present on %s", table)
+                    .isZero();
+        }
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
+                        + "WHERE CONSTRAINT_NAME IN ('UK_PLATFORMFIXEDCOST_PLATFORM_NAME', "
+                        + "'UK_MAFIXEDCOST_ACCOUNT_ITEM')", Integer.class)).isEqualTo(2);
+    }
+
     @Test
     void tenantDimensionApplied() {
         // changeset 002: tenant table created + seeded with the default tenant (id=1).
