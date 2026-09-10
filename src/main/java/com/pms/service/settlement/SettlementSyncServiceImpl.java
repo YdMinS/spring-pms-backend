@@ -5,6 +5,7 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.dto.response.SettlementSyncResponse;
 import com.pms.dto.response.SettlementSyncTargetResponse;
+import com.pms.exception.CoupangRateLimitedException;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.security.TenantContext;
 import com.pms.service.coupang.SyncWindow;
@@ -86,6 +87,11 @@ public class SettlementSyncServiceImpl implements SettlementSyncService {
             }
             try {
                 total = total.plus(runAccount(account, from, to, true));
+            } catch (CoupangRateLimitedException e) {
+                // 🔴 PLAN 2609_31 D9 — 쿨다운은 프로세스 전역이라 격리해도 나머지 계정이 전부 같은 예외를 맞는다.
+                //    200 + failedAccounts 로 내려가면 프론트가 남은 달을 계속 던져 왕복만 늘고, 재시도 가능 시각
+                //    문구가 사용자에게 안 보인다. 429 로 즉시 끊는다.
+                throw e;
             } catch (RuntimeException e) {
                 log.warn("Settlement revenue sync failed for account={}, isolated and continue",
                         account.getId(), e);
@@ -114,6 +120,11 @@ public class SettlementSyncServiceImpl implements SettlementSyncService {
         try {
             // 창 분할(31일 상한)은 어댑터가 한다 — 여기서 400 을 사용자에게 그대로 보여주지 않는다.
             total = runAccount(account, from, to, false);
+        } catch (CoupangRateLimitedException e) {
+            // 🔴 PLAN 2609_31 D9 — 쿨다운은 프로세스 전역이다. 200 + failedAccounts 로 내려가면 프론트의 월
+            //    루프가 남은 달을 계속 던져 왕복만 늘고, 재시도 가능 시각 문구가 사용자에게 안 보인다.
+            //    429 로 즉시 끊는다.
+            throw e;
         } catch (RuntimeException e) {
             log.warn("Settlement period backfill failed for account={}", account.getId(), e);
             failed.add(describeFailure(account, e));

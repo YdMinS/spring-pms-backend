@@ -37,8 +37,15 @@ public class CoupangRateLimitGuard {
         }
     }
 
-    /** 429 수신 시 쿨다운 시작. */
-    public void trip() {
-        blockedUntil.set(clock.instant().plus(COOLDOWN));
+    /**
+     * 429 수신 시 쿨다운 시작.
+     *
+     * @return 차단 종료 시각 — 호출자가 재시도 가능 시각을 그대로 실어 던질 수 있게 돌려준다
+     *         (PLAN 2609_31 D9-1. COOLDOWN 계산이 호출부에 복제되지 않게 하려는 것이다)
+     */
+    public Instant trip() {
+        Instant until = clock.instant().plus(COOLDOWN);
+        blockedUntil.set(until);
+        return until;
     }
 }

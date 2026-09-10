@@ -6,6 +6,7 @@ import com.pms.domain.Platform;
 import com.pms.domain.SettlementPayoutStatus;
 import com.pms.domain.SettlementType;
 import com.pms.dto.response.SettlementPayoutSyncResponse;
+import com.pms.exception.CoupangRateLimitedException;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.service.settlement.SettlementPayoutUpserter.PayoutUpsertResult;
@@ -19,6 +20,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.List;
@@ -30,6 +32,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -120,11 +123,44 @@ class SettlementPayoutSyncServiceImplTest {
         given(settlementSource.fetchPayouts(any(), any()))
                 .willThrow(new IllegalStateException("쿠팡 500"));
 
-        SettlementPayoutSyncResponse response = service.syncPayouts(7L, MONTH);
+        // 🔴 month == null 로 부른다 — MONTH 를 주면 "month 지정이라 안 찍는다"(D3)가 되어
+        //    실패 격리 검증이 조용히 사라진다.
+        SettlementPayoutSyncResponse response = service.syncPayouts(7L, null);
 
         assertThat(response.failedAccounts()).hasSize(1);
         assertThat(response.payouts()).isZero();
         verify(settlementSyncStatusWriter, times(0)).writePayoutSyncAt(any());
+    }
+
+    @Test
+    void monthSpecifiedRunDoesNotWriteAnchor() {
+        // 🔴 PLAN 2609_31 D3 — 과거 달 백필이 앵커를 찍으면 "최초 실행"이 소진돼 payoutBackfillMonths
+        //    초기 백필이 영영 돌지 않는다.
+        given(settlementSource.fetchPayouts(any(), eq(MONTH))).willReturn(List.of(
+                draft(SettlementType.WEEKLY, LocalDate.of(2026, 9, 4))));
+
+        service.syncPayouts(7L, MONTH);
+
+        verify(settlementSyncStatusWriter, never()).writePayoutSyncAt(any());
+    }
+
+    @Test
+    void autoRunStillWritesAnchor() {
+        given(settlementSource.fetchPayouts(any(), any())).willReturn(List.of());
+
+        service.syncPayouts(7L, null);
+
+        verify(settlementSyncStatusWriter).writePayoutSyncAt(7L);
+    }
+
+    @Test
+    void rateLimitedIsNotIsolated() {
+        // 🔴 PLAN 2609_31 D9 — 429 는 격리 catch 를 통과해 HTTP 429 로 올라간다(200 + failedAccounts 아님).
+        willThrow(new CoupangRateLimitedException(Instant.now().plusSeconds(600)))
+                .given(settlementSource).fetchPayouts(any(), any());
+
+        assertThatThrownBy(() -> service.syncPayouts(7L, MONTH))
+                .isInstanceOf(CoupangRateLimitedException.class);
     }
 
     private static SettlementPayoutDraft draft(SettlementType type, LocalDate settlementDate) {

@@ -1,6 +1,7 @@
 package com.pms.service.coupang;
 
 import com.pms.domain.MarketplaceAccount;
+import com.pms.exception.CoupangRateLimitedException;
 import com.pms.service.external.PiiMasker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -103,6 +104,9 @@ public class CoupangApiClientImpl implements CoupangApiClient {
      *
      * 모든 쿠팡 호출이 여기를 지나므로 429 쿨다운 서킷({@link CoupangRateLimitGuard})도 여기서만 건다 —
      * 호출 직전 차단창 확인, 429 수신 시 차단창 개시(재시도 금지).
+     *
+     * <p>🔴 429 는 첫 수신분도 {@link CoupangRateLimitedException}(HTTP 429) 으로 바꿔 던진다
+     * (PLAN 2609_31 D9-1) — 쿨다운 중 차단({@code check()})과 호출자가 보는 모양을 하나로 맞춘다.
      */
     private String execute(String method, String path, String query, Supplier<String> call) {
         rateLimitGuard.check();
@@ -118,11 +122,15 @@ public class CoupangApiClientImpl implements CoupangApiClient {
             }
             return body;
         } catch (RestClientResponseException e) { // non-2xx: has a response body
-            if (e.getStatusCode().value() == 429) {
-                rateLimitGuard.trip();      // Coupang: back off ~10 min instead of retrying
-            }
             log.warn("[COUPANG] {} {} FAIL status={} resp={}", method, path,
                     e.getStatusCode().value(), piiMasker.mask(e.getResponseBodyAsString()));
+            if (e.getStatusCode().value() == 429) {
+                // 🔴 PLAN 2609_31 D9-1 — 첫 429 만 RestClientResponseException(→ 500)으로 나가면 호출자가
+                //    "쿠팡 오류"와 구분하지 못한다. 두 번째 호출부터(check())와 같은 모양
+                //    (HTTP 429 + 재시도 가능 시각)으로 맞춘다.
+                //    Coupang: back off ~10 min instead of retrying.
+                throw new CoupangRateLimitedException(rateLimitGuard.trip());
+            }
             throw e;
         } catch (RestClientException e) { // transport error: no body
             log.warn("[COUPANG] {} {} FAIL {}", method, path, e.getMessage());
