@@ -62,12 +62,19 @@ public class CoupangSettlementSource implements SettlementSource {
     /**
      * 지급내역 응답에서 우리가 <b>의미를 아는</b> 필드. 여기 없는 금액성 필드는 조정 {@code OTHER} 로
      * 흘려보내고 필드명을 note 에 남긴다 — 모르는 돈을 조용히 버리면 검증식이 영영 맞지 않는다(D8·D13).
+     *
+     * <p>🔴 <b>실계정이 주는 이름을 빠짐없이 적어야 한다.</b> 빠지면 이미 매핑한 금액이 이름만 다른 채로
+     * {@code OTHER} 조정 한 행에 다시 담겨, 정산 상세에 정체불명 금액이 뜬다. prod 실측(2026-09-10):
+     * {@code settlementTargetAmount}·{@code settlementAmount}·{@code sellerServiceFee} 3개가 빠져 있어
+     * 주/월 정산 23건 전건에 690만원대 OTHER 행이 붙었다. 셋은 이미 읽고 있는 값의 별칭이다 —
+     * 검산: 6,903,562(OTHER 합) − 3,369,281(finalAmount) − 444,789(serviceFee) = 3,089,492(정산대상액).
      */
     private static final Set<String> KNOWN_PAYOUT_FIELDS = Set.of(
             "settlementType", "settlementDate", "finalSettlementDate", "revenueRecognitionYearMonth",
             "revenueRecognitionDateFrom", "revenueRecognitionDateTo", "totalSale", "totalSaleAmount",
             "serviceFee", "serviceFeeAmount", "finalAmount", "status", "deductionAmount",
-            "debtOfLastWeek", "pendingReleasedAmount", "vendorId", "settlementYearMonth");
+            "debtOfLastWeek", "pendingReleasedAmount", "vendorId", "settlementYearMonth",
+            "settlementTargetAmount", "settlementAmount", "sellerServiceFee");
 
     /** 금액성 필드 판정(이름 기준). 날짜·식별자를 금액으로 오해하지 않게 접미사로 좁힌다. */
     private static final List<String> AMOUNT_SUFFIXES = List.of("Amount", "amount", "Fee", "fee", "Sale", "sale");

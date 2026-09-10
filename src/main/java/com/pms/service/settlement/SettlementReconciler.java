@@ -72,8 +72,18 @@ public class SettlementReconciler {
      * <ul>
      *   <li>귀속 대상이 아닌 유형 → {@code AMOUNT_ONLY}</li>
      *   <li>{@code finalAmount} 미수신 → {@code PENDING} (🔴 아직 채점할 답안지가 없다 — UNRECONCILED 아님)</li>
+     *   <li>우리 쪽 근거가 통째로 없음(라인 0건 + 합산 조정 0원) → {@code PENDING} (아래 참조)</li>
      *   <li>|우리 계산 − finalAmount| ≤ 허용오차 → {@code RECONCILED}, 아니면 {@code UNRECONCILED}</li>
      * </ul>
+     *
+     * <p>🔴 <b>대조할 근거가 없는 것은 "금액 차이"가 아니다.</b> 매출내역(라인)을 아직 적재하지 못한 지급 묶음은
+     * {@code ourTotal} 이 0 이라 검증식이 자동으로 "차액 = −전액"을 내놓는다. 그것을 {@code UNRECONCILED} 로
+     * 찍으면 <b>정상 입금 전건이 매번 경고</b>가 되고(실측: 주/월 정산 23건 전건), 진짜 차액이 그 안에 묻힌다.
+     * 위의 {@code finalAmount} 미수신과 방향만 반대인 같은 결손이라 같은 값({@code PENDING})으로 둔다.
+     *
+     * <p>⚠️ 라인 0건이어도 <b>조정으로 금액이 설명되는</b> 묶음(유보금 해제·전주 채무 상환)은 그대로 채점한다
+     * (D5-4) — 그래서 조건이 "라인 0건"이 아니라 "라인 0건 <b>그리고</b> 합산 대상 조정 0원"이다.
+     * {@code finalAmount} 가 0 인 묶음도 채점 대상이다(0 == 0 은 실제로 맞은 것이다).
      */
     public SettlementReconStatus evaluate(SettlementPayout payout, Collection<SettlementLine> lines,
                                           Collection<SettlementAdjustment> adjustments) {
@@ -81,6 +91,11 @@ public class SettlementReconciler {
             return SettlementReconStatus.AMOUNT_ONLY;
         }
         if (payout.getFinalAmount() == null) {
+            return SettlementReconStatus.PENDING;
+        }
+        if ((lines == null || lines.isEmpty())
+                && adjustmentTotal(adjustments).signum() == 0
+                && payout.getFinalAmount().signum() != 0) {
             return SettlementReconStatus.PENDING;
         }
         BigDecimal diff = diff(payout.getFinalAmount(), lines, adjustments);
