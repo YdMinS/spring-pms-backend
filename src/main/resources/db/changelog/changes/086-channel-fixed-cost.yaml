@@ -1,0 +1,106 @@
+# Channel monthly fixed cost (FEATURE_2609_33 / PLAN D1 · D2 · D2-1 · D3 · D5).
+#   platform_fixed_cost            = the catalog. Item / amount / default threshold live HERE ONLY.
+#   marketplace_account_fixed_cost = "this channel bears that item" + mode / threshold override / applied months.
+# 🔴 The amount is NEVER copied onto the channel link (D1): when Coupang changes 55,000 we fix one catalog
+#    row and every channel follows. A per-channel copy means N edits and one silently-missed channel.
+# 🔴 amount is stored VAT-INCLUSIVE exactly as the platform charges it (D3) — do not multiply by 1.1
+#    anywhere downstream, that over-states the cost by 5,000 per month.
+# ⚠️ applied_from / applied_to are VARCHAR(7) 'YYYY-MM' — the unit is a MONTH and the type says so
+#    (same axis as settlement_payout.revenue_recognition_month, changeset 085).
+# ⚠️ platform_fixed_cost.active is BOOLEAN here and re-typed to BIT(1) for MySQL below: Liquibase's
+#    abstract BOOLEAN materializes as TINYINT on MySQL while Hibernate 6 expects BIT -> ddl-auto: validate
+#    crashes the app at boot. Same 006/064 pattern (project_thumbnail_boolean_bit_hotfix). H2 needs none.
+# ⚠️ H2 constraint names are schema-global unique -> table-prefixed names (fk_platformfixedcost_*, fk_mafixedcost_*).
+databaseChangeLog:
+
+  - changeSet:
+      id: 086-channel-fixed-cost
+      author: oclyx
+      comment: "FEATURE_2609_33: platform_fixed_cost catalog + marketplace_account_fixed_cost links."
+      changes:
+
+        # ---- 1. platform-level catalog (amount + default threshold live only here, D1) ----
+        - createTable:
+            tableName: platform_fixed_cost
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: platform, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: name, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: amount, type: "DECIMAL(15,2)", constraints: { nullable: false } }
+              - column: { name: threshold_amount, type: "DECIMAL(15,2)", defaultValueNumeric: 1000000, constraints: { nullable: false } }
+              - column: { name: active, type: BOOLEAN, defaultValueBoolean: true, constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_platformfixedcost_tenant
+            baseTableName: platform_fixed_cost
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            constraintName: uk_platformfixedcost_platform_name
+            tableName: platform_fixed_cost
+            columnNames: tenant_id, platform, name
+
+        # ---- 2. channel <-> catalog link (mode / override / applied months, D2 · D2-1 · D5) ----
+        - createTable:
+            tableName: marketplace_account_fixed_cost
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: marketplace_account_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: platform_fixed_cost_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: charge_mode, type: VARCHAR(10), defaultValue: "AUTO", constraints: { nullable: false } }
+              - column: { name: threshold_override, type: "DECIMAL(15,2)" }
+              - column: { name: applied_from, type: VARCHAR(7) }
+              - column: { name: applied_to, type: VARCHAR(7) }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_mafixedcost_tenant
+            baseTableName: marketplace_account_fixed_cost
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_mafixedcost_account
+            baseTableName: marketplace_account_fixed_cost
+            baseColumnNames: marketplace_account_id
+            referencedTableName: marketplace_account
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_mafixedcost_item
+            baseTableName: marketplace_account_fixed_cost
+            baseColumnNames: platform_fixed_cost_id
+            referencedTableName: platform_fixed_cost
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            constraintName: uk_mafixedcost_account_item
+            tableName: marketplace_account_fixed_cost
+            columnNames: tenant_id, marketplace_account_id, platform_fixed_cost_id
+
+      rollback:
+        - dropTable: { tableName: marketplace_account_fixed_cost }
+        - dropTable: { tableName: platform_fixed_cost }
+
+  - changeSet:
+      id: 086-channel-fixed-cost-boolean-bit-type
+      author: oclyx
+      dbms: mysql
+      comment: "platform_fixed_cost.active TINYINT -> BIT(1) to satisfy Hibernate schema validation."
+      changes:
+        - modifyDataType:
+            tableName: platform_fixed_cost
+            columnName: active
+            newDataType: BIT(1)
+        # MySQL MODIFY drops NOT NULL, so re-declare it.
+        - addNotNullConstraint:
+            tableName: platform_fixed_cost
+            columnName: active
+            columnDataType: BIT(1)
+      rollback:
+        - modifyDataType:
+            tableName: platform_fixed_cost
+            columnName: active
+            newDataType: BOOLEAN

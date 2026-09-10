@@ -1,21 +1,25 @@
 package com.pms.service.sales;
 
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.MarketplaceAccountFixedCost;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.SettlementPayoutStatus;
 import com.pms.domain.SettlementReconStatus;
 import com.pms.dto.response.ChannelSalesResponse;
+import com.pms.dto.response.MonthlyChannelSales;
 import com.pms.dto.response.PayoutAggregate;
 import com.pms.dto.response.ProductProfitResponse;
 import com.pms.dto.response.SalesLineGroup;
 import com.pms.dto.response.SellerSalesResponse;
+import com.pms.repository.MarketplaceAccountFixedCostRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.SettlementPayoutRepository;
 import com.pms.service.MasterChannelConfigService;
+import com.pms.service.sales.FixedCostCalculator.FixedCostResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -25,7 +29,9 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -68,20 +74,26 @@ public class SalesStatsServiceImpl implements SalesStatsService {
     private final ProductListingOptionRepository productListingOptionRepository;
     private final SettlementPayoutRepository settlementPayoutRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
+    private final MarketplaceAccountFixedCostRepository fixedCostRepository;
     private final MasterChannelConfigService masterChannelConfigService;
+    private final FixedCostCalculator fixedCostCalculator;
     private final BigDecimal feeVatRate;
 
     public SalesStatsServiceImpl(OrderLineRepository orderLineRepository,
                                  ProductListingOptionRepository productListingOptionRepository,
                                  SettlementPayoutRepository settlementPayoutRepository,
                                  MarketplaceAccountRepository marketplaceAccountRepository,
+                                 MarketplaceAccountFixedCostRepository fixedCostRepository,
                                  MasterChannelConfigService masterChannelConfigService,
+                                 FixedCostCalculator fixedCostCalculator,
                                  @Value("${oclyx.pricing.fee-vat-rate:0.1}") BigDecimal feeVatRate) {
         this.orderLineRepository = orderLineRepository;
         this.productListingOptionRepository = productListingOptionRepository;
         this.settlementPayoutRepository = settlementPayoutRepository;
         this.marketplaceAccountRepository = marketplaceAccountRepository;
+        this.fixedCostRepository = fixedCostRepository;
         this.masterChannelConfigService = masterChannelConfigService;
+        this.fixedCostCalculator = fixedCostCalculator;
         this.feeVatRate = feeVatRate == null ? BigDecimal.ZERO : feeVatRate;
     }
 
@@ -92,16 +104,23 @@ public class SalesStatsServiceImpl implements SalesStatsService {
         Period period = Period.of(from, to);
         List<MarketplaceAccount> accounts = marketplaceAccountRepository.findAllWithSeller(sellerId);
         Map<Long, PayoutAggregate> payouts = payouts(period, sellerId);
+        // 🔴 채널 탭과 같은 helper 를 1회만 부른다 — 두 탭이 각자 계산하면 합계가 어긋난다.
+        Map<Long, FixedCostResult> fixedCosts = fixedCostByAccount(period, sellerId, accountIds(accounts));
 
         // 판매자 행은 계정 목록으로 만든다 — 이 기간에 판 게 없어도 "받을 돈"은 있을 수 있다.
         Map<Long, String> sellerNames = new LinkedHashMap<>();
         Map<Long, Acc> salesBySeller = new HashMap<>();
         Map<Long, Acc> payoutBySeller = new HashMap<>();
+        Map<Long, BigDecimal> fixedBySeller = new HashMap<>();
         for (MarketplaceAccount account : accounts) {
             Long owner = account.getSeller().getId();
             sellerNames.putIfAbsent(owner, account.getSeller().getSellerName());
             payoutBySeller.computeIfAbsent(owner, key -> new Acc())
                     .addPayout(payouts.get(account.getId()));
+            // 🔴 판매자 단위로 임계를 다시 판정하지 않는다(D12) — 채널 판정 결과를 더하기만 한다.
+            fixedBySeller.merge(owner,
+                    fixedCosts.getOrDefault(account.getId(), FixedCostResult.zero()).amount(),
+                    BigDecimal::add);
         }
 
         for (GroupSales sales : collect(period, sellerId)) {
@@ -114,10 +133,11 @@ public class SalesStatsServiceImpl implements SalesStatsService {
         sellerNames.forEach((owner, name) -> {
             Acc sales = salesBySeller.getOrDefault(owner, new Acc());
             Acc payout = payoutBySeller.getOrDefault(owner, new Acc());
+            BigDecimal fixedCost = fixedBySeller.getOrDefault(owner, BigDecimal.ZERO);
             rows.add(new SellerSalesResponse(owner, name,
                     scale(sales.grossSales), scale(sales.discount), sales.netQty, sales.holdQty,
-                    scale(sales.estFee), sales.profit(), sales.profitReady(),
-                    scale(payout.pendingPayout), payout.unreconciledPayouts));
+                    scale(sales.estFee), netProfit(sales.profit(), fixedCost), sales.profitReady(),
+                    scale(payout.pendingPayout), payout.unreconciledPayouts, scale(fixedCost)));
         });
         rows.sort(Comparator.comparing(SellerSalesResponse::grossSales).reversed());
         return rows;
@@ -134,19 +154,25 @@ public class SalesStatsServiceImpl implements SalesStatsService {
             salesByAccount.computeIfAbsent(sales.group().accountId(), key -> new Acc()).addSales(sales);
         }
 
+        List<MarketplaceAccount> accounts = marketplaceAccountRepository.findAllWithSeller(sellerId);
+        // 🔴 루프 앞에서 1회. 행마다 부르면 채널 수만큼 쿼리가 나간다.
+        Map<Long, FixedCostResult> fixedCosts = fixedCostByAccount(period, sellerId, accountIds(accounts));
+
         List<ChannelSalesResponse> rows = new ArrayList<>();
-        for (MarketplaceAccount account : marketplaceAccountRepository.findAllWithSeller(sellerId)) {
+        for (MarketplaceAccount account : accounts) {
             Acc sales = salesByAccount.getOrDefault(account.getId(), new Acc());
             PayoutAggregate payout = payouts.getOrDefault(account.getId(),
                     PayoutAggregate.empty(account.getId()));
+            FixedCostResult fixedCost = fixedCosts.getOrDefault(account.getId(), FixedCostResult.zero());
             rows.add(new ChannelSalesResponse(
                     account.getId(), account.getAccountAlias(), account.getPlatform(),
                     account.getSeller().getId(),
                     scale(sales.grossSales), scale(sales.discount), sales.netQty, sales.holdQty,
-                    scale(sales.estFee), sales.profit(), sales.profitReady(),
+                    scale(sales.estFee), netProfit(sales.profit(), fixedCost.amount()), sales.profitReady(),
                     scale(nz(payout.pendingPayout())), scale(nz(payout.paidAmount())),
                     account.getLastSettlementSyncAt(),
-                    payout.unreconciledPayouts(), payout.amountOnlyPayouts(), payout.payoutCount()));
+                    payout.unreconciledPayouts(), payout.amountOnlyPayouts(), payout.payoutCount(),
+                    scale(fixedCost.amount()), fixedCost.chargedMonths()));
         }
         rows.sort(Comparator.comparing(ChannelSalesResponse::grossSales).reversed());
         return rows;
@@ -304,6 +330,69 @@ public class SalesStatsServiceImpl implements SalesStatsService {
                 return null;
             }
         });
+    }
+
+    // ── 고정비 (FEATURE_2609_33 / PLAN 2609_33 D4 · D4-1 · D6 · D12) ──────────────────────
+
+    /**
+     * 계정별 기간 고정비.
+     *
+     * <p>🔴 <b>{@code byChannel} 과 {@code summary} 가 이 메서드 하나만 쓴다.</b> 두 탭이 각자 계산하면
+     * (a) 계정마다 쿼리가 나가고 (b) 두 탭 합계가 서로 어긋난다 — 어긋나는 순간 화면이 신뢰를 잃는다.
+     *
+     * <p>🔴 판정 매출은 <b>걸친 달 전체</b>다(D4-1): 조회 기간이 아니라 첫 달 1일 00:00 ~ 마지막 달
+     * 다음 달 1일 00:00 으로 넓혀 집계한다. 9/1~9/10 조회에서 10일치로 판정하면 임계 미달로 보여
+     * "9월엔 고정비가 없다" 가 된다.
+     *
+     * <p>⚠️ 연결이 <b>0건이면 월별 집계 쿼리를 아예 부르지 않는다</b> — 고정비를 쓰지 않는 테넌트가
+     * 매출 화면을 열 때마다 집계를 한 번 더 돌 이유가 없다.
+     */
+    private Map<Long, FixedCostResult> fixedCostByAccount(Period period, Long sellerId,
+                                                          Collection<Long> accountIds) {
+        if (accountIds.isEmpty()) {
+            return Map.of();
+        }
+        List<MarketplaceAccountFixedCost> links =
+                fixedCostRepository.findByMarketplaceAccount_IdIn(accountIds);
+        if (links.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, List<MarketplaceAccountFixedCost>> linksByAccount = links.stream()
+                .collect(Collectors.groupingBy(link -> link.getMarketplaceAccount().getId()));
+
+        Map<Long, Map<String, BigDecimal>> monthlySales = monthlyNetSales(period, sellerId);
+        Map<Long, FixedCostResult> result = new HashMap<>();
+        linksByAccount.forEach((accountId, accountLinks) -> result.put(accountId,
+                fixedCostCalculator.forChannel(accountLinks, period.from(), period.to(),
+                        monthlySales.getOrDefault(accountId, Map.of()))));
+        return result;
+    }
+
+    /** 계정 × {@code "YYYY-MM"} 할인 후 매출. 🔴 문자열 키 조립은 여기서만 한다(쿼리는 year/month 정수). */
+    private Map<Long, Map<String, BigDecimal>> monthlyNetSales(Period period, Long sellerId) {
+        LocalDateTime from = YearMonth.from(period.from()).atDay(1).atStartOfDay();
+        LocalDateTime toExclusive = YearMonth.from(period.to()).plusMonths(1).atDay(1).atStartOfDay();
+        Map<Long, Map<String, BigDecimal>> byAccount = new HashMap<>();
+        for (MonthlyChannelSales row : orderLineRepository.aggregateMonthlySales(from, toExclusive, sellerId)) {
+            byAccount.computeIfAbsent(row.accountId(), key -> new HashMap<>())
+                    .merge(YearMonth.of(row.year(), row.month()).toString(), nz(row.netSales()),
+                            BigDecimal::add);
+        }
+        return byAccount;
+    }
+
+    private static List<Long> accountIds(List<MarketplaceAccount> accounts) {
+        return accounts.stream().map(MarketplaceAccount::getId).toList();
+    }
+
+    /**
+     * 순이익에서 고정비를 뺀다 — 🔴 <b>profit 이 null 이 아닐 때만</b>(D6).
+     *
+     * <p>{@code costBasisReady == false} 면 순이익이 null 이라 뺄 대상이 없다. 그렇다고 고정비를 0 으로
+     * 뭉개면 안 되므로 {@code fixedCost} 는 응답의 <b>자기 필드</b>로 따로 나간다.
+     */
+    private static BigDecimal netProfit(BigDecimal profit, BigDecimal fixedCost) {
+        return profit == null ? null : profit.subtract(nz(fixedCost));
     }
 
     /** 채널별 "받을 돈"·입금 확정·대사 배지. 🔴 {@code pendingPayout} 에는 기간이 걸리지 않는다(D4). */
