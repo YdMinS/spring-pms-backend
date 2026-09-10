@@ -77,8 +77,9 @@ class CoupangApiClientTest {
         server.expect(requestTo("https://api-gateway.coupang.com/v5/orders"))
                 .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS).body("{}"));
 
+        // 🔴 PLAN 2609_31 D9-1 — 첫 429 도 CoupangRateLimitedException(HTTP 429)으로 바꿔 던진다.
         assertThatThrownBy(() -> client.get("/v5/orders", "", account))
-                .isInstanceOf(RestClientResponseException.class);
+                .isInstanceOf(CoupangRateLimitedException.class);
 
         // 쿨다운이 열렸으므로 두 번째 호출은 서버에 도달하지 않는다(쿠팡 지침: 재시도 금지).
         assertThatThrownBy(() -> client.get("/v5/orders", "", account))

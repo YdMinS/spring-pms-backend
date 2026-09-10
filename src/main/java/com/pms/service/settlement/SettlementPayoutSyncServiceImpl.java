@@ -4,6 +4,7 @@ import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.dto.response.SettlementPayoutSyncResponse;
+import com.pms.exception.CoupangRateLimitedException;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.security.TenantContext;
 import com.pms.service.coupang.SyncWindow;
@@ -68,7 +69,12 @@ public class SettlementPayoutSyncServiceImpl implements SettlementPayoutSyncServ
         List<String> failed = new ArrayList<>();
         for (MarketplaceAccount account : accounts) {
             try {
-                total = total.plus(runAccount(account, months(account, month, current)));
+                total = total.plus(runAccount(account, months(account, month, current), month == null));
+            } catch (CoupangRateLimitedException e) {
+                // 🔴 PLAN 2609_31 D9 — 쿨다운은 프로세스 전역이라 격리해도 나머지 계정이 전부 같은 예외를 맞는다.
+                //    200 + failedAccounts 로 내려가면 프론트가 남은 달을 계속 던져 왕복만 늘고, 재시도 가능 시각
+                //    문구가 사용자에게 안 보인다. 429 로 즉시 끊는다.
+                throw e;
             } catch (RuntimeException e) {
                 log.warn("Settlement payout sync failed for account={}, isolated and continue",
                         account.getId(), e);
@@ -84,8 +90,15 @@ public class SettlementPayoutSyncServiceImpl implements SettlementPayoutSyncServ
      *
      * <p>⚠️ 비-웹 경로(@Scheduled)는 TenantContext 가 비어 @TenantId INSERT 가 NO_TENANT 로 떨어진다 —
      * 계정의 테넌트를 세팅하고 끝나면 원래 값으로 되돌린다(웹 경로의 요청 테넌트를 지우지 않게).
+     *
+     * @param updateAnchor 전 월이 끝난 뒤 {@code lastPayoutSyncAt} 을 갱신할지 —
+     *                     🔴 PLAN 2609_31 D3: {@code month} 를 지정한 호출은 과거 구간 백필이므로 false 다.
+     *                     앵커를 찍으면 "최초 실행"이 소진돼 {@code payoutBackfillMonths} 초기 백필이 영영
+     *                     돌지 않는다. 매출내역 기간 백필
+     *                     ({@code SettlementSyncServiceImpl.runAccount(updateAnchor=false)})과 같은 규칙.
      */
-    private PayoutUpsertResult runAccount(MarketplaceAccount account, List<YearMonth> months) {
+    private PayoutUpsertResult runAccount(MarketplaceAccount account, List<YearMonth> months,
+                                          boolean updateAnchor) {
         SettlementSource source = sources.get(account.getPlatform());
         Long previousTenant = TenantContext.get();
         PayoutUpsertResult result = PayoutUpsertResult.empty();
@@ -100,7 +113,9 @@ public class SettlementPayoutSyncServiceImpl implements SettlementPayoutSyncServ
                     result = result.plus(settlementPayoutUpserter.upsert(account, draft));
                 }
             }
-            settlementSyncStatusWriter.writePayoutSyncAt(account.getId());
+            if (updateAnchor) {
+                settlementSyncStatusWriter.writePayoutSyncAt(account.getId());
+            }
             return result;
         } finally {
             if (previousTenant != null) {
