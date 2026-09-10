@@ -27,11 +27,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 채널별 지급 묶음 집계 쿼리 (FEATURE_2609_30 / PLAN D4 · D5-5).
  *
- * <p>🔴 <b>이 규칙들은 JPQL 안에 있어 목으로는 검증되지 않는다</b> — "받을 돈"에 기간이 걸리지 않는 것,
- * 지급 확정액에만 기간이 걸리는 것, 그리고 <b>{@code payoutCount} 가 상태와 무관하게 전부 센다</b>는 것이다.
+ * <p>🔴 <b>이 규칙들은 JPQL 안에 있어 목으로는 검증되지 않는다</b> — "받을 돈"에 기간이 걸리지 않는 것과
+ * 지급 확정액에만 기간이 걸리는 것이다. 둘을 뒤집으면 화면의 두 금액이 조용히 서로의 값을 갖는다.
  *
- * <p>마지막 항목이 화면의 배지를 가른다: 정산 묶음이 아직 없는 채널({@code payoutCount = 0})과 전부 금액이
- * 맞는 채널은 둘 다 {@code unreconciledPayouts = 0} 이라, 이 값이 없으면 정산 전 채널에 "금액 일치"가 뜬다.
+ * <p>🔴 대사 상태별 건수는 이 집계가 세지 않는다(FEATURE_2609_34) — 기간이 안 걸리는 건수를 기간 행에
+ * 배지로 걸면 오해를 만든다. 대사 상태는 인식월 정산 목록이 건별로 보여준다.
  */
 @DataJpaTest
 @ActiveProfiles("test")
@@ -53,9 +53,14 @@ class SettlementPayoutAggregationTest {
         account = MarketplaceAccountFixture.coupangAccount(em, seller);
     }
 
-    /** 상태·대사 결과와 무관하게 전 묶음을 센다 — "정산 이력이 있는가"에 답하는 값이라 필터를 걸면 안 된다. */
+    /**
+     * 받을 돈은 기간 무관(D4)이고, 지급 확정만 기간을 탄다(D4-1).
+     *
+     * <p>🔴 대사 상태별 건수는 <b>이 집계에 없다</b>(FEATURE_2609_34) — 기간이 걸리지 않는 건수를 기간
+     * 필터가 달린 화면 행에 배지로 걸면 "이 기간에 N건이 어긋났다"로 읽힌다. 그래서 여기서 세지 않는다.
+     */
     @Test
-    void payoutCountCountsEveryPayoutRegardlessOfStatus() {
+    void pendingIgnoresPeriodWhilePaidHonorsIt() {
         // ⚠️ settlementDate 를 다르게 준다 — 유일키가 (계정, 인식월, 유형, 정산일)이라(D5-3)
         // 같은 달에 여러 묶음이 온다는 것은 곧 정산일이 다르다는 뜻이다.
         payout(1, SettlementPayoutStatus.SCHEDULED, SettlementReconStatus.PENDING, "100000", null);
@@ -64,15 +69,12 @@ class SettlementPayoutAggregationTest {
         payout(3, SettlementPayoutStatus.PAID, SettlementReconStatus.UNRECONCILED, "300000",
                 LocalDate.of(2026, 9, 20));
         payout(4, SettlementPayoutStatus.PAID, SettlementReconStatus.AMOUNT_ONLY, "50000",
-                // 기간 밖 입금 — payoutCount 에는 들어가지만 paidAmount 에는 안 들어간다.
+                // 기간 밖 입금 — paidAmount 에 들어가지 않는다.
                 LocalDate.of(2026, 8, 20));
         em.flush();
 
         PayoutAggregate row = aggregate();
 
-        assertThat(row.payoutCount()).isEqualTo(4L);
-        assertThat(row.unreconciledPayouts()).isEqualTo(1L);
-        assertThat(row.amountOnlyPayouts()).isEqualTo(1L);
         // 받을 돈 = SCHEDULED 만, 기간 무관(D4).
         assertThat(row.pendingPayout()).isEqualByComparingTo("100000");
         // 지급 확정 = PAID 이면서 기간 내 입금분만(8월 건 제외).
@@ -82,20 +84,18 @@ class SettlementPayoutAggregationTest {
     /**
      * 🔴 묶음이 없는 계정은 {@code group by} 라 <b>행 자체가 나오지 않는다</b>.
      *
-     * <p>그래서 서비스가 {@code PayoutAggregate.empty} 로 메우고, 그 0 이 화면의 "정산 이력 없음"이 된다.
-     * 이 쿼리가 빈 행이라도 돌려주기 시작하면 그 구분이 조용히 무너진다.
+     * <p>그래서 서비스가 {@code PayoutAggregate.empty} 로 메운다 — 그 0 이 없으면 정산 이력이 없는 채널의
+     * "받을 돈" 칸이 통째로 비어 버린다.
      */
     @Test
     void accountWithoutPayoutsProducesNoRow() {
         assertThat(settlementPayoutRepository.aggregateByAccount(seller.getId(), FROM, TO,
-                SettlementPayoutStatus.SCHEDULED, SettlementPayoutStatus.PAID,
-                SettlementReconStatus.UNRECONCILED, SettlementReconStatus.AMOUNT_ONLY)).isEmpty();
+                SettlementPayoutStatus.SCHEDULED, SettlementPayoutStatus.PAID)).isEmpty();
     }
 
     private PayoutAggregate aggregate() {
         List<PayoutAggregate> rows = settlementPayoutRepository.aggregateByAccount(seller.getId(), FROM, TO,
-                SettlementPayoutStatus.SCHEDULED, SettlementPayoutStatus.PAID,
-                SettlementReconStatus.UNRECONCILED, SettlementReconStatus.AMOUNT_ONLY);
+                SettlementPayoutStatus.SCHEDULED, SettlementPayoutStatus.PAID);
         assertThat(rows).singleElement().extracting(PayoutAggregate::accountId).isEqualTo(account.getId());
         return rows.get(0);
     }

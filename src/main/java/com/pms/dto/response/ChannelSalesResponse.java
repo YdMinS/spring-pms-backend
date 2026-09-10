@@ -15,9 +15,6 @@ import java.time.LocalDateTime;
  * @param pendingPayout          기간 무관 "받을 돈"(D4)
  * @param paidAmount             기간 내 지급 확정({@code status = PAID}, {@code finalSettlementDate} 기준)
  * @param lastSettlementSyncAt   정산 원장을 마지막으로 적재한 시각. null 이면 아직 한 번도 안 읽은 채널이다
- * @param amountOnlyPayouts      라인 없이 금액만 있는 묶음 수(추가정산·유보금) — 0 이 아닌 것이 정상이다(D5-5)
- * @param payoutCount            전체 지급 묶음 수. 🔴 0 = 정산 이력 없음 — 화면이 "금액 일치"와 구분해서
- *                               표시한다. 이 필드가 없으면 정산 전 채널이 "전부 맞음"으로 보인다
  * @param fixedCost              기간 고정비(FEATURE_2609_33 / PLAN 2609_33 D6). 🔴 <b>자기 필드로</b> 내려간다 —
  *                               {@code estNetProfit} 에 녹이면 {@code costBasisReady = false} 인 채널에서
  *                               고정비가 통째로 사라져 화면이 "고정비 0" 으로 읽는다. {@code estNetProfit} 에서는
@@ -40,9 +37,6 @@ public record ChannelSalesResponse(
         BigDecimal pendingPayout,
         BigDecimal paidAmount,
         LocalDateTime lastSettlementSyncAt,
-        long unreconciledPayouts,
-        long amountOnlyPayouts,
-        long payoutCount,
         BigDecimal fixedCost,
         int fixedCostMonths) {
 }
