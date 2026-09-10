@@ -11,6 +11,7 @@ import com.pms.dto.response.MonthlyChannelSales;
 import com.pms.dto.response.PayoutAggregate;
 import com.pms.dto.response.ProductProfitResponse;
 import com.pms.dto.response.SalesLineGroup;
+import com.pms.dto.response.SalesLineView;
 import com.pms.dto.response.SellerSalesResponse;
 import com.pms.repository.MarketplaceAccountFixedCostRepository;
 import com.pms.repository.MarketplaceAccountRepository;
@@ -165,7 +166,7 @@ public class SalesStatsServiceImpl implements SalesStatsService {
             FixedCostResult fixedCost = fixedCosts.getOrDefault(account.getId(), FixedCostResult.zero());
             rows.add(new ChannelSalesResponse(
                     account.getId(), account.getAccountAlias(), account.getPlatform(),
-                    account.getSeller().getId(),
+                    account.getSeller().getId(), account.getSeller().getSellerName(),
                     scale(sales.grossSales), scale(sales.discount), sales.netQty, sales.holdQty,
                     scale(sales.estFee), netProfit(sales.profit(), fixedCost.amount()), sales.profitReady(),
                     scale(nz(payout.pendingPayout())), scale(nz(payout.paidAmount())),
@@ -214,6 +215,17 @@ public class SalesStatsServiceImpl implements SalesStatsService {
                 ? Comparator.comparing(ProductProfitResponse::estNetProfit).reversed()
                 : Comparator.comparing(ProductProfitResponse::grossSales).reversed());
         return rows;
+    }
+
+    // ── ④ 판매 내역 ───────────────────────────────────────────────────────
+
+    @Override
+    public List<SalesLineView> lines(LocalDate from, LocalDate to, Long accountId) {
+        if (accountId == null) {
+            throw new IllegalArgumentException("판매 내역은 채널(accountId)을 지정해야 조회할 수 있습니다.");
+        }
+        Period period = Period.of(from, to);
+        return orderLineRepository.findSalesLines(period.fromTime(), period.toExclusive(), accountId);
     }
 
     // ── 공통 집계 ─────────────────────────────────────────────────────────

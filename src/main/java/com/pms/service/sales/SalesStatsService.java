@@ -2,6 +2,7 @@ package com.pms.service.sales;
 
 import com.pms.dto.response.ChannelSalesResponse;
 import com.pms.dto.response.ProductProfitResponse;
+import com.pms.dto.response.SalesLineView;
 import com.pms.dto.response.SellerSalesResponse;
 
 import java.time.LocalDate;
@@ -34,4 +35,14 @@ public interface SalesStatsService {
      * @param crossChannel true = 마스터 상품 단위로 합친다 / false = 마스터 × 채널로 쪼갠다
      */
     List<ProductProfitResponse> byProduct(LocalDate from, LocalDate to, Long sellerId, boolean crossChannel);
+
+    /**
+     * ④ 판매 내역 — 한 채널의 주문 라인 목록 (FEATURE_2609_34).
+     *
+     * <p>①②③ 이 접어서 합계를 내는 반면 이쪽은 접지 않는다. 채널별 매출 화면이 "이 매출이 어느 주문에서
+     * 나왔나"에 답하는 자리이고, 마켓 관리자 화면과 대조할 수 있는 유일한 축이다.
+     *
+     * <p>⚠️ {@code accountId} 는 필수다 — 한 채널을 들여다보는 목록이라 전 채널을 한 번에 내려보내지 않는다.
+     */
+    List<SalesLineView> lines(LocalDate from, LocalDate to, Long accountId);
 }

@@ -3,6 +3,7 @@ package com.pms.controller;
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.response.ChannelSalesResponse;
 import com.pms.dto.response.ProductProfitResponse;
+import com.pms.dto.response.SalesLineView;
 import com.pms.dto.response.SellerSalesResponse;
 import com.pms.service.sales.SalesStatsService;
 import lombok.RequiredArgsConstructor;
@@ -71,5 +72,19 @@ public class SalesStatsController {
             @RequestParam(required = false, defaultValue = "true") boolean crossChannel) {
         return ResponseEntity.ok(ResponseDTO.success(
                 salesStatsService.byProduct(from, to, sellerId, crossChannel)));
+    }
+
+    /**
+     * ④ 판매 내역 — 한 채널의 주문 라인 목록. {@code accountId} <b>필수</b>.
+     *
+     * <p>①②③ 과 달리 접지 않은 목록이라 채널을 지정하지 않으면 전 채널 라인이 통째로 나온다 —
+     * 그래서 계정을 필수로 받고, 없으면 400 이다.
+     */
+    @GetMapping("/lines")
+    public ResponseEntity<ResponseDTO<List<SalesLineView>>> lines(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam Long accountId) {
+        return ResponseEntity.ok(ResponseDTO.success(salesStatsService.lines(from, to, accountId)));
     }
 }
