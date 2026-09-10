@@ -36,11 +36,14 @@ class SalesStatsControllerTest extends BaseIntegrationTest {
     private static final String SUMMARY = "/api/admin/sales/summary";
     private static final String BY_CHANNEL = "/api/admin/sales/by-channel";
     private static final String BY_PRODUCT = "/api/admin/sales/by-product";
+    private static final String LINES = "/api/admin/sales/lines";
 
     @Autowired private SellerRepository sellerRepository;
     @Autowired private MarketplaceAccountRepository marketplaceAccountRepository;
     @Autowired private CoupangAccountCredentialRepository credentialRepository;
     @Autowired private SettlementPayoutRepository settlementPayoutRepository;
+
+    private Long accountId;
 
     @BeforeEach
     void seed() {
@@ -50,6 +53,7 @@ class SalesStatsControllerTest extends BaseIntegrationTest {
                 MarketplaceAccountFixture.coupangCoreBuilder()
                         .seller(seller).platform(Platform.COUPANG).accountAlias("메인").isActive(true).build());
         MarketplaceAccountFixture.saveCredential(credentialRepository, account, "V1", null);
+        accountId = account.getId();
 
         // 🔴 판매일 기간과 상관없이 잡혀야 하는 "받을 돈"(PLAN D4) — 지급일은 조회 기간 밖으로 둔다.
         settlementPayoutRepository.save(SettlementPayout.builder()
@@ -127,6 +131,28 @@ class SalesStatsControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data").isArray());
     }
 
+    /** ④ 판매 내역 — 채널을 지정하면 그 채널의 주문 라인이 배열로 온다(판 것이 없으면 빈 배열). */
+    @Test
+    void lines_adminToken_returns200() throws Exception {
+        mockMvc.perform(get(LINES)
+                        .param("from", "2026-09-01").param("to", "2026-09-30")
+                        .param("accountId", String.valueOf(accountId))
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isArray());
+    }
+
+    /**
+     * 🔴 계정 없이 부르면 400 이다 — 접지 않은 목록이라 계정을 안 받으면 전 채널 라인이 통째로 나간다.
+     */
+    @Test
+    void lines_withoutAccount_returns400() throws Exception {
+        mockMvc.perform(get(LINES)
+                        .param("from", "2026-09-01").param("to", "2026-09-30")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest());
+    }
+
     // ---- validation ----
 
     @Test
@@ -134,12 +160,16 @@ class SalesStatsControllerTest extends BaseIntegrationTest {
         for (String path : paths()) {
             mockMvc.perform(get(path)
                             .param("from", "2026-09-30").param("to", "2026-09-01")
+                            // ⚠️ 판매 내역만 계정을 요구한다. 나머지 엔드포인트는 모르는 파라미터라 무시하므로
+                            //    루프를 쪼개지 않고 함께 넘긴다 — 안 넘기면 판매 내역이 "기간이 뒤집혀서"가
+                            //    아니라 "계정이 없어서" 400 이 되어 이 테스트가 아무것도 지키지 못한다.
+                            .param("accountId", String.valueOf(accountId))
                             .header("Authorization", "Bearer " + adminToken))
                     .andExpect(status().isBadRequest());
         }
     }
 
     private static List<String> paths() {
-        return List.of(SUMMARY, BY_CHANNEL, BY_PRODUCT);
+        return List.of(SUMMARY, BY_CHANNEL, BY_PRODUCT, LINES);
     }
 }

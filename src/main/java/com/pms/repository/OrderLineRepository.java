@@ -5,6 +5,7 @@ import com.pms.domain.OrderStatus;
 import com.pms.dto.response.CostBasisBreakdown;
 import com.pms.dto.response.MonthlyChannelSales;
 import com.pms.dto.response.SalesLineGroup;
+import com.pms.dto.response.SalesLineView;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -202,6 +203,46 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
     List<SalesLineGroup> aggregateSales(@Param("from") LocalDateTime from,
                                         @Param("toExclusive") LocalDateTime toExclusive,
                                         @Param("sellerId") Long sellerId);
+
+    /**
+     * 판매 내역 — 집계하지 않은 <b>주문 라인 목록</b> (FEATURE_2609_34).
+     *
+     * <p>채널별 매출 화면이 "이 매출이 어디서 나왔나"를 보여주는 목록이다. {@link #aggregateSales} 가
+     * 같은 라인을 접어서 합계를 내는 반면, 이쪽은 접지 않고 주문번호와 함께 그대로 내려준다.
+     *
+     * <p>🔴 <b>금액식을 {@link #aggregateSales} 에서 그대로 옮겨 온다</b> — 유효수량·비례 안분·좌변 우변이
+     * 하나라도 다르면 이 목록의 합이 화면 위쪽 채널 합계와 어긋난다. 둘 중 어느 쪽이 맞는지는 화면을 보는
+     * 사람이 알 수 없으므로, 어긋나는 순간 두 숫자를 다 못 쓰게 된다.
+     *
+     * <p>⚠️ {@code left join} 세 개는 여기서도 그대로다 — 채널 옵션이 없는 라인(백필 누락·WING 수정분)을
+     * <b>버리지 않기</b> 위해서다. inner join 으로 바꾸면 그 라인만 조용히 사라져 합계가 안 맞는다.
+     *
+     * <p>⚠️ 계정은 <b>필수</b>다. 이 목록은 한 채널을 들여다보는 화면 전용이라, 계정 없이 부르면 전 채널
+     * 라인이 통째로 나와 화면이 감당할 수 없다.
+     *
+     * @param toExclusive 상한 <b>배타</b>. 종료일의 23:59:59 를 만들지 않기 위해 다음 날 00:00 을 넘긴다
+     */
+    @Query("""
+            select new com.pms.dto.response.SalesLineView(
+                l.id, a.id, o.orderedAt, o.externalOrderId, l.itemName, mp.name,
+                l.orderQty, l.cancelQty, l.holdQty, l.orderQty - l.cancelQty,
+                coalesce(l.unitPrice, 0),
+                coalesce(l.unitPrice, 0) * (l.orderQty - l.cancelQty),
+                coalesce(l.discountAmount, 0) * (l.orderQty - l.cancelQty)
+                        / coalesce(nullif(l.orderQty, 0), 1))
+            from OrderLine l
+              join l.order o
+              join o.marketplaceAccount a
+              left join l.productListingOption plo
+              left join plo.masterProductOption mpo
+              left join mpo.masterProduct mp
+            where a.id = :accountId
+              and o.orderedAt >= :from and o.orderedAt < :toExclusive
+            order by o.orderedAt desc, l.id desc
+            """)
+    List<SalesLineView> findSalesLines(@Param("from") LocalDateTime from,
+                                       @Param("toExclusive") LocalDateTime toExclusive,
+                                       @Param("accountId") Long accountId);
 
     // ── 고정비 부과 판정용 월별 집계 (FEATURE_2609_33 / PLAN 2609_33 D4-1 · D11 · D11-1) ──────
 

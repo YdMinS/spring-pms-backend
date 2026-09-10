@@ -12,6 +12,7 @@ import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
 import com.pms.dto.response.SalesLineGroup;
+import com.pms.dto.response.SalesLineView;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.security.crypto.AesAttributeConverter;
 import org.junit.jupiter.api.BeforeEach;
@@ -142,6 +143,46 @@ class OrderLineSalesAggregationTest {
         em.clear();
 
         assertThat(aggregate()).isEmpty();
+    }
+
+    /**
+     * 🔴 판매 내역 목록의 금액은 집계와 <b>같은 식</b>이어야 한다 — 어긋나면 이 목록의 합이 화면 위쪽
+     * 채널 합계와 달라지고, 둘 중 어느 쪽이 맞는지 화면을 보는 사람이 알 수 없게 된다.
+     *
+     * <p>마스터에 연결되지 않은 라인도 <b>목록에 남는다</b>(상품명만 null) — 빼면 합계가 어긋난다.
+     */
+    @Test
+    void salesLinesCarryTheSameAmountsAndKeepUnmappedLines() {
+        line(option, 10, 3, 2, "1000", "500", null);   // netQty 7, gross 7000, discount 350
+        line(null, 2, 0, 0, "2000", "0", null);        // 채널 옵션 미연결
+
+        em.flush();
+        em.clear();
+
+        List<SalesLineView> lines = orderLineRepository.findSalesLines(FROM, TO_EXCLUSIVE, account.getId());
+
+        assertThat(lines).hasSize(2);
+        assertThat(lines).filteredOn(view -> view.masterProductName() != null)
+                .singleElement()
+                .satisfies(view -> {
+                    assertThat(view.netQty()).isEqualTo(7L);
+                    assertThat(view.holdQty()).isEqualTo(2L);
+                    assertThat(view.grossSales()).isEqualByComparingTo("7000");
+                    assertThat(view.discount()).isEqualByComparingTo("350");
+                });
+        assertThat(lines).filteredOn(view -> view.masterProductName() == null)
+                .singleElement()
+                .satisfies(view -> assertThat(view.grossSales()).isEqualByComparingTo("4000"));
+    }
+
+    /** 🔴 다른 채널의 라인은 섞이지 않는다 — 한 채널을 들여다보는 목록이다. */
+    @Test
+    void salesLinesAreScopedToOneAccount() {
+        line(option, 1, 0, 0, "1000", "0", null);
+        em.flush();
+        em.clear();
+
+        assertThat(orderLineRepository.findSalesLines(FROM, TO_EXCLUSIVE, account.getId() + 999L)).isEmpty();
     }
 
     // ------------------------------------------------------------- fixtures
