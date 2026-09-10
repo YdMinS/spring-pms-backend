@@ -20,8 +20,23 @@ import java.util.List;
  */
 public interface SettlementReconciliationService {
 
-    /** 지급 묶음 목록. 파라미터가 null 이면 그 조건은 적용하지 않는다. */
+    /** 지급 묶음 목록 — <b>지급일</b> 축. 파라미터가 null 이면 그 조건은 적용하지 않는다. */
     List<PayoutSummary> payouts(Long sellerId, Long accountId, LocalDate from, LocalDate to);
+
+    /**
+     * 지급 묶음 목록 — <b>매출인식월</b> 축 (FEATURE_2609_34). 매출 화면이 "이 기간 매출에 대한 정산"을
+     * 나열할 때 쓴다.
+     *
+     * <p>🔴 {@link #payouts} 와 축이 다르다(지급일 vs 인식월). 매출 화면의 기간은 판매일 축이라 지급일로
+     * 자르면 8월에 판 것을 9월에 받는 건이 통째로 빠진다. 두 메서드를 하나로 합치지 말 것.
+     *
+     * <p>응답은 인식월 내림차순 → 같은 달 안에서 지급일 오름차순이다. 여러 달을 조회하면 달마다 여러 건이
+     * 나오므로 <b>월 단위 묶음은 화면이</b> 만든다(서버는 정렬만 보장한다).
+     *
+     * @param from 판매일 기준 시작일 — 이 날짜가 속한 <b>달</b>부터
+     * @param to   판매일 기준 종료일 — 이 날짜가 속한 <b>달</b>까지
+     */
+    List<PayoutSummary> payoutsByRecognitionMonth(Long sellerId, Long accountId, LocalDate from, LocalDate to);
 
     /** 묶음 1건 + 조정 행 + 검증식 요약 금액. */
     SettlementPayoutDetailResponse payout(Long payoutId);

@@ -51,6 +51,30 @@ public interface SettlementPayoutRepository extends JpaRepository<SettlementPayo
                                   @Param("to") LocalDate to);
 
     /**
+     * <b>매출인식월</b> 구간 조회 — 매출 화면이 "이 기간 매출에 대한 정산"을 나열하는 유일한 경로
+     * (FEATURE_2609_34).
+     *
+     * <p>🔴 {@link #search} 와 축이 다르다. 저쪽은 <b>지급일</b>(돈이 언제 들어왔나), 이쪽은
+     * <b>매출인식월</b>(어느 달 매출에 대한 정산인가)이다. 매출 화면의 기간은 판매일 축이라 지급일로 자르면
+     * 8월에 판 것을 9월에 받는 건이 통째로 빠진다 — 두 메서드를 합치지 말 것.
+     *
+     * <p>⚠️ {@code revenue_recognition_month} 는 {@code 'YYYY-MM'} 고정폭 문자열이라 사전식 비교가
+     * 연월 비교와 같다. {@code >=}/{@code <=} 를 그대로 쓰는 이유이고, 인덱스도 그대로 탄다.
+     *
+     * <p>정렬 = 인식월 내림차순(최근 달이 위) → 같은 달 안에서는 지급일 오름차순(주정산 1차·2차·3차 순).
+     */
+    @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller"})
+    @Query("SELECT p FROM SettlementPayout p WHERE "
+            + "(:sellerId IS NULL OR p.marketplaceAccount.seller.id = :sellerId) AND "
+            + "(:accountId IS NULL OR p.marketplaceAccount.id = :accountId) AND "
+            + "p.revenueRecognitionMonth >= :fromMonth AND p.revenueRecognitionMonth <= :toMonth "
+            + "ORDER BY p.revenueRecognitionMonth DESC, p.settlementDate ASC, p.id ASC")
+    List<SettlementPayout> searchByRecognitionMonth(@Param("sellerId") Long sellerId,
+                                                    @Param("accountId") Long accountId,
+                                                    @Param("fromMonth") String fromMonth,
+                                                    @Param("toMonth") String toMonth);
+
+    /**
      * 그 계정·그 인식월의 지급 건 finalAmount 합 (FEATURE_2609_32 / PLAN 2609_32 D4·D6).
      *
      * <p>🔴 {@code settlementType} 으로 거르지 않는다 — 주정산+월정산+추가정산+유보금 <b>모든 유형의 합</b>이

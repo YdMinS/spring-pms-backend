@@ -53,6 +53,33 @@ class SettlementReconcilerTest {
                 .isEqualTo(SettlementReconStatus.RECONCILED);
     }
 
+    /**
+     * 🔴 <b>대조할 근거가 없는 것은 "금액 차이"가 아니다.</b> 매출내역(라인)을 아직 적재하지 못하면
+     * {@code ourTotal} 이 0 이라 검증식이 자동으로 "차액 = −전액"을 내놓는다. UNRECONCILED 로 찍으면
+     * 정상 입금 전건이 경고가 된다(prod 실측: 주/월 정산 23건 전건이 그렇게 찍혔다).
+     *
+     * <p>{@code OTHER} 는 합산에서 빠지므로(의미 미확인 금액) 조정 행이 있어도 근거가 되지 않는다.
+     */
+    @Test
+    void payoutWithoutAnyComparableBasisIsPendingNotUnreconciled() {
+        SettlementPayout payout = payout(SettlementType.MONTHLY, "3369281");
+
+        assertThat(reconciler.evaluate(payout, List.of(), List.of()))
+                .isEqualTo(SettlementReconStatus.PENDING);
+        assertThat(reconciler.evaluate(payout, List.of(),
+                List.of(adjustment(SettlementAdjustmentType.OTHER, "6903562"))))
+                .isEqualTo(SettlementReconStatus.PENDING);
+    }
+
+    /** 라인이 붙은 뒤에도 금액이 어긋나면 그때는 진짜 UNRECONCILED 다 — 위 규칙이 경고를 삼키면 안 된다. */
+    @Test
+    void basisPresentAndAmountOffStaysUnreconciled() {
+        SettlementPayout payout = payout(SettlementType.MONTHLY, "3369281");
+
+        assertThat(reconciler.evaluate(payout, List.of(line(SaleType.SALE, "3000000")), List.of()))
+                .isEqualTo(SettlementReconStatus.UNRECONCILED);
+    }
+
     @Test
     void pendingWhenFinalAmountMissing() {
         SettlementPayout payout = payout(SettlementType.WEEKLY, null);
