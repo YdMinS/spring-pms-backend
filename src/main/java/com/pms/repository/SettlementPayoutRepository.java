@@ -11,6 +11,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -48,6 +49,27 @@ public interface SettlementPayoutRepository extends JpaRepository<SettlementPayo
                                   @Param("accountId") Long accountId,
                                   @Param("from") LocalDate from,
                                   @Param("to") LocalDate to);
+
+    /**
+     * 그 계정·그 인식월의 지급 건 finalAmount 합 (FEATURE_2609_32 / PLAN 2609_32 D4·D6).
+     *
+     * <p>🔴 {@code settlementType} 으로 거르지 않는다 — 주정산+월정산+추가정산+유보금 <b>모든 유형의 합</b>이
+     * 요점이다. 추가정산은 그 달 주정산에서 빠졌던 몫이라 월 단위로는 차이를 메우는 항목이다.
+     *
+     * <p>⚠️ {@code finalAmount} 미수신 건은 합에서 뺀다 — 0으로 더하면 차이가 항상 우리 쪽 초과로 나온다(D6).
+     * 미수신 건수는 {@link #countByMarketplaceAccount_IdAndRevenueRecognitionMonthAndFinalAmountIsNull} 로
+     * 따로 세어 화면이 "미수신 n건"을 밝힌다.
+     */
+    @Query("SELECT COALESCE(SUM(p.finalAmount), 0) FROM SettlementPayout p "
+            + "WHERE p.marketplaceAccount.id = :accountId AND p.revenueRecognitionMonth = :month "
+            + "AND p.finalAmount IS NOT NULL")
+    BigDecimal sumFinalAmountByMonth(@Param("accountId") Long accountId, @Param("month") String month);
+
+    /** 그 달 지급 건 수(전체 유형). */
+    long countByMarketplaceAccount_IdAndRevenueRecognitionMonth(Long accountId, String month);
+
+    /** 그 달 {@code finalAmount} 미수신 건 수 — 합계에서 빠진 건수다(D6). */
+    long countByMarketplaceAccount_IdAndRevenueRecognitionMonthAndFinalAmountIsNull(Long accountId, String month);
 
     /** 계정 단위 존재 확인(적재 로그·테스트용). */
     List<SettlementPayout> findByMarketplaceAccountAndRevenueRecognitionMonth(

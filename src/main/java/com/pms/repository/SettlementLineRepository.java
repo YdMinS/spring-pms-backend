@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -46,6 +47,30 @@ public interface SettlementLineRepository extends JpaRepository<SettlementLine, 
                                           @Param("from") LocalDate from,
                                           @Param("to") LocalDate to,
                                           @Param("payoutId") Long payoutId);
+
+    /**
+     * 인식일 구간의 라인 합 — REFUND 는 음수 (FEATURE_2609_32 / PLAN 2609_32 D7).
+     *
+     * <p>🔴 부호 규칙이 {@link com.pms.service.settlement.SettlementReconciler#lineTotal} 과 <b>이중화</b>돼
+     * 있다. 월 전체 라인을 메모리에 올리면 수천 건이라 감수한 예외다 — 두 답이 같은지
+     * {@code SettlementMonthAggregationTest} 가 동치 테스트로 고정한다.
+     *
+     * <p>⚠️ 지급 건 귀속 여부를 보지 않는다. 그 달에 인식된 우리 라인 <b>전부</b>가 맞다(D6).
+     *
+     * <p>⚠️ {@code SaleType.REFUND} 를 JPQL 리터럴로 박지 않고 파라미터로 바인딩한다 — FQN 리터럴은
+     * Hibernate 버전에 의존하고 리팩터링에 잡히지 않는다.
+     */
+    @Query("SELECT COALESCE(SUM(CASE WHEN l.saleType = :refund "
+            + "THEN -COALESCE(l.settlementAmount, 0) ELSE COALESCE(l.settlementAmount, 0) END), 0) "
+            + "FROM SettlementLine l "
+            + "WHERE l.marketplaceAccount.id = :accountId AND l.recognitionDate BETWEEN :from AND :to")
+    BigDecimal sumSignedSettlementAmount(@Param("accountId") Long accountId,
+                                         @Param("from") LocalDate from,
+                                         @Param("to") LocalDate to,
+                                         @Param("refund") SaleType refund);
+
+    /** 그 계정·그 인식일 구간의 라인 건수. 🔴 0 = 매출내역 미적재 (PLAN 2609_32 D4-1). */
+    long countByMarketplaceAccount_IdAndRecognitionDateBetween(Long accountId, LocalDate from, LocalDate to);
 
     /** 묶음에 귀속된 라인 — 대사·리포트·엑셀의 공통 입력. */
     @EntityGraph(attributePaths = {"orderLine", "productListingOption", "productListingOption.productListing"})
