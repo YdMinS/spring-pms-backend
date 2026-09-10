@@ -12,6 +12,11 @@ import java.time.LocalDateTime;
  * 그래서 현금주의({@code paidAmount})는 여기서만 제공한다 — 판매자 레벨로 올리면 주기가 다른 채널이
  * 섞여 합계의 뜻이 사라진다(D4-1).
  *
+ * @param cancelQty              취소 확정 수량. 매출에서는 이미 빠져 있다 — 화면이 "얼마나 취소됐나"에
+ *                               답하는 값이다
+ * @param refundedAmount         취소 확정으로 <b>매출에서 빠진</b> 금액("환불완료 금액")
+ * @param pendingRefundAmount    아직 매출에 남아 있지만 빠질 수 있는 금액("환불대기 금액").
+ *                               🔴 유효수량 상한이 걸려 있다 — 이미 취소 확정된 몫을 다시 세지 않는다
  * @param pendingPayout          기간 무관 "받을 돈"(D4)
  * @param paidAmount             기간 내 지급 확정({@code status = PAID}, {@code finalSettlementDate} 기준)
  * @param lastSettlementSyncAt   정산 원장을 마지막으로 적재한 시각. null 이면 아직 한 번도 안 읽은 채널이다
@@ -35,6 +40,9 @@ public record ChannelSalesResponse(
         BigDecimal estFee,
         BigDecimal estNetProfit,
         boolean costBasisReady,
+        long cancelQty,
+        BigDecimal refundedAmount,
+        BigDecimal pendingRefundAmount,
         BigDecimal pendingPayout,
         BigDecimal paidAmount,
         LocalDateTime lastSettlementSyncAt,
