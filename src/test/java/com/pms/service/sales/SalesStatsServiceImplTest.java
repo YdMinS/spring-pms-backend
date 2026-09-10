@@ -431,14 +431,16 @@ class SalesStatsServiceImplTest {
                                  String gross, String discount, String cost, long missingCostLines,
                                  long netQty) {
         return new SalesLineGroup(seller.getId(), seller.getSellerName(), account.getId(),
-                optionId, masterId, "양말세트", netQty, 0L,
-                new BigDecimal(gross), new BigDecimal(discount), new BigDecimal(cost), missingCostLines);
+                optionId, masterId, "양말세트", netQty, 0L, 0L,
+                new BigDecimal(gross), BigDecimal.ZERO, BigDecimal.ZERO,
+                new BigDecimal(discount), new BigDecimal(cost), missingCostLines);
     }
 
     /** 채널 옵션 연결이 없는 그룹(백필 누락·WING 수정분). */
     private SalesLineGroup unmappedGroup(MarketplaceAccount account, String gross, String discount) {
         return new SalesLineGroup(seller.getId(), seller.getSellerName(), account.getId(),
-                null, null, null, 2L, 0L,
-                new BigDecimal(gross), new BigDecimal(discount), BigDecimal.ZERO, 2L);
+                null, null, null, 2L, 0L, 0L,
+                new BigDecimal(gross), BigDecimal.ZERO, BigDecimal.ZERO,
+                new BigDecimal(discount), BigDecimal.ZERO, 2L);
     }
 }

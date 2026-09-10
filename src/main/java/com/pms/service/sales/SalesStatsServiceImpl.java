@@ -169,6 +169,7 @@ public class SalesStatsServiceImpl implements SalesStatsService {
                     account.getSeller().getId(), account.getSeller().getSellerName(),
                     scale(sales.grossSales), scale(sales.discount), sales.netQty, sales.holdQty,
                     scale(sales.estFee), netProfit(sales.profit(), fixedCost.amount()), sales.profitReady(),
+                    sales.cancelQty, scale(sales.refundedAmount), scale(sales.pendingRefundAmount),
                     scale(nz(payout.pendingPayout())), scale(nz(payout.paidAmount())),
                     account.getLastSettlementSyncAt(),
                     scale(fixedCost.amount()), fixedCost.chargedMonths()));
@@ -441,6 +442,19 @@ public class SalesStatsServiceImpl implements SalesStatsService {
     /** 그룹 1건의 계산 결과. {@code estNetProfit == null} = 재료가 빠져 순이익을 낼 수 없는 그룹. */
     private record GroupSales(SalesLineGroup group, BigDecimal grossSales, BigDecimal discount,
                               long netQty, long holdQty, BigDecimal estFee, BigDecimal estNetProfit) {
+
+        /** 취소·환불 값은 가공하지 않고 그대로 통과시킨다(DB 가 이미 접었다). */
+        long cancelQty() {
+            return group.cancelQty();
+        }
+
+        BigDecimal refundedAmount() {
+            return nz(group.refundedAmount());
+        }
+
+        BigDecimal pendingRefundAmount() {
+            return nz(group.pendingRefundAmount());
+        }
     }
 
     /** ③의 그룹 키. {@code accountId == null} = 채널 교차(마스터 단위로 합침). */
@@ -460,8 +474,11 @@ public class SalesStatsServiceImpl implements SalesStatsService {
         private BigDecimal estFee = BigDecimal.ZERO;
         private BigDecimal estNetProfit = BigDecimal.ZERO;
         private BigDecimal pendingPayout = BigDecimal.ZERO;
+        private BigDecimal refundedAmount = BigDecimal.ZERO;
+        private BigDecimal pendingRefundAmount = BigDecimal.ZERO;
         private long netQty;
         private long holdQty;
+        private long cancelQty;
         private boolean profitReady = true;
 
         void addSales(GroupSales sales) {
@@ -470,6 +487,9 @@ public class SalesStatsServiceImpl implements SalesStatsService {
             estFee = estFee.add(sales.estFee());
             netQty += sales.netQty();
             holdQty += sales.holdQty();
+            cancelQty += sales.cancelQty();
+            refundedAmount = refundedAmount.add(sales.refundedAmount());
+            pendingRefundAmount = pendingRefundAmount.add(sales.pendingRefundAmount());
             if (sales.estNetProfit() == null) {
                 profitReady = false;
             } else {

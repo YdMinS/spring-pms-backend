@@ -165,6 +165,10 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
      * <p>정의(PLAN D14 · 03 Step 1):
      * <pre>
      *   netQty  = orderQty − cancelQty        🔴 holdQty(환불대기)는 <b>빼지 않는다</b>
+     *   refunded= Σ (unitPrice × cancelQty)              취소 확정으로 매출에서 빠진 금액
+     *   pending = Σ (unitPrice × min(holdQty, netQty))   아직 남아 있지만 빠질 수 있는 금액
+     *                                          🔴 유효수량 상한 — 취소 확정과 환불대기가 같은 라인에
+     *                                          함께 서 있을 수 있어(prod 실측) 상한이 없으면 이중계상된다
      *   gross   = Σ (unitPrice × netQty)      할인 <b>전</b>
      *   discount= Σ (discountAmount × netQty / orderQty)   유효수량 비례 안분
      * </pre>
@@ -183,7 +187,12 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
                 s.id, s.sellerName, a.id, plo.id, mp.id, mp.name,
                 sum(l.orderQty - l.cancelQty),
                 sum(l.holdQty),
+                sum(l.cancelQty),
                 sum(coalesce(l.unitPrice, 0) * (l.orderQty - l.cancelQty)),
+                sum(coalesce(l.unitPrice, 0) * l.cancelQty),
+                sum(coalesce(l.unitPrice, 0) * (case when l.holdQty > l.orderQty - l.cancelQty
+                                                     then l.orderQty - l.cancelQty
+                                                     else l.holdQty end)),
                 sum(coalesce(l.discountAmount, 0) * (l.orderQty - l.cancelQty)
                         / coalesce(nullif(l.orderQty, 0), 1)),
                 sum(coalesce(l.costAmount, 0) * (l.orderQty - l.cancelQty)

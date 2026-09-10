@@ -135,6 +135,29 @@ class OrderLineSalesAggregationTest {
                 .extracting(SalesLineGroup::missingCostLines).isEqualTo(0L);
     }
 
+    /**
+     * 🔴 취소 확정 금액과 환불대기 금액은 <b>따로</b> 나온다 — 앞은 매출에서 이미 빠진 돈이고,
+     * 뒤는 아직 매출에 남아 있지만 빠질 수 있는 돈이다. 화면이 둘을 구분해 보여준다.
+     *
+     * <p>🔴 환불대기 금액에는 <b>유효수량 상한</b>이 걸린다. 취소 확정과 환불대기가 같은 라인에 함께 서 있는
+     * 경우가 실제로 있어(prod 실측), 상한이 없으면 이미 빠진 금액을 "빠질 예정"으로 한 번 더 센다.
+     */
+    @Test
+    void refundedAndPendingAmountsAreSeparateAndPendingIsCappedByLiveQty() {
+        line(option, 10, 3, 2, "1000", "0", null);   // 취소 3 → 3000, 대기 2 ≤ 유효 7 → 2000
+        line(option, 1, 1, 1, "5000", "0", null);    // 전량취소 + 대기 1 → 상한 0 이라 대기 금액 없음
+        em.flush();
+        em.clear();
+
+        assertThat(aggregate()).singleElement().satisfies(group -> {
+            assertThat(group.cancelQty()).isEqualTo(4L);
+            assertThat(group.refundedAmount()).isEqualByComparingTo("8000");   // 3×1000 + 1×5000
+            assertThat(group.pendingRefundAmount()).isEqualByComparingTo("2000");
+            // 매출은 취소분만 빠진다 — 환불대기는 그대로 남아 있다(D14).
+            assertThat(group.grossSales()).isEqualByComparingTo("7000");
+        });
+    }
+
     /** 기간 밖 주문은 집계되지 않는다(상한은 다음 날 00:00 배타). */
     @Test
     void ordersOutsidePeriodAreExcluded() {
