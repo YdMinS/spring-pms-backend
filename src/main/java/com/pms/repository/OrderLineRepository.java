@@ -3,6 +3,7 @@ package com.pms.repository;
 import com.pms.domain.OrderLine;
 import com.pms.domain.OrderStatus;
 import com.pms.dto.response.CostBasisBreakdown;
+import com.pms.dto.response.MonthlyChannelSales;
 import com.pms.dto.response.SalesLineGroup;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
@@ -201,4 +202,44 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
     List<SalesLineGroup> aggregateSales(@Param("from") LocalDateTime from,
                                         @Param("toExclusive") LocalDateTime toExclusive,
                                         @Param("sellerId") Long sellerId);
+
+    // ── 고정비 부과 판정용 월별 집계 (FEATURE_2609_33 / PLAN 2609_33 D4-1 · D11 · D11-1) ──────
+
+    /**
+     * 계정 × <b>달</b> 상품매출(할인 후). 고정비 부과 판정의 유일한 근거다.
+     *
+     * <p>🔴 금액식은 {@link #aggregateSales} 의 {@code grossSales − discount} 를 <b>그대로</b> 옮긴 것이다
+     * (D11): {@code Σ(unitPrice × netQty) − Σ(discountAmount × netQty / orderQty)}. 다른 식을 새로 쓰면
+     * 화면 매출과 판정 근거가 어긋나 사용자가 둘 중 하나를 버그로 읽는다. 🔴 {@code grossSales} 단독
+     * (할인 <b>전</b>)으로 판정하면 쿠폰이 걸린 채널이 부과되지 않은 달을 부과로 판정한다.
+     *
+     * <p>🔴 날짜 축은 {@code o.orderedAt} — 화면 집계와 같은 축이다(D11-1). 플랫폼의 인식 시점과 같다고
+     * 단정하지 않는다. 어긋남은 {@code chargeMode} 로 사람이 덮는다(D2).
+     *
+     * <p>⚠️ 월 그룹핑은 {@code year()}/{@code month()} 다. {@code date_format} 같은 네이티브 함수는
+     * H2(테스트)와 MySQL(운영)에서 다르게 동작한다 — {@code YYYY-MM} 문자열 조립은 서비스가 한다.
+     *
+     * <p>⚠️ 채널 옵션 join 이 없다: 판정에 필요한 것은 계정 × 달 금액뿐이라 {@code left join} 3개를
+     * 다시 태울 이유가 없다(그래도 라인이 버려지지 않는다는 성질은 동일하다).
+     *
+     * @param from        걸친 달들의 <b>1일 00:00</b>(조회 시작일이 아니다, D4-1)
+     * @param toExclusive 마지막 달 <b>다음 달 1일 00:00</b> — 배타 상한
+     */
+    @Query("""
+            select new com.pms.dto.response.MonthlyChannelSales(
+                a.id, year(o.orderedAt), month(o.orderedAt),
+                sum(coalesce(l.unitPrice, 0) * (l.orderQty - l.cancelQty))
+                    - sum(coalesce(l.discountAmount, 0) * (l.orderQty - l.cancelQty)
+                            / coalesce(nullif(l.orderQty, 0), 1)))
+            from OrderLine l
+              join l.order o
+              join o.marketplaceAccount a
+              join a.seller s
+            where o.orderedAt >= :from and o.orderedAt < :toExclusive
+              and (:sellerId is null or s.id = :sellerId)
+            group by a.id, year(o.orderedAt), month(o.orderedAt)
+            """)
+    List<MonthlyChannelSales> aggregateMonthlySales(@Param("from") LocalDateTime from,
+                                                    @Param("toExclusive") LocalDateTime toExclusive,
+                                                    @Param("sellerId") Long sellerId);
 }
