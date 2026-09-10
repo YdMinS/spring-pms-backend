@@ -36,6 +36,5 @@ public record SellerSalesResponse(
         BigDecimal estNetProfit,
         boolean costBasisReady,
         BigDecimal pendingPayout,
-        long unreconciledPayouts,
         BigDecimal fixedCost) {
 }

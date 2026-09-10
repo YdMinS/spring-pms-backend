@@ -12,23 +12,21 @@ import java.math.BigDecimal;
  * <p>⚠️ {@code recon_status = AMOUNT_ONLY}(추가정산·유보금)도 {@code pendingPayout} 에 포함한다 —
  * 라인이 없을 뿐 실제로 받을 돈이다(D5-4·D5-5).
  *
+ * <p>🔴 <b>대사 상태 집계(건수)를 여기에 다시 넣지 말 것</b>(FEATURE_2609_34). 지급 묶음은 매출인식일 축이라
+ * 판매일 기간으로 좁혀지지 않는다 — 기간을 바꿔도 안 변하는 건수를 기간 필터가 달린 행에 배지로 걸면
+ * "이번 달에 13건이 어긋났다"로 읽힌다(실제로는 그 채널의 <b>전체</b> 건수였다). 대사 상태는 인식월별
+ * 정산 목록({@code /payouts/by-recognition})이 건별로 보여준다.
+ *
  * @param paidAmount 기간 내 <b>지급 확정</b>액({@code status = PAID}, {@code finalSettlementDate} 기준).
  *                   현금주의는 채널 레벨에서만 낸다 — 채널마다 정산 주기가 달라 판매자 합산은 의미가 없다(D4-1)
- * @param payoutCount 이 채널의 전체 지급 묶음 수. 🔴 <b>0 = 정산 이력이 아직 없다</b>. 이 값이 없으면
- *                    화면이 "전부 금액이 맞음"과 "아직 정산이 안 들어옴"을 구분하지 못한다 — 둘 다
- *                    {@code unreconciledPayouts = 0} 이라 정산 전 채널에 초록 배지가 뜬다.
- *                    ⚠️ {@code lastSettlementSyncAt} 으로 대신할 수 없다(동기화는 돌았는데 묶음이 0건일 수 있다)
  */
 public record PayoutAggregate(
         Long accountId,
         BigDecimal pendingPayout,
-        BigDecimal paidAmount,
-        long unreconciledPayouts,
-        long amountOnlyPayouts,
-        long payoutCount) {
+        BigDecimal paidAmount) {
 
-    /** 집계 쿼리가 행을 내주지 않은 채널 = 지급 묶음이 하나도 없다 → {@code payoutCount = 0}. */
+    /** 집계 쿼리가 행을 내주지 않은 채널 = 지급 묶음이 하나도 없다. */
     public static PayoutAggregate empty(Long accountId) {
-        return new PayoutAggregate(accountId, BigDecimal.ZERO, BigDecimal.ZERO, 0L, 0L, 0L);
+        return new PayoutAggregate(accountId, BigDecimal.ZERO, BigDecimal.ZERO);
     }
 }

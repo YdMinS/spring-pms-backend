@@ -3,7 +3,6 @@ package com.pms.repository;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.SettlementPayout;
 import com.pms.domain.SettlementPayoutStatus;
-import com.pms.domain.SettlementReconStatus;
 import com.pms.domain.SettlementType;
 import com.pms.dto.response.PayoutAggregate;
 import org.springframework.data.jpa.repository.EntityGraph;
@@ -100,7 +99,7 @@ public interface SettlementPayoutRepository extends JpaRepository<SettlementPayo
             MarketplaceAccount marketplaceAccount, String revenueRecognitionMonth);
 
     /**
-     * 채널(계정)별 지급 묶음 집계 — 매출 화면의 "받을 돈" · 입금 확정 · 배지 (FEATURE_2609_30 / 03 ①②).
+     * 채널(계정)별 지급 묶음 집계 — 매출 화면의 "받을 돈" · 입금 확정 (FEATURE_2609_30 / 03 ①②).
      *
      * <p>🔴 {@code pendingPayout} 에 <b>기간 조건이 없다</b>(D4). 지급 묶음의 축은 매출인식일이라 판매일
      * 기간과 겹치지 않는다 — 판매일 기간으로 자르면 "받을 돈"이 실제 받을 금액보다 작게 나온다.
@@ -111,6 +110,10 @@ public interface SettlementPayoutRepository extends JpaRepository<SettlementPayo
      *
      * <p>⚠️ {@code case ... then p.finalAmount end}(else 없음)로 두는 이유: {@code else 0} 을 쓰면
      * 정수 리터럴과 DECIMAL 이 한 CASE 에 섞인다. 합계가 없으면 {@code coalesce} 가 0 으로 받는다.
+     *
+     * <p>🔴 <b>대사 상태별 건수를 여기서 세지 말 것</b>(FEATURE_2609_34). 이 집계에는 기간이 걸리지 않으므로
+     * 그 건수를 기간 필터가 달린 화면 행에 걸면 "이 기간에 N건이 어긋났다"로 읽힌다. 대사 상태는 인식월로
+     * 좁힌 {@link #searchByRecognitionMonth} 목록이 건별로 보여준다.
      */
     @Query("""
             select new com.pms.dto.response.PayoutAggregate(
@@ -118,10 +121,7 @@ public interface SettlementPayoutRepository extends JpaRepository<SettlementPayo
                 coalesce(sum(case when p.status = :scheduled then p.finalAmount end), 0),
                 coalesce(sum(case when p.status = :paid
                                    and p.finalSettlementDate >= :from
-                                   and p.finalSettlementDate <= :to then p.finalAmount end), 0),
-                sum(case when p.reconStatus = :unreconciled then 1 else 0 end),
-                sum(case when p.reconStatus = :amountOnly then 1 else 0 end),
-                count(p))
+                                   and p.finalSettlementDate <= :to then p.finalAmount end), 0))
             from SettlementPayout p join p.marketplaceAccount a
             where (:sellerId is null or a.seller.id = :sellerId)
             group by a.id
@@ -130,7 +130,5 @@ public interface SettlementPayoutRepository extends JpaRepository<SettlementPayo
                                              @Param("from") LocalDate from,
                                              @Param("to") LocalDate to,
                                              @Param("scheduled") SettlementPayoutStatus scheduled,
-                                             @Param("paid") SettlementPayoutStatus paid,
-                                             @Param("unreconciled") SettlementReconStatus unreconciled,
-                                             @Param("amountOnly") SettlementReconStatus amountOnly);
+                                             @Param("paid") SettlementPayoutStatus paid);
 }
