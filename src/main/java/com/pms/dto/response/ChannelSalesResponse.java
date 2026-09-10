@@ -27,6 +27,7 @@ public record ChannelSalesResponse(
         String accountAlias,
         Platform platform,
         Long sellerId,
+        String sellerName,
         BigDecimal grossSales,
         BigDecimal discount,
         long netQty,
