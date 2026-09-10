@@ -6,7 +6,6 @@ import com.pms.domain.MasterProductOption;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.SettlementPayoutStatus;
-import com.pms.domain.SettlementReconStatus;
 import com.pms.dto.response.ChannelSalesResponse;
 import com.pms.dto.response.MonthlyChannelSales;
 import com.pms.dto.response.PayoutAggregate;
@@ -137,7 +136,7 @@ public class SalesStatsServiceImpl implements SalesStatsService {
             rows.add(new SellerSalesResponse(owner, name,
                     scale(sales.grossSales), scale(sales.discount), sales.netQty, sales.holdQty,
                     scale(sales.estFee), netProfit(sales.profit(), fixedCost), sales.profitReady(),
-                    scale(payout.pendingPayout), payout.unreconciledPayouts, scale(fixedCost)));
+                    scale(payout.pendingPayout), scale(fixedCost)));
         });
         rows.sort(Comparator.comparing(SellerSalesResponse::grossSales).reversed());
         return rows;
@@ -171,7 +170,6 @@ public class SalesStatsServiceImpl implements SalesStatsService {
                     scale(sales.estFee), netProfit(sales.profit(), fixedCost.amount()), sales.profitReady(),
                     scale(nz(payout.pendingPayout())), scale(nz(payout.paidAmount())),
                     account.getLastSettlementSyncAt(),
-                    payout.unreconciledPayouts(), payout.amountOnlyPayouts(), payout.payoutCount(),
                     scale(fixedCost.amount()), fixedCost.chargedMonths()));
         }
         rows.sort(Comparator.comparing(ChannelSalesResponse::grossSales).reversed());
@@ -395,11 +393,15 @@ public class SalesStatsServiceImpl implements SalesStatsService {
         return profit == null ? null : profit.subtract(nz(fixedCost));
     }
 
-    /** 채널별 "받을 돈"·입금 확정·대사 배지. 🔴 {@code pendingPayout} 에는 기간이 걸리지 않는다(D4). */
+    /**
+     * 채널별 "받을 돈"·입금 확정. 🔴 {@code pendingPayout} 에는 기간이 걸리지 않는다(D4).
+     *
+     * <p>🔴 <b>대사 상태 건수는 여기서 내려보내지 않는다</b>(FEATURE_2609_34) — 기간이 걸리지 않는 건수를
+     * 기간 행에 배지로 걸면 오해를 만든다. 대사 상태는 인식월 정산 목록이 건별로 보여준다.
+     */
     private Map<Long, PayoutAggregate> payouts(Period period, Long sellerId) {
         return settlementPayoutRepository.aggregateByAccount(sellerId, period.from(), period.to(),
-                        SettlementPayoutStatus.SCHEDULED, SettlementPayoutStatus.PAID,
-                        SettlementReconStatus.UNRECONCILED, SettlementReconStatus.AMOUNT_ONLY).stream()
+                        SettlementPayoutStatus.SCHEDULED, SettlementPayoutStatus.PAID).stream()
                 .collect(Collectors.toMap(PayoutAggregate::accountId, Function.identity(),
                         (left, right) -> left));
     }
@@ -448,7 +450,6 @@ public class SalesStatsServiceImpl implements SalesStatsService {
         private BigDecimal pendingPayout = BigDecimal.ZERO;
         private long netQty;
         private long holdQty;
-        private long unreconciledPayouts;
         private boolean profitReady = true;
 
         void addSales(GroupSales sales) {
@@ -469,7 +470,6 @@ public class SalesStatsServiceImpl implements SalesStatsService {
                 return;
             }
             pendingPayout = pendingPayout.add(nz(payout.pendingPayout()));
-            unreconciledPayouts += payout.unreconciledPayouts();
         }
 
         BigDecimal profit() {

@@ -103,7 +103,9 @@ class SalesStatsControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data[0].estNetProfit").value(0))
                 .andExpect(jsonPath("$.data[0].costBasisReady").value(true))
                 .andExpect(jsonPath("$.data[0].pendingPayout").value(1804000.00))
-                .andExpect(jsonPath("$.data[0].unreconciledPayouts").value(1));
+                // 🔴 대사 상태 건수는 응답에 없다(FEATURE_2609_34) — 기간이 안 걸리는 건수를 기간 행에
+                //    실으면 "이 기간에 N건이 어긋났다"로 읽힌다. 대사는 인식월 정산 목록이 건별로 보여준다.
+                .andExpect(jsonPath("$.data[0].unreconciledPayouts").doesNotExist());
     }
 
     @Test
@@ -113,7 +115,8 @@ class SalesStatsControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data[0].accountAlias").value("메인"))
                 .andExpect(jsonPath("$.data[0].platform").value("COUPANG"))
                 .andExpect(jsonPath("$.data[0].paidAmount").value(0))
-                .andExpect(jsonPath("$.data[0].amountOnlyPayouts").value(0));
+                .andExpect(jsonPath("$.data[0].amountOnlyPayouts").doesNotExist())
+                .andExpect(jsonPath("$.data[0].payoutCount").doesNotExist());
     }
 
     @Test

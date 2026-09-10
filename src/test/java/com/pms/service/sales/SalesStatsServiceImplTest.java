@@ -131,9 +131,9 @@ class SalesStatsServiceImplTest {
     @Test
     void pendingPayoutIgnoresPeriodFilter() {
         givenAccounts(coupang);
-        given(settlementPayoutRepository.aggregateByAccount(any(), any(), any(), any(), any(), any(), any()))
+        given(settlementPayoutRepository.aggregateByAccount(any(), any(), any(), any(), any()))
                 .willReturn(List.of(new PayoutAggregate(10L, new BigDecimal("1804000"),
-                        BigDecimal.ZERO, 2L, 1L, 5L)));
+                        BigDecimal.ZERO)));
         given(orderLineRepository.aggregateSales(any(), any(), any())).willReturn(List.of());
 
         SellerSalesResponse wide = service.summary(FROM, TO, null).get(0);
@@ -141,50 +141,40 @@ class SalesStatsServiceImplTest {
 
         assertThat(wide.pendingPayout()).isEqualByComparingTo("1804000");
         assertThat(narrow.pendingPayout()).isEqualByComparingTo(wide.pendingPayout());
-        assertThat(narrow.unreconciledPayouts()).isEqualTo(2L);
     }
 
-    /** 현금주의({@code paidAmount})·미분류 배지는 채널 레벨에만 있다(D4-1 · D5-5). */
+    /** 현금주의({@code paidAmount})는 채널 레벨에만 있다 — 채널마다 정산 주기가 달라 판매자 합산은 뜻을 잃는다(D4-1). */
     @Test
-    void channelRowCarriesCashBasisAndBadges() {
+    void channelRowCarriesCashBasis() {
         givenAccounts(coupang);
-        given(settlementPayoutRepository.aggregateByAccount(any(), any(), any(), any(), any(), any(), any()))
+        given(settlementPayoutRepository.aggregateByAccount(any(), any(), any(), any(), any()))
                 .willReturn(List.of(new PayoutAggregate(10L, new BigDecimal("1804000"),
-                        new BigDecimal("900000"), 2L, 1L, 5L)));
+                        new BigDecimal("900000"))));
         given(orderLineRepository.aggregateSales(any(), any(), any())).willReturn(List.of());
 
         assertThat(service.byChannel(FROM, TO, null)).singleElement()
                 .satisfies(row -> {
                     assertThat(row.paidAmount()).isEqualByComparingTo("900000");
                     assertThat(row.pendingPayout()).isEqualByComparingTo("1804000");
-                    assertThat(row.amountOnlyPayouts()).isEqualTo(1L);
                     assertThat(row.platform()).isEqualTo(Platform.COUPANG);
-                    assertThat(row.payoutCount()).isEqualTo(5L);
                 });
     }
 
     /**
-     * 🔴 정산 묶음이 하나도 없는 채널은 {@code payoutCount = 0} 이어야 한다.
+     * 🔴 정산 묶음이 하나도 없는 채널도 행이 나와야 한다.
      *
-     * <p>없으면 화면이 "금액 일치"(전부 맞음)와 "정산 이력 없음"(아직 안 들어옴)을 구분하지 못한다 —
-     * 둘 다 {@code unreconciledPayouts = 0} 이라 정산 전 채널에 초록 배지가 뜬다.
-     * 집계 쿼리는 {@code group by} 라 묶음이 없는 계정의 행을 아예 내주지 않으므로, 그 빈자리를
-     * {@link PayoutAggregate#empty} 가 0 으로 메운다.
+     * <p>집계 쿼리는 {@code group by} 라 묶음이 없는 계정의 행을 아예 내주지 않으므로, 그 빈자리를
+     * {@link PayoutAggregate#empty} 가 0 으로 메운다. 없으면 그 채널의 "받을 돈" 칸이 통째로 비어 버린다.
      */
     @Test
-    void channelWithNoPayoutsReportsZeroCount() {
+    void channelWithNoPayoutsStillProducesRow() {
         givenAccounts(coupang);
-        given(settlementPayoutRepository.aggregateByAccount(any(), any(), any(), any(), any(), any(), any()))
+        given(settlementPayoutRepository.aggregateByAccount(any(), any(), any(), any(), any()))
                 .willReturn(List.of());
         given(orderLineRepository.aggregateSales(any(), any(), any())).willReturn(List.of());
 
         assertThat(service.byChannel(FROM, TO, null)).singleElement()
-                .satisfies(row -> {
-                    assertThat(row.payoutCount()).isZero();
-                    // 정산이 없다는 것과 차이가 없다는 것은 다르다 — 둘을 같은 값으로 뭉개면 안 된다.
-                    assertThat(row.unreconciledPayouts()).isZero();
-                    assertThat(row.pendingPayout()).isEqualByComparingTo("0");
-                });
+                .satisfies(row -> assertThat(row.pendingPayout()).isEqualByComparingTo("0"));
     }
 
     /** 같은 마스터가 두 계정에 걸리면 cross=true 는 1행, cross=false 는 2행이다(집계 경로는 하나). */
@@ -393,7 +383,7 @@ class SalesStatsServiceImplTest {
     }
 
     private void givenNoPayouts() {
-        given(settlementPayoutRepository.aggregateByAccount(any(), any(), any(), any(), any(), any(), any()))
+        given(settlementPayoutRepository.aggregateByAccount(any(), any(), any(), any(), any()))
                 .willReturn(List.of());
     }
 
