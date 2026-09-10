@@ -13,13 +13,21 @@ import java.util.List;
  *
  * <p>둘을 섞지 않는 이유 = 사용자가 <b>어디에 문의할지</b> 알아야 하기 때문이다. 통장 금액 차이는 플랫폼
  * 정산팀, 라인 차이는 상품·수수료 설정 쪽이다.
+ *
+ * @param monthCheck 인식월 참고 대조. 🔴 <b>대조 불가 유형에서만</b> 채운다 — 주정산·월정산은 자기
+ *                   검증식이 있어 {@code null} 이다 (FEATURE_2609_32 / PLAN 2609_32 D4·D5)
  */
-public record ReconReportResponse(PayoutSummary payout, BlockA blockA, BlockB blockB) {
+public record ReconReportResponse(PayoutSummary payout, BlockA blockA, BlockB blockB, MonthCheck monthCheck) {
 
     /**
      * 검증식 {@code Σ라인 + Σ조정 == finalAmount} 의 전개 (D9).
      *
      * <p>⚠️ 라인이 0건이면 조정만 나열된다 — <b>정상</b>이다(D5-4).
+     *
+     * <p>🔴 대조 불가 유형({@code AMOUNT_ONLY} — 추가정산·유보금)은 {@code ourTotal}·{@code diff}·
+     * {@code tolerance} 가 <b>{@code null}</b> 이다. 0이 아니라 "대조하지 않았다"는 뜻이다 —
+     * 라인을 일부러 귀속시키지 않으므로 계산하면 100% 차액 −전액이 나온다
+     * (FEATURE_2609_32 / PLAN 2609_32 D2). {@code lineTotal}·조정 행·{@code finalAmount} 는 그대로 온다.
      *
      * @param unmatchedCount 미분류 라인 수. 합계에는 <b>포함</b>되어 있다(D7)
      */
