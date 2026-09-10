@@ -68,6 +68,23 @@ public class SettlementReconciliationServiceImpl implements SettlementReconcilia
     }
 
     @Override
+    public List<PayoutSummary> payoutsByRecognitionMonth(Long sellerId, Long accountId,
+                                                         LocalDate from, LocalDate to) {
+        if (from == null || to == null) {
+            throw new IllegalArgumentException("조회 기간(from, to)을 모두 지정해야 합니다.");
+        }
+        if (from.isAfter(to)) {
+            throw new IllegalArgumentException("조회 시작일이 종료일보다 늦습니다.");
+        }
+        // 'YYYY-MM' 고정폭이라 사전식 비교 = 연월 비교다(repository Javadoc 참조).
+        return settlementPayoutRepository.searchByRecognitionMonth(sellerId, accountId,
+                        YearMonth.from(from).toString(), YearMonth.from(to).toString()).stream()
+                .map(payout -> summary(payout,
+                        settlementLineRepository.countBySettlementPayout_Id(payout.getId())))
+                .toList();
+    }
+
+    @Override
     public SettlementPayoutDetailResponse payout(Long payoutId) {
         SettlementPayout payout = require(payoutId);
         List<SettlementLine> lines = lines(payout);

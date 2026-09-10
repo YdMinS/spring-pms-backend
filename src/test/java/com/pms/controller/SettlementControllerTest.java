@@ -65,6 +65,7 @@ class SettlementControllerTest extends BaseIntegrationTest {
     private static final String TARGETS = "/api/admin/settlement/sync/targets";
     private static final String PAYOUT_SYNC = "/api/admin/settlement/payout/sync";
     private static final String PAYOUTS = "/api/admin/settlement/payouts";
+    private static final String BY_RECOGNITION = PAYOUTS + "/by-recognition";
     private static final String SUGGESTIONS = "/api/admin/settlement/commission-suggestions";
     private static final String SUGGESTIONS_APPLY = SUGGESTIONS + "/apply";
     private static final String XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -323,8 +324,53 @@ class SettlementControllerTest extends BaseIntegrationTest {
     }
 
     private String[] reconPaths() {
-        return new String[]{PAYOUTS, PAYOUTS + "/" + payoutId, PAYOUTS + "/" + payoutId + "/lines",
+        return new String[]{PAYOUTS, BY_RECOGNITION, PAYOUTS + "/" + payoutId,
+                PAYOUTS + "/" + payoutId + "/lines",
                 PAYOUTS + "/" + payoutId + "/report", PAYOUTS + "/" + payoutId + "/export"};
+    }
+
+    // ---- 인식월 축 조회 (FEATURE_2609_34) ----
+
+    /**
+     * 🔴 축이 다르다는 것이 이 엔드포인트의 존재 이유다. 시드는 <b>인식월 2026-08 · 지급일 2026-09-04</b> —
+     * 판매일 8월로 조회하면 나오고, 9월로 조회하면 나오지 않아야 한다. 여기가 뒤집히면 매출 화면이
+     * "8월에 판 것을 9월에 받은" 정산을 8월 매출 옆에 못 보여준다.
+     */
+    @Test
+    void payoutsByRecognition_matchesRecognitionMonthNotSettlementDate() throws Exception {
+        mockMvc.perform(get(BY_RECOGNITION)
+                        .param("from", "2026-08-01").param("to", "2026-08-31")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].payoutId").value(payoutId))
+                .andExpect(jsonPath("$.data[0].revenueRecognitionMonth").value("2026-08"))
+                .andExpect(jsonPath("$.data[0].lineCount").value(1));
+
+        mockMvc.perform(get(BY_RECOGNITION)
+                        .param("from", "2026-09-01").param("to", "2026-09-30")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isEmpty());
+    }
+
+    /** 여러 달을 조회하면 걸친 달이 전부 들어온다 — 화면이 월별로 묶을 수 있게 인식월 내림차순이다. */
+    @Test
+    void payoutsByRecognition_coversEveryMonthInThePeriod() throws Exception {
+        mockMvc.perform(get(BY_RECOGNITION)
+                        .param("from", "2026-07-15").param("to", "2026-08-20")
+                        .param("accountId", String.valueOf(accountId))
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].revenueRecognitionMonth").value("2026-08"));
+    }
+
+    @Test
+    void payoutsByRecognition_reversedPeriod_returns400() throws Exception {
+        mockMvc.perform(get(BY_RECOGNITION)
+                        .param("from", "2026-08-31").param("to", "2026-08-01")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest());
     }
 
     // ---- 실측 수수료율 피드백 (06) — 401/403/200 ----

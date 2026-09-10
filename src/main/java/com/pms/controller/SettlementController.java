@@ -117,6 +117,29 @@ public class SettlementController {
                 settlementReconciliationService.payouts(sellerId, accountId, from, to)));
     }
 
+    /**
+     * 지급 묶음 목록 — <b>매출인식월</b> 축 (FEATURE_2609_34). 매출 화면이 채널 행을 펼칠 때 부른다.
+     *
+     * <p>🔴 위 {@code /payouts} 와 축이 다르다: 저쪽은 <b>지급일</b> 구간, 이쪽은 판매일 기간이 걸치는
+     * <b>인식월</b> 구간이다. 매출 화면의 기간은 판매일이라 지급일로 자르면 "8월에 판 것을 9월에 받는" 건이
+     * 통째로 빠진다. 한 엔드포인트에 플래그로 합치지 말 것 — 두 축이 섞이면 화면이 무엇을 본 건지 잃는다.
+     *
+     * <p>🔴 경로가 {@code /payouts/{id}} 보다 <b>먼저 매칭</b>돼야 한다. Spring 의 PathPattern 은 리터럴
+     * 세그먼트를 변수보다 우선하므로 이대로 안전하다 — {@code {id}} 를 {@code String} 으로 바꾸는 순간
+     * 깨지므로 그렇게 바꾸지 말 것.
+     *
+     * <p>{@code from > to} 는 400({@code IllegalArgumentException} → GlobalExceptionHandler).
+     */
+    @GetMapping("/payouts/by-recognition")
+    public ResponseEntity<ResponseDTO<List<PayoutSummary>>> payoutsByRecognitionMonth(
+            @RequestParam(required = false) Long sellerId,
+            @RequestParam(required = false) Long accountId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return ResponseEntity.ok(ResponseDTO.success(settlementReconciliationService
+                .payoutsByRecognitionMonth(sellerId, accountId, from, to)));
+    }
+
     /** 묶음 1건 + 조정 행 + 검증식 요약 금액. 없는 id 는 400. */
     @GetMapping("/payouts/{id}")
     public ResponseEntity<ResponseDTO<SettlementPayoutDetailResponse>> payout(@PathVariable Long id) {

@@ -194,6 +194,27 @@ class CoupangSettlementSourceTest {
         assertThat(adjustments.get(3).note()).contains("mysteryFee");
     }
 
+    /**
+     * 🔴 실계정이 실제로 주는 이름이다(prod 실측 2026-09-10). 셋이 {@code KNOWN_PAYOUT_FIELDS} 에서 빠져
+     * 있던 동안 <b>이미 읽고 있는 금액</b>이 이름만 다른 채 {@code OTHER} 조정으로 다시 담겨, 주/월 정산
+     * 전건에 690만원대 정체불명 행이 붙었다. 별칭이라는 근거:
+     * 6,903,562 − finalAmount 3,369,281 − serviceFee 444,789 = 3,089,492(= settlementTargetAmount).
+     */
+    @Test
+    void fetchPayoutsDoesNotRebundleKnownAmountsAsOther() {
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn("""
+                [{"settlementType":"MONTHLY","settlementDate":"2026-08-15",
+                  "revenueRecognitionYearMonth":"2026-07","totalSale":3869070,"serviceFee":444789,
+                  "finalAmount":3369281,"status":"DONE",
+                  "settlementTargetAmount":3089492,"settlementAmount":3369281,
+                  "sellerServiceFee":444789}]""");
+
+        List<SettlementAdjustmentDraft> adjustments =
+                source.fetchPayouts(account, YearMonth.of(2026, 7)).get(0).adjustments();
+
+        assertThat(adjustments).isEmpty();
+    }
+
     @Test
     void fetchPayoutsUsesTheSettlementHistoriesPathWithTheRecognitionMonth() {
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn("[]");
