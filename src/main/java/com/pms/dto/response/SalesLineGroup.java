@@ -19,6 +19,13 @@ import java.math.BigDecimal;
  * @param masterProductId   null = 위와 같음(마스터까지 못 올라간다)
  * @param netQty            {@code Σ (orderQty − cancelQty)}. 🔴 {@code holdQty}(환불대기)는 빼지 않는다(D14)
  * @param holdQty           별도 표기용 합계 — 화면이 "환불대기 12건" 을 보여주는 데 쓴다
+ * @param cancelQty         {@code Σ cancelQty} — 취소가 확정된 수량. 매출에서는 이미 빠져 있다
+ * @param refundedAmount    {@code Σ (unitPrice × cancelQty)} — 취소 확정으로 <b>매출에서 빠진</b> 금액.
+ *                          화면이 "환불완료 금액"으로 보여준다
+ * @param pendingRefundAmount {@code Σ (unitPrice × min(holdQty, netQty))} — 아직 매출에 남아 있지만
+ *                          빠질 수 있는 금액. 🔴 <b>유효수량으로 상한을 건다</b>: 취소 확정과 환불대기가
+ *                          같은 라인에 함께 서 있는 경우가 실제로 있어(prod 실측), 상한이 없으면 이미
+ *                          빠진 금액을 "빠질 예정"으로 한 번 더 세게 된다
  * @param grossSales        {@code Σ (unitPrice × netQty)} — <b>할인 전</b>이다
  * @param discount          {@code Σ (discountAmount × netQty / orderQty)} — 유효수량 비례 안분
  * @param costAmount        {@code Σ (costAmount × netQty / orderQty)} — 원가 스냅샷(changeset 081)만 쓴다
@@ -33,7 +40,10 @@ public record SalesLineGroup(
         String masterProductName,
         long netQty,
         long holdQty,
+        long cancelQty,
         BigDecimal grossSales,
+        BigDecimal refundedAmount,
+        BigDecimal pendingRefundAmount,
         BigDecimal discount,
         BigDecimal costAmount,
         long missingCostLines) {
