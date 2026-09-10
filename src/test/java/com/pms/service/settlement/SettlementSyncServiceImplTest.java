@@ -4,6 +4,7 @@ import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.dto.response.SettlementSyncResponse;
+import com.pms.exception.CoupangRateLimitedException;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.service.settlement.SettlementLineUpserter.UpsertResult;
@@ -15,6 +16,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -150,6 +152,18 @@ class SettlementSyncServiceImplTest {
                 .isInstanceOf(IllegalArgumentException.class);
 
         verify(settlementSource, never()).fetchRevenue(any(), any(), any(), any());
+    }
+
+    @Test
+    void periodRateLimitedIsNotIsolated() {
+        // 🔴 PLAN 2609_31 D9 — 쿨다운은 프로세스 전역이라 격리해도 무의미하다. 429 는 그대로 올라간다.
+        given(marketplaceAccountRepository.findById(7L)).willReturn(Optional.of(account));
+        willThrow(new CoupangRateLimitedException(Instant.now().plusSeconds(600)))
+                .given(settlementSource).fetchRevenue(any(), any(), any(), any());
+
+        assertThatThrownBy(() -> service.syncPeriod(7L,
+                LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31)))
+                .isInstanceOf(CoupangRateLimitedException.class);
     }
 
     private void givenOnePage() {

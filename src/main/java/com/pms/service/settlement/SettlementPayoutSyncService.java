@@ -21,7 +21,9 @@ public interface SettlementPayoutSyncService {
      *
      * @param accountId null 이면 지원 플랫폼의 활성 계정 전부
      * @param month     null 이면 계정별로 자동 결정한다 — 최초 실행이면
-     *                  {@code payoutBackfillMonths} 개월치, 아니면 당월 + 직전월(정정 흡수)
+     *                  {@code payoutBackfillMonths} 개월치, 아니면 당월 + 직전월(정정 흡수).
+     *                  🔴 지정하면 그 달만 읽고 {@code lastPayoutSyncAt}(앵커) 을 <b>갱신하지 않는다</b>
+     *                  (PLAN 2609_31 D3 — 과거 달 백필이 "최초 실행"을 소진하면 초기 백필이 영영 안 돈다)
      * @throws IllegalArgumentException 계정이 없거나 미래 월을 요청했을 때 (→ 400)
      */
     SettlementPayoutSyncResponse syncPayouts(Long accountId, YearMonth month);
