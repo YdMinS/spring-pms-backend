@@ -5,6 +5,7 @@ import com.pms.dto.request.CommissionApplyRequest;
 import com.pms.dto.response.CommissionApplyResponse;
 import com.pms.dto.response.CommissionSuggestionResponse;
 import com.pms.dto.response.PayoutSummary;
+import com.pms.dto.response.SaleMonthSettlement;
 import com.pms.dto.response.ReconLineView;
 import com.pms.dto.response.ReconReportResponse;
 import com.pms.dto.response.SettlementPayoutDetailResponse;
@@ -138,6 +139,22 @@ public class SettlementController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
         return ResponseEntity.ok(ResponseDTO.success(settlementReconciliationService
                 .payoutsByRecognitionMonth(sellerId, accountId, from, to)));
+    }
+
+    /**
+     * 판매월 기준 정산 — "그 달 판매가 언제 얼마로 정산됐나" (FEATURE_2609_34).
+     *
+     * <p>🔴 위 두 목록과 축이 다르다: {@code /payouts} 는 지급일, {@code /payouts/by-recognition} 은 판매월로
+     * <b>정산 건</b>을 찾고, 이쪽은 <b>판매</b>에서 정산 시점을 올려다본다. 한 달 판매가 여러 번에 나눠
+     * 정산되는 경우는 이쪽에서만 보인다 — 셋을 한 엔드포인트로 합치지 말 것.
+     */
+    @GetMapping("/by-sale-month")
+    public ResponseEntity<ResponseDTO<List<SaleMonthSettlement>>> bySaleMonth(
+            @RequestParam Long accountId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                settlementReconciliationService.bySaleMonth(accountId, from, to)));
     }
 
     /** 묶음 1건 + 조정 행 + 검증식 요약 금액. 없는 id 는 400. */
