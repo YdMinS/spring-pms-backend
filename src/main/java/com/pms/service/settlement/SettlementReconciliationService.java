@@ -1,6 +1,7 @@
 package com.pms.service.settlement;
 
 import com.pms.dto.response.PayoutSummary;
+import com.pms.dto.response.SaleMonthSettlement;
 import com.pms.dto.response.ReconLineView;
 import com.pms.dto.response.ReconReportResponse;
 import com.pms.dto.response.SettlementPayoutDetailResponse;
@@ -54,4 +55,14 @@ public interface SettlementReconciliationService {
 
     /** 리포트 ①의 라인 목록을 그대로 xlsx 로. */
     byte[] export(Long payoutId);
+
+    /**
+     * 판매월 기준 정산 — "그 달 판매가 언제 얼마로 정산됐나" (FEATURE_2609_34).
+     *
+     * <p>🔴 {@link #payoutsByRecognitionMonth} 와 <b>축이 반대</b>다. 저쪽은 정산 건에서 판매를 내려다보고,
+     * 이쪽은 판매에서 정산 시점을 올려다본다. 한 달 판매가 여러 번에 나눠 정산되는 경우는 이쪽에서만 보인다.
+     *
+     * <p>⚠️ 아직 어느 지급에도 붙지 않은 판매는 정산 시점이 없어 빠진다 — 화면이 따로 말한다.
+     */
+    List<SaleMonthSettlement> bySaleMonth(Long accountId, LocalDate from, LocalDate to);
 }

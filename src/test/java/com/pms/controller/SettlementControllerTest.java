@@ -66,6 +66,7 @@ class SettlementControllerTest extends BaseIntegrationTest {
     private static final String PAYOUT_SYNC = "/api/admin/settlement/payout/sync";
     private static final String PAYOUTS = "/api/admin/settlement/payouts";
     private static final String BY_RECOGNITION = PAYOUTS + "/by-recognition";
+    private static final String BY_SALE_MONTH = "/api/admin/settlement/by-sale-month";
     private static final String SUGGESTIONS = "/api/admin/settlement/commission-suggestions";
     private static final String SUGGESTIONS_APPLY = SUGGESTIONS + "/apply";
     private static final String XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -324,9 +325,43 @@ class SettlementControllerTest extends BaseIntegrationTest {
     }
 
     private String[] reconPaths() {
-        return new String[]{PAYOUTS, BY_RECOGNITION, PAYOUTS + "/" + payoutId,
+        return new String[]{PAYOUTS, BY_RECOGNITION, BY_SALE_MONTH, PAYOUTS + "/" + payoutId,
                 PAYOUTS + "/" + payoutId + "/lines",
                 PAYOUTS + "/" + payoutId + "/report", PAYOUTS + "/" + payoutId + "/export"};
+    }
+
+    // ---- 판매월 축 조회 (FEATURE_2609_34) ----
+
+    /**
+     * 🔴 축이 반대다: 정산 건이 아니라 <b>판매</b>에서 정산 시점을 올려다본다. 시드는 8월 판매 1건이
+     * 9/4 에 지급된 모양이라, 8월로 조회하면 그 한 줄이 나오고 7월로 조회하면 비어야 한다.
+     */
+    @Test
+    void bySaleMonth_groupsSalesByMonthAndPaymentDate() throws Exception {
+        mockMvc.perform(get(BY_SALE_MONTH)
+                        .param("accountId", String.valueOf(accountId))
+                        .param("from", "2026-08-01").param("to", "2026-08-31")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].saleMonth").value("2026-08"))
+                .andExpect(jsonPath("$.data[0].settlementDate").value("2026-09-04"))
+                .andExpect(jsonPath("$.data[0].paid").value(true))
+                .andExpect(jsonPath("$.data[0].orders").value(1));
+
+        mockMvc.perform(get(BY_SALE_MONTH)
+                        .param("accountId", String.valueOf(accountId))
+                        .param("from", "2026-07-01").param("to", "2026-07-31")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isEmpty());
+    }
+
+    @Test
+    void bySaleMonth_withoutAccount_returns400() throws Exception {
+        mockMvc.perform(get(BY_SALE_MONTH)
+                        .param("from", "2026-08-01").param("to", "2026-08-31")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest());
     }
 
     // ---- 인식월 축 조회 (FEATURE_2609_34) ----

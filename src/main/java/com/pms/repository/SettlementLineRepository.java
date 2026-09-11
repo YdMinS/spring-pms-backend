@@ -97,4 +97,33 @@ public interface SettlementLineRepository extends JpaRepository<SettlementLine, 
     List<SettlementLine> findMatchedForCommissionFeedback(@Param("sellerId") Long sellerId,
                                                           @Param("from") LocalDate from,
                                                           @Param("to") LocalDate to);
+
+    /**
+     * 판매월 × 지급일 집계 — "그 달 판매가 언제 얼마로 정산됐나" (FEATURE_2609_34).
+     *
+     * <p>🔴 <b>지급 묶음에 귀속된 판매만</b> 센다. 아직 어느 지급에도 붙지 않은 판매는 정산 시점이 없어
+     * 이 집계에 넣을 자리가 없다 — 화면이 "미정산"으로 따로 말한다.
+     *
+     * <p>🔴 환불은 음수로 반영한다({@code saleType = REFUND}) — 그렇지 않으면 환불이 매출을 부풀린다.
+     *
+     * <p>⚠️ 월 문자열 조립은 서비스가 한다({@code year()}/{@code month()} 정수로 그룹핑) — {@code date_format}
+     * 같은 네이티브 함수는 H2(테스트)와 MySQL(운영)에서 다르게 동작한다.
+     */
+    @Query("""
+            select year(l.recognitionDate), month(l.recognitionDate),
+                   p.settlementDate, p.status,
+                   count(l),
+                   coalesce(sum(l.saleAmount), 0),
+                   coalesce(sum(case when l.saleType = com.pms.domain.SaleType.REFUND
+                                     then -l.settlementAmount else l.settlementAmount end), 0)
+            from SettlementLine l
+              join l.settlementPayout p
+            where l.marketplaceAccount.id = :accountId
+              and l.recognitionDate >= :from and l.recognitionDate <= :to
+            group by year(l.recognitionDate), month(l.recognitionDate), p.settlementDate, p.status
+            order by year(l.recognitionDate) desc, month(l.recognitionDate) desc, p.settlementDate asc
+            """)
+    List<Object[]> aggregateBySaleMonth(@Param("accountId") Long accountId,
+                                        @Param("from") LocalDate from,
+                                        @Param("to") LocalDate to);
 }
