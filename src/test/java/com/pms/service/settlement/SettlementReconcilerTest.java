@@ -38,8 +38,9 @@ class SettlementReconcilerTest {
 
         assertThat(reconciler.evaluate(payout, lines, List.of()))
                 .isEqualTo(SettlementReconStatus.UNRECONCILED);
+        // 🔴 통장 기준: 우리 계산(103,000)보다 적게 들어왔으니(100,000) 음수다.
         assertThat(reconciler.diff(payout.getFinalAmount(), lines, List.of()))
-                .isEqualByComparingTo("3000");
+                .isEqualByComparingTo("-3000");
     }
 
     @Test

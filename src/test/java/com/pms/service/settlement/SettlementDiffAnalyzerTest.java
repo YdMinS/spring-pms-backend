@@ -54,12 +54,13 @@ class SettlementDiffAnalyzerTest {
     @Test
     void feeRateLabelUsesPlatformCategoryCommission() {
         givenCommission("0.106");
-        // 실측 11.5% vs 기준 10.6% → 판매금액 × 0.009 가 FEE_RATE 다(둘 다 VAT 제외 기준).
+        // 실측 11.5% vs 기준 10.6% → 판매금액 × 0.009 만큼 수수료를 더 떼였다.
+        // 🔴 부호는 통장 기준이다 — 더 떼였으면 그만큼 <b>덜 받은</b> 것이라 음수다.
         SettlementLine line = saleLine("100000", "11500", "1150", "0.115", null, null, "87350");
 
         SettlementDiffAnalyzer.DiffReport report = analyzer.analyze(payout, List.of(line));
 
-        assertThat(amountOf(report, SettlementDiffAnalyzer.LABEL_FEE_RATE)).isEqualByComparingTo("900");
+        assertThat(amountOf(report, SettlementDiffAnalyzer.LABEL_FEE_RATE)).isEqualByComparingTo("-900");
     }
 
     @Test
@@ -110,8 +111,9 @@ class SettlementDiffAnalyzerTest {
 
         SettlementDiffAnalyzer.DiffReport report = analyzer.analyze(payout, List.of(refund));
 
-        assertThat(amountOf(report, SettlementDiffAnalyzer.LABEL_REFUND)).isEqualByComparingTo("20000");
-        assertThat(report.totalDiff()).isEqualByComparingTo("20000");
+        // 환불은 우리가 돌려준 돈이다 — 통장 기준으로 음수다.
+        assertThat(amountOf(report, SettlementDiffAnalyzer.LABEL_REFUND)).isEqualByComparingTo("-20000");
+        assertThat(report.totalDiff()).isEqualByComparingTo("-20000");
     }
 
     @Test
