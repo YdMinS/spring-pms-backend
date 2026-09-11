@@ -19,6 +19,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.YearMonth;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -29,6 +30,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 /**
@@ -152,6 +155,35 @@ class CoupangSettlementSourceTest {
     }
 
     // ---- 지급내역(settlement-histories) ----
+
+    /**
+     * 🔴 조회 상한은 <b>어제</b>다 — 쿠팡은 {@code recognitionDateTo} 가 오늘 이상이면 400 을 준다
+     * (2026-09-11 문서 확인). 정기 동기화가 {@code to = 오늘} 로 부르므로 여기서 자르지 않으면 당월
+     * 조회가 통째로 실패한다.
+     */
+    @Test
+    void fetchRevenueClampsTheWindowToYesterday() {
+        given(coupangApiClient.get(anyString(), anyString(), any()))
+                .willReturn("{\"data\":[],\"hasNext\":false,\"nextToken\":\"\"}");
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+
+        source.fetchRevenue(account, today.minusDays(3), today.plusDays(5), page -> { });
+
+        ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient, atLeastOnce()).get(anyString(), query.capture(), any());
+        assertThat(query.getAllValues())
+                .allSatisfy(q -> assertThat(q).contains("recognitionDateTo=" + today.minusDays(1)));
+    }
+
+    /** 오늘 하루만 물어보면 조회할 구간이 남지 않는다 — 예외가 아니라 <b>호출 없이</b> 끝낸다. */
+    @Test
+    void fetchRevenueSkipsWhenTheWindowIsEntirelyInTheFuture() {
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+
+        source.fetchRevenue(account, today, today, page -> { });
+
+        verify(coupangApiClient, never()).get(anyString(), anyString(), any());
+    }
 
     @Test
     void fetchPayoutsParsesTopLevelArrayAndKeepsElementsSeparate() {
