@@ -61,16 +61,16 @@ class SettlementPayoutAggregationTest {
      */
     @Test
     void pendingIgnoresPeriodWhilePaidHonorsIt() {
-        // ⚠️ settlementDate 를 다르게 준다 — 유일키가 (계정, 인식월, 유형, 정산일)이라(D5-3)
-        // 같은 달에 여러 묶음이 온다는 것은 곧 정산일이 다르다는 뜻이다.
-        payout(1, SettlementPayoutStatus.SCHEDULED, SettlementReconStatus.PENDING, "100000", null);
-        payout(2, SettlementPayoutStatus.PAID, SettlementReconStatus.RECONCILED, "200000",
-                LocalDate.of(2026, 9, 15));
-        payout(3, SettlementPayoutStatus.PAID, SettlementReconStatus.UNRECONCILED, "300000",
-                LocalDate.of(2026, 9, 20));
-        payout(4, SettlementPayoutStatus.PAID, SettlementReconStatus.AMOUNT_ONLY, "50000",
-                // 기간 밖 입금 — paidAmount 에 들어가지 않는다.
-                LocalDate.of(2026, 8, 20));
+        // ⚠️ 지급일(settlementDate)은 유일키의 일부이기도 하다(계정, 인식월, 유형, 정산일 — D5-3).
+        payout(LocalDate.of(2026, 9, 1), SettlementPayoutStatus.SCHEDULED,
+                SettlementReconStatus.PENDING, "100000");
+        payout(LocalDate.of(2026, 9, 15), SettlementPayoutStatus.PAID,
+                SettlementReconStatus.RECONCILED, "200000");
+        payout(LocalDate.of(2026, 9, 20), SettlementPayoutStatus.PAID,
+                SettlementReconStatus.UNRECONCILED, "300000");
+        // 🔴 기간 밖 입금 — 인식월은 같아도(9월) 돈이 8월에 들어왔으면 이 기간의 입금이 아니다.
+        payout(LocalDate.of(2026, 8, 20), SettlementPayoutStatus.PAID,
+                SettlementReconStatus.AMOUNT_ONLY, "50000");
         em.flush();
 
         PayoutAggregate row = aggregate();
@@ -100,14 +100,17 @@ class SettlementPayoutAggregationTest {
         return rows.get(0);
     }
 
-    private void payout(int day, SettlementPayoutStatus status, SettlementReconStatus recon,
-                        String finalAmount, LocalDate finalSettlementDate) {
+    /**
+     * 🔴 {@code finalSettlementDate} 를 채우지 않는다 — 지급내역 API 가 주지 않는 필드라 실제로도 항상
+     * NULL 이다. 테스트가 그걸 채우면 "기준일을 되돌려도 통과하는" 가짜 그물이 된다.
+     */
+    private void payout(LocalDate settlementDate, SettlementPayoutStatus status,
+                        SettlementReconStatus recon, String finalAmount) {
         em.persist(SettlementPayout.builder()
                 .marketplaceAccount(account)
                 .settlementType(SettlementType.WEEKLY)
                 .revenueRecognitionMonth("2026-09")
-                .settlementDate(LocalDate.of(2026, 9, day))
-                .finalSettlementDate(finalSettlementDate)
+                .settlementDate(settlementDate)
                 .finalAmount(new BigDecimal(finalAmount))
                 .status(status)
                 .reconStatus(recon)

@@ -18,7 +18,8 @@ import java.time.LocalDateTime;
  * @param pendingRefundAmount    아직 매출에 남아 있지만 빠질 수 있는 금액("환불대기 금액").
  *                               🔴 유효수량 상한이 걸려 있다 — 이미 취소 확정된 몫을 다시 세지 않는다
  * @param pendingPayout          기간 무관 "받을 돈"(D4)
- * @param paidAmount             기간 내 지급 확정({@code status = PAID}, {@code finalSettlementDate} 기준)
+ * @param paidAmount             기간 내 지급 확정({@code status = PAID}, {@code settlementDate} 기준).
+ *                               🔴 {@code finalSettlementDate} 는 지급내역 API 가 주지 않는다(항상 NULL)
  * @param lastSettlementSyncAt   정산 원장을 마지막으로 적재한 시각. null 이면 아직 한 번도 안 읽은 채널이다
  * @param fixedCost              기간 고정비(FEATURE_2609_33 / PLAN 2609_33 D6). 🔴 <b>자기 필드로</b> 내려간다 —
  *                               {@code estNetProfit} 에 녹이면 {@code costBasisReady = false} 인 채널에서

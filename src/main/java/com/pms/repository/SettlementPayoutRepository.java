@@ -103,7 +103,13 @@ public interface SettlementPayoutRepository extends JpaRepository<SettlementPayo
      *
      * <p>🔴 {@code pendingPayout} 에 <b>기간 조건이 없다</b>(D4). 지급 묶음의 축은 매출인식일이라 판매일
      * 기간과 겹치지 않는다 — 판매일 기간으로 자르면 "받을 돈"이 실제 받을 금액보다 작게 나온다.
-     * 기간을 타는 것은 {@code paidAmount}(현금주의) 하나뿐이고, 기준일도 {@code finalSettlementDate} 다.
+     * 기간을 타는 것은 {@code paidAmount}(현금주의) 하나뿐이고, 기준일은 {@code settlementDate} 다.
+     *
+     * <p>🔴 <b>{@code finalSettlementDate} 를 기준일로 쓰지 말 것</b>(FEATURE_2609_34, 2026-09-11 문서 확인).
+     * 지급내역 API(`settlement-histories`) 응답에는 그 필드가 <b>아예 없다</b> — {@code finalSettlementDate}
+     * 는 매출내역 API(`revenue-history`)에만 있다. 그래서 이 컬럼은 prod 전 건 NULL 이고, 그것을 기준으로
+     * 자르면 "기간 내 입금"이 <b>영원히 0원</b>이 된다(실측). 지급 시점은 {@code settlementDate} + 
+     * {@code status = DONE(PAID)} 조합으로 판정한다.
      *
      * <p>⚠️ {@code recon_status = AMOUNT_ONLY}(추가정산·유보금)를 제외하지 않는다 — 라인이 없을 뿐
      * 실제로 받을 돈이다(D5-4·D5-5).
@@ -120,8 +126,8 @@ public interface SettlementPayoutRepository extends JpaRepository<SettlementPayo
                 a.id,
                 coalesce(sum(case when p.status = :scheduled then p.finalAmount end), 0),
                 coalesce(sum(case when p.status = :paid
-                                   and p.finalSettlementDate >= :from
-                                   and p.finalSettlementDate <= :to then p.finalAmount end), 0))
+                                   and p.settlementDate >= :from
+                                   and p.settlementDate <= :to then p.finalAmount end), 0))
             from SettlementPayout p join p.marketplaceAccount a
             where (:sellerId is null or a.seller.id = :sellerId)
             group by a.id
