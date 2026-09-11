@@ -112,6 +112,42 @@ class CoupangSettlementSourceTest {
         assertThat(drafts.get(0).serviceFeeRatio()).isNotNull();
     }
 
+    /**
+     * 🔴 <b>실계정 응답은 주문 배열이고 옵션은 {@code items[]} 안에 있다</b>(2026-09-11 문서 확인 + 실계정
+     * 실패). 주문 노드에서 옵션 식별자를 찾으면 늘 비어 있어 <b>회차 전체가 예외로 죽는다</b> — 실제로
+     * 그래서 정산 라인이 한 건도 적재되지 못했다. 주문 레벨 값은 옵션마다 복사되어야 한다.
+     */
+    @Test
+    void flattensNestedItemsIntoOneDraftPerOption() {
+        given(coupangApiClient.get(anyString(), anyString(), any()))
+                .willReturn(page("", false, """
+                        {"orderId":"O1","saleType":"SALE","recognitionDate":"2026-08-05",
+                         "saleDate":"2026-08-01","settlementDate":"2026-08-24",
+                         "deliveryFee":{"amount":"3000","settlementAmount":"2500"},
+                         "items":[
+                           {"vendorItemId":"V10","quantity":2,"saleAmount":"20000",
+                            "serviceFee":"2000","serviceFeeVat":"200","settlementAmount":"17800"},
+                           {"vendorItemId":"V11","quantity":1,"saleAmount":"5000",
+                            "serviceFee":"500","serviceFeeVat":"50","settlementAmount":"4450"}]}"""));
+
+        List<SettlementLineDraft> drafts = collect(LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 10));
+
+        assertThat(drafts).hasSize(2);
+        assertThat(drafts).extracting(SettlementLineDraft::platformOptionId)
+                .containsExactly("V10", "V11");
+        assertThat(drafts).allSatisfy(draft -> {
+            // 주문 레벨 값은 옵션마다 복사된다.
+            assertThat(draft.externalOrderId()).isEqualTo("O1");
+            assertThat(draft.saleType()).isEqualTo(SaleType.SALE);
+            assertThat(draft.recognitionDate()).isEqualTo(LocalDate.of(2026, 8, 5));
+        });
+        assertThat(drafts.get(0).settlementAmount()).isEqualByComparingTo("17800");
+        assertThat(drafts.get(1).quantity()).isEqualTo(1);
+        // 🔴 배송비는 주문 단위다 — 첫 옵션에만 실어 옵션 수만큼 부풀지 않게 한다.
+        assertThat(drafts.get(0).deliveryFeeAmount()).isEqualByComparingTo("2500");
+        assertThat(drafts.get(1).deliveryFeeAmount()).isNull();
+    }
+
     @Test
     void refundLineIsDetectedFromSaleType() {
         given(coupangApiClient.get(anyString(), anyString(), any()))

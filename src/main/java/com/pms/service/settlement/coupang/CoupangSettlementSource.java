@@ -298,8 +298,18 @@ public class CoupangSettlementSource implements SettlementSource {
             return List.of();
         }
         List<SettlementLineDraft> drafts = new ArrayList<>();
-        for (JsonNode line : array) {
-            drafts.add(toDraft(line));
+        for (JsonNode order : array) {
+            JsonNode items = order.path("items");
+            if (!items.isArray() || items.isEmpty()) {
+                // 방어: 평면 응답(테스트 목·문서 변경)도 계속 받는다. 옵션 식별자가 없으면 draft 가 거른다.
+                drafts.add(toDraft(order, order, true));
+                continue;
+            }
+            boolean first = true;
+            for (JsonNode item : items) {
+                drafts.add(toDraft(order, item, first));
+                first = false;
+            }
         }
         return drafts;
     }
@@ -314,26 +324,55 @@ public class CoupangSettlementSource implements SettlementSource {
         return root.path("nextToken").asText("");
     }
 
-    private SettlementLineDraft toDraft(JsonNode line) {
+    /**
+     * 주문 1건 × 옵션 1건 → 정산 라인 draft.
+     *
+     * <p>🔴 <b>응답은 주문 배열이고 옵션은 그 안의 {@code items[]} 에 있다</b>(2026-09-11 문서 확인 +
+     * 실계정 실패로 확인). 주문 노드에서 {@code vendorItemId} 를 찾으면 항상 비어 있어 <b>회차 전체가
+     * 예외로 죽는다</b> — 실제로 그래서 정산 라인이 한 건도 적재되지 못했다. 주문 레벨(주문번호·매출/환불·
+     * 각종 날짜)과 옵션 레벨(옵션 식별자·수량·금액·수수료)을 여기서 합친다.
+     *
+     * <p>⚠️ {@code raw} 는 <b>옵션 노드</b>를 싣는다 — 거울 행이 라인 단위라 주문 노드를 실으면 같은 주문의
+     * 옵션들이 전부 같은 원문을 갖게 된다.
+     *
+     * @param firstItem 배송비를 이 라인에 실을지. 🔴 배송비는 <b>주문 단위</b> 값이라 옵션마다 실으면
+     *                  옵션 수만큼 부풀어 차이 리포트의 배송비 라벨이 거짓말을 한다 — 첫 옵션에만 싣는다
+     */
+    private SettlementLineDraft toDraft(JsonNode order, JsonNode item, boolean firstItem) {
         return new SettlementLineDraft(
-                text(line, "orderId", "externalOrderId"),
-                text(line, "vendorItemId", "platformOptionId"),
-                saleType(text(line, "saleType", "settlementType", "type")),
-                date(line, "recognitionDate", "saleRecognitionDate"),
-                date(line, "saleDate", "salesDate"),
-                date(line, "settlementDate"),
-                date(line, "finalSettlementDate"),
-                integer(line, "quantity", "saleCount", "shippingCount"),
-                decimal(line, "saleAmount", "salePrice", "totalSalePrice"),
-                decimal(line, "serviceFee"),
-                decimal(line, "serviceFeeVat"),
-                decimal(line, "serviceFeeRatio"),
+                text(order, "orderId", "externalOrderId"),
+                text(item, "vendorItemId", "platformOptionId"),
+                saleType(text(order, "saleType", "settlementType", "type")),
+                date(order, "recognitionDate", "saleRecognitionDate"),
+                date(order, "saleDate", "salesDate"),
+                date(order, "settlementDate"),
+                date(order, "finalSettlementDate"),
+                integer(item, "quantity", "saleCount", "shippingCount"),
+                decimal(item, "saleAmount", "salePrice", "totalSalePrice"),
+                decimal(item, "serviceFee"),
+                decimal(item, "serviceFeeVat"),
+                decimal(item, "serviceFeeRatio"),
                 // 셀러 부담 쿠폰만 더한다 — coupangDiscountCoupon(플랫폼 부담)은 우리 비용이 아니다.
-                sum(decimal(line, "sellerDiscountCoupon"), decimal(line, "downloadableCoupon")),
-                sum(decimal(line, "deliveryFee", "deliveryFeeAmount"),
-                        decimal(line, "remoteDeliveryFee", "remoteAreaDeliveryFee")),
-                decimal(line, "settlementAmount"),
-                line);
+                sum(decimal(item, "sellerDiscountCoupon"), decimal(item, "downloadableCoupon")),
+                firstItem ? deliveryFee(order) : null,
+                decimal(item, "settlementAmount"),
+                item);
+    }
+
+    /**
+     * 주문의 배송비 — {@code deliveryFee} 는 <b>객체</b>다(문서: amount·fee·settlementAmount·remote* …).
+     *
+     * <p>정산되는 금액을 쓰되, 옛 평면 응답(숫자 필드)도 그대로 받는다.
+     * ⚠️ 이 값은 차이 리포트의 <b>설명 라벨</b>로만 쓰인다 — 검증식 합계에는 들어가지 않는다.
+     */
+    private BigDecimal deliveryFee(JsonNode order) {
+        JsonNode fee = order.path("deliveryFee");
+        if (fee.isObject()) {
+            BigDecimal settled = decimal(fee, "settlementAmount");
+            return settled != null ? settled : sum(decimal(fee, "amount"), decimal(fee, "remoteAmount"));
+        }
+        return sum(decimal(order, "deliveryFee", "deliveryFeeAmount"),
+                decimal(order, "remoteDeliveryFee", "remoteAreaDeliveryFee"));
     }
 
     /**
