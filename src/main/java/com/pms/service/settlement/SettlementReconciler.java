@@ -104,11 +104,17 @@ public class SettlementReconciler {
                 : SettlementReconStatus.UNRECONCILED;
     }
 
-    /** 우리 계산 − 쿠팡 finalAmount. 양수 = 우리가 더 크게 봤다. */
+    /**
+     * 쿠팡 finalAmount − 우리 계산. 🔴 <b>통장 기준</b>이다: {@code +} 면 우리가 <b>더 받았고</b>,
+     * {@code −} 면 덜 받았다.
+     *
+     * <p>라인 단위 차액({@code SettlementDiffAnalyzer})도 같은 부호 규칙을 쓴다 — 한 화면에 두 부호가
+     * 섞이면 사용자가 매번 어느 쪽 기준인지 다시 물어야 한다.
+     */
     public BigDecimal diff(BigDecimal finalAmount, Collection<SettlementLine> lines,
                            Collection<SettlementAdjustment> adjustments) {
         BigDecimal ours = ourTotal(lines, adjustments);
-        return finalAmount == null ? ours : ours.subtract(finalAmount);
+        return finalAmount == null ? ours.negate() : finalAmount.subtract(ours);
     }
 
     public BigDecimal ourTotal(Collection<SettlementLine> lines, Collection<SettlementAdjustment> adjustments) {

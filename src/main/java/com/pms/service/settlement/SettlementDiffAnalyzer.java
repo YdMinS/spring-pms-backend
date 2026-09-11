@@ -107,7 +107,9 @@ public class SettlementDiffAnalyzer {
             views.add(view(payout, line, diff.primaryLabel(), diff.diff(), false));
         }
 
-        BigDecimal totalDiff = scale(expectedTotal.subtract(actualTotal));
+        // 🔴 라인 차액과 <b>같은 부호 규칙</b>(실제 − 예상)이어야 항등식 Σ라벨 == 총차액이 성립한다 —
+        //    라벨만 뒤집고 여기를 빼먹으면 합계와 총차액이 정확히 반대로 어긋난다(실제로 그랬다).
+        BigDecimal totalDiff = scale(actualTotal.subtract(expectedTotal));
         return new DiffReport(scale(expectedTotal), scale(actualTotal), totalDiff,
                 labelViews(totals, counts, totalDiff), views);
     }
@@ -118,7 +120,8 @@ public class SettlementDiffAnalyzer {
      * <pre>
      *   expectedFee = saleAmount × commissionRate × (1 + feeVatRate)     ← 우리 추정(수수료 부가세 포함)
      *   actualFee   = serviceFee + serviceFeeVat                         ← 실제
-     *   diff        = (saleAmount − expectedFee) − settlementAmount      ← 예상보다 덜 받은 금액
+     *   diff        = settlementAmount − (saleAmount − expectedFee)      ← 🔴 <b>실제 − 예상</b>
+     *                                                                       + 면 더 받았고, − 면 덜 받았다
      * </pre>
      *
      * <p>🔴 {@code FEE_RATE} 는 <b>둘 다 VAT 제외 기준</b>으로 뺀다(쿠팡 문서: serviceFeeRatio 는 VAT 제외).
@@ -132,9 +135,9 @@ public class SettlementDiffAnalyzer {
 
         if (line.getSaleType() == SaleType.REFUND) {
             // 환불은 "예상 0, 실제 −금액" 이다. 전액이 곧 차이이고 다른 라벨을 붙이지 않는다.
-            labels.put(LABEL_REFUND, scale(settlementAmount));
-            return new LineDiff(BigDecimal.ZERO, settlementAmount.negate(), scale(settlementAmount),
-                    labels, LABEL_REFUND);
+            labels.put(LABEL_REFUND, scale(settlementAmount.negate()));
+            return new LineDiff(BigDecimal.ZERO, settlementAmount.negate(),
+                    scale(settlementAmount.negate()), labels, LABEL_REFUND);
         }
 
         BigDecimal saleAmount = nz(line.getSaleAmount());
@@ -167,13 +170,26 @@ public class SettlementDiffAnalyzer {
         }
 
         BigDecimal expected = saleAmount.subtract(expectedFee);
-        BigDecimal diff = scale(expected.subtract(settlementAmount));
+        BigDecimal shortfall = scale(expected.subtract(settlementAmount));
 
         // 잔차 = 위 라벨로 설명되지 않은 나머지. 이것이 항등식을 성립시킨다.
         BigDecimal explained = labels.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
-        labels.put(LABEL_ROUNDING, scale(diff.subtract(explained)));
+        labels.put(LABEL_ROUNDING, scale(shortfall.subtract(explained)));
 
-        return new LineDiff(scale(expected), scale(settlementAmount), diff, labels, primaryLabel(labels, diff));
+        // 🔴 부호를 <b>통장 기준</b>으로 뒤집는다: + = 더 받음 / − = 덜 받음. 위 계산은 "예상보다 덜 받은
+        //    금액"이라 라벨과 차액을 <b>함께</b> 뒤집어야 항등식(Σ라벨 == 차액)이 유지된다 — 한쪽만 뒤집으면
+        //    리포트가 즉시 거짓말을 시작한다.
+        Map<String, BigDecimal> received = negate(labels);
+        BigDecimal diff = shortfall.negate();
+        return new LineDiff(scale(expected), scale(settlementAmount), diff, received,
+                primaryLabel(received, diff));
+    }
+
+    /** 부호만 뒤집은 복사본. 순서를 유지해야 리포트의 라벨 순서가 흔들리지 않는다. */
+    private static Map<String, BigDecimal> negate(Map<String, BigDecimal> labels) {
+        Map<String, BigDecimal> flipped = new LinkedHashMap<>();
+        labels.forEach((label, amount) -> flipped.put(label, amount.negate()));
+        return flipped;
     }
 
     /** 표시용 대표 라벨 = 절대금액이 가장 큰 원인. 차이가 없는 라인은 {@code NONE}. */
