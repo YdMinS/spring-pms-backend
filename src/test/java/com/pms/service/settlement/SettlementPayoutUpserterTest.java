@@ -146,6 +146,31 @@ class SettlementPayoutUpserterTest {
         assertThat(saved.getAllValues().get(1).getAmount()).isEqualByComparingTo("90000");
     }
 
+    /**
+     * 🔴 이번 응답에 없는 조정은 <b>지운다</b>. 조정 행은 전부 지급내역 응답에서 나오므로 "이번에 안 왔다"
+     * 는 "더는 없다" 는 뜻이다 — 남겨 두면 낡은 값이 영원히 화면에 붙어 있는다(파서를 고친 뒤에도 예전
+     * {@code OTHER} 행이 재동기화로 사라지지 않아 실제로 그랬다).
+     */
+    @Test
+    void adjustmentsMissingFromTheResponseAreRemoved() {
+        SettlementAdjustment stale = SettlementAdjustment.builder()
+                .id(77L).adjustmentType(SettlementAdjustmentType.OTHER)
+                .amount(new BigDecimal("6903562")).note("미매핑 필드: …").build();
+        SettlementAdjustment kept = SettlementAdjustment.builder()
+                .id(78L).adjustmentType(SettlementAdjustmentType.DEDUCTION)
+                .amount(new BigDecimal("85000")).build();
+        given(settlementAdjustmentRepository.findBySettlementPayout_Id(anyLong()))
+                .willReturn(List.of(stale, kept));
+
+        upserter.upsert(account, draft(SettlementType.WEEKLY, LocalDate.of(2026, 9, 4), "1000000",
+                new SettlementAdjustmentDraft(SettlementAdjustmentType.DEDUCTION,
+                        new BigDecimal("85000"), null)));
+
+        // 이번 응답이 준 DEDUCTION 은 남고, 사라진 OTHER 만 지워진다.
+        verify(settlementAdjustmentRepository).delete(stale);
+        verify(settlementAdjustmentRepository, never()).delete(kept);
+    }
+
     @Test
     void missingRecognitionRangeFallsBackToWholeMonth() {
         upserter.upsert(account, new SettlementPayoutDraft(SettlementType.MONTHLY, MONTH, null, null,

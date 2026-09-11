@@ -2,6 +2,7 @@ package com.pms.service.settlement;
 
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.SettlementAdjustment;
+import com.pms.domain.SettlementAdjustmentType;
 import com.pms.domain.SettlementLine;
 import com.pms.domain.SettlementPayout;
 import com.pms.domain.SettlementReconStatus;
@@ -17,7 +18,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import java.util.Optional;
 
 /**
@@ -104,6 +107,7 @@ public class SettlementPayoutUpserter {
     /** 조정 행 upsert (D8). 같은 묶음을 두 번 적재해도 행 수는 그대로고 금액만 최신값이 된다. */
     private int saveAdjustments(SettlementPayout payout, SettlementPayoutDraft draft) {
         int count = 0;
+        Set<SettlementAdjustmentType> seen = EnumSet.noneOf(SettlementAdjustmentType.class);
         for (SettlementAdjustmentDraft adjustment : draft.adjustments()) {
             if (adjustment.amount() == null) {
                 continue;
@@ -120,8 +124,16 @@ public class SettlementPayoutUpserter {
                             .build()
                     : existing.toBuilder().amount(adjustment.amount()).note(adjustment.note()).build();
             settlementAdjustmentRepository.save(row);
+            seen.add(adjustment.type());
             count++;
         }
+
+        // 🔴 이번 응답에 없는 조정은 <b>지운다</b>. 조정 행은 전부 지급내역 응답에서 나오므로 "이번에
+        //    안 왔다" = "더는 없다" 이고, 남겨 두면 낡은 값이 영원히 화면에 붙어 있는다 — 실제로 파서를
+        //    고친 뒤에도 예전 `OTHER`(미매핑 필드) 행 23건이 재동기화로 사라지지 않았다.
+        settlementAdjustmentRepository.findBySettlementPayout_Id(payout.getId()).stream()
+                .filter(row -> !seen.contains(row.getAdjustmentType()))
+                .forEach(settlementAdjustmentRepository::delete);
         return count;
     }
 
