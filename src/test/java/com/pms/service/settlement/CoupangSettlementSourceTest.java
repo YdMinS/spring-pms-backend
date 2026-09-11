@@ -148,6 +148,32 @@ class CoupangSettlementSourceTest {
         assertThat(drafts.get(1).deliveryFeeAmount()).isNull();
     }
 
+    /**
+     * 🔴 <b>식별자가 없는 줄 하나가 회차 전체를 죽이지 않는다.</b> 예전에는 예외가 그대로 올라가 남은
+     * 페이지까지 통째로 날아갔고(7월은 5페이지에서 끊겨 7/22 이후가 빠졌다), 빠진 금액이 화면에서는
+     * "차액"으로 보였다. 못 만드는 줄은 건너뛰고 나머지는 그대로 싣는다.
+     */
+    @Test
+    void skipsRowsWithoutAnOptionIdInsteadOfLosingThePage() {
+        given(coupangApiClient.get(anyString(), anyString(), any()))
+                .willReturn(page("", false, """
+                        {"orderId":"O1","saleType":"SALE","recognitionDate":"2026-08-05",
+                         "deliveryFee":{"settlementAmount":"2500"},
+                         "items":[
+                           {"quantity":1,"saleAmount":"1000","settlementAmount":"900"},
+                           {"vendorItemId":"V20","quantity":1,"saleAmount":"5000",
+                            "settlementAmount":"4500"}]}"""));
+
+        List<SettlementLineDraft> drafts = collect(LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 10));
+
+        assertThat(drafts).singleElement()
+                .satisfies(draft -> {
+                    assertThat(draft.platformOptionId()).isEqualTo("V20");
+                    // 배송비는 첫 <b>유효한</b> 줄이 가져간다 — 건너뛴 줄에 실어 버리면 사라진다.
+                    assertThat(draft.deliveryFeeAmount()).isEqualByComparingTo("2500");
+                });
+    }
+
     @Test
     void refundLineIsDetectedFromSaleType() {
         given(coupangApiClient.get(anyString(), anyString(), any()))
