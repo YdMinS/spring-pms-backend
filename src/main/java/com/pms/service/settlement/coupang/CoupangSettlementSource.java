@@ -298,18 +298,27 @@ public class CoupangSettlementSource implements SettlementSource {
             return List.of();
         }
         List<SettlementLineDraft> drafts = new ArrayList<>();
+        List<String> skipped = new ArrayList<>();
         for (JsonNode order : array) {
             JsonNode items = order.path("items");
-            if (!items.isArray() || items.isEmpty()) {
-                // 방어: 평면 응답(테스트 목·문서 변경)도 계속 받는다. 옵션 식별자가 없으면 draft 가 거른다.
-                drafts.add(toDraft(order, order, true));
-                continue;
+            // 평면 응답(테스트 목·문서 변경)도 계속 받는다 — 옵션이 없으면 주문 노드 자체를 한 번 시도한다.
+            Iterable<JsonNode> rows = items.isArray() && !items.isEmpty() ? items : List.of(order);
+            boolean deliveryAttached = false;
+            for (JsonNode row : rows) {
+                try {
+                    drafts.add(toDraft(order, row, !deliveryAttached));
+                    deliveryAttached = true;
+                } catch (IllegalArgumentException e) {
+                    // 🔴 <b>한 줄 때문에 회차 전체를 버리지 않는다.</b> 예전에는 여기서 예외가 그대로 올라가
+                    //    남은 페이지까지 통째로 날아갔다 — 7월은 5페이지에서 죽어 7/22 이후가 통째로 빠졌고,
+                    //    화면에는 그만큼이 "차액"으로 보였다. 못 만드는 줄은 건너뛰고 <b>건수를 남긴다</b>.
+                    skipped.add(order.path("orderId").asText("?"));
+                }
             }
-            boolean first = true;
-            for (JsonNode item : items) {
-                drafts.add(toDraft(order, item, first));
-                first = false;
-            }
+        }
+        if (!skipped.isEmpty()) {
+            log.warn("정산 라인 {}건을 건너뜀(식별자 없음) — 주문번호 예: {}",
+                    skipped.size(), skipped.subList(0, Math.min(5, skipped.size())));
         }
         return drafts;
     }
