@@ -11,6 +11,7 @@ import com.pms.domain.SettlementPayoutStatus;
 import com.pms.domain.SettlementType;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangCredentials;
+import com.pms.service.coupang.SyncWindow;
 import com.pms.service.settlement.SettlementAdjustmentDraft;
 import com.pms.service.settlement.SettlementLineDraft;
 import com.pms.service.settlement.SettlementPayoutDraft;
@@ -88,11 +89,31 @@ public class CoupangSettlementSource implements SettlementSource {
         return Platform.COUPANG;
     }
 
+    /**
+     * 매출내역 조회.
+     *
+     * <p>🔴 <b>상한은 어제(KST)다</b>(2026-09-11 문서 확인: {@code recognitionDateTo cannot exceed
+     * yesterday}). 오늘을 넘겨 보내면 쿠팡이 400 을 준다 — 정기 델타 동기화는 {@code to = 오늘} 로
+     * 부르고 화면의 과거 불러오기도 당월을 오늘까지로 자르므로, <b>여기서 클램프하지 않으면 당월 조회가
+     * 통째로 실패</b>한다. 창 상한은 마켓의 규칙이므로 호출부가 아니라 이 어댑터가 안다.
+     *
+     * <p>⚠️ 클램프 결과 조회할 구간이 없으면(예: 오늘 하루만 요청) <b>호출하지 않고 조용히 끝낸다</b> —
+     * 아직 인식되지 않은 날짜를 물어본 것이지 잘못된 입력이 아니다.
+     */
     @Override
     public void fetchRevenue(MarketplaceAccount account, LocalDate from, LocalDate to,
                              Consumer<List<SettlementLineDraft>> pageConsumer) {
         if (from == null || to == null || from.isAfter(to)) {
             throw new IllegalArgumentException("조회 기간(from, to)이 올바르지 않습니다.");
+        }
+        LocalDate latest = LocalDate.now(SyncWindow.KST).minusDays(1);
+        if (to.isAfter(latest)) {
+            to = latest;
+        }
+        if (from.isAfter(to)) {
+            log.debug("Settlement revenue window is entirely in the future — skipped: account={} {}~{}",
+                    account.getId(), from, to);
+            return;
         }
         String vendorId = CoupangCredentials.of(account).getVendorId();
         // 쿠팡 상한(31일)을 넘는 요청은 잘라서 여러 번 호출한다 — 400 을 사용자에게 그대로 보여주지 않는다.
