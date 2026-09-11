@@ -7,11 +7,13 @@ import com.pms.domain.SettlementAdjustmentType;
 import com.pms.domain.SettlementLine;
 import com.pms.domain.SaleType;
 import com.pms.domain.SettlementPayout;
+import com.pms.domain.SettlementPayoutStatus;
 import com.pms.dto.response.AdjustmentView;
 import com.pms.dto.response.MonthCheck;
 import com.pms.dto.response.PayoutSummary;
 import com.pms.dto.response.ReconLineView;
 import com.pms.dto.response.ReconReportResponse;
+import com.pms.dto.response.SaleMonthSettlement;
 import com.pms.dto.response.SettlementPayoutDetailResponse;
 import com.pms.repository.SettlementAdjustmentRepository;
 import com.pms.repository.SettlementLineRepository;
@@ -82,6 +84,31 @@ public class SettlementReconciliationServiceImpl implements SettlementReconcilia
                 .map(payout -> summary(payout,
                         settlementLineRepository.countBySettlementPayout_Id(payout.getId())))
                 .toList();
+    }
+
+    @Override
+    public List<SaleMonthSettlement> bySaleMonth(Long accountId, LocalDate from, LocalDate to) {
+        if (accountId == null || from == null || to == null) {
+            throw new IllegalArgumentException("채널(accountId)과 조회 기간(from, to)을 모두 지정해야 합니다.");
+        }
+        if (from.isAfter(to)) {
+            throw new IllegalArgumentException("조회 시작일이 종료일보다 늦습니다.");
+        }
+        return settlementLineRepository.aggregateBySaleMonth(accountId, from, to).stream()
+                .map(SettlementReconciliationServiceImpl::toSaleMonth)
+                .toList();
+    }
+
+    /** 🔴 월 문자열 조립은 여기 한 곳에서만 한다(쿼리는 year/month 정수 — H2↔MySQL 이식성). */
+    private static SaleMonthSettlement toSaleMonth(Object[] row) {
+        YearMonth month = YearMonth.of(((Number) row[0]).intValue(), ((Number) row[1]).intValue());
+        return new SaleMonthSettlement(
+                month.toString(),
+                (LocalDate) row[2],
+                row[3] == SettlementPayoutStatus.PAID,
+                ((Number) row[4]).longValue(),
+                (BigDecimal) row[5],
+                (BigDecimal) row[6]);
     }
 
     @Override

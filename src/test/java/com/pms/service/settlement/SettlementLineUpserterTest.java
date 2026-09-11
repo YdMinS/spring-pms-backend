@@ -1,6 +1,7 @@
 package com.pms.service.settlement;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.pms.domain.CoupangOrderLine;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Order;
 import com.pms.domain.OrderLine;
@@ -9,6 +10,7 @@ import com.pms.domain.ProductListingOption;
 import com.pms.domain.SaleType;
 import com.pms.domain.SettlementLine;
 import com.pms.fixture.MarketplaceAccountFixture;
+import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.SettlementLineRepository;
@@ -47,6 +49,7 @@ class SettlementLineUpserterTest {
     @Mock private SettlementLineRepository settlementLineRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private OrderLineRepository orderLineRepository;
+    @Mock private CoupangOrderLineRepository coupangOrderLineRepository;
 
     private SettlementLineUpserter upserter;
 
@@ -57,7 +60,7 @@ class SettlementLineUpserterTest {
     void setUp() {
         // 미러 기록기는 비워 둔다 — 이 테스트의 관심사는 중립 라인이다(미러 없음도 정상 동작).
         upserter = new SettlementLineUpserter(settlementLineRepository, productListingOptionRepository,
-                orderLineRepository, List.of());
+                orderLineRepository, coupangOrderLineRepository, List.of());
         given(settlementLineRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
     }
 
@@ -132,6 +135,57 @@ class SettlementLineUpserterTest {
         assertThat(result.matched()).isZero();
     }
 
+    /**
+     * 🔴 <b>주문번호 + 마켓 옵션번호로 바로 붙는다</b>(FEATURE_2609_34) — 등록된 채널 옵션이 없어도.
+     * 예전에는 등록을 거쳐야만 붙어서 아직 등록하지 않은 상품의 판매가 전부 미분류로 남았다
+     * (prod 실측 2.8% → 61.3%).
+     */
+    @Test
+    void matchesOrderDirectlyByOrderAndOptionNumber() {
+        OrderLine line = OrderLine.builder().id(500L).build();
+        given(settlementLineRepository
+                .findByMarketplaceAccount_IdAndExternalOrderIdAndPlatformOptionIdAndSaleTypeAndRecognitionDate(
+                        anyLong(), anyString(), anyString(), any(), any()))
+                .willReturn(Optional.empty());
+        given(coupangOrderLineRepository.findByMarketplaceAccount_IdAndOrderIdRawAndVendorItemId(7L, "O1", "V10"))
+                .willReturn(List.of(CoupangOrderLine.builder().orderLine(line).build()));
+
+        SettlementLineUpserter.UpsertResult result =
+                upserter.upsertPage(account, List.of(draft("10000")), new HashSet<>());
+
+        ArgumentCaptor<SettlementLine> saved = ArgumentCaptor.forClass(SettlementLine.class);
+        verify(settlementLineRepository).save(saved.capture());
+        assertThat(saved.getValue().getOrderLine()).isSameAs(line);
+        assertThat(result.matched()).isEqualTo(1);
+        // 등록 목록을 뒤질 필요가 없다.
+        verify(orderLineRepository, never()).findByExternalOrderIdAndListingOptionId(anyString(), anyLong());
+    }
+
+    /**
+     * 같은 주문·같은 옵션이 여러 박스에 걸쳐 있으면(합포장 분할) <b>하나를 고른다</b> — 어느 쪽이든 상품은
+     * 같고 금액은 정산 쪽 값을 쓴다. 버리면 그 판매가 영영 미분류로 남는다.
+     */
+    @Test
+    void splitBoxesPickOneOrderLineInsteadOfGivingUp() {
+        given(settlementLineRepository
+                .findByMarketplaceAccount_IdAndExternalOrderIdAndPlatformOptionIdAndSaleTypeAndRecognitionDate(
+                        anyLong(), anyString(), anyString(), any(), any()))
+                .willReturn(Optional.empty());
+        given(coupangOrderLineRepository.findByMarketplaceAccount_IdAndOrderIdRawAndVendorItemId(7L, "O1", "V10"))
+                .willReturn(List.of(
+                        CoupangOrderLine.builder().orderLine(OrderLine.builder().id(9L).build()).build(),
+                        CoupangOrderLine.builder().orderLine(OrderLine.builder().id(4L).build()).build()));
+
+        SettlementLineUpserter.UpsertResult result =
+                upserter.upsertPage(account, List.of(draft("10000")), new HashSet<>());
+
+        ArgumentCaptor<SettlementLine> saved = ArgumentCaptor.forClass(SettlementLine.class);
+        verify(settlementLineRepository).save(saved.capture());
+        assertThat(saved.getValue().getOrderLine().getId()).isEqualTo(4L);   // 항상 같은 것이 나온다
+        assertThat(result.matched()).isEqualTo(1);
+    }
+
+    /** 마켓 주문이 우리 DB 에 없을 때만 옛 경로(등록 채널 옵션 경유)로 내려간다. */
     @Test
     void matchesOrderLineThroughListingOption() {
         ProductListingOption option = ProductListingOption.builder().id(3L).build();
@@ -152,6 +206,7 @@ class SettlementLineUpserterTest {
         assertThat(result.matched()).isEqualTo(1);
     }
 
+    /** 옛 경로에서 후보가 여럿이면 그대로 미분류다 — 그쪽은 옵션이 같다는 보장이 없다. */
     @Test
     void ambiguousOrderLineIsLeftUnmatched() {
         ProductListingOption option = ProductListingOption.builder().id(3L).build();

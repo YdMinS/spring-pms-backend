@@ -2,9 +2,11 @@ package com.pms.service.settlement;
 
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderLine;
+import com.pms.domain.CoupangOrderLine;
 import com.pms.domain.Platform;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.SettlementLine;
+import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.SettlementLineRepository;
@@ -13,9 +15,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -38,15 +42,18 @@ public class SettlementLineUpserter {
     private final SettlementLineRepository settlementLineRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
     private final OrderLineRepository orderLineRepository;
+    private final CoupangOrderLineRepository coupangOrderLineRepository;
     private final Map<Platform, SettlementMirrorWriter> mirrorWriters = new EnumMap<>(Platform.class);
 
     public SettlementLineUpserter(SettlementLineRepository settlementLineRepository,
                                   ProductListingOptionRepository productListingOptionRepository,
                                   OrderLineRepository orderLineRepository,
+                                  CoupangOrderLineRepository coupangOrderLineRepository,
                                   List<SettlementMirrorWriter> mirrorWriters) {
         this.settlementLineRepository = settlementLineRepository;
         this.productListingOptionRepository = productListingOptionRepository;
         this.orderLineRepository = orderLineRepository;
+        this.coupangOrderLineRepository = coupangOrderLineRepository;
         mirrorWriters.forEach(writer -> this.mirrorWriters.put(writer.platform(), writer));
     }
 
@@ -98,11 +105,12 @@ public class SettlementLineUpserter {
                         draft.saleType(), draft.recognitionDate());
 
         if (found.isEmpty()) {
-            ProductListingOption option = matchOption(draft.platformOptionId());
+            OrderLine orderLine = matchOrderLine(account, draft);
+            ProductListingOption option = matchOption(draft.platformOptionId(), orderLine);
             return settlementLineRepository.save(SettlementLine.builder()
                     .marketplaceAccount(account)
                     .productListingOption(option)
-                    .orderLine(matchOrderLine(draft.externalOrderId(), option))
+                    .orderLine(orderLine)
                     .externalOrderId(draft.externalOrderId())
                     .platformOptionId(draft.platformOptionId())
                     .saleType(draft.saleType())
@@ -124,12 +132,12 @@ public class SettlementLineUpserter {
         // ⚠️ orderLine/option 은 "비어 있을 때만" 채운다 — 이미 붙은 매핑을 재조회가 밀어내면
         //    WING 수동 수정으로 깨진 매칭이 멀쩡한 값을 덮는다([[project_wing_edit_desync]]).
         SettlementLine existing = found.get();
-        ProductListingOption option = existing.getProductListingOption() != null
-                ? existing.getProductListingOption()
-                : matchOption(draft.platformOptionId());
         OrderLine orderLine = existing.getOrderLine() != null
                 ? existing.getOrderLine()
-                : matchOrderLine(draft.externalOrderId(), option);
+                : matchOrderLine(account, draft);
+        ProductListingOption option = existing.getProductListingOption() != null
+                ? existing.getProductListingOption()
+                : matchOption(draft.platformOptionId(), orderLine);
 
         return settlementLineRepository.save(existing.toBuilder()
                 .productListingOption(option)
@@ -150,30 +158,60 @@ public class SettlementLineUpserter {
      * 채널 옵션 매칭 (D7): {@code platformOptionId}(= 쿠팡 vendorItemId) →
      * {@link ProductListingOption#getPlatformOptionId()}. 2609_22·2609_23 이 쓰는 경로 그대로다 —
      * 새 조회 방식을 만들지 말 것.
+     *
+     * <p>못 찾으면 <b>붙은 주문에 달린 옵션</b>으로 대신한다 — 주문이 이미 그 옵션을 알고 있으면
+     * 등록 목록을 다시 뒤질 이유가 없다.
      */
-    private ProductListingOption matchOption(String platformOptionId) {
-        return productListingOptionRepository.findByPlatformOptionId(platformOptionId).orElse(null);
+    private ProductListingOption matchOption(String platformOptionId, OrderLine orderLine) {
+        ProductListingOption option =
+                productListingOptionRepository.findByPlatformOptionId(platformOptionId).orElse(null);
+        if (option != null) {
+            return option;
+        }
+        return orderLine == null ? null : orderLine.getProductListingOption();
     }
 
     /**
      * 주문 라인 매칭 (D7). 실패는 예외가 아니라 {@code UNMATCHED} 다 — 라인마다 WARN 을 찍으면 로그가
      * 못 쓰게 되므로 여기서는 조용히 null 을 돌려주고, 호출자가 매칭률을 한 줄로 남긴다.
      */
-    private OrderLine matchOrderLine(String externalOrderId, ProductListingOption option) {
+    private OrderLine matchOrderLine(MarketplaceAccount account, SettlementLineDraft draft) {
+        // 🔴 <b>주문번호 + 마켓 옵션번호로 바로 붙인다</b>(FEATURE_2609_34). 예전에는 등록된 채널 옵션을
+        //    거쳐야만 붙어서, 아직 등록하지 않은 상품의 판매는 전부 미분류로 남았다 — prod 실측으로
+        //    1,096건 중 31건(2.8%)만 붙었고, 이 경로로는 672건(61.3%)이 붙는다. 등록 여부와 무관한
+        //    식별자(마켓이 준 주문번호·옵션번호)로 맞추는 것이 원래 맞는 축이다.
+        List<CoupangOrderLine> mirrored = coupangOrderLineRepository
+                .findByMarketplaceAccount_IdAndOrderIdRawAndVendorItemId(
+                        account.getId(), draft.externalOrderId(), draft.platformOptionId());
+        OrderLine direct = pickOne(mirrored);
+        if (direct != null) {
+            return direct;
+        }
+
+        // 폴백: 등록된 채널 옵션 경유(옛 경로). 마켓 주문이 우리 DB 에 없을 때만 여기까지 온다.
+        ProductListingOption option =
+                productListingOptionRepository.findByPlatformOptionId(draft.platformOptionId()).orElse(null);
         if (option == null) {
             return null;
         }
-        List<OrderLine> candidates =
-                orderLineRepository.findByExternalOrderIdAndListingOptionId(externalOrderId, option.getId());
-        if (candidates.size() == 1) {
-            return candidates.get(0);
-        }
-        if (candidates.size() > 1) {
-            // 합포장 분할 등으로 후보가 여러 개 — 틀린 라인에 붙이면 상품별 수익성이 오염된다.
-            log.debug("Ambiguous order line for settlement: orderId={} optionId={} matches={}",
-                    externalOrderId, option.getId(), candidates.size());
-        }
-        return null;
+        List<OrderLine> candidates = orderLineRepository
+                .findByExternalOrderIdAndListingOptionId(draft.externalOrderId(), option.getId());
+        return candidates.size() == 1 ? candidates.get(0) : null;
+    }
+
+    /**
+     * 후보 중 하나를 고른다.
+     *
+     * <p>⚠️ 후보가 여럿인 것은 합포장 분할로 <b>같은 주문·같은 옵션</b>이 여러 박스에 걸친 경우다 —
+     * 어느 쪽을 골라도 상품은 같고, 금액은 정산 쪽 값을 쓰므로 오염되지 않는다. 매번 같은 것이 나오도록
+     * id 가 작은 것을 고른다(고르지 않고 버리면 그 판매가 영영 미분류로 남는다).
+     */
+    private static OrderLine pickOne(List<CoupangOrderLine> mirrored) {
+        return mirrored.stream()
+                .map(CoupangOrderLine::getOrderLine)
+                .filter(Objects::nonNull)
+                .min(Comparator.comparing(OrderLine::getId))
+                .orElse(null);
     }
 
     /**
