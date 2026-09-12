@@ -1,0 +1,37 @@
+# Package box dimensions (FEATURE_2609_38 / PLAN D1 · D2 · D3 · D4 · D9).
+#   package.width_cm / length_cm / height_cm = the physical size of the SHIPPING BOX itself.
+# 🔴 Not to be confused with products.package_width / package_length / package_height (VARCHAR, e.g. "160mm"):
+#    those describe the PRODUCT's packing spec sent to Coupang. Different axis — never merge the two.
+# 🔴 Existing rows are backfilled with 0 and 0,0,0 means UNSET (D4): the real measurements of boxes created
+#    before this feature are unknown and cannot be invented. The request DTO rejects 0 (D5), so a box gets
+#    its real size the next time someone edits it. Never treat 0 as "a zero-sized box" in a calculation (D9).
+# 🔴 Unit is CENTIMETRES and the column name enforces it (D2): there is deliberately no unit column, so no
+#    consumer ever needs a mm/cm conversion branch.
+# ⚠️ addColumn (nullable) -> update (0) -> addNotNullConstraint, the same 3 steps as 002-tenant-col-package:
+#    going straight to NOT NULL fails on dev/prod where rows already exist.
+databaseChangeLog:
+
+  - changeSet:
+      id: 088-package-size
+      author: oclyx
+      comment: "FEATURE_2609_38: package width/length/height in cm (existing rows backfilled to 0 = unset)."
+      changes:
+        - addColumn:
+            tableName: package
+            columns:
+              - column: { name: width_cm, type: "DECIMAL(5,1)" }
+              - column: { name: length_cm, type: "DECIMAL(5,1)" }
+              - column: { name: height_cm, type: "DECIMAL(5,1)" }
+        - update:
+            tableName: package
+            columns:
+              - column: { name: width_cm, valueNumeric: 0 }
+              - column: { name: length_cm, valueNumeric: 0 }
+              - column: { name: height_cm, valueNumeric: 0 }
+        - addNotNullConstraint: { tableName: package, columnName: width_cm, columnDataType: "DECIMAL(5,1)" }
+        - addNotNullConstraint: { tableName: package, columnName: length_cm, columnDataType: "DECIMAL(5,1)" }
+        - addNotNullConstraint: { tableName: package, columnName: height_cm, columnDataType: "DECIMAL(5,1)" }
+      rollback:
+        - dropColumn: { tableName: package, columnName: width_cm }
+        - dropColumn: { tableName: package, columnName: length_cm }
+        - dropColumn: { tableName: package, columnName: height_cm }

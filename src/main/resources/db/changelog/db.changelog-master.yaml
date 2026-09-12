@@ -165,3 +165,5 @@ databaseChangeLog:
       file: db/changelog/changes/086-channel-fixed-cost.yaml
   - include:
       file: db/changelog/changes/087-carrier-catalog.yaml
+  - include:
+      file: db/changelog/changes/088-package-size.yaml

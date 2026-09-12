@@ -42,6 +42,9 @@ public class PackageServiceTest {
                 .cost(new BigDecimal("2.50"))
                 .effectiveDate(LocalDate.now())
                 .isDefault(false)
+                .widthCm(new BigDecimal("22.0"))
+                .lengthCm(new BigDecimal("19.0"))
+                .heightCm(new BigDecimal("9.0"))
                 .build();
     }
 
@@ -125,6 +128,74 @@ public class PackageServiceTest {
 
         verify(packageRepository, times(1)).save(any());
         verify(packageRepository, never()).findByIsDefaultTrue();
+    }
+
+    @Test
+    public void testCreatePackagePersistsSize() {
+        Package newPackage = Package.builder()
+                .id(3L)
+                .type("S")
+                .cost(new BigDecimal("2.50"))
+                .effectiveDate(LocalDate.now())
+                .isDefault(false)
+                .widthCm(new BigDecimal("22.0"))
+                .lengthCm(new BigDecimal("19.0"))
+                .heightCm(new BigDecimal("9.0"))
+                .build();
+        given(packageRepository.save(any())).willReturn(newPackage);
+
+        PackageResponse response = packageService.createPackage(testRequest);
+
+        ArgumentCaptor<Package> captor = ArgumentCaptor.forClass(Package.class);
+        verify(packageRepository).save(captor.capture());
+        assertThat(captor.getValue().getWidthCm()).isEqualByComparingTo(new BigDecimal("22.0"));
+        assertThat(captor.getValue().getLengthCm()).isEqualByComparingTo(new BigDecimal("19.0"));
+        assertThat(captor.getValue().getHeightCm()).isEqualByComparingTo(new BigDecimal("9.0"));
+
+        assertThat(response.getWidthCm()).isEqualByComparingTo(new BigDecimal("22.0"));
+        assertThat(response.getLengthCm()).isEqualByComparingTo(new BigDecimal("19.0"));
+        assertThat(response.getHeightCm()).isEqualByComparingTo(new BigDecimal("9.0"));
+    }
+
+    /**
+     * Regression lock for PLAN 2609_38 D7: demoting the old default must keep its dimensions.
+     * A hand-copied Package.builder() rebuild resets them to 0 without any error.
+     */
+    @Test
+    public void testCreateDefaultPackageKeepsDemotedPackageSize() {
+        PackageRequest request = PackageRequest.builder()
+                .type("M")
+                .cost(new BigDecimal("3.50"))
+                .effectiveDate(LocalDate.now())
+                .isDefault(true)
+                .widthCm(new BigDecimal("27.0"))
+                .lengthCm(new BigDecimal("18.0"))
+                .heightCm(new BigDecimal("15.0"))
+                .build();
+
+        Package existingDefault = Package.builder()
+                .id(1L)
+                .type("L")
+                .cost(new BigDecimal("2.50"))
+                .effectiveDate(LocalDate.now())
+                .isDefault(true)
+                .widthCm(new BigDecimal("30.0"))
+                .lengthCm(new BigDecimal("20.0"))
+                .heightCm(new BigDecimal("10.0"))
+                .build();
+
+        given(packageRepository.findByIsDefaultTrue()).willReturn(Optional.of(existingDefault));
+        given(packageRepository.save(any())).willReturn(existingDefault);
+
+        packageService.createPackage(request);
+
+        ArgumentCaptor<Package> captor = ArgumentCaptor.forClass(Package.class);
+        verify(packageRepository, times(2)).save(captor.capture());
+        Package demoted = captor.getAllValues().get(0);
+        assertThat(demoted.getIsDefault()).isFalse();
+        assertThat(demoted.getWidthCm()).isEqualByComparingTo(new BigDecimal("30.0"));
+        assertThat(demoted.getLengthCm()).isEqualByComparingTo(new BigDecimal("20.0"));
+        assertThat(demoted.getHeightCm()).isEqualByComparingTo(new BigDecimal("10.0"));
     }
 
     // getPackage tests
