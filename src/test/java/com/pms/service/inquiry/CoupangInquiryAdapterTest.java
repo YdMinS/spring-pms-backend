@@ -21,6 +21,7 @@ import org.mockito.quality.Strictness;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
 
@@ -90,8 +91,20 @@ class CoupangInquiryAdapterTest {
         List<SyncWindow> slices = adapter.slices(account);
 
         assertThat(slices).hasSize(1);
-        assertThat(slices.get(0).from()).isEqualTo(today.minusDays(7));
+        // 양끝 포함 7일 = from + 6. from + 7 이면 8일이라 쿠팡이 창을 거절한다.
+        assertThat(slices.get(0).from()).isEqualTo(today.minusDays(6));
         assertThat(slices.get(0).to()).isEqualTo(today);
+    }
+
+    @Test
+    void slices_neverSpanMoreThanSevenDaysInclusive() {
+        // 앵커가 멀어도(D9 상한까지) 슬라이스 하나하나는 쿠팡 상한 안에 있어야 한다.
+        givenOldestUnanswered(LocalDate.now(SyncWindow.KST).minusDays(400).atStartOfDay());
+
+        List<SyncWindow> slices = adapter.slices(account);
+
+        assertThat(slices).allSatisfy(slice ->
+                assertThat(ChronoUnit.DAYS.between(slice.from(), slice.to())).isLessThanOrEqualTo(6));
     }
 
     @Test
@@ -125,6 +138,8 @@ class CoupangInquiryAdapterTest {
                 contains("answeredType=ALL"), eq(account));
         verify(coupangApiClient, atLeastOnce()).get(contains("callCenterInquiries"),
                 contains("partnerCounselingStatus=NONE"), eq(account));
+        // vendorId 는 경로뿐 아니라 쿼리에도 실려야 한다 — 빠지면 두 API 모두 목록을 돌려주지 않는다.
+        verify(coupangApiClient, times(4)).get(anyString(), contains("vendorId=A0001"), eq(account));
     }
 
     @Test
