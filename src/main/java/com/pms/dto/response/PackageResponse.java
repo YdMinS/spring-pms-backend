@@ -32,4 +32,14 @@ public class PackageResponse {
 
     @Schema(description = "Is default package type? (Only one can be true)", example = "false")
     private Boolean isDefault;
+
+    // Box dimensions in cm (PLAN 2609_38 D1 · D2). 0,0,0 = unset -> screens render "미지정" (D8).
+    @Schema(description = "Box width in cm (0 = unset)", example = "22.0", type = "number")
+    private BigDecimal widthCm;
+
+    @Schema(description = "Box length in cm (0 = unset)", example = "19.0", type = "number")
+    private BigDecimal lengthCm;
+
+    @Schema(description = "Box height in cm (0 = unset)", example = "9.0", type = "number")
+    private BigDecimal heightCm;
 }

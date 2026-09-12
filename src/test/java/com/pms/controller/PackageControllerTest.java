@@ -21,7 +21,10 @@ public class PackageControllerTest extends BaseIntegrationTest {
                         "type", "S",
                         "cost", new BigDecimal("2.50"),
                         "effectiveDate", LocalDate.now().toString(),
-                        "isDefault", false
+                        "isDefault", false,
+                        "widthCm", new BigDecimal("22.0"),
+                        "lengthCm", new BigDecimal("19.0"),
+                        "heightCm", new BigDecimal("9.0")
                 )
         );
 
@@ -40,7 +43,10 @@ public class PackageControllerTest extends BaseIntegrationTest {
                         "type", "S",
                         "cost", new BigDecimal("2.50"),
                         "effectiveDate", LocalDate.now().toString(),
-                        "isDefault", false
+                        "isDefault", false,
+                        "widthCm", new BigDecimal("22.0"),
+                        "lengthCm", new BigDecimal("19.0"),
+                        "heightCm", new BigDecimal("9.0")
                 )
         );
 
@@ -66,6 +72,29 @@ public class PackageControllerTest extends BaseIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(requestJson))
                 .andExpect(status().isBadRequest());
+    }
+
+    /** PLAN 2609_38 D5: 0 is the backfill "unset" marker, so it must never be accepted as input. */
+    @Test
+    public void testCreatePackageZeroSizeReturnsBadRequest() throws Exception {
+        String requestJson = objectMapper.writeValueAsString(
+                Map.of(
+                        "type", "S",
+                        "cost", new BigDecimal("2.50"),
+                        "effectiveDate", LocalDate.now().toString(),
+                        "isDefault", false,
+                        "widthCm", BigDecimal.ZERO,
+                        "lengthCm", new BigDecimal("19.0"),
+                        "heightCm", new BigDecimal("9.0")
+                )
+        );
+
+        mockMvc.perform(post("/api/admin/package")
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestJson))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
     }
 
     // GET /api/admin/package tests
@@ -109,7 +138,10 @@ public class PackageControllerTest extends BaseIntegrationTest {
                         "type", "M",
                         "cost", new BigDecimal("3.50"),
                         "effectiveDate", LocalDate.now().toString(),
-                        "isDefault", false
+                        "isDefault", false,
+                        "widthCm", new BigDecimal("27.0"),
+                        "lengthCm", new BigDecimal("18.0"),
+                        "heightCm", new BigDecimal("15.0")
                 )
         );
 
@@ -128,7 +160,10 @@ public class PackageControllerTest extends BaseIntegrationTest {
                         "type", "S",
                         "cost", new BigDecimal("2.50"),
                         "effectiveDate", LocalDate.now().toString(),
-                        "isDefault", true
+                        "isDefault", true,
+                        "widthCm", new BigDecimal("22.0"),
+                        "lengthCm", new BigDecimal("19.0"),
+                        "heightCm", new BigDecimal("9.0")
                 )
         );
 
@@ -152,7 +187,10 @@ public class PackageControllerTest extends BaseIntegrationTest {
                         "type", "M",
                         "cost", new BigDecimal("3.50"),
                         "effectiveDate", LocalDate.now().toString(),
-                        "isDefault", false
+                        "isDefault", false,
+                        "widthCm", new BigDecimal("27.0"),
+                        "lengthCm", new BigDecimal("18.0"),
+                        "heightCm", new BigDecimal("15.0")
                 )
         );
 

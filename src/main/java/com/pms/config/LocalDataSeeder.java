@@ -248,9 +248,10 @@ public class LocalDataSeeder implements CommandLineRunner {
         if (packageRepository.count() > 0) {
             return;
         }
-        packageRepository.save(localPackage("소박스", "300", false));
-        packageRepository.save(localPackage("중박스", "500", true));
-        packageRepository.save(localPackage("대박스", "800", false));
+        // 치수는 우체국 표준 규격(cm) 실측값 — 0,0,0 은 「미지정」이므로 시드에 쓰지 않는다(PLAN 2609_38 D4).
+        packageRepository.save(localPackage("소박스", "300", false, "22.0", "19.0", "9.0"));
+        packageRepository.save(localPackage("중박스", "500", true, "27.0", "18.0", "15.0"));
+        packageRepository.save(localPackage("대박스", "800", false, "34.0", "25.0", "21.0"));
         log.info("[LOCAL-SEED] 3 packages seeded (중박스 default)");
     }
 
@@ -297,12 +298,16 @@ public class LocalDataSeeder implements CommandLineRunner {
         log.info("[LOCAL-SEED] 2 margin policies seeded (seller × COUPANG 15% / NAVER 12%)");
     }
 
-    private Package localPackage(String type, String cost, boolean isDefault) {
+    private Package localPackage(String type, String cost, boolean isDefault,
+                                 String widthCm, String lengthCm, String heightCm) {
         return Package.builder()
                 .type(type)
                 .cost(new BigDecimal(cost))
                 .effectiveDate(LocalDate.now())
                 .isDefault(isDefault)
+                .widthCm(new BigDecimal(widthCm))
+                .lengthCm(new BigDecimal(lengthCm))
+                .heightCm(new BigDecimal(heightCm))
                 .build();
     }
 

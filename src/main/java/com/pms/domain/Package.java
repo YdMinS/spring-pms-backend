@@ -16,6 +16,7 @@ import java.time.LocalDate;
  * - effectiveDate: Date from which package is valid
  * - isDefault: Only ONE package can have isDefault=true globally.
  *   When creating/updating with isDefault=true, existing default is set to false.
+ * - widthCm/lengthCm/heightCm: box dimensions in cm, 0 = unset
  *
  * @see com.pms.service.PackageService for business operations
  * @see com.pms.dto.request.PackageRequest for input validation
@@ -73,4 +74,24 @@ public class Package {
      */
     @Column(name = "is_default", nullable = false)
     private Boolean isDefault;
+
+    /**
+     * Box width in centimetres (PLAN 2609_38 D1 · D2).
+     * 0 means UNSET: rows created before this feature were backfilled with 0 (D4), and the
+     * request DTO rejects 0 so the value is filled in the next time the box is edited (D5).
+     * ⚠️ Display only — never feed this into pricing or channel payloads (D9).
+     */
+    @Builder.Default
+    @Column(name = "width_cm", nullable = false, precision = 5, scale = 1)
+    private BigDecimal widthCm = BigDecimal.ZERO;
+
+    /** Box length in centimetres, 0 = unset (PLAN 2609_38 D1 · D4). */
+    @Builder.Default
+    @Column(name = "length_cm", nullable = false, precision = 5, scale = 1)
+    private BigDecimal lengthCm = BigDecimal.ZERO;
+
+    /** Box height in centimetres, 0 = unset (PLAN 2609_38 D1 · D4). */
+    @Builder.Default
+    @Column(name = "height_cm", nullable = false, precision = 5, scale = 1)
+    private BigDecimal heightCm = BigDecimal.ZERO;
 }
