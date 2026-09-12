@@ -34,14 +34,9 @@ public class PackageServiceImpl implements PackageService {
     public PackageResponse createPackage(PackageRequest request) {
         if (request.getIsDefault()) {
             packageRepository.findByIsDefaultTrue().ifPresent(existing -> {
-                Package updated = Package.builder()
-                    .id(existing.getId())
-                    .type(existing.getType())
-                    .cost(existing.getCost())
-                    .effectiveDate(existing.getEffectiveDate())
-                    .isDefault(false)
-                    .build();
-                packageRepository.save(updated);
+                // toBuilder(), never a hand-copied Package.builder() (PLAN 2609_38 D7): a hand copy
+                // silently drops every column it forgets — the box dimensions were its first victim.
+                packageRepository.save(existing.toBuilder().isDefault(false).build());
             });
         }
 
@@ -50,6 +45,9 @@ public class PackageServiceImpl implements PackageService {
             .cost(request.getCost())
             .effectiveDate(request.getEffectiveDate())
             .isDefault(request.getIsDefault())
+            .widthCm(request.getWidthCm())
+            .lengthCm(request.getLengthCm())
+            .heightCm(request.getHeightCm())
             .build();
 
         Package saved = packageRepository.save(pkg);
@@ -80,24 +78,21 @@ public class PackageServiceImpl implements PackageService {
         if (request.getIsDefault()) {
             packageRepository.findByIsDefaultTrue().ifPresent(existing -> {
                 if (!existing.getId().equals(id)) {
-                    Package updated = Package.builder()
-                        .id(existing.getId())
-                        .type(existing.getType())
-                        .cost(existing.getCost())
-                        .effectiveDate(existing.getEffectiveDate())
-                        .isDefault(false)
-                        .build();
-                    packageRepository.save(updated);
+                    // toBuilder() keeps the demoted box's dimensions (PLAN 2609_38 D7).
+                    packageRepository.save(existing.toBuilder().isDefault(false).build());
                 }
             });
         }
 
-        Package updated = Package.builder()
-            .id(pkg.getId())
+        // toBuilder() carries every untouched column forward; only the request fields are overwritten.
+        Package updated = pkg.toBuilder()
             .type(request.getType())
             .cost(request.getCost())
             .effectiveDate(request.getEffectiveDate())
             .isDefault(request.getIsDefault())
+            .widthCm(request.getWidthCm())
+            .lengthCm(request.getLengthCm())
+            .heightCm(request.getHeightCm())
             .build();
 
         Package saved = packageRepository.save(updated);
@@ -119,6 +114,9 @@ public class PackageServiceImpl implements PackageService {
             .cost(pkg.getCost())
             .effectiveDate(pkg.getEffectiveDate())
             .isDefault(pkg.getIsDefault())
+            .widthCm(pkg.getWidthCm())
+            .lengthCm(pkg.getLengthCm())
+            .heightCm(pkg.getHeightCm())
             .build();
     }
 }

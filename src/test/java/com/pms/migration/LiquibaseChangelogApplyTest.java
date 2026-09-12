@@ -700,6 +700,19 @@ class LiquibaseChangelogApplyTest {
     }
 
     @Test
+    void packageSizeColumnsApplied() {
+        // changeset 088: a successful count proves the three columns exist
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM package WHERE width_cm IS NULL OR length_cm IS NULL OR height_cm IS NULL",
+                Integer.class)).isZero();
+        // and NOT NULL is really on: an insert without the sizes must fail
+        assertThatThrownBy(() -> jdbcTemplate.execute(
+                "INSERT INTO package (tenant_id, type, cost, effective_date, is_default) "
+                + "VALUES (1, 'X', 100, '2026-01-01', false)"))
+                .isInstanceOf(DataAccessException.class);
+    }
+
+    @Test
     void tenantDimensionApplied() {
         // changeset 002: tenant table created + seeded with the default tenant (id=1).
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tenant", Integer.class)).isEqualTo(1);

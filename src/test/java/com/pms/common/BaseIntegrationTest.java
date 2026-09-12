@@ -130,6 +130,9 @@ public abstract class BaseIntegrationTest {
                 .cost(new BigDecimal("2.50"))
                 .effectiveDate(LocalDate.now())
                 .isDefault(true)
+                .widthCm(new BigDecimal("22.0"))
+                .lengthCm(new BigDecimal("19.0"))
+                .heightCm(new BigDecimal("9.0"))
                 .build();
         seededPackageId = packageRepository.saveAndFlush(pkg).getId();
     }
