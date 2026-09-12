@@ -21,6 +21,11 @@ import lombok.NoArgsConstructor;
  * image at an {@code anchor} corner/center, scaled to {@code scalePercent} of the base's short side
  * (contain-fit), inset by {@code marginPercent}, at {@code opacity}.</p>
  *
+ * <p><b>type</b> = {@code colorAdjust} (FEATURE_2609_35) — correct the base image's colors
+ * ({@code brightness}/{@code contrast}/{@code saturation}/{@code temperature}, each -100..100, 0 = no
+ * change). Geometry fields are ignored by {@code colorAdjust} and the color fields are ignored by
+ * {@code overlay}.</p>
+ *
  * <p>⚠️ Immutable (Builder only, no setters). Jackson (de)serializes through the Lombok builder so the
  * same rule holds for request bodies and the DB converter. Null geometry fields are normalized by the
  * engine (anchor → BOTTOM_RIGHT, opacity → 1.0, scalePercent → 20, marginPercent → 0).</p>
@@ -32,7 +37,7 @@ import lombok.NoArgsConstructor;
 @JsonDeserialize(builder = ImageOp.ImageOpBuilder.class)
 public class ImageOp {
 
-    /** v1 = {@code overlay}. An unknown type is skipped by the engine. */
+    /** {@code overlay} | {@code colorAdjust}. An unknown type is skipped by the engine. */
     private String type;
 
     /** overlay = {@link TemplateAsset#getStorageKey()} of the overlay image (loaded via {@code getBytes}). */
@@ -52,6 +57,30 @@ public class ImageOp {
 
     /** Edge margin as a percent of the base's short side. Null → 0. */
     private Integer marginPercent;
+
+    /**
+     * {@code colorAdjust} only (ignored by {@code overlay}). Brightness gain -100..100; null/0 = no change.
+     * -100 = black, +100 = 2×. Out-of-range values are clamped by the engine.
+     */
+    private Integer brightness;
+
+    /**
+     * {@code colorAdjust} only (ignored by {@code overlay}). Contrast around mid-grey (0.5), -100..100;
+     * null/0 = no change. -100 = flat mid-grey, +100 = 2×. Out-of-range values are clamped by the engine.
+     */
+    private Integer contrast;
+
+    /**
+     * {@code colorAdjust} only (ignored by {@code overlay}). Saturation -100..100; null/0 = no change.
+     * -100 = greyscale, +100 = 2×. Out-of-range values are clamped by the engine.
+     */
+    private Integer saturation;
+
+    /**
+     * {@code colorAdjust} only (ignored by {@code overlay}). Color temperature -100..100; null/0 = no change.
+     * Positive = warmer (R↑ B↓), negative = cooler (R↓ B↑), up to ±20% channel gain. Clamped by the engine.
+     */
+    private Integer temperature;
 
     @JsonPOJOBuilder(withPrefix = "")
     public static class ImageOpBuilder {

@@ -92,6 +92,18 @@ class ProcessingPresetServiceTest {
     }
 
     @Test
+    void create_colorAdjustOpWithoutAssetKey_isAccepted() {
+        given(processingPresetRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+
+        // colorAdjust has no required field (assetStorageKey is overlay-only) → must not 400.
+        ProcessingPresetRequest request = ProcessingPresetRequest.builder().name("C")
+                .operations(List.of(ImageOp.builder().type("colorAdjust").brightness(20).build())).build();
+        ProcessingPresetResponse response = service.create(request);
+
+        assertThat(response.getOperations()).extracting(ImageOp::getBrightness).containsExactly(20);
+    }
+
+    @Test
     void create_overlayMissingAssetKey_throws() {
         ProcessingPresetRequest request = ProcessingPresetRequest.builder()
                 .name("W").operations(List.of(ImageOp.builder().type("overlay").build())).build();
