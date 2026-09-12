@@ -46,8 +46,14 @@ public class CoupangInquiryAdapter implements InquirySyncAdapter {
     /** 페이징 무한루프 가드. {@code totalPages} 를 못 읽는 응답이 와도 여기서 멈춘다. */
     static final int MAX_PAGES = 20;
 
-    /** 🔴 쿠팡 상한이다 — 두 문의 API 모두 조회 간격이 7일을 넘으면 거절한다(PLAN §4). 넓힐 수 없다. */
-    static final int WINDOW_DAYS = 7;
+    /**
+     * 🔴 쿠팡 상한이다 — 두 문의 API 모두 조회 간격이 <b>7일(양끝 포함)</b>을 넘으면 거절한다(PLAN §4).
+     * 넓힐 수 없다.
+     *
+     * ⚠️ 그래서 한 슬라이스의 끝은 {@code from + 6} 이다. {@code from + 7} 은 양끝 포함 8일이라
+     * 매 회차 첫 슬라이스부터 거절당한다 — 반품철회 조회({@code WITHDRAW_MAX_RANGE_DAYS})와 같은 셈법이다.
+     */
+    static final int WINDOW_MAX_RANGE_DAYS = 6;
 
     /** ⚠️ 교환 클레임({@code yyyy-MM-dd'T'HH:mm:ss})과 다르다 — 문의 조회는 날짜까지다. */
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
@@ -110,9 +116,9 @@ public class CoupangInquiryAdapter implements InquirySyncAdapter {
      * 조회 슬라이스 (D8·D9·D10).
      *
      * <pre>
-     * anchor = min(lastInquirySyncAt, 가장 오래된 미답변 문의의 inquiredAt)   // 둘 다 null 이면 now − 7d
+     * anchor = min(lastInquirySyncAt, 가장 오래된 미답변 문의의 inquiredAt)   // 둘 다 null 이면 now − 6d
      * anchor = max(anchor, now − inquiryStaleDays)                          // D9 상한
-     * slices = [anchor, today] 를 7일 폭으로 분할, 최대 inquiryTrackingMaxSlices
+     * slices = [anchor, today] 를 7일(양끝 포함) 폭으로 분할, 최대 inquiryTrackingMaxSlices
      * </pre>
      *
      * 미답변 건을 앵커에 끌어들이므로 별도 추적 배치 없이 "우리가 아직 답 안 한 건" 이 창 안에 계속 남는다.
@@ -130,7 +136,7 @@ public class CoupangInquiryAdapter implements InquirySyncAdapter {
         List<SyncWindow> slices = new ArrayList<>();
         LocalDate from = anchor.isAfter(today) ? today : anchor;
         while (slices.size() < maxSlices) {
-            LocalDate to = from.plusDays(WINDOW_DAYS);
+            LocalDate to = from.plusDays(WINDOW_MAX_RANGE_DAYS);
             if (to.isAfter(today)) {
                 to = today;
             }
@@ -162,7 +168,7 @@ public class CoupangInquiryAdapter implements InquirySyncAdapter {
 
         LocalDate anchor = min(lastSync, oldestUnanswered);
         if (anchor == null) {
-            anchor = today.minusDays(WINDOW_DAYS);          // 첫 실행 = 최근 7일
+            anchor = today.minusDays(WINDOW_MAX_RANGE_DAYS);   // 첫 실행 = 최근 7일(양끝 포함)
         }
         LocalDate floor = today.minusDays(coupangProperties.getInquiryStaleDays());
         return anchor.isBefore(floor) ? floor : anchor;     // D9 상한
@@ -181,13 +187,17 @@ public class CoupangInquiryAdapter implements InquirySyncAdapter {
     /**
      * 한 유형 × 한 슬라이스를 페이징하며 적재한다.
      *
-     * ⚠️ {@code answeredType}·{@code partnerCounselingStatus} 는 <b>필수</b>다 — 생략하면 400.
+     * ⚠️ {@code vendorId}(쿼리)·{@code answeredType}·{@code partnerCounselingStatus} 는 <b>필수</b>다 — 생략하면 400.
      * ⚠️ {@code pageSize} 상한이 유형마다 다르다(상품 50 / 고객센터 30). 하나로 통일하지 말 것.
      * ⚠️ 쿼리를 인코딩하지 말 것 — 서명 대상과 전송 문자열이 같아야 한다({@code CoupangApiClientImpl}).
      */
     private PageResult collect(MarketplaceAccount account, InquiryType type, SyncWindow window) {
-        String path = path(type).replace("{vendorId}", CoupangCredentials.of(account).getVendorId());
-        String baseQuery = requiredFilter(type)
+        String vendorId = CoupangCredentials.of(account).getVendorId();
+        String path = path(type).replace("{vendorId}", vendorId);
+        // ⚠️ vendorId 는 경로에 이미 들어가 있어도 쿼리에 또 실어야 한다 — 두 문의 API 모두 쿼리
+        //    파라미터로도 필수다(쿠팡 요청 예시가 양쪽에 같은 값을 싣는다). 빠지면 목록이 오지 않는다.
+        String baseQuery = "vendorId=" + vendorId
+                + "&" + requiredFilter(type)
                 + "&inquiryStartAt=" + window.from().format(DATE)
                 + "&inquiryEndAt=" + window.to().format(DATE)
                 + "&pageSize=" + pageSize(type);
