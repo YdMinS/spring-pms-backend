@@ -660,6 +660,45 @@ class LiquibaseChangelogApplyTest {
                         + "'UK_MAFIXEDCOST_ACCOUNT_ITEM')", Integer.class)).isEqualTo(2);
     }
 
+    /**
+     * changeset 087: 택배사 코드 카탈로그 + 쿠팡 시드 (FEATURE_2609_37 / PLAN D1 · D10).
+     *
+     * <p>🔴 시드가 실제로 적재됐는지 확인하는 <b>유일한 자리</b>다(D12) — 다른 테스트는 Liquibase OFF 라
+     * 카탈로그가 비어 있다. 표가 비면 전 건 400 이 나므로 행 수를 못 박는다.
+     * <p>🔴 {@code tenant_id}·감사컬럼이 <b>없어야</b> 한다(D2) — 엔티티가 BaseEntity 를 상속하지 않아
+     * 컬럼이 생기면 {@code ddl-auto: validate} 가 dev 부팅을 죽인다.
+     */
+    @Test
+    void carrierCatalogApplied() {
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM carrier_catalog WHERE platform = 'COUPANG'", Integer.class))
+                .isEqualTo(198);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT name FROM carrier_catalog WHERE platform='COUPANG' AND code='CJGLS'", String.class))
+                .isEqualTo("CJ대한통운");
+
+        // display_order: 큐레이션 17개가 10~170, 나머지는 1000 이상 (D10-1).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM carrier_catalog WHERE platform='COUPANG' AND display_order <= 170",
+                Integer.class)).isEqualTo(17);
+
+        // 롯데 두 코드는 둘 다 살아 있어야 한다 (계정마다 매칭되는 쪽이 다르다).
+        assertThat(jdbcTemplate.queryForList(
+                "SELECT code FROM carrier_catalog WHERE platform='COUPANG' AND code IN ('HYUNDAI','LOTTEGLOBAL')",
+                String.class)).containsExactlyInAnyOrder("HYUNDAI", "LOTTEGLOBAL");
+
+        // tenant 없는 lookup — tenant_id / 감사컬럼이 없어야 한다.
+        assertThat(jdbcTemplate.queryForList(
+                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'CARRIER_CATALOG'",
+                String.class))
+                .containsExactlyInAnyOrder("ID", "PLATFORM", "CODE", "NAME", "DISPLAY_ORDER");
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
+                        + "WHERE CONSTRAINT_NAME = 'UQ_CARRIER_CATALOG_PLATFORM_CODE'", Integer.class))
+                .isEqualTo(1);
+    }
+
     @Test
     void tenantDimensionApplied() {
         // changeset 002: tenant table created + seeded with the default tenant (id=1).

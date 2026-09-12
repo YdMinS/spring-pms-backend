@@ -17,7 +17,7 @@ import jakarta.validation.constraints.Size;
  * <p>택배사는 <b>마켓 코드 자체</b>({@code deliveryCompanyCode})로 받는다 — 단건 발송처리(2609_11 D2
  * 개정 2026-09-03)와 같은 계약이다. 쿠팡은 택배사 목록 API 가 없고 문서의 정적 코드표가 SSOT 라
  * 로컬 {@code carrier} 행이 없는 택배사가 대부분이며, 임의 문자열은
- * {@link com.pms.service.CoupangCourierCodes} 화이트리스트가 거른다.
+ * {@link com.pms.domain.CarrierCatalog} 화이트리스트가 거른다(PLAN 2609_37 D1).
  *
  * <p>record 사용 → accessor 자동 생성 (Lombok 금지).
  */

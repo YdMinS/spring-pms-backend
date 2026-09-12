@@ -1,8 +1,10 @@
 package com.pms.service;
 
 import com.pms.domain.Carrier;
+import com.pms.domain.CarrierCatalog;
 import com.pms.domain.Platform;
 import com.pms.domain.PlatformCarrierCode;
+import com.pms.repository.CarrierCatalogRepository;
 import com.pms.repository.CarrierRepository;
 import com.pms.repository.PlatformCarrierCodeRepository;
 import org.junit.jupiter.api.Test;
@@ -26,6 +28,9 @@ class CarrierCodeServiceImplTest {
 
     @Mock
     private PlatformCarrierCodeRepository platformCarrierCodeRepository;
+
+    @Mock
+    private CarrierCatalogRepository carrierCatalogRepository;
 
     @InjectMocks
     private CarrierCodeServiceImpl carrierCodeService;
@@ -62,31 +67,49 @@ class CarrierCodeServiceImplTest {
                 .isInstanceOf(IllegalStateException.class);
     }
 
+    // ---- findOptions: 카탈로그가 원천 (PLAN 2609_37 D1 · D4 · D13) ----
+
     @Test
-    void findOptions_쿠팡은_전체코드표에_등록택배사가_맨위() {
-        Carrier lotte = Carrier.builder().id(2L).name("롯데(로컬 표기)").isActive(true).build();
-        given(platformCarrierCodeRepository.findByPlatformAndCarrier_IsActiveTrueOrderByCarrier_IdAsc(Platform.COUPANG))
-                .willReturn(List.of(
-                        PlatformCarrierCode.builder().id(2L).carrier(lotte)
-                                .platform(Platform.COUPANG).deliveryCompanyCode("HYUNDAI").build()));
+    void findOptions_catalogOrderRegisteredFirst() {
+        givenCatalog(Platform.COUPANG,
+                catalog("CJGLS", "CJ대한통운", 10),
+                catalog("HANJIN", "한진택배", 20),
+                catalog("HYUNDAI", "롯데택배", 30));
+        givenRegistered(Platform.COUPANG, registered(Platform.COUPANG, 2L, "롯데택배", "HYUNDAI"));
 
         List<CarrierOption> options = carrierCodeService.findOptions(Platform.COUPANG);
 
-        // 등록분이 먼저 오고, 표시 이름은 쿠팡 표를 따른다(로컬 표기와 달라도 코드와 어긋나지 않게).
-        assertThat(options.get(0)).isEqualTo(new CarrierOption("HYUNDAI", "롯데택배", true));
-        // 나머지는 쿠팡이 받아주는 코드 전량 — 등록하지 않은 택배사도 고를 수 있어야 한다.
-        assertThat(options).hasSize(CoupangCourierCodes.all().size());
-        assertThat(options).contains(new CarrierOption("CJGLS", "CJ대한통운", false));
-        assertThat(options.stream().filter(o -> "HYUNDAI".equals(o.deliveryCompanyCode())).count()).isEqualTo(1);
+        // 등록분이 맨 앞, 나머지는 display_order 순.
+        assertThat(options).containsExactly(
+                new CarrierOption("HYUNDAI", "롯데택배", true),
+                new CarrierOption("CJGLS", "CJ대한통운", false),
+                new CarrierOption("HANJIN", "한진택배", false));
     }
 
     @Test
-    void findOptions_비쿠팡은_등록된것만() {
-        Carrier cj = Carrier.builder().id(1L).name("CJ대한통운").isActive(true).build();
-        given(platformCarrierCodeRepository.findByPlatformAndCarrier_IsActiveTrueOrderByCarrier_IdAsc(Platform.NAVER))
-                .willReturn(List.of(
-                        PlatformCarrierCode.builder().id(1L).carrier(cj)
-                                .platform(Platform.NAVER).deliveryCompanyCode("CJGLS").build()));
+    void findOptions_usesCatalogName() {
+        givenCatalog(Platform.COUPANG, catalog("HYUNDAI", "롯데택배", 30));
+        givenRegistered(Platform.COUPANG, registered(Platform.COUPANG, 2L, "롯데(로컬 표기)", "HYUNDAI"));
+
+        assertThat(carrierCodeService.findOptions(Platform.COUPANG))
+                .containsExactly(new CarrierOption("HYUNDAI", "롯데택배", true));
+    }
+
+    @Test
+    void findOptions_keepsRegisteredCodeMissingFromCatalog() {
+        givenCatalog(Platform.COUPANG, catalog("CJGLS", "CJ대한통운", 10));
+        givenRegistered(Platform.COUPANG, registered(Platform.COUPANG, 3L, "옛 택배사", "OLDCODE"));
+
+        // 카탈로그에 없는 등록 코드는 사라지지 않고 등록분 끝에 로컬 이름으로 남는다.
+        assertThat(carrierCodeService.findOptions(Platform.COUPANG)).containsExactly(
+                new CarrierOption("OLDCODE", "옛 택배사", true),
+                new CarrierOption("CJGLS", "CJ대한통운", false));
+    }
+
+    @Test
+    void findOptions_emptyCatalogFallsBackToRegistered() {
+        givenCatalog(Platform.NAVER);
+        givenRegistered(Platform.NAVER, registered(Platform.NAVER, 1L, "CJ대한통운", "CJGLS"));
 
         assertThat(carrierCodeService.findOptions(Platform.NAVER))
                 .containsExactly(new CarrierOption("CJGLS", "CJ대한통운", true));
@@ -94,31 +117,70 @@ class CarrierCodeServiceImplTest {
 
     @Test
     void findOptions_없으면_빈리스트() {
-        given(platformCarrierCodeRepository.findByPlatformAndCarrier_IsActiveTrueOrderByCarrier_IdAsc(Platform.NAVER))
-                .willReturn(List.of());
+        givenCatalog(Platform.NAVER);
+        givenRegistered(Platform.NAVER);
 
         assertThat(carrierCodeService.findOptions(Platform.NAVER)).isEmpty();
     }
 
+    // ---- validate: 카탈로그가 화이트리스트 ----
+
     @Test
-    void validateDeliveryCompanyCode_쿠팡코드표에_있으면_통과() {
+    void validate_allowsCatalogCode() {
+        given(carrierCatalogRepository.existsByPlatform(Platform.COUPANG)).willReturn(true);
+        given(carrierCatalogRepository.existsByPlatformAndCode(Platform.COUPANG, "KDEXP")).willReturn(true);
+
         assertThat(carrierCodeService.validateDeliveryCompanyCode("KDEXP", Platform.COUPANG)).isEqualTo("KDEXP");
     }
 
     @Test
-    void validateDeliveryCompanyCode_쿠팡코드표에_없으면_IllegalArgumentException() {
+    void validate_rejectsUnknownCode() {
+        given(carrierCatalogRepository.existsByPlatform(Platform.COUPANG)).willReturn(true);
+        given(carrierCatalogRepository.existsByPlatformAndCode(Platform.COUPANG, "NOPE")).willReturn(false);
+
         assertThatThrownBy(() -> carrierCodeService.validateDeliveryCompanyCode("NOPE", Platform.COUPANG))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("NOPE");
     }
 
     @Test
-    void validateDeliveryCompanyCode_비쿠팡은_등록된코드만() {
-        given(platformCarrierCodeRepository.findByPlatformAndCarrier_IsActiveTrueOrderByCarrier_IdAsc(Platform.NAVER))
-                .willReturn(List.of());
+    void validate_emptyCatalogAllowsOnlyRegistered() {
+        given(carrierCatalogRepository.existsByPlatform(Platform.NAVER)).willReturn(false);
+        givenRegistered(Platform.NAVER, registered(Platform.NAVER, 1L, "CJ대한통운", "CJGLS"));
 
-        assertThatThrownBy(() -> carrierCodeService.validateDeliveryCompanyCode("CJGLS", Platform.NAVER))
+        assertThat(carrierCodeService.validateDeliveryCompanyCode("CJGLS", Platform.NAVER)).isEqualTo("CJGLS");
+        assertThatThrownBy(() -> carrierCodeService.validateDeliveryCompanyCode("HANJIN", Platform.NAVER))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("NAVER");
+    }
+
+    @Test
+    void validate_빈값이면_IllegalArgumentException() {
+        assertThatThrownBy(() -> carrierCodeService.validateDeliveryCompanyCode("  ", Platform.COUPANG))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("택배사를 선택하세요");
+    }
+
+    // ---- fixtures ----
+
+    private void givenCatalog(Platform platform, CarrierCatalog... rows) {
+        given(carrierCatalogRepository.findByPlatformOrderByDisplayOrderAscCodeAsc(platform))
+                .willReturn(List.of(rows));
+    }
+
+    private void givenRegistered(Platform platform, PlatformCarrierCode... codes) {
+        given(platformCarrierCodeRepository.findByPlatformAndCarrier_IsActiveTrueOrderByCarrier_IdAsc(platform))
+                .willReturn(List.of(codes));
+    }
+
+    private CarrierCatalog catalog(String code, String name, int displayOrder) {
+        return CarrierCatalog.builder()
+                .platform(Platform.COUPANG).code(code).name(name).displayOrder(displayOrder).build();
+    }
+
+    private PlatformCarrierCode registered(Platform platform, Long carrierId, String carrierName, String code) {
+        Carrier carrier = Carrier.builder().id(carrierId).name(carrierName).isActive(true).build();
+        return PlatformCarrierCode.builder()
+                .id(carrierId).carrier(carrier).platform(platform).deliveryCompanyCode(code).build();
     }
 }

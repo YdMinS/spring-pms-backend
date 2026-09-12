@@ -163,3 +163,5 @@ databaseChangeLog:
       file: db/changelog/changes/085-settlement-payout-month-varchar.yaml
   - include:
       file: db/changelog/changes/086-channel-fixed-cost.yaml
+  - include:
+      file: db/changelog/changes/087-carrier-catalog.yaml
