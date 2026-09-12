@@ -1,0 +1,245 @@
+# Carrier code catalog (FEATURE_2609_37 / PLAN D1 · D2 · D3 · D4 · D5 · D10).
+#   carrier_catalog = every delivery company code a platform accepts (platform x code -> name).
+# 🔴 This table is now the ONLY source of carrier codes: the hardcoded Java courier-code table is
+#    deleted in the same change. The single-shipment dropdown and the whitelist that guards invoice upload
+#    both read it, so a missing row means a 400 for a code the platform would have accepted.
+# 🔴 Updates happen through a NEW CHANGESET ONLY (D3): there is no admin CRUD and no screen for this table.
+#    A retired code is DELETED by a later changeset — there is deliberately no is_active column (D5), which
+#    also keeps the MySQL BOOLEAN/BIT(1) trap (006/064) out of this table.
+# 🔴 No tenant_id (D2): "CJ대한통운 is CJGLS on Coupang" cannot differ per tenant, and the sibling lookups
+#    (carrier / platform_carrier_code, changeset 001) carry no tenant either. No audit columns — the entity
+#    does not extend BaseEntity, and ddl-auto: validate would crash on boot if the columns disagreed.
+# ⚠️ display_order is per platform (D4): the 17 rows the web UI used to pin to the top get 10..170 (that
+#    curated order), every remaining row gets 1000+ in Coupang's own document order. Names are copied
+#    VERBATIM from the document table (D10) — the "name (code)" label seen on screen is built by the
+#    frontend (D14), so never bake a code into name here.
+# ⚠️ HYUNDAI (롯데택배) and LOTTEGLOBAL (롯데글로벌) must BOTH stay: which one a Coupang account matches
+#    differs per account (verified on a live account 2026-08-30); dropping either 400s the channels stored
+#    with that code.
+databaseChangeLog:
+
+  - changeSet:
+      id: 087-carrier-catalog
+      author: oclyx
+      comment: "FEATURE_2609_37: carrier_catalog table + Coupang courier code seed (198 rows)."
+      changes:
+
+        # ---- 1. the catalog itself (no tenant_id, no is_active, no audit columns) ----
+        - createTable:
+            tableName: carrier_catalog
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: platform, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: code, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: name, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: display_order, type: INT, constraints: { nullable: false } }
+        - addUniqueConstraint:
+            constraintName: uq_carrier_catalog_platform_code
+            tableName: carrier_catalog
+            columnNames: "platform, code"
+
+        # ---- 2. Coupang seed: the document table verbatim, in document order (D10 · D10-1) ----
+        - sql:
+            sql: >
+              INSERT INTO carrier_catalog (platform, code, name, display_order) VALUES
+              ('COUPANG', 'HYUNDAI', '롯데택배', 30),
+              ('COUPANG', 'KGB', '로젠택배', 50),
+              ('COUPANG', 'EPOST', '우체국', 60),
+              ('COUPANG', 'HANJIN', '한진택배', 20),
+              ('COUPANG', 'CJGLS', 'CJ대한통운', 10),
+              ('COUPANG', 'KOREX', '대한통운[합병]', 1000),
+              ('COUPANG', 'KDEXP', '경동택배', 70),
+              ('COUPANG', 'DIRECT', '업체직송', 1010),
+              ('COUPANG', 'ILYANG', '일양택배', 80),
+              ('COUPANG', 'CHUNIL', '천일특송', 90),
+              ('COUPANG', 'AJOU', '아주택배', 150),
+              ('COUPANG', 'CSLOGIS', 'SC로지스', 140),
+              ('COUPANG', 'DAESIN', '대신택배', 100),
+              ('COUPANG', 'CVS', 'CVS택배', 110),
+              ('COUPANG', 'HDEXP', '합동택배', 1020),
+              ('COUPANG', 'DHL', 'DHL', 1030),
+              ('COUPANG', 'UPS', 'UPS', 1040),
+              ('COUPANG', 'FEDEX', 'FEDEX', 1050),
+              ('COUPANG', 'REGISTPOST', '우편등기', 1060),
+              ('COUPANG', 'EMS', '우체국 EMS', 170),
+              ('COUPANG', 'TNT', 'TNT', 1070),
+              ('COUPANG', 'USPS', 'USPS', 1080),
+              ('COUPANG', 'IPARCEL', 'i-parcel', 1090),
+              ('COUPANG', 'GSMNTON', 'GSM NtoN', 1100),
+              ('COUPANG', 'SWGEXP', '성원글로벌', 1110),
+              ('COUPANG', 'PANTOS', '범한판토스', 1120),
+              ('COUPANG', 'ACIEXPRESS', 'ACI Express', 1130),
+              ('COUPANG', 'DAEWOON', '대운글로벌', 1140),
+              ('COUPANG', 'AIRBOY', '에어보이익스프레스', 1150),
+              ('COUPANG', 'KGLNET', 'KGL네트웍스', 1160),
+              ('COUPANG', 'KUNYOUNG', '건영택배', 1170),
+              ('COUPANG', 'SLX', 'SLX택배', 120),
+              ('COUPANG', 'HONAM', '우리택배', 130),
+              ('COUPANG', 'LINEEXPRESS', 'LineExpress', 1180),
+              ('COUPANG', 'TWOFASTEXP', '2FastsExpress', 1190),
+              ('COUPANG', 'HPL', '한의사랑택배', 1200),
+              ('COUPANG', 'GOODSTOLUCK', '굿투럭', 1210),
+              ('COUPANG', 'KOREXG', 'CJ대한통운특', 1220),
+              ('COUPANG', 'HANDEX', '한덱스', 1230),
+              ('COUPANG', 'BGF', 'BGF포스트', 1240),
+              ('COUPANG', 'ECMS', 'ECMS익스프레스', 1250),
+              ('COUPANG', 'WONDERS', '원더스퀵', 1260),
+              ('COUPANG', 'YONGMA', '용마로지스', 1270),
+              ('COUPANG', 'SEBANG', '세방택배', 1280),
+              ('COUPANG', 'NHLOGIS', '농협택배', 1290),
+              ('COUPANG', 'LOTTEGLOBAL', '롯데글로벌', 40),
+              ('COUPANG', 'GSIEXPRESS', 'GSI익스프레스', 1300),
+              ('COUPANG', 'EFS', 'EFS', 1310),
+              ('COUPANG', 'DHLGLOBALMAIL', 'DHL GlobalMail', 1320),
+              ('COUPANG', 'HILOGIS', 'Hi택배', 160),
+              ('COUPANG', 'GPSLOGIX', 'GPS로직', 1330),
+              ('COUPANG', 'CRLX', '시알로지텍', 1340),
+              ('COUPANG', 'BRIDGE', '브리지로지스', 1350),
+              ('COUPANG', 'HOMEINNOV', '홈이노베이션로지스', 1360),
+              ('COUPANG', 'CWAY', '씨웨이', 1370),
+              ('COUPANG', 'GNETWORK', '자이언트', 1380),
+              ('COUPANG', 'ACEEXP', 'ACE Express', 1390),
+              ('COUPANG', 'WEVILL', '우리동네택배', 1400),
+              ('COUPANG', 'FOREVERPS', '퍼레버택배', 1410),
+              ('COUPANG', 'WARPEX', '워펙스', 1420),
+              ('COUPANG', 'QXPRESS', '큐익스프레스', 1430),
+              ('COUPANG', 'SMARTLOGIS', '스마트로지스', 1440),
+              ('COUPANG', 'HOMEPICK', '홈픽택배', 1450),
+              ('COUPANG', 'GTSLOGIS', 'GTS로지스', 1460),
+              ('COUPANG', 'ESTHER', '에스더쉬핑', 1470),
+              ('COUPANG', 'INTRAS', '로토스', 1480),
+              ('COUPANG', 'EUNHA', '은하쉬핑', 1490),
+              ('COUPANG', 'UFREIGHT', '유프레이트 코리아', 1500),
+              ('COUPANG', 'LSERVICE', '엘서비스', 1510),
+              ('COUPANG', 'TPMLOGIS', '로지스밸리', 1520),
+              ('COUPANG', 'ZENIELSYSTEM', '제니엘시스템', 1530),
+              ('COUPANG', 'ANYTRACK', '애니트랙', 1540),
+              ('COUPANG', 'JLOGIST', '제이로지스트', 1550),
+              ('COUPANG', 'CHAINLOGIS', '두발히어로(4시간당일택배)', 1560),
+              ('COUPANG', 'QRUN', '큐런', 1570),
+              ('COUPANG', 'FRESHSOLUTIONS', '프레시솔루션', 1580),
+              ('COUPANG', 'HIVECITY', '하이브시티', 1590),
+              ('COUPANG', 'HANSSEM', '한샘', 1600),
+              ('COUPANG', 'SFC', 'SFC(Santai)', 1610),
+              ('COUPANG', 'JNET', 'J-NET', 1620),
+              ('COUPANG', 'GENIEGO', '지니고', 1630),
+              ('COUPANG', 'PANASIA', '판아시아', 1640),
+              ('COUPANG', 'ELIAN', 'elianpost', 1650),
+              ('COUPANG', 'LOTTECHILSUNG', '롯데칠성', 1660),
+              ('COUPANG', 'SBGLS', 'SBGLS', 1670),
+              ('COUPANG', 'ALLTAKOREA', '올타코리아', 1680),
+              ('COUPANG', 'YUNDA', 'yunda express', 1690),
+              ('COUPANG', 'VALEX', '발렉스', 1700),
+              ('COUPANG', 'KOKUSAI', '국제익스프레스', 1710),
+              ('COUPANG', 'XINPATEK', '윈핸드해운항공', 1720),
+              ('COUPANG', 'HEREWEGO', '탱고앤고', 1730),
+              ('COUPANG', 'WOONGJI', '웅지익스프레스', 1740),
+              ('COUPANG', 'PINGPONG', '핑퐁', 1750),
+              ('COUPANG', 'YDH', 'YDH', 1760),
+              ('COUPANG', 'CARGOPLEASE', '화물부탁해', 1770),
+              ('COUPANG', 'LOGISPOT', '로지스팟', 1780),
+              ('COUPANG', 'FRESHMATES', '프레시메이트', 1790),
+              ('COUPANG', 'VROONG', '부릉', 1800),
+              ('COUPANG', 'NKLS', 'NK로지솔루션', 1810),
+              ('COUPANG', 'DODOFLEX', '도도플렉스', 1820),
+              ('COUPANG', 'ETOMARS', '이투마스', 1830),
+              ('COUPANG', 'SHIPNERGY', '배송하기좋은날', 1840),
+              ('COUPANG', 'VENDORPIA', '벤더피아', 1850),
+              ('COUPANG', 'COSHIP', '캐나다쉬핑', 1860),
+              ('COUPANG', 'GDAKOREA', '지디에이코리아', 1870),
+              ('COUPANG', 'BABABA', '바바바로지스', 1880),
+              ('COUPANG', 'TEAMFRESH', '팀프레시', 1890),
+              ('COUPANG', 'HOME1004', '1004홈', 1900),
+              ('COUPANG', 'NAEUN', '나은물류', 1910),
+              ('COUPANG', 'ACCCARGO', 'acccargo', 1920),
+              ('COUPANG', 'NTLPS', '엔티엘피스', 1930),
+              ('COUPANG', 'EKDP', '삼다수가정배송', 1940),
+              ('COUPANG', 'HOTSINGCARGO', '허싱카고코리아', 1950),
+              ('COUPANG', 'SINOEX', 'SINOTRANS EXPRESS', 1960),
+              ('COUPANG', 'DRABBIT', '딜리래빗', 1970),
+              ('COUPANG', 'HOMEPICKTODAY', '홈픽오늘도착', 1980),
+              ('COUPANG', 'DAERIM', '대림통운', 1990),
+              ('COUPANG', 'LOGISPARTNER', '로지스파트너', 2000),
+              ('COUPANG', 'GOBOX', '고박스', 2010),
+              ('COUPANG', 'FASTBOX', '패스트박스', 2020),
+              ('COUPANG', 'PANSTAR', '팬스타국제특송', 2030),
+              ('COUPANG', 'ACTCORE', '에이씨티앤코아물류', 2040),
+              ('COUPANG', 'KJT', '케이제이티', 2050),
+              ('COUPANG', 'THEBAO', '더바오', 2060),
+              ('COUPANG', 'RUSH', '오늘회러쉬', 2070),
+              ('COUPANG', 'KT', 'kt express', 2080),
+              ('COUPANG', 'IBP', 'ibpcorp', 2090),
+              ('COUPANG', 'HY', 'HY', 2100),
+              ('COUPANG', 'LOGISVALLEY', '로지스밸리', 2110),
+              ('COUPANG', 'TODAY', '투데이', 2120),
+              ('COUPANG', 'ONEDAYLOGIS', '라스트마일시스템즈', 2130),
+              ('COUPANG', 'HKHOLDINGS', '에이치케이홀딩스', 2140),
+              ('COUPANG', 'JIKGUMOON', '직구문', 2150),
+              ('COUPANG', 'CUBEFLOW', '큐브플로우', 2160),
+              ('COUPANG', 'SHFLY', '성훈물류', 2170),
+              ('COUPANG', 'GBS', '지비에스', 2180),
+              ('COUPANG', 'BANPOOM', '반품구조대', 2190),
+              ('COUPANG', 'GLOVIS', '현대글로비스', 2200),
+              ('COUPANG', 'ARGO', '아르고', 2210),
+              ('COUPANG', 'JMNP', '딜리박스', 2220),
+              ('COUPANG', 'SELC', '삼성로지텍', 2230),
+              ('COUPANG', 'MTINTER', '엠티인터네셔널', 2240),
+              ('COUPANG', 'GDSP', '골드스넵스', 2250),
+              ('COUPANG', 'TODAYPICKUP', '오늘의픽업', 2260),
+              ('COUPANG', 'YJSGLOBAL', 'yjs글로벌', 2270),
+              ('COUPANG', 'DUXGLOBAL', '유로택배', 2280),
+              ('COUPANG', 'INTERLOGIS', '인터로지스', 2290),
+              ('COUPANG', 'WOOJIN', '우진인터로지스', 2300),
+              ('COUPANG', 'GHSPEED', '지에이치스피드', 2310),
+              ('COUPANG', 'WIDETECH', '와이드테크', 2320),
+              ('COUPANG', 'ECOHAI', '에코하이', 2330),
+              ('COUPANG', 'TONAMI', '토나미', 2340),
+              ('COUPANG', 'DAIICHI', '제1화물', 2350),
+              ('COUPANG', 'FUKUYAMA', '후쿠야마통운', 2360),
+              ('COUPANG', 'KURLYNEXTMILE', '컬리넥스트마일', 2370),
+              ('COUPANG', 'ARAMEX', 'ARAMEX', 2380),
+              ('COUPANG', 'BISNZ', 'BISNZ', 2390),
+              ('COUPANG', 'INNOS', '이노스', 2400),
+              ('COUPANG', 'SEORIM', '서림물류', 2410),
+              ('COUPANG', 'WEMOVE', '위무브', 2420),
+              ('COUPANG', 'POOLATHOME', '풀앳홈', 2430),
+              ('COUPANG', 'SPARKLE', '스파클직배송', 2440),
+              ('COUPANG', 'ICS', 'ICS', 2450),
+              ('COUPANG', 'HANMI', '한미포스트', 2460),
+              ('COUPANG', 'CAINIAO', 'CAINIAO', 2470),
+              ('COUPANG', 'HWATONG', '화통', 2480),
+              ('COUPANG', 'ESTLA', '이스트라', 2490),
+              ('COUPANG', 'IK', 'IK물류', 2500),
+              ('COUPANG', 'PULMUONEWATER', '풀무원샘물', 2510),
+              ('COUPANG', 'TSG', '티에스지로지스', 2520),
+              ('COUPANG', 'OCS', 'ocs코리아', 2530),
+              ('COUPANG', 'MDLOGIS', '모든로지스', 2540),
+              ('COUPANG', 'GCS', '지씨에스', 2550),
+              ('COUPANG', 'FTF', '물류대장LCS', 2560),
+              ('COUPANG', 'HUBNET', 'Hubnet Logistics', 2570),
+              ('COUPANG', 'WINION_3P', '위니온로지스', 2580),
+              ('COUPANG', 'WOORIHB', '우리한방택배', 2590),
+              ('COUPANG', 'LETUS', '레터스', 2600),
+              ('COUPANG', 'JWTNL', 'JWTNL', 2610),
+              ('COUPANG', 'JCLS', 'JCLS', 2620),
+              ('COUPANG', 'GKGLOBAL', '지케이글로벌', 2630),
+              ('COUPANG', 'GONELO', '고넬로', 2640),
+              ('COUPANG', 'CASA', '신세계까사', 2650),
+              ('COUPANG', 'BRCH', '비알씨에이치', 2660),
+              ('COUPANG', 'HLDE', 'W7', 2670),
+              ('COUPANG', 'MORNINGGLOBAL', '모닝글로벌', 2680),
+              ('COUPANG', 'DNDN', '든든택배', 2690),
+              ('COUPANG', 'KGBLS', 'KGB로지스', 2700),
+              ('COUPANG', 'KGBPS', 'KGB택배', 2710),
+              ('COUPANG', 'DONGBU', '드림택배', 2720),
+              ('COUPANG', 'YELLOW', '옐로우캡', 2730),
+              ('COUPANG', 'INNOGIS', 'GTX로지스', 2740),
+              ('COUPANG', 'DADREAM', '다드림', 2750),
+              ('COUPANG', 'IQS', '굿스포스트', 2760),
+              ('COUPANG', 'SFEXPRESS', '순풍택배', 2770),
+              ('COUPANG', 'LGE', 'LG전자', 2780),
+              ('COUPANG', 'WINION', '위니온', 2790),
+              ('COUPANG', 'WINION2', '위니온(에어컨)', 2800)
+
+      rollback:
+        - dropTable: { tableName: carrier_catalog }

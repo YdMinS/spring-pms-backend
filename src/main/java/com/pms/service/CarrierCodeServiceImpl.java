@@ -1,8 +1,10 @@
 package com.pms.service;
 
 import com.pms.domain.Carrier;
+import com.pms.domain.CarrierCatalog;
 import com.pms.domain.Platform;
 import com.pms.domain.PlatformCarrierCode;
+import com.pms.repository.CarrierCatalogRepository;
 import com.pms.repository.CarrierRepository;
 import com.pms.repository.PlatformCarrierCodeRepository;
 import lombok.RequiredArgsConstructor;
@@ -12,8 +14,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * {@link CarrierCodeService} 구현.
@@ -28,6 +32,7 @@ public class CarrierCodeServiceImpl implements CarrierCodeService {
 
     private final CarrierRepository carrierRepository;
     private final PlatformCarrierCodeRepository platformCarrierCodeRepository;
+    private final CarrierCatalogRepository carrierCatalogRepository;
 
     @Override
     public String resolveDeliveryCompanyCode(Platform platform) {
@@ -49,25 +54,39 @@ public class CarrierCodeServiceImpl implements CarrierCodeService {
 
     @Override
     public List<CarrierOption> findOptions(Platform platform) {
-        // 택배사 관리에 등록해 둔 코드 — 쿠팡이면 목록 맨 위로, 그 외 플랫폼이면 이것이 목록의 전부다.
+        // 택배사 관리에 등록해 둔 코드 — 목록 맨 위로 올린다.
         Map<String, String> registered = registeredNamesByCode(platform);
-        if (!Platform.COUPANG.equals(platform)) {
+        List<CarrierCatalog> catalog =
+                carrierCatalogRepository.findByPlatformOrderByDisplayOrderAscCodeAsc(platform);
+
+        // 카탈로그가 빈 플랫폼(아직 시드하지 않은 마켓)은 등록된 택배사만이 목록의 전부다
+        // (PLAN 2609_37 D9 — 빈 리스트도 정상, 예외 아님).
+        if (catalog.isEmpty()) {
             return registered.entrySet().stream()
                     .map(e -> new CarrierOption(e.getKey(), e.getValue(), true))
                     .toList();
         }
 
-        List<CarrierOption> options = new ArrayList<>();
-        for (Map.Entry<String, String> entry : registered.entrySet()) {
-            // 표시 이름은 쿠팡 표를 우선한다 — 로컬 이름이 달라도 코드와 어긋나지 않게.
-            options.add(new CarrierOption(entry.getKey(),
-                    CoupangCourierCodes.nameOf(entry.getKey()), true));
+        List<CarrierOption> registeredOptions = new ArrayList<>();
+        List<CarrierOption> others = new ArrayList<>();
+        Set<String> catalogCodes = new LinkedHashSet<>();
+        for (CarrierCatalog row : catalog) {
+            catalogCodes.add(row.getCode());
+            // 표시 이름은 카탈로그를 우선한다 — 로컬 이름이 달라도 코드와 어긋나지 않게 (D13).
+            boolean isRegistered = registered.containsKey(row.getCode());
+            (isRegistered ? registeredOptions : others)
+                    .add(new CarrierOption(row.getCode(), row.getName(), isRegistered));
         }
-        CoupangCourierCodes.all().forEach((code, name) -> {
-            if (!registered.containsKey(code)) {
-                options.add(new CarrierOption(code, name, false));
+        // 등록돼 있는데 카탈로그에 없는 코드(옛 코드·오타)는 로컬 이름으로 등록분 끝에 남긴다 —
+        // 저장해 둔 값이 드롭다운에서 사라지면 사용자는 자기가 뭘 골랐는지 알 수 없다.
+        registered.forEach((code, name) -> {
+            if (!catalogCodes.contains(code)) {
+                registeredOptions.add(new CarrierOption(code, name, true));
             }
         });
+
+        List<CarrierOption> options = new ArrayList<>(registeredOptions);
+        options.addAll(others);
         return options;
     }
 
@@ -77,8 +96,9 @@ public class CarrierCodeServiceImpl implements CarrierCodeService {
         if (code.isEmpty()) {
             throw new IllegalArgumentException("택배사를 선택하세요");
         }
-        boolean allowed = Platform.COUPANG.equals(platform)
-                ? CoupangCourierCodes.contains(code)
+        // 카탈로그가 있는 플랫폼은 카탈로그가 화이트리스트, 빈 플랫폼은 등록된 코드만 통과 (D9).
+        boolean allowed = carrierCatalogRepository.existsByPlatform(platform)
+                ? carrierCatalogRepository.existsByPlatformAndCode(platform, code)
                 : registeredNamesByCode(platform).containsKey(code);
         if (!allowed) {
             throw new IllegalArgumentException("선택한 택배사를 " + platform + " 에 사용할 수 없습니다: " + code);
