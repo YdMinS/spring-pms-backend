@@ -4,9 +4,11 @@ import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
 import com.pms.dto.response.CustomerInquiryResponse;
+import com.pms.dto.response.InquirySyncResponse;
 import com.pms.dto.response.InquiryTypeCatalogResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.service.inquiry.InquiryQueryService;
+import com.pms.service.inquiry.InquirySyncService;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.mock.mockito.MockBean;
 
@@ -16,11 +18,13 @@ import java.util.List;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * CustomerInquiryController 통합 테스트 — 인증(401)·목록·유형 카탈로그·400/404 핸들러 매핑.
+ * CustomerInquiryController 통합 테스트 — 인증(401)·목록·유형 카탈로그·400/404 핸들러 매핑 ·
+ * 문의만 다시 가져오기(POST /sync).
  *
  * 서비스는 @MockBean 이라 검증 로직이 돌지 않는다 → 400·404 는 목이 예외를 던지게 해서
  * <b>핸들러 매핑</b>만 고정한다(검증 자체는 InquiryQueryServiceImplTest 담당).
@@ -30,6 +34,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class CustomerInquiryControllerTest extends BaseIntegrationTest {
 
     @MockBean private InquiryQueryService inquiryQueryService;
+    @MockBean private InquirySyncService inquirySyncService;
 
     @Test
     void getInquiries_returnsList_withUserToken() throws Exception {
@@ -87,6 +92,43 @@ class CustomerInquiryControllerTest extends BaseIntegrationTest {
     @Test
     void getInquiry_requiresAuth() throws Exception {
         mockMvc.perform(get("/api/inquiries/1"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void sync_returnsFetchedCount_withUserToken() throws Exception {
+        given(inquirySyncService.sync(7L)).willReturn(InquirySyncResponse.builder()
+                .accountId(7L).fetched(3).staleClosed(1).syncedAt(LocalDateTime.now()).build());
+
+        mockMvc.perform(post("/api/inquiries/sync")
+                        .param("accountId", "7")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.accountId").value(7))
+                .andExpect(jsonPath("$.data.fetched").value(3))
+                .andExpect(jsonPath("$.data.staleClosed").value(1));
+    }
+
+    @Test
+    void sync_unknownAccount_returns404() throws Exception {
+        given(inquirySyncService.sync(999L))
+                .willThrow(new ResourceNotFoundException("MarketplaceAccount", 999L));
+
+        mockMvc.perform(post("/api/inquiries/sync")
+                        .param("accountId", "999")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void sync_withoutAccountId_returns400() throws Exception {
+        mockMvc.perform(post("/api/inquiries/sync").header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void sync_requiresAuth() throws Exception {
+        mockMvc.perform(post("/api/inquiries/sync").param("accountId", "7"))
                 .andExpect(status().isUnauthorized());
     }
 
