@@ -34,10 +34,10 @@ public interface CarrierCodeService {
     /**
      * 단건 발송처리 드롭다운용 택배사 목록.
      *
-     * <p>쿠팡은 <b>택배사 목록 API 가 없고</b> 문서의 정적 코드표가 SSOT 라, COUPANG 은
-     * {@link CoupangCourierCodes} 전량을 준다(D2 개정 2026-09-03) — 택배사 관리에 등록해 둔 코드는
-     * {@code registered=true} 로 맨 위에 온다. 다른 플랫폼은 예전대로 등록된 활성 택배사만 준다
-     * (없으면 빈 리스트 — 예외 아님, D16).
+     * <p>코드표는 {@link com.pms.domain.CarrierCatalog}(플랫폼 × 코드 × 이름, PLAN 2609_37 D1)에서
+     * 온다 — 그 플랫폼의 카탈로그 전량을 {@code display_order} 순으로 주고, 택배사 관리에 등록해 둔
+     * 코드는 {@code registered=true} 로 맨 위에 온다. 카탈로그가 빈 플랫폼(아직 시드하지 않은 마켓)은
+     * 등록된 활성 택배사만 준다 (없으면 빈 리스트 — 예외 아님, 2609_11 D16 · 2609_37 D9).
      */
     List<CarrierOption> findOptions(Platform platform);
 
@@ -45,7 +45,8 @@ public interface CarrierCodeService {
      * 사용자가 고른 택배사 코드를 검증하고 그대로 반환(단건 발송처리 전용).
      *
      * <p>드롭다운이 코드를 그대로 돌려주므로 해석할 것은 없고, <b>화이트리스트 검증</b>이 일이다 —
-     * 쿠팡은 {@link CoupangCourierCodes} 표에 있는 코드만, 다른 플랫폼은 택배사 관리에 등록된 코드만 통과한다.
+     * 그 플랫폼의 {@link com.pms.domain.CarrierCatalog} 행이 있으면 카탈로그에 있는 코드만,
+     * 카탈로그가 빈 플랫폼은 택배사 관리에 등록된 코드만 통과한다(PLAN 2609_37 D9).
      * 없는 코드면 {@link IllegalArgumentException}(400) 이며,
      * {@link #resolveDeliveryCompanyCode(Platform)} 의 {@link IllegalStateException}(설정 오류=500)과 의미가 다르다.
      *
