@@ -33,6 +33,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -216,6 +217,10 @@ public class ListingMasterCreateServiceImpl implements ListingMasterCreateServic
                     // 없던 셀이 여기서 살아난다 — 이 기능의 핵심 이득).
                     .platformOptionId(market.vendorItemId())
                     .sellerProductItemId(market.sellerProductItemId())
+                    // 2609_39/D19 ④: 쿠팡에서 읽어온 실판매가 = 지금 마켓에 걸린 가격. 셀의 sellingPrice 는
+                    // 아래 주석대로 그대로 두되(가격 동기화 기능이 아니다), 마켓 실가는 기록해 둔다.
+                    .marketPrice(market.salePrice())
+                    .marketPriceAt(LocalDateTime.now())
                     // D20: id 가 있다 ⇒ 쿠팡이 승인했다.
                     .approvalStatus(market.vendorItemId() != null
                             ? OptionApprovalStatus.APPROVED : OptionApprovalStatus.NOT_APPROVED)

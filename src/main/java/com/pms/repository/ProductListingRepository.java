@@ -123,6 +123,27 @@ public interface ProductListingRepository extends JpaRepository<ProductListing, 
     List<ProductListing> findPendingApproval();
 
     /**
+     * Repricing candidates (FEATURE_2609_39 / PLAN D6·D17·D20): the cells whose option prices may be judged and
+     * pushed. Tenant-filtered by {@code @TenantId} automatically.
+     *
+     * <p>🔴 The two hard rules are in the query, not in Java: {@code status = SELLING} (D20 — a suspended or
+     * rejected cell still carries market identifiers, so leaving it in would end with us repricing something
+     * that is not for sale) and {@code platform = COUPANG} (D17 — no other adapter can update a price, and
+     * filtering afterwards only means reading rows to throw them away).</p>
+     *
+     * @param sellerId  restrict to one seller; null = every seller
+     * @param platform  restrict to one platform; null = every (supported) platform
+     * @return SELLING Coupang cells for the current tenant
+     */
+    @Query("select l from ProductListing l "
+            + "where l.status = com.pms.domain.ListingStatus.SELLING "
+            + "and l.platform = com.pms.domain.Platform.COUPANG "
+            + "and (:sellerId is null or l.seller.id = :sellerId) "
+            + "and (:platform is null or l.platform = :platform)")
+    List<ProductListing> findRepricingTargets(@Param("sellerId") Long sellerId,
+                                              @Param("platform") Platform platform);
+
+    /**
      * Pending market-sync source (FEATURE_2608_06 / 3d, pending-sync / push-sync): cells regenerated locally
      * by layer A but not yet pushed to the market. Derived-query SELECT, so tenant-filtered by {@code @TenantId}
      * automatically (only the current tenant's cells).

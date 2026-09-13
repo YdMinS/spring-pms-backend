@@ -98,7 +98,9 @@ class PriceCalculatorTest {
 
     @Test
     void calculatePrice_missingMarginPreset_throws400() {
-        stubConfig("0.10", "2500", "500");
+        // ⚠️ 배송·박스는 스텁하지 않는다: 해석 순서가 「셀 단위(수수료·마진 프리셋) → 옵션 단위(배송·박스)」라
+        // 프리셋이 없으면 배송/박스 리졸버까지 가지 않는다(2609_39 / D16 로 해석을 두 단계로 나눈 결과).
+        given(masterChannelConfigService.resolvePlatformCategory(cell)).willReturn(platformCategory("0.10"));
         given(marginPolicyRepository.findBySellerIdAndPlatform(7L, Platform.COUPANG))
                 .willReturn(Optional.empty());
 

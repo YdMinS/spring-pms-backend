@@ -435,4 +435,23 @@ class CoupangListingImportServiceTest {
                 masterOptions.stream().map(MasterProductOption::getId).toList())).willReturn(items);
         givenSavesReturnIds();
     }
+
+    // 2609_39/D19 ④: 편입 옵션의 가격은 마켓에서 <b>읽어온</b> 실가격이라 market_price 와 selling_price 가
+    // 같은 값으로 출발한다. 이걸 빼면 온보딩한 셀이 첫날부터 「아직 안 밀림」으로 잘못 쌓인다.
+    @Test
+    void testImportRecordsMarketPriceFromMarket() {
+        MasterProductOption existing = masterOption(10L, "1세트");
+        givenImportReady(marketProduct(marketOption("6입", "8123", "12900")), List.of(existing),
+                List.of(MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_A)).quantity(6).build(),
+                        MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_B)).quantity(1).build()));
+
+        service.importListing(MASTER_ID, importRequest(spec("6입", "8123", 6, 1)));
+
+        ArgumentCaptor<ProductListingOption> captor = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository).save(captor.capture());
+        ProductListingOption saved = captor.getValue();
+        assertThat(saved.getMarketPrice()).isEqualByComparingTo("12900");
+        assertThat(saved.getMarketPrice()).isEqualByComparingTo(saved.getSellingPrice());
+        assertThat(saved.getMarketPriceAt()).isNotNull();
+    }
 }

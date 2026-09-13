@@ -41,6 +41,9 @@ public class MarginPolicyServiceImpl implements MarginPolicyService {
                 .platform(platform)
                 .marginRate(request.getMarginRate())
                 .displayDiscountRate(request.getDisplayDiscountRate())
+                // 2609_39/D4: alert thresholds. null is a meaningful value here (= condition unused).
+                .minMarginAmount(request.getMinMarginAmount())
+                .minMarginRate(request.getMinMarginRate())
                 .build();
         return mapToResponse(marginPolicyRepository.save(policy));
     }
@@ -72,6 +75,10 @@ public class MarginPolicyServiceImpl implements MarginPolicyService {
                 // null = keep existing (optional field convention).
                 .displayDiscountRate(request.getDisplayDiscountRate() != null
                         ? request.getDisplayDiscountRate() : existing.getDisplayDiscountRate())
+                // 2609_39/D4: written straight through — unlike displayDiscountRate, null does NOT mean
+                // "keep": it means "stop alerting on this axis", and the user must be able to clear it.
+                .minMarginAmount(request.getMinMarginAmount())
+                .minMarginRate(request.getMinMarginRate())
                 .build();
         return mapToResponse(marginPolicyRepository.save(updated));
     }
@@ -110,6 +117,8 @@ public class MarginPolicyServiceImpl implements MarginPolicyService {
                 .platform(policy.getPlatform().name())
                 .marginRate(policy.getMarginRate())
                 .displayDiscountRate(policy.getDisplayDiscountRate())
+                .minMarginAmount(policy.getMinMarginAmount())
+                .minMarginRate(policy.getMinMarginRate())
                 .build();
     }
 }
