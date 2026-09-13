@@ -26,9 +26,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * {@link StockOutService} 구현.
@@ -76,29 +78,22 @@ public class StockOutServiceImpl implements StockOutService {
             return new OutboundResponse(List.of(), List.of());
         }
 
-        // 필요 수량의 배수는 orderQty 다 — 위 클래스 주석의 cancelQty 함정 참고.
-        Map<Long, OrderLineExpander.LineExpansion> expansions =
-                orderLineExpander.expand(lines, OrderLine::getOrderQty);
-        Map<Long, Map<Long, Long>> confirmed = confirmedByLine(lines.stream().map(OrderLine::getId).toList());
+        // 필요 − 출고합 계산은 remainingLines 하나가 소유한다(D28) — 이 화면도 그것을 쓴다.
+        Map<Long, OrderLine> linesById = lines.stream()
+                .collect(Collectors.toMap(OrderLine::getId, l -> l, (a, b) -> a, LinkedHashMap::new));
 
         List<OutboundOrderView> orders = new ArrayList<>();
         List<OutboundUnexpandedView> unexpanded = new ArrayList<>();
-        for (OrderLine line : lines) {
-            OrderLineExpander.LineExpansion expansion = expansions.get(line.getId());
-            if (expansion == null || expansion.failed()) {
+        for (RemainingLine remainingLine : remainingLines(lines)) {
+            OrderLine line = linesById.get(remainingLine.orderLineId());
+            if (remainingLine.failed()) {
                 unexpanded.add(new OutboundUnexpandedView(line.getId(),
                         line.getOrder().getExternalOrderId(), line.getItemName(),
-                        expansion == null
-                                ? OrderLineExpander.Failure.UNMAPPED_OPTION.name()
-                                : expansion.failure().name()));
+                        remainingLine.failure().name()));
                 continue;
             }
 
-            Map<Long, Long> confirmedForLine = confirmed.getOrDefault(line.getId(), Map.of());
-            List<OutboundProductLine> products = expansion.products().stream()
-                    .map(p -> new OutboundProductLine(p.productId(), p.productName(), p.quantity(),
-                            confirmedQty(confirmedForLine, p.productId())))
-                    .toList();
+            List<OutboundProductLine> products = remainingLine.products();
             // 다 내보낸 라인은 목록에서 뺀다 — 남은 것이 하나도 없으면 화면에 띄울 이유가 없다.
             if (products.stream().allMatch(p -> p.remainingQty() <= 0)) {
                 continue;
@@ -117,6 +112,44 @@ public class StockOutServiceImpl implements StockOutService {
                     products));
         }
         return new OutboundResponse(orders, unexpanded);
+    }
+
+    @Override
+    public List<RemainingLine> remaining(Collection<OrderLine> lines) {
+        return remainingLines(lines);
+    }
+
+    /**
+     * 🔴 잔량 계산의 <b>유일한 구현</b> — {@link #outbound}(출고 화면)와 {@link #remaining}(포장 콘솔)이
+     * 이것 하나를 공유한다(PLAN 2609_40 D28).
+     *
+     * <p>필요 수량의 배수는 {@code orderQty} 다 — 클래스 주석의 {@code cancelQty} 함정 참고.
+     * 여기에 상태 필터가 없다는 점이 중요하다: 무엇을 물을지는 호출자가 정하고, 이 메서드는 "그 라인에
+     * 아직 뭐가 남았나"만 답한다.
+     */
+    private List<RemainingLine> remainingLines(Collection<OrderLine> lines) {
+        if (lines == null || lines.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, OrderLineExpander.LineExpansion> expansions =
+                orderLineExpander.expand(lines, OrderLine::getOrderQty);
+        Map<Long, Map<Long, Long>> confirmed = confirmedByLine(lines.stream().map(OrderLine::getId).toList());
+
+        List<RemainingLine> result = new ArrayList<>();
+        for (OrderLine line : lines) {
+            OrderLineExpander.LineExpansion expansion = expansions.get(line.getId());
+            if (expansion == null || expansion.failed()) {
+                result.add(new RemainingLine(line.getId(), List.of(),
+                        expansion == null ? OrderLineExpander.Failure.UNMAPPED_OPTION : expansion.failure()));
+                continue;
+            }
+            Map<Long, Long> confirmedForLine = confirmed.getOrDefault(line.getId(), Map.of());
+            result.add(new RemainingLine(line.getId(), expansion.products().stream()
+                    .map(p -> new OutboundProductLine(p.productId(), p.productName(), p.quantity(),
+                            confirmedQty(confirmedForLine, p.productId())))
+                    .toList(), null));
+        }
+        return result;
     }
 
     @Override

@@ -3,6 +3,7 @@ package com.pms.service;
 import com.pms.domain.Platform;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 플랫폼별 택배사 코드 조회의 <b>유일 진입점</b>.
@@ -53,4 +54,15 @@ public interface CarrierCodeService {
      * @throws IllegalArgumentException 그 플랫폼에서 쓸 수 없는 코드일 때 → 400
      */
     String validateDeliveryCompanyCode(String deliveryCompanyCode, Platform platform);
+
+    /**
+     * 마켓이 준 택배사 <b>이름</b>으로 그 플랫폼의 코드를 되찾는다. 못 찾으면 empty (PLAN 2609_40 D6).
+     *
+     * <p>주문 동기화 응답은 코드가 아니라 이름({@code deliveryCompanyName})을 준다 — 실물 박스에 택배사 코드를
+     * 채우려면 {@link com.pms.domain.CarrierCatalog} 에서 되찾아야 한다. 공백·대소문자 차이는 흡수한다.
+     *
+     * <p>🔴 <b>예외를 던지지 않는다.</b> 모르는 이름은 정상 경로다 — 코드만 비우고 송장번호는 저장된다.
+     * ({@link #validateDeliveryCompanyCode} 의 400 과 의미가 다르다: 저쪽은 사용자가 고른 값의 검증이다.)
+     */
+    Optional<String> findCodeByName(String carrierName, Platform platform);
 }

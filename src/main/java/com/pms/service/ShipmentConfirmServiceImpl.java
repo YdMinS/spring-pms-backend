@@ -6,6 +6,7 @@ import com.pms.config.CoupangProperties;
 import com.pms.domain.CoupangOrderLine;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderLine;
+import com.pms.domain.OrderShipment;
 import com.pms.domain.OrderStatus;
 import com.pms.domain.Platform;
 import com.pms.dto.request.ManualShipmentRequest;
@@ -29,6 +30,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -51,6 +53,10 @@ import java.util.stream.Collectors;
  *    — 정상 경로(DB 매칭)에서는 쿠팡을 한 번도 호출하지 않는다.
  * ⚠️ 폴백으로 조회한 박스는 {@code order_line} 에 적재된다(PLAN 2609_13 D1·D9) — best-effort 라
  *    저장이 실패해도 송장은 그대로 전송된다(D6). 이 서비스에 @Transactional 을 붙이면 안 된다(D3).
+ *
+ * <p>🔴 <b>송장번호는 이제 버려지지 않는다</b>(FEATURE_2609_40 / PLAN D5 ①·D8·D30): 결과 파일의 송장을
+ *    {@code shipment_parcel}(실물 박스) 로 남긴다. 택배수량을 올려 송장이 N장인 주문은 <b>배송 묶음이 하나일 때만</b>
+ *    N행을 만들고(파일에 묶음 식별자가 없다), <b>쿠팡에는 대표 1장만</b> 올린다(전송 동작 무변경).
  *
  * <p>{@code confirmManual}(단건 수동, PLAN 2609_11)은 같은 전송 헬퍼({@code postInvoices})만 공유하고 판정은 따로 한다:
  * 앵커 라인이 속한 <b>박스 1개</b>만 전개하고(같은 주문의 다른 박스는 손대지 않는다, D1),
@@ -96,19 +102,20 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
     private final CarrierCodeService carrierCodeService;
     private final ObjectMapper objectMapper;
     private final OrderUpserter orderUpserter;
+    private final ShipmentParcelRecorder shipmentParcelRecorder;
 
     @Override
     public ShipmentConfirmResult confirm(MultipartFile file) {
         List<UploadRow> uploadRows = parse(file);
 
-        // orderId → invoiceNumber (1주문=1박스 전제, 중복 시 첫 행 사용).
-        Map<String, String> invoiceByOrderId = new LinkedHashMap<>();
+        // orderId → 송장번호 목록(파일 순서 유지, 중복 제거).
+        // 🔴 택배수량을 올린 주문은 결과 파일에 서로 다른 송장이 N행 온다 — 예전처럼 첫 행만 남기면
+        //    두 번째 박스의 송장이 사라진다(PLAN 2609_40 D8). 쿠팡 전송만 대표 1장을 쓴다.
+        Map<String, List<String>> invoicesByOrderId = new LinkedHashMap<>();
         for (UploadRow row : uploadRows) {
-            // 한 주문에 상품이 여러 개면 결과 파일에 같은 송장번호로 N행이 오는 게 정상이다 → 값이 다를 때만 경고.
-            String prev = invoiceByOrderId.putIfAbsent(row.orderId(), row.invoiceNumber());
-            if (prev != null && !prev.equals(row.invoiceNumber())) {
-                log.warn("발송처리 주문번호당 송장번호 불일치 — 첫 행 사용: orderId={} 사용={} 무시={}",
-                        row.orderId(), prev, row.invoiceNumber());
+            List<String> invoices = invoicesByOrderId.computeIfAbsent(row.orderId(), k -> new ArrayList<>());
+            if (!invoices.contains(row.invoiceNumber())) {
+                invoices.add(row.invoiceNumber());      // 같은 송장의 N행(상품 여러 개)은 1장으로 접는다
             }
         }
 
@@ -122,9 +129,11 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
         // 송장업로드 성공 시 status 를 갱신할 DB 라인(박스 단위).
         // 폴백으로 확정된 주문도 조회 시점에 적재되므로(PLAN 2609_13 D9) 여기 편입된다.
         Map<String, List<OrderLine>> dbLinesByBoxId = new LinkedHashMap<>();
+        // 택배사 코드는 플랫폼당 한 번만 읽는다(박스 저장용 — 없어도 송장은 저장된다, PLAN 2609_40 D6).
+        Map<Platform, String> carrierCodeCache = new EnumMap<>(Platform.class);
         int matchedOrders = 0;
 
-        for (String orderId : invoiceByOrderId.keySet()) {
+        for (String orderId : invoicesByOrderId.keySet()) {
             List<OrderLine> lines = orderLineRepository.findByExternalOrderId(orderId);
             if (lines.isEmpty()) {
                 fallbackCandidates.add(orderId);
@@ -136,6 +145,9 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
                 unmatched.add(orderId);
                 continue;
             }
+            // 🔴 실물 박스 저장은 여기 한 곳이다(PLAN 2609_40 D8·D30) — 전송 전, 상태 필터 전.
+            //    전량 발송 완료로 아래에서 skip 되는 주문도 송장은 이미 발급됐으므로 박스를 남긴다.
+            recordParcels(orderId, lines, invoicesByOrderId.get(orderId), carrierCodeCache);
             // 한 주문에 박스가 여러 개면 박스마다 상태가 다를 수 있다(order_line.status = box.status 의 거울).
             List<OrderLine> sendable = lines.stream()
                     .filter(this::sendable)
@@ -153,7 +165,7 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
         }
 
         matchedOrders += fallback(fallbackCandidates, unmatched, skipped, accountById, linesByAccount,
-                dbLinesByBoxId);
+                dbLinesByBoxId, invoicesByOrderId, carrierCodeCache);
 
         int succeeded = 0;
         List<FailedBox> failed = new ArrayList<>();
@@ -161,7 +173,7 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
             MarketplaceAccount account = accountById.get(entry.getKey());
             List<InvoiceLine> lines = entry.getValue();
             try {
-                AccountResult result = sendBatch(account, lines, invoiceByOrderId);
+                AccountResult result = sendBatch(account, lines, invoicesByOrderId);
                 succeeded += result.succeeded();
                 markDeparted(result.succeededBoxIds(), dbLinesByBoxId);
                 failed.addAll(result.failed());
@@ -224,6 +236,15 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
         String path = (update ? coupangProperties.getUpdateInvoicesPath() : coupangProperties.getInvoicesPath())
                 .replace("{vendorId}", CoupangCredentials.of(account).getVendorId());
 
+        // 🔴 실물 박스 저장(PLAN 2609_40 D5 ①) — 사용자가 입력한 송장·택배사 코드로 그 박스의 행 1개.
+        //    묶음이 앵커로 지정돼 있으므로 D30(다중 묶음 가드)과 무관하다. 이미 있으면 건너뛴다.
+        //    전송 성공 여부와 무관하게, 전송 전에 남긴다 — 송장은 이미 발급됐다.
+        try {
+            shipmentParcelRecorder.record(anchor.getOrderShipment(), invoiceNumber, deliveryCompanyCode, null);
+        } catch (Exception e) {
+            log.warn("단건 발송처리 실물 박스 저장 실패(전송은 계속): orderId={} box={}", externalOrderId, boxId, e);
+        }
+
         List<InvoiceLine> lines = toInvoiceLines(boxLines);
         AccountResult result;
         try {
@@ -280,6 +301,73 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
     }
 
     /**
+     * 결과 파일의 송장을 실물 박스({@code shipment_parcel})로 남긴다 (PLAN 2609_40 D8 · D30).
+     *
+     * <p>🔴 <b>그 주문의 배송 묶음이 하나일 때만</b> 만든다. 결과 파일이 주는 것은 (주문번호, 송장번호) 뿐이고
+     * 묶음 식별자가 없어 <b>어느 묶음의 송장인지 알 수 없다</b> — 추측해서 붙이면 스캔한 송장이 남의 박스를 연다.
+     * 묶음이 2개 이상이면 경고만 남기고, 주문 동기화 백필이 묶음별로 정확히 채운다(D30).
+     *
+     * <p>🔴 묶음 수를 세는 소스는 <b>그 주문의 전체 라인</b>이다 — {@code sendable} 만 세면 박스 2개 중 하나가
+     * 이미 발송된 주문이 「묶음 1개」로 세어져 가드를 빠져나간다.
+     *
+     * <p>⚠️ 전송 성공 여부와 무관하게 저장한다(송장은 이미 발급됐고 작업자는 그걸 들고 싼다).
+     * ⚠️ 여기서 던지면 안 된다 — 박스 저장 실패가 발송처리를 막으면 안 된다.
+     */
+    private void recordParcels(String orderId, List<OrderLine> lines, List<String> invoiceNumbers,
+                               Map<Platform, String> carrierCodeCache) {
+        if (invoiceNumbers == null || invoiceNumbers.isEmpty() || lines.isEmpty()) {
+            return;
+        }
+        try {
+            Map<String, OrderShipment> shipmentsById = new LinkedHashMap<>();
+            for (OrderLine line : lines) {
+                String boxId = boxIdOf(line);
+                if (boxId != null && !boxId.isBlank() && line.getOrderShipment() != null) {
+                    shipmentsById.putIfAbsent(boxId, line.getOrderShipment());
+                }
+            }
+            if (shipmentsById.size() != 1) {
+                log.warn("발송처리 실물 박스 생성 생략 — 배송 묶음 {}개 · 송장 {}장: orderId={} (PLAN 2609_40 D30, "
+                                + "주문 동기화가 묶음별로 채운다)",
+                        shipmentsById.size(), invoiceNumbers.size(), orderId);
+                return;
+            }
+            OrderShipment shipment = shipmentsById.values().iterator().next();
+            Platform platform = lines.get(0).getOrder().getMarketplaceAccount().getPlatform();
+            String carrierCode = carrierCodeQuietly(platform, carrierCodeCache);
+            for (String invoiceNumber : invoiceNumbers) {
+                shipmentParcelRecorder.record(shipment, invoiceNumber, carrierCode, null);
+            }
+        } catch (Exception e) {
+            log.warn("발송처리 실물 박스 저장 실패(전송은 계속): orderId={}", orderId, e);
+        }
+    }
+
+    /**
+     * 박스에 적을 택배사 코드 — 못 얻어도 진행한다(PLAN 2609_40 D6).
+     *
+     * <p>전송용 {@code resolveDeliveryCompanyCode} 는 미설정 시 던지지만, 여기서는 코드가 없다고
+     * 송장번호까지 버릴 이유가 없다. 플랫폼당 1회만 읽고 캐시한다(실패도 캐시 — 재조회 무의미).
+     */
+    private String carrierCodeQuietly(Platform platform, Map<Platform, String> cache) {
+        if (platform == null) {
+            return null;
+        }
+        // ⚠️ computeIfAbsent 를 쓰지 않는다 — null(미해석)을 저장하지 않아 주문마다 다시 조회하게 된다.
+        if (cache.containsKey(platform)) {
+            return cache.get(platform);
+        }
+        String code = null;
+        try {
+            code = carrierCodeService.resolveDeliveryCompanyCode(platform);
+        } catch (Exception e) {
+            log.info("실물 박스 택배사 코드 미해석(송장번호만 저장): platform={} reason={}", platform, e.getMessage());
+        }
+        cache.put(platform, code);
+        return code;
+    }
+
+    /**
      * 성공 시 write-back 할 DB 라인을 박스 id 로 색인한다.
      *
      * <p>배송 묶음은 nullable 이므로 널/공백 키는 담지 않는다. DB 값과 응답 {@code shipmentBoxId} 는
@@ -314,7 +402,9 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
     private int fallback(List<String> candidates, List<String> unmatched, List<SkippedOrder> skipped,
                          Map<Long, MarketplaceAccount> accountById,
                          Map<Long, List<InvoiceLine>> linesByAccount,
-                         Map<String, List<OrderLine>> dbLinesByBoxId) {
+                         Map<String, List<OrderLine>> dbLinesByBoxId,
+                         Map<String, List<String>> invoicesByOrderId,
+                         Map<Platform, String> carrierCodeCache) {
         if (candidates.isEmpty()) {
             return 0;                       // 정상 경로: 쿠팡 호출 0회
         }
@@ -371,7 +461,11 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
             // upsertBox 가 자기 트랜잭션에서 커밋한 뒤라 여기서 읽으면 방금 저장한 라인이 보인다.
             // 전송에서 빠진 박스(DEPARTURE 이상)가 섞여도 무해하다 — markDeparted 는 쿠팡이 성공을
             // 돌려준 박스 id 만 갱신한다. 여기서 다시 거르면 폴백 경로에만 필터 규칙이 하나 더 생긴다.
-            registerWriteBack(orderLineRepository.findByExternalOrderId(orderId), dbLinesByBoxId);
+            List<OrderLine> storedLines = orderLineRepository.findByExternalOrderId(orderId);
+            registerWriteBack(storedLines, dbLinesByBoxId);
+            // 🔴 폴백으로 확정된 주문도 같은 헬퍼를 부른다(PLAN 2609_40) — 빠뜨리면 그 주문만
+            //    다음 주문 동기화 전까지 스캔되지 않는다.
+            recordParcels(orderId, storedLines, invoicesByOrderId.get(orderId), carrierCodeCache);
             promoteToFront(coupangAccounts, account);
             log.info("발송처리 폴백 확정: orderId={} account={} boxes={}",
                     orderId, account.getId(), distinctBoxIds(hit.lines()).size());
@@ -467,14 +561,26 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
         return new OrderLookup(lines, skippedStatus);
     }
 
-    /** 계정의 (박스×라인)을 dto/라인 으로 조립해 1 POST 전송하고 응답을 집계. */
+    /**
+     * 계정의 (박스×라인)을 dto/라인 으로 조립해 1 POST 전송하고 응답을 집계.
+     *
+     * <p>🔴 송장이 여러 장인 주문도 <b>대표 1장(첫 송장)만</b> 보낸다(PLAN 2609_40 D8) — 쿠팡은 배송 묶음
+     * 하나에 송장 하나만 받는다. 나머지 송장은 실물 박스({@code shipment_parcel})에만 남는다.
+     */
     private AccountResult sendBatch(MarketplaceAccount account, List<InvoiceLine> lines,
-                                    Map<String, String> invoiceByOrderId) throws Exception {
+                                    Map<String, List<String>> invoicesByOrderId) throws Exception {
         // deliveryCompanyCode 는 계정당 1회 (하드코딩 금지, 미설정 시 IllegalStateException).
         String deliveryCompanyCode = carrierCodeService.resolveDeliveryCompanyCode(account.getPlatform());
         String path = coupangProperties.getInvoicesPath()
                 .replace("{vendorId}", CoupangCredentials.of(account).getVendorId());
-        return postInvoices(account, lines, invoiceByOrderId::get, deliveryCompanyCode, path);
+        return postInvoices(account, lines, orderId -> representativeInvoice(invoicesByOrderId, orderId),
+                deliveryCompanyCode, path);
+    }
+
+    /** 쿠팡에 올릴 대표 송장 = 파일 순서의 첫 장(D8). */
+    private String representativeInvoice(Map<String, List<String>> invoicesByOrderId, String orderId) {
+        List<String> invoices = invoicesByOrderId.get(orderId);
+        return (invoices == null || invoices.isEmpty()) ? null : invoices.get(0);
     }
 
     /**

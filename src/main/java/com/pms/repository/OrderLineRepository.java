@@ -112,6 +112,28 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
     @EntityGraph(attributePaths = {"order", "order.marketplaceAccount", "orderShipment"})
     List<OrderLine> findWithAccountByIdIn(List<Long> ids);
 
+    // ── 포장 콘솔 (FEATURE_2609_40 / 03) ──────────────────────────────────────
+
+    /**
+     * 배송 묶음의 모든 주문 라인 — 송장 스캔이 "이 박스에 담을 것"을 만드는 출발점.
+     *
+     * <p>🔴 <b>상태 조건이 없다</b>(PLAN 2609_40 D27). 포장은 <i>발송처리 → 라벨 → 포장</i> 순서라
+     * 그 시점의 라인은 이미 {@code SHIPPED}(배송지시)다 — {@link #findOutboundTargets} 의
+     * 결제완료·상품준비중 필터를 여기에 가져오면 <b>스캔한 송장이 전부 빈 목록</b>이 된다.
+     * 걸러내는 것은 전량 취소뿐이고 그 판정은 서비스가 한다({@code isFullyCancelled()}).
+     *
+     * <p>⚠️ {@code @EntityGraph} 는 {@link #findOutboundTargets} 와 같다: {@code open-in-view=false} 라
+     * BOM 전개가 라인마다 옵션을 지연로딩하면 N+1 이 된다.
+     */
+    @EntityGraph(attributePaths = {"order", "order.marketplaceAccount", "order.marketplaceAccount.seller",
+            "productListingOption", "productListingOption.masterProductOption"})
+    List<OrderLine> findByOrderShipment_Id(Long orderShipmentId);
+
+    /** 배송 묶음 여러 개의 라인을 한 번에 — 작업 대상 목록이 박스마다 다시 읽지 않도록(N+1 금지). */
+    @EntityGraph(attributePaths = {"order", "order.marketplaceAccount", "order.marketplaceAccount.seller",
+            "productListingOption", "productListingOption.masterProductOption"})
+    List<OrderLine> findByOrderShipment_IdIn(Collection<Long> orderShipmentIds);
+
     // ── 정산 라인 매핑 (FEATURE_2609_30 / PLAN D7) ──────────────────────────
 
     /**

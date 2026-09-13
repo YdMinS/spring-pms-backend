@@ -14,6 +14,8 @@ import com.pms.repository.OrderLineRepository;
 import com.pms.repository.OrderRepository;
 import com.pms.repository.OrderShipmentRepository;
 import com.pms.repository.ProductListingOptionRepository;
+import com.pms.service.CarrierCodeService;
+import com.pms.service.ShipmentParcelRecorder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -67,6 +69,8 @@ public class OrderUpserter {
     private final OrderLineRepository orderLineRepository;
     private final CoupangOrderLineRepository coupangOrderLineRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
+    private final CarrierCodeService carrierCodeService;
+    private final ShipmentParcelRecorder shipmentParcelRecorder;
 
     /** box 1개의 orderItems 전부를 upsert. 반환 = (신규, 갱신) 건수. */
     @Transactional
@@ -156,7 +160,7 @@ public class OrderUpserter {
         // 추적 가능 여부는 상태가 아니라 배송 묶음의 속성이다 — NONE_TRACKING(업체 직접배송)만 false.
         boolean trackingAvailable = !COUPANG_NONE_TRACKING.equalsIgnoreCase(platformStatus);
 
-        return orderShipmentRepository.findByOrder_IdAndExternalShipmentId(order.getId(), boxId)
+        OrderShipment shipment = orderShipmentRepository.findByOrder_IdAndExternalShipmentId(order.getId(), boxId)
                 .map(existing -> orderShipmentRepository.save(existing.toBuilder()
                         .shippingFee(shippingFee)
                         .remoteFee(remoteFee)
@@ -169,6 +173,42 @@ public class OrderUpserter {
                         .remoteFee(remoteFee)
                         .trackingAvailable(trackingAvailable)
                         .build()));
+        backfillParcel(shipment, box);
+        return shipment;
+    }
+
+    /**
+     * 송장번호 백필 — 응답에 실려 온 송장으로 실물 박스를 만든다 (FEATURE_2609_40 / PLAN D5 ② · D6 · D7).
+     *
+     * <p>🔴 <b>추가 API 호출 0회</b>다: {@code invoiceNumber}·{@code deliveryCompanyName} 은 이미 받은
+     * 발주서 응답(ordersheets v5)의 박스 안에 있다. 이 경로가 없으면 oclyx 를 거치지 않고 WING 에서 처리한 건과
+     * 과거 건은 영영 스캔되지 않는다.
+     *
+     * <p>🔴 마켓이 주는 것은 택배사 <b>이름</b>이라 {@code carrier_catalog} 로 코드를 되찾는다. 못 찾으면
+     * <b>코드만 비우고 송장번호는 저장한다</b>(D6) — 스캔에 필요한 것은 송장번호 하나다.
+     *
+     * <p>🔴 이미 있는 박스는 손대지 않는다({@link ShipmentParcelRecorder}) — 동기화가 {@code PACKED} 박스의
+     * 포장 결과를 덮으면 원장과 화면이 갈라진다.
+     *
+     * <p>🔴 백필은 송장이 있는 <b>모든</b> 배송 묶음에 {@code PENDING} 박스를 만든다 — 이미 출고가 끝난 과거
+     * 주문도 포함이다. 그래서 작업 목록은 상태가 아니라 <b>잔량</b>으로 거른다(PLAN 2609_40 D31) —
+     * 여기서 날짜나 상태로 거르지 않는다.
+     *
+     * <p>⚠️ best-effort: 백필 실패가 주문 동기화를 깨뜨리면 안 되므로 감싸서 로그만 남긴다.
+     */
+    private void backfillParcel(OrderShipment shipment, JsonNode box) {
+        try {
+            String invoiceNumber = box.path("invoiceNumber").asText("");
+            if (invoiceNumber.isBlank()) {
+                return;                       // 아직 송장이 없는 박스 — 아무것도 하지 않는다
+            }
+            String carrierName = box.path("deliveryCompanyName").asText("");
+            String carrierCode = carrierCodeService.findCodeByName(carrierName, Platform.COUPANG).orElse(null);
+            shipmentParcelRecorder.record(shipment, invoiceNumber, carrierCode, carrierName);
+        } catch (Exception e) {
+            log.warn("[order-upsert] invoice parcel backfill failed (sync continues): orderId={}, boxId={}",
+                    box.path("orderId").asText(null), box.path("shipmentBoxId").asText(null), e);
+        }
     }
 
     /**

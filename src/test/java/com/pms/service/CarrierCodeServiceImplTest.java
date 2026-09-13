@@ -161,6 +161,28 @@ class CarrierCodeServiceImplTest {
                 .hasMessageContaining("택배사를 선택하세요");
     }
 
+    /** 이름 → 코드 되찾기 (PLAN 2609_40 D6) — 공백·대소문자 차이를 흡수한다. */
+    @Test
+    void findCodeByName_trimsAndIgnoresCase() {
+        given(carrierCatalogRepository
+                .findFirstByPlatformAndNameIgnoreCaseOrderByDisplayOrderAscCodeAsc(Platform.COUPANG, "CJ대한통운"))
+                .willReturn(Optional.of(catalog("CJGLS", "CJ대한통운", 10)));
+
+        assertThat(carrierCodeService.findCodeByName("  CJ대한통운 ", Platform.COUPANG)).contains("CJGLS");
+    }
+
+    /** 🔴 모르는 이름은 정상 경로다 — 던지지 않고 empty 를 준다(송장번호는 저장된다). */
+    @Test
+    void findCodeByName_unknownNameReturnsEmpty() {
+        given(carrierCatalogRepository
+                .findFirstByPlatformAndNameIgnoreCaseOrderByDisplayOrderAscCodeAsc(Platform.COUPANG, "듣보택배"))
+                .willReturn(Optional.empty());
+
+        assertThat(carrierCodeService.findCodeByName("듣보택배", Platform.COUPANG)).isEmpty();
+        assertThat(carrierCodeService.findCodeByName(null, Platform.COUPANG)).isEmpty();
+        assertThat(carrierCodeService.findCodeByName("  ", Platform.COUPANG)).isEmpty();
+    }
+
     // ---- fixtures ----
 
     private void givenCatalog(Platform platform, CarrierCatalog... rows) {
