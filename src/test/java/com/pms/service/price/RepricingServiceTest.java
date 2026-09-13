@@ -18,11 +18,14 @@ import com.pms.dto.response.RepricingCandidatesResponse;
 import com.pms.dto.response.RepricingCandidatesResponse.Exclusion;
 import com.pms.dto.response.RepricingCandidatesResponse.Row;
 import com.pms.repository.MarginPolicyRepository;
+import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
+import com.pms.service.ListingAssetService;
 import com.pms.service.MasterChannelConfigService;
 import com.pms.service.PriceCalculator;
+import com.pms.service.listing.ListingChannelResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -66,6 +69,9 @@ class RepricingServiceTest {
     @Mock private ProductListingProductRepository productListingProductRepository;
     @Mock private MarginPolicyRepository marginPolicyRepository;
     @Mock private MasterChannelConfigService masterChannelConfigService;
+    @Mock private ListingAssetService listingAssetService;
+    @Mock private ListingChannelResolver channelResolver;
+    @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
 
     private RepricingServiceImpl service;
 
@@ -73,8 +79,10 @@ class RepricingServiceTest {
     void setUp() {
         PriceCalculator priceCalculator =
                 new PriceCalculator(marginPolicyRepository, masterChannelConfigService, VAT);
+        // 실행(02) 협력자는 조회 경로에서 한 번도 쓰이지 않는다 — mock 을 넘기되 어떤 스텁도 두지 않는다.
         service = new RepricingServiceImpl(productListingRepository, productListingOptionRepository,
-                productListingProductRepository, priceCalculator);
+                productListingProductRepository, priceCalculator, listingAssetService, channelResolver,
+                marketplaceAccountRepository);
     }
 
     // ---------------------------------------------------------------- fixtures
