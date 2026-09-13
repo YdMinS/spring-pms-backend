@@ -17,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -104,6 +105,17 @@ public class CarrierCodeServiceImpl implements CarrierCodeService {
             throw new IllegalArgumentException("선택한 택배사를 " + platform + " 에 사용할 수 없습니다: " + code);
         }
         return code;
+    }
+
+    @Override
+    public Optional<String> findCodeByName(String carrierName, Platform platform) {
+        // 모르는 이름 · 빈 이름은 정상 경로다(PLAN 2609_40 D6) — 던지지 않고 empty 를 준다.
+        if (carrierName == null || carrierName.isBlank() || platform == null) {
+            return Optional.empty();
+        }
+        return carrierCatalogRepository
+                .findFirstByPlatformAndNameIgnoreCaseOrderByDisplayOrderAscCodeAsc(platform, carrierName.trim())
+                .map(CarrierCatalog::getCode);
     }
 
     /** 그 플랫폼에 코드가 등록된 활성 택배사 — 등록 순서(택배사 id) 유지. */

@@ -1,0 +1,111 @@
+# Physical parcel layer (FEATURE_2609_40 / PLAN D1 · D2 · D3 · D4 · D7 · D8 · D32).
+# ① shipment_parcel = THE PHYSICAL BOX WE PACK, one row per invoice (waybill) label.
+#    Its parent order_shipment = COUPANG'S SHIPMENT BOX (the marketplace's shipping bundle).
+#    They are different layers: the marketplace decides the bundle, we decide how many real boxes it takes.
+# ② Raising the parcel count on the carrier sheet makes the carrier issue SEVERAL invoices for one bundle,
+#    so several rows are created here. Coupang still receives ONLY THE FIRST invoice (D8) — the marketplace
+#    accepts a single invoice per shipment bundle and that send behaviour is deliberately unchanged.
+# ③ UNIQUE (order_shipment_id, invoice_number) is the ONLY defence against the sync backfill: order sync is
+#    run repeatedly, and without this constraint every run would add another parcel row (D7).
+# ④ status values — PENDING (not packed yet) · PACKED (packed and shipped out) ·
+#    UNUSED (a label that ended up not being used, D32). Written by the packing console (piece 03).
+# ⚠️ shipment_parcel_item.order_line_id is mandatory on purpose (D2): a parcel must know WHICH ORDER each
+#    item belongs to, so packing several orders into one box later needs no model change.
+# ⚠️ H2 constraint names are schema-global unique -> distinct names (fk_shipmentparcel_* / fk_shipmentparcelitem_*).
+databaseChangeLog:
+
+  - changeSet:
+      id: 090-shipment-parcel
+      author: oclyx
+      comment: "FEATURE_2609_40: shipment_parcel + shipment_parcel_item (one row per invoice label)."
+      changes:
+        - createTable:
+            tableName: shipment_parcel
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: order_shipment_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: invoice_number, type: VARCHAR(60), constraints: { nullable: false } }
+              - column: { name: carrier_code, type: VARCHAR(50) }
+              - column: { name: carrier_name, type: VARCHAR(100) }
+              - column: { name: parcel_seq, type: INT, constraints: { nullable: false } }
+              - column: { name: status, type: VARCHAR(20), constraints: { nullable: false } }
+              - column: { name: packed_at, type: TIMESTAMP }
+              - column: { name: packed_by, type: VARCHAR(100) }
+              - column: { name: box_package_id, type: BIGINT }
+              - column: { name: expected_box_cost, type: "DECIMAL(12,2)" }
+              - column: { name: actual_box_cost, type: "DECIMAL(12,2)" }
+              - column: { name: expected_delivery_cost, type: "DECIMAL(12,2)" }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_shipmentparcel_tenant
+            baseTableName: shipment_parcel
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_shipmentparcel_shipment
+            baseTableName: shipment_parcel
+            baseColumnNames: order_shipment_id
+            referencedTableName: order_shipment
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_shipmentparcel_package
+            baseTableName: shipment_parcel
+            baseColumnNames: box_package_id
+            referencedTableName: package
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            constraintName: uq_shipment_parcel_invoice
+            tableName: shipment_parcel
+            columnNames: order_shipment_id, invoice_number
+        - createIndex:
+            tableName: shipment_parcel
+            indexName: idx_shipmentparcel_invoice
+            columns:
+              - column: { name: invoice_number }
+
+        - createTable:
+            tableName: shipment_parcel_item
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: shipment_parcel_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: order_line_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: product_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: quantity, type: INT, constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_shipmentparcelitem_tenant
+            baseTableName: shipment_parcel_item
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_shipmentparcelitem_parcel
+            baseTableName: shipment_parcel_item
+            baseColumnNames: shipment_parcel_id
+            referencedTableName: shipment_parcel
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_shipmentparcelitem_orderline
+            baseTableName: shipment_parcel_item
+            baseColumnNames: order_line_id
+            referencedTableName: order_line
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_shipmentparcelitem_product
+            baseTableName: shipment_parcel_item
+            baseColumnNames: product_id
+            referencedTableName: products
+            referencedColumnNames: id
+        - createIndex:
+            tableName: shipment_parcel_item
+            indexName: idx_shipmentparcelitem_parcel
+            columns:
+              - column: { name: shipment_parcel_id }
+      rollback:
+        - dropTable: { tableName: shipment_parcel_item }
+        - dropTable: { tableName: shipment_parcel }
