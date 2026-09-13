@@ -1,8 +1,12 @@
 package com.pms.repository;
 
+import com.pms.domain.ParcelStatus;
 import com.pms.domain.ShipmentParcel;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -21,4 +25,40 @@ public interface ShipmentParcelRepository extends JpaRepository<ShipmentParcel, 
     long countByOrderShipment_Id(Long orderShipmentId);
 
     List<ShipmentParcel> findByOrderShipment_IdOrderByParcelSeqAsc(Long orderShipmentId);
+
+    // ── 포장 콘솔 (FEATURE_2609_40 / 03) ──────────────────────────────────────
+
+    /**
+     * 송장번호 하나로 박스를 찾는다 — 스캔의 입구(PLAN 2609_40 D9).
+     *
+     * <p>⚠️ 배송 묶음을 모르는 조회다: 작업자가 들고 있는 것은 송장 한 장뿐이라
+     * {@link #findByOrderShipment_IdAndInvoiceNumber} 를 쓸 수 없다. 유일 제약은 (배송묶음, 송장번호)라
+     * 이론적으로는 서로 다른 묶음이 같은 송장번호를 가질 수 있어 목록으로 받고 가장 오래된 것을 쓴다 —
+     * 택배사가 송장번호를 재사용하지 않는 한 언제나 1건이다.
+     */
+    List<ShipmentParcel> findByInvoiceNumberOrderByIdAsc(String invoiceNumber);
+
+    /** 배송 묶음 여러 개의 박스를 한 번에 — 작업 목록이 묶음별 총 박스 수를 셀 때 쓴다(N+1 금지). */
+    List<ShipmentParcel> findByOrderShipment_IdIn(Collection<Long> orderShipmentIds);
+
+    /**
+     * 상태별 박스 + 판매자 필터 — 작업 대상 목록(D16).
+     *
+     * <p>🔴 <b>잔량 0 걸러내기는 여기서 하지 않는다</b>(D31). 잔량은 {@code STOCK_OUT} 합계라
+     * SQL 로 재현하는 순간 두 번째 계산기가 생긴다(D28) — 거르는 것은 서비스다.
+     *
+     * <p>⚠️ 판매자는 {@code 박스 → 배송묶음 → 주문 → 계정 → 판매자} 로 해석한다(출고 화면과 같은 축).
+     */
+    @Query("""
+            select p from ShipmentParcel p
+              join p.orderShipment s
+              join s.order o
+              join o.marketplaceAccount a
+              join a.seller sel
+             where p.status = :status
+               and (:sellerId is null or sel.id = :sellerId)
+             order by p.id asc
+            """)
+    List<ShipmentParcel> findByStatusAndSeller(@Param("status") ParcelStatus status,
+                                               @Param("sellerId") Long sellerId);
 }
