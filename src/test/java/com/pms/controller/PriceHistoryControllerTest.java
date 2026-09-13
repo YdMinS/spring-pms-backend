@@ -49,11 +49,13 @@ class PriceHistoryControllerTest extends BaseIntegrationTest {
     private Long coupangListingId;
     private Long naverListingId;
     private Long productId;
+    private Long sellerId;
 
     @BeforeEach
     void seed() {
         Seller seller = sellerRepository.save(Seller.builder()
                 .sellerName("행복상회").businessRegistration("111-22-33333").build());
+        sellerId = seller.getId();
         Product product = productRepository.save(
                 Product.builder().productName("양말A").price(new BigDecimal("4000.00")).build());
         productId = product.getId();
@@ -122,6 +124,52 @@ class PriceHistoryControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(1))
                 .andExpect(jsonPath("$.data[0].listingId").value(coupangListingId));
+    }
+
+    /**
+     * 2609_43 — 판매가 조정 내역 탭이 판매자별로 이력을 본다. 🔴 {@code PRODUCT_COST} 행은 셀이 없어 빠지는
+     * 것이 맞다(판매자별 = 셀 기준).
+     */
+    @Test
+    void testFilterBySellerReturnsOnlyThatSellersCells() throws Exception {
+        seedOtherSellerChange();
+
+        mockMvc.perform(get(PATH).param("sellerId", String.valueOf(sellerId))
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[*].listingId").value(
+                        org.hamcrest.Matchers.containsInAnyOrder(
+                                coupangListingId.intValue(), naverListingId.intValue())))
+                // 원가 행은 셀에 속하지 않는다 → 판매자로 거르면 빠진다.
+                .andExpect(jsonPath("$.data[*].targetType").value(
+                        org.hamcrest.Matchers.everyItem(org.hamcrest.Matchers.is("LISTING_SELLING"))));
+    }
+
+    /** 회귀 — 판매자를 주지 않으면 기존과 같다(남의 판매자 행까지 전부). */
+    @Test
+    void testWithoutSellerReturnsEveryRow() throws Exception {
+        seedOtherSellerChange();
+
+        mockMvc.perform(get(PATH).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(4));
+    }
+
+    /** 다른 판매자의 셀 + 판매가 변경 1행. 기존 테스트의 건수를 흔들지 않도록 필요한 테스트에서만 부른다. */
+    private void seedOtherSellerChange() {
+        Seller other = sellerRepository.save(Seller.builder()
+                .sellerName("옆집상회").businessRegistration("222-33-44444").build());
+        ProductListing otherCell = productListingRepository.save(ProductListing.builder()
+                .platform(Platform.COUPANG).name("옆집 쿠팡 셀").status(ListingStatus.SELLING)
+                .seller(other).build());
+        ProductListingOption otherOption = productListingOptionRepository.save(
+                ProductListingOption.builder().productListing(otherCell).optionName("1켤레")
+                        .sellingPrice(new BigDecimal("3000")).build());
+        priceChangeLogRepository.save(PriceChangeLog.builder()
+                .targetType(PriceTargetType.LISTING_SELLING).listingOption(otherOption)
+                .oldPrice(new BigDecimal("2500.0000")).newPrice(new BigDecimal("3000.0000"))
+                .reason(PriceChangeReason.MANUAL).createdBy(ADMIN_EMAIL).build());
     }
 
     @Test

@@ -98,6 +98,18 @@ class RepricingPushTest {
                 .build();
     }
 
+    /** 직접 지정가 옵션 — 가격을 사람이 소유한다(2609_19). 전송 조건은 모두 갖췄다. */
+    private ProductListingOption manualOption(ProductListing cell) {
+        return option(10L, cell, "12000.00").toBuilder()
+                .priceSource(GeneratedContentSource.MANUAL_OVERRIDE).build();
+    }
+
+    private ProductListingOption savedOption() {
+        ArgumentCaptor<ProductListingOption> saved = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository).save(saved.capture());
+        return saved.getValue();
+    }
+
     private MarketplaceAccount account(Seller owner) {
         return MarketplaceAccount.builder().id(1L).seller(owner).platform(Platform.COUPANG)
                 .isActive(true).build();
@@ -172,25 +184,57 @@ class RepricingPushTest {
         verify(productListingOptionRepository, never()).save(any());
     }
 
+    /**
+     * 🔴 2609_43 D1(2609_39 D6 번복) — 직접 지정가 옵션도 전송한다. 같은 요청의 미등록 옵션만 건너뛴다
+     * (전송 전용 조건이라 그 사유는 그대로 살아 있다).
+     */
     @Test
-    void testPushSkipsManualAndUnregistered() {
+    void testPushPushesManualAndSkipsUnregistered() {
         ProductListing cell = cell(CELL_ID, seller);
-        ProductListingOption manual = option(10L, cell, "12000.00").toBuilder()
-                .priceSource(GeneratedContentSource.MANUAL_OVERRIDE).build();
         ProductListingOption unregistered = option(11L, cell, "9000.00").toBuilder()
                 .platformOptionId(null).build();
-        given(productListingOptionRepository.findWithConfigByIdIn(anyCollection()))
-                .willReturn(List.of(manual, unregistered));
-        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
+        givenLoadable(List.of(manualOption(cell), unregistered), cell);
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(SELLER_ID, Platform.COUPANG))
+                .willReturn(Optional.of(account(seller)));
 
         RepricePushResult result = service.push(List.of(10L, 11L));
 
-        assertThat(result.pushed()).isZero();
-        assertThat(result.skipped()).hasSize(2);
-        assertThat(result.skipped()).extracting(RepricePushResult.SkippedOption::optionId)
-                .containsExactly(10L, 11L);
-        verifyNoInteractions(channel);
-        verify(productListingOptionRepository, never()).save(any());
+        assertThat(result.pushed()).isEqualTo(1);
+        assertThat(result.skipped()).hasSize(1);
+        assertThat(result.skipped().get(0).optionId()).isEqualTo(11L);
+        assertThat(result.skipped().get(0).reason()).isEqualTo("마켓 옵션 식별자 없음");
+        verify(channel, times(1)).updateOptionPrice(any(), eq(new BigDecimal("12000.00")), any());
+    }
+
+    /**
+     * 🔴 2609_43 D2 회귀 — 전송 후에도 직접 지정가로 남아야 한다. 이 경로가 {@code priceSource} 를 쓰기
+     * 시작하면 2609_19 가 통째로 무너진다.
+     */
+    @Test
+    void testPushManualOptionKeepsManualPriceSource() {
+        ProductListing cell = cell(CELL_ID, seller);
+        givenLoadable(List.of(manualOption(cell)), cell);
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(SELLER_ID, Platform.COUPANG))
+                .willReturn(Optional.of(account(seller)));
+
+        service.push(List.of(10L));
+
+        assertThat(savedOption().getPriceSource()).isEqualTo(GeneratedContentSource.MANUAL_OVERRIDE);
+    }
+
+    /** 직접 지정가 옵션도 마켓이 받아들인 값이 {@code market_price} 에 남아야 다음 조회가 「밀림」을 안다. */
+    @Test
+    void testPushManualOptionRecordsMarketPrice() {
+        ProductListing cell = cell(CELL_ID, seller);
+        givenLoadable(List.of(manualOption(cell)), cell);
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(SELLER_ID, Platform.COUPANG))
+                .willReturn(Optional.of(account(seller)));
+
+        service.push(List.of(10L));
+
+        ProductListingOption saved = savedOption();
+        assertThat(saved.getMarketPrice()).isEqualByComparingTo("12000.00");
+        assertThat(saved.getMarketPriceAt()).isNotNull();
     }
 
     /**

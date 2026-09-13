@@ -103,6 +103,12 @@ class RepricingOverrideTest {
                 .build();
     }
 
+    /** 직접 지정가 옵션 — 가격을 사람이 소유한다(2609_19). 판매중 셀의 정상 옵션이다. */
+    private ProductListingOption manualOption(ProductListing cell) {
+        return option(10L, cell, "12000.00").toBuilder()
+                .priceSource(GeneratedContentSource.MANUAL_OVERRIDE).build();
+    }
+
     private static PriceOverrideRequest.Item item(Long optionId, String price) {
         return new PriceOverrideRequest.Item(optionId, new BigDecimal(price));
     }
@@ -175,21 +181,32 @@ class RepricingOverrideTest {
         verifyNoInteractions(marketplaceAccountRepository);
     }
 
-    /** D4 — 이미 사람이 소유한 가격은 옵션 편집 화면(2609_19)이 바꾼다. */
+    /** 🔴 2609_43 D1(2609_42 D4 번복) — 사람이 소유한 가격을 사람이 바꾸는 것이라 막지 않는다. */
     @Test
-    void override_manualOptionSkipped() {
+    void override_manualOptionApplied() {
         ProductListing cell = cell(CELL_ID, ListingStatus.SELLING);
-        ProductListingOption manual = option(10L, cell, "12000.00").toBuilder()
-                .priceSource(GeneratedContentSource.MANUAL_OVERRIDE).build();
-        givenLoadable(List.of(manual), cell);
+        givenLoadable(List.of(manualOption(cell)), cell);
 
         PriceOverrideResult result = service.override(List.of(item(10L, "13500.00")));
 
-        assertThat(result.applied()).isZero();
-        assertThat(result.skipped()).hasSize(1);
-        assertThat(result.skipped().get(0).optionId()).isEqualTo(10L);
-        assertThat(result.skipped().get(0).reason()).isEqualTo("직접 지정한 가격");
-        verify(productListingOptionRepository, never()).save(any());
+        assertThat(result.applied()).isEqualTo(1);
+        assertThat(result.skipped()).isEmpty();
+        assertThat(result.failed()).isEmpty();
+        assertThat(savedOption().getSellingPrice()).isEqualByComparingTo("13500.00");
+    }
+
+    /**
+     * 🔴 2609_43 D2 회귀 — 직접 지정가 옵션은 저장 후에도 직접 지정가로 남아야 한다. 이 경로가
+     * {@code priceSource} 를 쓰기 시작하면(= AUTO 로 되돌리면) 2609_19 가 통째로 무너진다.
+     */
+    @Test
+    void override_manualOption_keepsManualPriceSource() {
+        ProductListing cell = cell(CELL_ID, ListingStatus.SELLING);
+        givenLoadable(List.of(manualOption(cell)), cell);
+
+        service.override(List.of(item(10L, "13500.00")));
+
+        assertThat(savedOption().getPriceSource()).isEqualTo(GeneratedContentSource.MANUAL_OVERRIDE);
     }
 
     @Test

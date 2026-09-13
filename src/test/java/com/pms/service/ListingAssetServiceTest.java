@@ -526,6 +526,8 @@ class ListingAssetServiceTest {
     }
 
     // 2609_19/D2: a price the user set for this channel survives a regeneration; AUTO options still recompute.
+    // 🔴 2609_43/D2: this stays true after the repricing console opened manual entry and market push to those
+    // same options (D1) — skipping the OFFICIAL recalculation is what "manual price" means.
     @Test
     void recalculateOptionPricesSkipsManualOption() {
         ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();

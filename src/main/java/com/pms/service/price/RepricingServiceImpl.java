@@ -394,8 +394,8 @@ public class RepricingServiceImpl implements RepricingService {
     }
 
     /**
-     * 대상이 아닌 사유. null = 처리한다. 순서는 {@code PUSH} 기준으로 「채널 → 셀 상태 → 식별자 → 가격
-     * 소유자」이고, {@code OVERRIDE} 는 그 중 <b>전송에만 필요한 두 가지</b>를 건너뛴다.
+     * 대상이 아닌 사유. null = 처리한다. 순서는 {@code PUSH} 기준으로 「채널 → 셀 상태 → 식별자」이고,
+     * {@code OVERRIDE} 는 그 중 <b>전송에만 필요한 두 가지</b>를 건너뛴다.
      *
      * <p>🔴 채널 지원 여부와 마켓 식별자는 <b>전송 전용</b> 조건이다(2609_42): 아직 등록 전인 셀이나 어댑터가
      * 없는 플랫폼의 셀도 <b>로컬 판매가는 정할 수 있다</b>. 직접 입력에서 이 둘로 막으면 이유 없이 막는 것이다.</p>
@@ -413,9 +413,10 @@ public class RepricingServiceImpl implements RepricingService {
         if (purpose == Purpose.PUSH && option.getPlatformOptionId() == null) {
             return "마켓 옵션 식별자 없음";
         }
-        if (option.getPriceSource() == GeneratedContentSource.MANUAL_OVERRIDE) {
-            return "직접 지정한 가격";                  // D6·D23 — 해제는 [기본값으로 변경] 경로가 소유한다
-        }
+        // 🔴 2609_43 D1: 직접 지정가 차단을 제거했다(2609_39 D6 · 2609_42 D4 번복). 사람이 소유한 가격을
+        //    사람이 바꾸는 경로라 막을 이유가 없다 — 경보에 띄워 놓고 대응만 막는 것이 앞뒤가 안 맞았다.
+        //    공식 재계산(ListingAssetService.recalculateOptionPrices)의 건너뛰기는 그대로다 — 그게
+        //    직접 지정가의 정의다(D2). 이 조각은 그 코드를 건드리지 않는다.
         return null;
     }
 
@@ -505,6 +506,7 @@ public class RepricingServiceImpl implements RepricingService {
         // 상품이 전부 여기 쌓인다.
         boolean pendingPush = marketPrice != null && sellingPrice != null
                 && marketPrice.compareTo(sellingPrice) != 0;
+        // 2609_43: excluded = MANUAL 은 이제 「재계산에서 빠진다」는 뜻이다. 직접 입력·마켓 반영은 된다(D1·D2).
         boolean manual = option.getPriceSource() == GeneratedContentSource.MANUAL_OVERRIDE;
 
         if (cellBasis.error() != null) {
@@ -622,10 +624,11 @@ public class RepricingServiceImpl implements RepricingService {
         private void add(Row row, PriceCalculator.CellPricingBasis basis) {
             optionCount++;
             if (row.below()) {
+                // 2609_43 D1: 직접 지정가도 실행 가능해졌다 — belowCount 는 「대응 필요」 전부이고,
+                // belowManualCount 는 그중 가격을 사람이 소유한 수(부분집합)다. 겹쳐 세는 것이 맞다.
+                belowCount++;
                 if (row.excluded() == Exclusion.MANUAL) {
                     belowManualCount++;
-                } else {
-                    belowCount++;
                 }
             }
             if (row.pendingPush()) {
