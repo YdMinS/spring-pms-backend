@@ -75,13 +75,14 @@ public interface RepricingService {
      * <p>🔴 {@code priceSource} 를 <b>건드리지 않는다</b>(2609_42 D2). {@code ListingOptionService.setOptionPrices}
      * 를 쓰면 옵션이 {@code MANUAL_OVERRIDE} 가 되어(2609_19 D3) 다음 재계산부터 영구 제외되는데, 그러면 이
      * 기능이 하려는 일의 정반대가 된다 — 여기 입력은 「이번 한 번만」이고 다음 재계산이 공식값으로 덮는 것이
-     * 정상이다.</p>
+     * 정상이다. 🔴 반대로 <b>이미 직접 지정가인 옵션은 직접 지정가로 남는다</b>(2609_43 D2) — 이 경로가 그 칸을
+     * 쓰지 않기 때문에 두 방향 모두 성립한다.</p>
      *
      * <p>🔴 {@code marketPrice} 도 건드리지 않는다(D10) — 그래야 그 행이 「아직 안 밀림」으로 떠서 사람이
      * {@link #push} 를 눌러야 한다는 사실을 화면이 말할 수 있다.</p>
      *
-     * <p>⚠️ 이미 직접 지정가({@code MANUAL_OVERRIDE})인 옵션은 이 경로의 대상이 아니다(D4) — 그 가격은 이미
-     * 사람이 소유하고 있고, 바꾸려면 옵션 편집 화면(2609_19)이 맞다. 서버는 {@code skipped} 로 돌려준다.</p>
+     * <p>🔴 이미 직접 지정가({@code MANUAL_OVERRIDE})인 옵션도 <b>대상이다</b>(2609_43 D1 — 2609_42 D4 번복):
+     * 사람이 소유한 가격을 사람이 바꾸는 것이라 막을 이유가 없다. 공식 재계산만 그 옵션을 계속 건너뛴다(D2).</p>
      *
      * @param items 옵션 id + 새 판매가. 상한은 요청 DTO 가 소유한다
      * @return 옵션 단위 결과({@code applied}/{@code skipped}/{@code failed}). 마켓을 부르지 않으므로 중단은 없다

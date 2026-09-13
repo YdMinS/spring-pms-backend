@@ -1,8 +1,10 @@
 package com.pms.service.price;
 
+import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
+import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
 import com.pms.dto.response.RecalculateResult;
 import com.pms.repository.MarketplaceAccountRepository;
@@ -19,6 +21,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -119,5 +122,30 @@ class RepricingRecalculateTest {
         assertThat(result.failed().get(0).message()).contains("마진 프리셋 없음");
         // 1·3번째는 각자의 트랜잭션에서 이미 커밋됐다 — 되돌리지 않는다.
         verify(listingAssetService, times(3)).recalculateOptionPrices(any());
+    }
+
+    /**
+     * 🔴 2609_43 D2 회귀 — 직접 입력·마켓 반영이 직접 지정가 옵션에 열렸어도(D1) <b>공식 재계산은 계속
+     * 건너뛴다.</b> 그 건너뛰기는 {@code ListingAssetService.recalculateOptionPrices} 안에 있고
+     * ({@code ListingAssetServiceTest.recalculateOptionPricesSkipsManualOption} 이 실제 동작을 지킨다),
+     * 이 재가격 경로는 그 이음매를 부를 뿐 <b>스스로 가격을 쓰지 않는다</b> — 여기서 제외 규칙을 다시
+     * 판정해 직접 지정가를 끼워 넣는 순간 직접 지정가의 정의가 사라진다.
+     */
+    @Test
+    void recalculate_stillSkipsManualOption() {
+        givenCell(1L);
+        ProductListingOption manual = ProductListingOption.builder().id(50L).optionName("직접 지정")
+                .sellingPrice(new BigDecimal("15000"))
+                .priceSource(GeneratedContentSource.MANUAL_OVERRIDE).build();
+        given(productListingOptionRepository.findByProductListingId(1L)).willReturn(List.of(manual));
+
+        RecalculateResult result = service.recalculate(List.of(1L));
+
+        assertThat(result.status()).isEqualTo("SUCCESS");
+        assertThat(result.optionChanged()).isZero();          // 이음매가 건너뛰었으므로 바뀐 것이 없다
+        assertThat(manual.getSellingPrice()).isEqualByComparingTo("15000");
+        // 재가격 서비스는 가격을 스스로 쓰지 않는다 — 쓰는 곳은 이음매 하나뿐이다.
+        verify(productListingOptionRepository, never()).save(any());
+        verify(listingAssetService, times(1)).recalculateOptionPrices(any());
     }
 }

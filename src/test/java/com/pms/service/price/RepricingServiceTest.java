@@ -238,9 +238,10 @@ class RepricingServiceTest {
         assertThat(response.groups().get(0).pendingPushCount()).isEqualTo(1);
     }
 
-    // 5. D23: 직접 지정가도 똑같이 판정하고 행도 내려보낸다. 다만 집계는 따로 센다(실행 불가).
+    // 5. 2609_43 D1: 직접 지정가도 똑같이 판정하고 행도 내려보낸다. belowCount 는 그 행을 <b>포함</b>하고
+    //    (화면의 행 수와 맞아야 한다), belowManualCount 는 그중 가격을 사람이 소유한 수를 겹쳐 센다.
     @Test
-    void testCandidatesCountsManualBelowSeparately() {
+    void candidates_belowCountIncludesManual() {
         ProductListing cell = cell(CELL_ID);
         MasterProductOption mo = masterOption(10L);
         ProductListingOption manual = option(50L, cell, mo, "10000", "10000").toBuilder()
@@ -252,11 +253,11 @@ class RepricingServiceTest {
 
         assertThat(response.rows()).singleElement().satisfies(row -> {
             assertThat(row.below()).isTrue();                       // 경보는 한다
-            assertThat(row.excluded()).isEqualTo(Exclusion.MANUAL);  // 실행에서만 빠진다
+            assertThat(row.excluded()).isEqualTo(Exclusion.MANUAL);  // 공식 재계산에서만 빠진다(D2)
         });
         assertThat(response.groups()).singleElement().satisfies(group -> {
-            assertThat(group.belowManualCount()).isEqualTo(1);
-            assertThat(group.belowCount()).isZero();
+            assertThat(group.belowCount()).isEqualTo(1);             // 🔴 2609_43: 직접 지정가도 대응 필요에 든다
+            assertThat(group.belowManualCount()).isEqualTo(1);       // 그중 사람이 소유한 수(부분집합)
         });
     }
 

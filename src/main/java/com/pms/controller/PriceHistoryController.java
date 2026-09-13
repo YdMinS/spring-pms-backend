@@ -45,11 +45,12 @@ public class PriceHistoryController {
             @RequestParam(required = false) Long optionId,
             @RequestParam(required = false) Long listingId,
             @RequestParam(required = false) Long masterProductId,
+            @RequestParam(required = false) Long sellerId,
             @RequestParam(required = false) Platform platform,
             @RequestParam(required = false) PriceTargetType targetType,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
         return ResponseEntity.ok(ResponseDTO.success(priceHistoryService.search(
-                productId, optionId, listingId, masterProductId, platform, targetType, from, to)));
+                productId, optionId, listingId, masterProductId, sellerId, platform, targetType, from, to)));
     }
 }

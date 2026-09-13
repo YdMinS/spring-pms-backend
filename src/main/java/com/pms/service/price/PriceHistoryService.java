@@ -21,6 +21,7 @@ public interface PriceHistoryService {
      *   <tr><td>productId</td><td>this purchased item's COST movements</td></tr>
      *   <tr><td>optionId</td><td>one cell option's selling price</td></tr>
      *   <tr><td>listingId</td><td>every option of ONE channel cell</td></tr>
+     *   <tr><td>sellerId</td><td>every cell of ONE seller (2609_43) — 🔴 cost rows drop out, they have no cell</td></tr>
      *   <tr><td>masterProductId</td><td>one product across ALL channels — "Coupang went up, Naver did not"</td></tr>
      *   <tr><td>platform</td><td>narrows the above to one channel</td></tr>
      *   <tr><td>targetType</td><td>cost only / selling price only</td></tr>
@@ -33,6 +34,6 @@ public interface PriceHistoryService {
      * it is found by {@code listingId}. The screen has to say so.
      */
     List<PriceChangeView> search(Long productId, Long optionId, Long listingId, Long masterProductId,
-                                 Platform platform, PriceTargetType targetType,
+                                 Long sellerId, Platform platform, PriceTargetType targetType,
                                  LocalDate from, LocalDate to);
 }
