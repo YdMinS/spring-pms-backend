@@ -749,6 +749,46 @@ class LiquibaseChangelogApplyTest {
                 Integer.class)).isEqualTo(1);
     }
 
+    /**
+     * changeset 091: 상자 유형·이미지 + 상자 기억표 (FEATURE_2609_40 / PLAN D20 · D21 · D22).
+     *
+     * <p>🔴 기존 상자는 전부 {@code PURCHASED} 여야 한다 — 이 기능 전의 상자는 전부 구매한 것이고,
+     * 하나라도 {@code RECYCLED} 로 남으면 원가 0 짜리 상자가 판매가 계산 목록에 섞인다.</p>
+     */
+    @Test
+    void boxKindAndRecipeApplied() {
+        // 컬럼 2개가 실존하고, 백필이 남긴 값이 PURCHASED 뿐이다(빈 DB 라 행은 없지만 제약은 검증된다).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM package WHERE box_kind <> 'PURCHASED' OR image_url IS NOT NULL",
+                Integer.class)).isZero();
+
+        // box_kind 는 NOT NULL 이어야 한다(유형 없는 상자는 어느 목록에 속하는지 알 수 없다).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE TABLE_NAME = 'PACKAGE' AND COLUMN_NAME = 'BOX_KIND'",
+                String.class)).isEqualTo("NO");
+        // 사진은 없는 것이 정상이다(치수로 도형을 그린다, D26).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE TABLE_NAME = 'PACKAGE' AND COLUMN_NAME = 'IMAGE_URL'",
+                String.class)).isEqualTo("YES");
+
+        // 기억표 테이블 + 컬럼(성공하는 count 가 곧 증거).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM box_recipe WHERE recipe_key IS NULL AND package_id IS NULL "
+                        + "AND use_count IS NULL AND last_used_at IS NULL", Integer.class)).isZero();
+
+        // 🔴 같은 조합 × 같은 상자는 한 행뿐이다(remember 가 +1 하는 자리).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
+                        + "WHERE CONSTRAINT_NAME = 'UQ_BOX_RECIPE_KEY_PACKAGE'", Integer.class))
+                .isEqualTo(1);
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID = '091-box-kind-recipe'",
+                Integer.class)).isEqualTo(1);
+    }
+
     @Test
     void tenantDimensionApplied() {
         // changeset 002: tenant table created + seeded with the default tenant (id=1).

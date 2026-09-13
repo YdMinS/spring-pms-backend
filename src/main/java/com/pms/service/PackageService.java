@@ -1,7 +1,9 @@
 package com.pms.service;
 
+import com.pms.domain.BoxKind;
 import com.pms.dto.request.PackageRequest;
 import com.pms.dto.response.PackageResponse;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -29,10 +31,21 @@ public interface PackageService {
     PackageResponse getPackage(Long id);
 
     /**
-     * Retrieve all packages.
+     * Retrieve packages, optionally narrowed to one kind (FEATURE_2609_40 / PLAN D21).
+     *
+     * <p>🔴 Callers that feed the SELLING-PRICE calculation must pass {@link BoxKind#PURCHASED}: a recycled
+     * box costs 0 and would price goods off a zero-cost box if it could be chosen as a default box. The
+     * unfiltered call stays the default so the box-management and packing screens still see every box.</p>
+     *
+     * @param boxKind kind filter, or null for every kind
      * @return List<PackageResponse> (empty if none)
      */
-    List<PackageResponse> getPackages();
+    List<PackageResponse> getPackages(BoxKind boxKind);
+
+    /** Every package, regardless of kind. */
+    default List<PackageResponse> getPackages() {
+        return getPackages(null);
+    }
 
     /**
      * Update an existing package. If isDefault=true, existing default is set to false.
@@ -49,4 +62,17 @@ public interface PackageService {
      * @throws com.pms.exception.ResourceNotFoundException if not found
      */
     void deletePackage(Long id);
+
+    /**
+     * Upload a photo for a box and store its URL (FEATURE_2609_40 / PLAN D26).
+     *
+     * <p>Goes through the shared {@code ImageStorageService} seam — never a storage path of its own.
+     * Clearing a photo only nulls the column; the stored object is deliberately kept.</p>
+     *
+     * @param id   package ID
+     * @param file image file (validated by {@code ImageValidator})
+     * @return PackageResponse with the new imageUrl
+     * @throws com.pms.exception.ResourceNotFoundException if not found
+     */
+    PackageResponse uploadImage(Long id, MultipartFile file);
 }

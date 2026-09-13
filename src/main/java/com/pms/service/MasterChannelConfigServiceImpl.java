@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.BoxKind;
 import com.pms.domain.CarrierRate;
 import com.pms.domain.Category;
 import com.pms.domain.MasterProduct;
@@ -102,6 +103,12 @@ public class MasterChannelConfigServiceImpl implements MasterChannelConfigServic
                 : cell.getMasterProduct() == null ? null : cell.getMasterProduct().getDefaultPackage();
         if (resolved == null || resolved.getCost() == null) {
             throw new IllegalArgumentException("박스 미설정");
+        }
+        // 🔴 A recycled box must never reach the selling-price calculation (PLAN 2609_40 D21): it costs 0,
+        // so pricing off it would give the goods away. This is DATA being wrong, not a runtime hiccup —
+        // do not fall back to another box, make the caller fix the assignment.
+        if (resolved.getBoxKind() == BoxKind.RECYCLED) {
+            throw new IllegalArgumentException("재활용 상자는 판매가 계산에 사용할 수 없습니다");
         }
         return resolved;
     }

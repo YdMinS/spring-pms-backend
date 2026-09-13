@@ -1,0 +1,73 @@
+# Box kind + image, and the box memory table (FEATURE_2609_40 / PLAN D20 · D21 · D22 · D23 · D24).
+# ① package.box_kind = PURCHASED | RECYCLED.
+#    🔴 RECYCLED boxes are EXCLUDED FROM THE PRICING BOX LIST (D21): a recycled box costs 0, so the moment one
+#    can be picked as a master/option default box the selling price is computed from a zero-cost box.
+#    Two separate defences live in code: the list API filters (GET /api/admin/package?boxKind=PURCHASED) and
+#    MasterChannelConfigService.resolvePackage rejects a recycled box with 400. Neither replaces the other.
+#    Existing rows are backfilled to PURCHASED — every box created before this feature was bought.
+# ② package.image_url is nullable on purpose (D26): a box with no photo is drawn as a shape from its
+#    dimensions, so the feature never waits for photos. Clearing it only nulls the column — the S3 object is
+#    kept (it may be referenced elsewhere).
+# ③ box_recipe = "this combination of items went into that box" (D22). The key is recipe_key and
+#    🔴 IT IS A SORTED STRING: (product_id:quantity) pairs sorted by product_id ascending and joined with '|'
+#    (e.g. "12:2|45:1"). Order IS the rule — if the same combination produced a different key depending on the
+#    scan order, the memory would never match again. com.pms.service.packing.BoxRecipeKey owns that rule.
+#    🔴 No order / option / seller is part of the key: same items in the same quantities = same box.
+# ⚠️ addColumn (nullable) -> update -> addNotNullConstraint, the same 3 steps as 088-package-size:
+#    going straight to NOT NULL fails on dev/prod where rows already exist.
+# ⚠️ H2 constraint names are schema-global unique -> distinct names (fk_boxrecipe_*).
+databaseChangeLog:
+
+  - changeSet:
+      id: 091-box-kind-recipe
+      author: oclyx
+      comment: "FEATURE_2609_40: package.box_kind (existing rows backfilled to PURCHASED) + image_url + box_recipe."
+      changes:
+        - addColumn:
+            tableName: package
+            columns:
+              - column: { name: box_kind, type: VARCHAR(20) }
+              - column: { name: image_url, type: VARCHAR(500) }
+        - update:
+            tableName: package
+            columns:
+              - column: { name: box_kind, value: PURCHASED }
+        - addNotNullConstraint:
+            tableName: package
+            columnName: box_kind
+            columnDataType: VARCHAR(20)
+
+        - createTable:
+            tableName: box_recipe
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: recipe_key, type: VARCHAR(500), constraints: { nullable: false } }
+              - column: { name: package_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: use_count, type: INT, constraints: { nullable: false } }
+              - column: { name: last_used_at, type: TIMESTAMP, constraints: { nullable: false } }
+        - addForeignKeyConstraint:
+            constraintName: fk_boxrecipe_tenant
+            baseTableName: box_recipe
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_boxrecipe_package
+            baseTableName: box_recipe
+            baseColumnNames: package_id
+            referencedTableName: package
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            constraintName: uq_box_recipe_key_package
+            tableName: box_recipe
+            columnNames: tenant_id, recipe_key, package_id
+        - createIndex:
+            tableName: box_recipe
+            indexName: idx_boxrecipe_key
+            columns:
+              - column: { name: recipe_key }
+      rollback:
+        - dropTable: { tableName: box_recipe }
+        - dropColumn: { tableName: package, columnName: box_kind }
+        - dropColumn: { tableName: package, columnName: image_url }

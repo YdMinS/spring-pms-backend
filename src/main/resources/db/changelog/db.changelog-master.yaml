@@ -171,3 +171,5 @@ databaseChangeLog:
       file: db/changelog/changes/089-margin-threshold-market-price.yaml
   - include:
       file: db/changelog/changes/090-shipment-parcel.yaml
+  - include:
+      file: db/changelog/changes/091-box-kind-recipe.yaml
