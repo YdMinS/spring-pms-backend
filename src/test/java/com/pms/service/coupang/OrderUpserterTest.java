@@ -16,6 +16,8 @@ import com.pms.repository.OrderLineRepository;
 import com.pms.repository.OrderRepository;
 import com.pms.repository.OrderShipmentRepository;
 import com.pms.repository.ProductListingOptionRepository;
+import com.pms.service.CarrierCodeService;
+import com.pms.service.ShipmentParcelRecorder;
 import com.pms.service.coupang.OrderUpserter.UpsertCount;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -62,6 +64,11 @@ class OrderUpserterTest {
     private CoupangOrderLineRepository coupangOrderLineRepository;
     @Mock
     private ProductListingOptionRepository productListingOptionRepository;
+    /** 송장 백필(2609_40)의 협력자 — 백필 자체는 {@code OrderUpserterParcelTest} 가 검증한다. */
+    @Mock
+    private CarrierCodeService carrierCodeService;
+    @Mock
+    private ShipmentParcelRecorder shipmentParcelRecorder;
 
     @InjectMocks
     private OrderUpserter upserter;

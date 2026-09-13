@@ -169,3 +169,5 @@ databaseChangeLog:
       file: db/changelog/changes/088-package-size.yaml
   - include:
       file: db/changelog/changes/089-margin-threshold-market-price.yaml
+  - include:
+      file: db/changelog/changes/090-shipment-parcel.yaml

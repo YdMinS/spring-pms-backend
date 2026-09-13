@@ -67,6 +67,7 @@ class ShipmentConfirmSkipRegressionTest {
     @Mock private CoupangProperties coupangProperties;
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock private OrderUpserter orderUpserter;
+    @Mock private ShipmentParcelRecorder shipmentParcelRecorder;
 
     private ShipmentConfirmServiceImpl service;
     private MarketplaceAccount account;
@@ -75,7 +76,8 @@ class ShipmentConfirmSkipRegressionTest {
     void setUp() {
         service = new ShipmentConfirmServiceImpl(
                 coupangApiClient, coupangProperties, orderLineRepository, coupangOrderLineRepository,
-                marketplaceAccountRepository, carrierCodeService, new ObjectMapper(), orderUpserter);
+                marketplaceAccountRepository, carrierCodeService, new ObjectMapper(), orderUpserter,
+                shipmentParcelRecorder);
 
         Seller seller = Seller.builder().id(1L).sellerName("셀러A").businessRegistration("123-45-67890").build();
         account = MarketplaceAccountFixture.coupangStubBuilder("A001", null)

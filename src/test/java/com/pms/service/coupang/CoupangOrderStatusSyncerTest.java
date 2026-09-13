@@ -15,6 +15,8 @@ import com.pms.repository.OrderLineRepository;
 import com.pms.repository.OrderRepository;
 import com.pms.repository.OrderShipmentRepository;
 import com.pms.repository.ProductListingOptionRepository;
+import com.pms.service.CarrierCodeService;
+import com.pms.service.ShipmentParcelRecorder;
 import com.pms.service.coupang.CoupangOrderStatusSyncer.StatusSyncResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -51,6 +53,11 @@ class CoupangOrderStatusSyncerTest {
 
     @Mock
     private CoupangApiClient coupangApiClient;
+    /** 송장 백필(2609_40)의 협력자 — 이 테스트의 응답에는 송장이 없어 호출되지 않는다. */
+    @Mock
+    private CarrierCodeService carrierCodeService;
+    @Mock
+    private ShipmentParcelRecorder shipmentParcelRecorder;
 
     private CoupangOrderStatusSyncer syncer;
 
@@ -90,7 +97,7 @@ class CoupangOrderStatusSyncerTest {
         syncer = new CoupangOrderStatusSyncer(
                 coupangApiClient,
                 new OrderUpserter(orderRepository(), shipmentRepository(), lineRepository(), mirrorRepository(),
-                        listingOptionRepository()),
+                        listingOptionRepository(), carrierCodeService, shipmentParcelRecorder),
                 props, new ObjectMapper());
     }
 
