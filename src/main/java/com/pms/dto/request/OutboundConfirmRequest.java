@@ -19,6 +19,10 @@ import java.util.List;
  *
  * <p>🔴 <b>자동 호출 금지</b>(D18) — 발송처리·송장 업로드·동기화 어디에서도 이 요청을 만들지 않는다.
  * 모든 행은 사람의 클릭에서 출발한다.
+ *
+ * <p>⚠️ 포장 화면의 [이 박스 완료]는 <b>사람의 확인</b>이므로 이 요청을 만든다(PLAN 2609_40 D19) —
+ * 박스에 담긴 항목을 주문 라인별로 묶어 라인 수만큼 부른다({@code PackingService.complete}).
+ * 송장 스캔 자체는 만들지 않는다: 스캔은 입력이지 확인이 아니다.
  */
 public record OutboundConfirmRequest(
         @NotNull Long orderLineId,
