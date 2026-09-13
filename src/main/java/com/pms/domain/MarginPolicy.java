@@ -52,4 +52,22 @@ public class MarginPolicy extends BaseEntity {
     // Nullable = treat as 0 (no discount shown → originalPrice == salePrice). Clamped to [0, 0.5] at calc time.
     @Column(name = "display_discount_rate", precision = 5, scale = 4)
     private BigDecimal displayDiscountRate;
+
+    /**
+     * Minimum acceptable margin amount in won (FEATURE_2609_39 / PLAN D4). {@code null} = this condition is
+     * unused (no alert on the amount axis).
+     *
+     * <p>⚠️ A different axis from {@link #marginRate}: that one BUILDS the selling price, this one is the
+     * line below which the price needs attention. Never merge the two columns.</p>
+     */
+    @Column(name = "min_margin_amount", precision = 10, scale = 2)
+    private BigDecimal minMarginAmount;
+
+    /**
+     * Minimum acceptable margin ratio, e.g. {@code 0.1090} = 10.9% (FEATURE_2609_39 / PLAN D4).
+     * {@code null} = this condition is unused. An option trips the alert when it falls below the amount
+     * threshold OR below this one (OR, not AND).
+     */
+    @Column(name = "min_margin_rate", precision = 5, scale = 4)
+    private BigDecimal minMarginRate;
 }

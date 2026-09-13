@@ -38,6 +38,7 @@ import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /**
@@ -317,5 +318,36 @@ class ListingRegistrationServiceTest {
         assertThat(response.getSwept()).isEqualTo(2);
         assertThat(response.getPromotedToSelling()).isEqualTo(1);
         assertThat(response.getFailed()).isEqualTo(1);
+    }
+
+
+    // (f) 2609_39/D19 ③: 식별자를 <b>처음</b> 받는 옵션만 market_price 를 얻는다. 이미 식별자가 있던 옵션은
+    //     재동기화일 뿐 가격을 보낸 적이 없으므로 그대로 둔다(089 이후 등록분이 「아직 안 밀림」으로 쌓이는 것을 막는다).
+    @Test
+    void testApprovalSyncRecordsMarketPriceOnFirstIdentifier() {
+        ProductListingOption fresh = option();                                     // platformOptionId == null
+        ProductListingOption resynced = ProductListingOption.builder().id(51L).optionName("추가")
+                .sellingPrice(new BigDecimal("9000")).platformOptionId("333").build();
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.SUBMITTED, "SP-1")));
+        stubAccountAndAdapter();
+        given(adapter.fetchStatus(any(), any())).willReturn(new FetchResult(ListingStatus.SELLING, List.of(
+                new FetchResult.OptionId("기본", "111", "222"),
+                new FetchResult.OptionId("추가", "333", "444"))));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID))
+                .willReturn(List.of(fresh, resynced));
+
+        service.fetchStatus(CELL_ID);
+
+        ArgumentCaptor<ProductListingOption> captor = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository, times(2)).save(captor.capture());
+        ProductListingOption savedFresh = captor.getAllValues().stream()
+                .filter(o -> o.getId().equals(50L)).findFirst().orElseThrow();
+        ProductListingOption savedResynced = captor.getAllValues().stream()
+                .filter(o -> o.getId().equals(51L)).findFirst().orElseThrow();
+        assertThat(savedFresh.getMarketPrice()).isEqualByComparingTo("6000");   // 등록 payload 로 나간 가격
+        assertThat(savedFresh.getMarketPriceAt()).isNotNull();
+        assertThat(savedResynced.getMarketPrice()).isNull();
+        assertThat(savedResynced.getMarketPriceAt()).isNull();
     }
 }

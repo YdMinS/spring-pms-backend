@@ -30,6 +30,7 @@ import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -252,12 +253,13 @@ public class ListingOptionServiceImpl implements ListingOptionService {
             // price is ours alone to keep; it reaches the market with the next register/[수정 요청] (D5).
             if (adapter == null || !StringUtils.hasText(option.getPlatformOptionId())) {
                 skipped.add(option.getOptionName());
-                toSave.put(option.getId(), applied(option, target));
+                // pushed=false: nothing reached the market, so market_price must stay as it was (2609_39/D19).
+                toSave.put(option.getId(), applied(option, target, false));
                 continue;
             }
             try {
                 adapter.updateOptionPrice(option, target.salePrice(), account);
-                toSave.put(option.getId(), applied(option, target));
+                toSave.put(option.getId(), applied(option, target, true));
                 pushed++;
             } catch (Exception e) {
                 // Caught, not propagated: a rejected option must not roll back the ones that went through,
@@ -366,12 +368,20 @@ public class ListingOptionServiceImpl implements ListingOptionService {
     private record TargetPrice(BigDecimal salePrice, BigDecimal originalPrice, GeneratedContentSource source) {
     }
 
-    private static ProductListingOption applied(ProductListingOption option, TargetPrice target) {
-        return option.toBuilder()
+    /**
+     * @param pushed true only when the marketplace accepted this exact price — then and only then is it also
+     *               the price that is live on the market (2609_39/D19 ②). Writing {@code marketPrice} for an
+     *               option we never sent would make that column lie on its very first day.
+     */
+    private static ProductListingOption applied(ProductListingOption option, TargetPrice target, boolean pushed) {
+        ProductListingOption.ProductListingOptionBuilder builder = option.toBuilder()
                 .sellingPrice(target.salePrice())
                 .originalPrice(target.originalPrice())
-                .priceSource(target.source())
-                .build();
+                .priceSource(target.source());
+        if (pushed) {
+            builder.marketPrice(target.salePrice()).marketPriceAt(LocalDateTime.now());
+        }
+        return builder.build();
     }
 
     /**

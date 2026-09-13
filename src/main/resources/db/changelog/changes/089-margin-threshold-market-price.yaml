@@ -1,0 +1,38 @@
+# Minimum-margin thresholds + the price that is actually live on the market (FEATURE_2609_39 / PLAN D4·D5).
+#
+# ① margin_policy.min_margin_amount / min_margin_rate are ALERT thresholds, a different axis from
+#    margin_rate (the target margin that BUILDS the selling price). NULL = that condition is unused —
+#    there is no value to invent for existing rows, so no backfill and no default.
+# ② product_listing_option.market_price is the price that is really live on the marketplace.
+#    selling_price is a LOCAL value that a recalculation overwrites, so after a recalculation it can no
+#    longer answer "what is it sold for right now" nor "what has not been pushed yet".
+#    The backfill only touches rows that carry a market identifier: without the WHERE, DRAFT / unapproved
+#    options would claim a market price they never had. market_price_at is left NULL (the past push time
+#    is unknowable). No boolean → no MySQL BIT trap (changeset 006).
+databaseChangeLog:
+
+  - changeSet:
+      id: 089-margin-threshold-market-price
+      author: oclyx
+      comment: "FEATURE_2609_39: margin_policy min thresholds (nullable = unused) + product_listing_option.market_price."
+      changes:
+        - addColumn:
+            tableName: margin_policy
+            columns:
+              - column: { name: min_margin_amount, type: "DECIMAL(10,2)" }
+              - column: { name: min_margin_rate, type: "DECIMAL(5,4)" }
+        - addColumn:
+            tableName: product_listing_option
+            columns:
+              - column: { name: market_price, type: "DECIMAL(10,2)" }
+              - column: { name: market_price_at, type: "DATETIME" }
+        - update:
+            tableName: product_listing_option
+            columns:
+              - column: { name: market_price, valueComputed: selling_price }
+            where: "platform_option_id IS NOT NULL"
+      rollback:
+        - dropColumn: { tableName: margin_policy, columnName: min_margin_amount }
+        - dropColumn: { tableName: margin_policy, columnName: min_margin_rate }
+        - dropColumn: { tableName: product_listing_option, columnName: market_price }
+        - dropColumn: { tableName: product_listing_option, columnName: market_price_at }

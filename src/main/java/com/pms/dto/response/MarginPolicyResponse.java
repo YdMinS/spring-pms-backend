@@ -33,4 +33,12 @@ public class MarginPolicyResponse {
 
     @Schema(description = "Display discount rate (0.2000 = 20% strike-through)", example = "0.2000")
     private BigDecimal displayDiscountRate;
+
+    // Alert thresholds (FEATURE_2609_39 / D4). null = that condition is unused — the frontend shows an
+    // empty field, never a 0 (0 would mean "alert only below 0 won", which is a real, different setting).
+    @Schema(description = "Minimum margin amount in won; null = condition unused", example = "1000.00")
+    private BigDecimal minMarginAmount;
+
+    @Schema(description = "Minimum margin ratio (0.1090 = 10.9%); null = condition unused", example = "0.1090")
+    private BigDecimal minMarginRate;
 }

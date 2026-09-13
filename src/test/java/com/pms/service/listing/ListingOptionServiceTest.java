@@ -745,4 +745,29 @@ class ListingOptionServiceTest {
         verify(productListingOptionRepository, never()).saveAll(any());
         verify(adapter, never()).updateOptionPrice(any(), any(), any());
     }
+
+    // 12. 2609_39/D19 ②: market_price 는 마켓이 실제로 받아들인 옵션에만 기록된다. 전송하지 않은 옵션(식별자
+    //     없음)에까지 쓰면 「마켓에 걸린 가격」이 첫날부터 거짓이 된다.
+    @Test
+    void testSetOptionPricesRecordsMarketPriceOnlyWhenPushed() {
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(pricingListing()));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, "V-1"), pricedOption(2L, null)));
+        given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("18750.00"));
+        given(resolver.resolveOptional(Platform.COUPANG)).willReturn(Optional.of(adapter));
+        givenActiveAccount();
+
+        service.setOptionPrices(LISTING_ID, List.of(
+                new OptionPrice(1L, new BigDecimal("15000")),
+                new OptionPrice(2L, new BigDecimal("15000"))));
+
+        List<ProductListingOption> saved = captureSaved();
+        ProductListingOption pushed = saved.stream().filter(o -> o.getId().equals(1L)).findFirst().orElseThrow();
+        ProductListingOption skipped = saved.stream().filter(o -> o.getId().equals(2L)).findFirst().orElseThrow();
+        assertThat(pushed.getMarketPrice()).isEqualByComparingTo("15000");
+        assertThat(pushed.getMarketPriceAt()).isNotNull();
+        assertThat(skipped.getMarketPrice()).isNull();
+        assertThat(skipped.getMarketPriceAt()).isNull();
+        assertThat(skipped.getSellingPrice()).isEqualByComparingTo("15000");   // 로컬 값은 그래도 저장된다
+    }
 }

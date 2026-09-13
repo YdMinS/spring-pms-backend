@@ -20,6 +20,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -179,11 +180,17 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
                     ? byVendorItemId.get(option.getPlatformOptionId())
                     : byName.get(option.getOptionName());
             if (match != null) {
-                ProductListingOption updated = option.toBuilder()
+                ProductListingOption.ProductListingOptionBuilder builder = option.toBuilder()
                         .platformOptionId(match.vendorItemId())
                         .sellerProductItemId(match.sellerProductItemId())
-                        .approvalStatus(OptionApprovalStatus.APPROVED)
-                        .build();
+                        .approvalStatus(OptionApprovalStatus.APPROVED);
+                if (option.getPlatformOptionId() == null) {
+                    // 2609_39/D19 ③: the option just got its first market identifier, so the price that went
+                    // out in the register payload is now the one live on the market. An option that ALREADY
+                    // had an identifier is only being re-synced — no price was sent, so market_price stands.
+                    builder.marketPrice(option.getSellingPrice()).marketPriceAt(LocalDateTime.now());
+                }
+                ProductListingOption updated = builder.build();
                 productListingOptionRepository.save(updated);
                 optionStatuses.add(ListingStatusResponse.OptionStatus.from(updated));
             } else {
