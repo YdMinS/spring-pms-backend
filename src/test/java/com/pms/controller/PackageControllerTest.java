@@ -3,6 +3,7 @@ package com.pms.controller;
 import com.pms.common.BaseIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -225,6 +226,18 @@ public class PackageControllerTest extends BaseIntegrationTest {
     @Test
     public void testDeletePackageUnauthorized() throws Exception {
         mockMvc.perform(delete("/api/admin/package/" + seededPackageId))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    // POST /api/admin/package/{id}/image tests (FEATURE_2609_40)
+    @Test
+    public void testUploadImageRequiresAuth() throws Exception {
+        byte[] jpeg = new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xE0,
+                0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00};
+        MockMultipartFile file = new MockMultipartFile("file", "box.jpg", "image/jpeg", jpeg);
+
+        mockMvc.perform(multipart("/api/admin/package/" + seededPackageId + "/image").file(file))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.status").value("FAILURE"));
     }

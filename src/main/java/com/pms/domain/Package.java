@@ -17,6 +17,8 @@ import java.time.LocalDate;
  * - isDefault: Only ONE package can have isDefault=true globally.
  *   When creating/updating with isDefault=true, existing default is set to false.
  * - widthCm/lengthCm/heightCm: box dimensions in cm, 0 = unset
+ * - boxKind: PURCHASED | RECYCLED. RECYCLED boxes never reach the selling-price calculation (2609_40 D21)
+ * - imageUrl: optional box photo; NULL means "draw a shape from the dimensions" (2609_40 D26)
  *
  * @see com.pms.service.PackageService for business operations
  * @see com.pms.dto.request.PackageRequest for input validation
@@ -94,4 +96,34 @@ public class Package {
     @Builder.Default
     @Column(name = "height_cm", nullable = false, precision = 5, scale = 1)
     private BigDecimal heightCm = BigDecimal.ZERO;
+
+    /**
+     * How we got this box (PLAN 2609_40 D20 · D21). Rows created before the feature were backfilled to
+     * {@link BoxKind#PURCHASED} — every box that existed then was bought.
+     *
+     * <p>🔴 {@link BoxKind#RECYCLED} boxes are invisible to the selling-price calculation: the list API
+     * filters them out for pricing dropdowns and
+     * {@link com.pms.service.MasterChannelConfigService#resolvePackage} rejects them outright. A recycled
+     * box costs 0, so one slipping into pricing would silently price goods off a zero-cost box.</p>
+     *
+     * <p>⚠️ Only one validation branches on this value: a recycled box may cost 0, a purchased box may not
+     * (see {@code PackageServiceImpl}). A recycled box can never be the default box.</p>
+     */
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    @Column(name = "box_kind", nullable = false, length = 20)
+    private BoxKind boxKind = BoxKind.PURCHASED;
+
+    /**
+     * Photo of the box — the value returned by {@code ImageStorageService} (disk-relative path on
+     * local/test, public S3 URL on dev/prod), uploaded through {@code POST /api/admin/package/{id}/image}.
+     *
+     * <p>NULL is a normal state (PLAN 2609_40 D26): screens draw a shape scaled to the box dimensions
+     * instead, so nothing waits for a photo. ⚠️ Clearing a photo only nulls this column — the stored object
+     * is deliberately NOT deleted, because the same value may be referenced elsewhere.</p>
+     *
+     * <p>⚠️ The edit endpoint ({@code PATCH}) never touches this column; the upload endpoint owns it.</p>
+     */
+    @Column(name = "image_url", length = 500)
+    private String imageUrl;
 }

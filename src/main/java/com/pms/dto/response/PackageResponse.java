@@ -1,5 +1,6 @@
 package com.pms.dto.response;
 
+import com.pms.domain.BoxKind;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -42,4 +43,11 @@ public class PackageResponse {
 
     @Schema(description = "Box height in cm (0 = unset)", example = "9.0", type = "number")
     private BigDecimal heightCm;
+
+    // Box kind + photo (PLAN 2609_40 D20 · D26). imageUrl null -> screens draw a shape from the dimensions.
+    @Schema(description = "Box kind (PURCHASED | RECYCLED)", example = "PURCHASED")
+    private BoxKind boxKind;
+
+    @Schema(description = "Box photo URL (null = none, screen draws a shape from the dimensions)")
+    private String imageUrl;
 }

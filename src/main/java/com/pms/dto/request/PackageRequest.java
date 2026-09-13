@@ -1,5 +1,6 @@
 package com.pms.dto.request;
 
+import com.pms.domain.BoxKind;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
@@ -27,9 +28,12 @@ public class PackageRequest {
     @Schema(description = "Package type/category", example = "STANDARD", maxLength = 50)
     private String type;
 
+    // 🔴 Cost 0 is accepted HERE and rejected in the service for a PURCHASED box (PLAN 2609_40 D20):
+    // the rule depends on boxKind, which a field-level annotation cannot see. A recycled box legitimately
+    // costs 0 — refusing it at this layer would make recycled boxes impossible to register.
     @NotNull(message = "Cost is required")
     @DecimalMin(value = "0.00")
-    @Schema(description = "Shipping cost", example = "15.50", type = "number")
+    @Schema(description = "Shipping cost (0 allowed only for a RECYCLED box)", example = "15.50", type = "number")
     private BigDecimal cost;
 
     @NotNull(message = "Effective date is required")
@@ -64,4 +68,17 @@ public class PackageRequest {
     @Digits(integer = 3, fraction = 1, message = "Height allows one decimal place")
     @Schema(description = "Box height in cm", example = "9.0", type = "number")
     private BigDecimal heightCm;
+
+    /**
+     * How we got the box (PLAN 2609_40 D20). Optional: omitted / null means {@link BoxKind#PURCHASED},
+     * which keeps clients that predate this feature creating bought boxes exactly as before.
+     *
+     * <p>🔴 A RECYCLED box may cost 0 but can never be the default box — the default box is what the
+     * selling-price calculation falls back to (D21).</p>
+     *
+     * <p>⚠️ There is no image field here on purpose: the photo is owned by
+     * {@code POST /api/admin/package/{id}/image} and an edit must never wipe it.</p>
+     */
+    @Schema(description = "Box kind (PURCHASED | RECYCLED). Null = PURCHASED", example = "PURCHASED")
+    private BoxKind boxKind;
 }

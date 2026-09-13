@@ -71,6 +71,12 @@ public interface MasterChannelConfigService {
     /** Delivery = option override ?? master default. 400 if both are null. */
     CarrierRate resolveDelivery(ProductListing cell, MasterProductOption masterOption);
 
-    /** Box = option override ?? master default. 400 if both are null. */
+    /**
+     * Box = option override ?? master default. 400 if both are null.
+     *
+     * <p>🔴 Also 400 when the resolved box is {@link com.pms.domain.BoxKind#RECYCLED} (PLAN 2609_40 D21):
+     * a recycled box costs 0 and pricing off it would give the goods away. This resolves ONE box that was
+     * already assigned — it is not a list, so it takes no kind filter; the list API does the filtering.</p>
+     */
     Package resolvePackage(ProductListing cell, MasterProductOption masterOption);
 }
