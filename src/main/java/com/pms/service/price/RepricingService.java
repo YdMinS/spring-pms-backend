@@ -4,11 +4,14 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.dto.request.PriceOverrideRequest;
+import com.pms.dto.response.PriceOverrideResult;
 import com.pms.dto.response.RecalculateResult;
 import com.pms.dto.response.RepricePushResult;
 import com.pms.dto.response.RepricingCandidatesResponse;
 import com.pms.service.listing.ListingChannel;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -67,6 +70,27 @@ public interface RepricingService {
     RepricePushResult push(List<Long> optionIds);
 
     /**
+     * 판매가 직접 입력 — 사람이 친 값을 <b>로컬 판매가에만</b> 적는다(FEATURE_2609_42 / D1). 마켓 호출 0회.
+     *
+     * <p>🔴 {@code priceSource} 를 <b>건드리지 않는다</b>(2609_42 D2). {@code ListingOptionService.setOptionPrices}
+     * 를 쓰면 옵션이 {@code MANUAL_OVERRIDE} 가 되어(2609_19 D3) 다음 재계산부터 영구 제외되는데, 그러면 이
+     * 기능이 하려는 일의 정반대가 된다 — 여기 입력은 「이번 한 번만」이고 다음 재계산이 공식값으로 덮는 것이
+     * 정상이다.</p>
+     *
+     * <p>🔴 {@code marketPrice} 도 건드리지 않는다(D10) — 그래야 그 행이 「아직 안 밀림」으로 떠서 사람이
+     * {@link #push} 를 눌러야 한다는 사실을 화면이 말할 수 있다.</p>
+     *
+     * <p>⚠️ 이미 직접 지정가({@code MANUAL_OVERRIDE})인 옵션은 이 경로의 대상이 아니다(D4) — 그 가격은 이미
+     * 사람이 소유하고 있고, 바꾸려면 옵션 편집 화면(2609_19)이 맞다. 서버는 {@code skipped} 로 돌려준다.</p>
+     *
+     * @param items 옵션 id + 새 판매가. 상한은 요청 DTO 가 소유한다
+     * @return 옵션 단위 결과({@code applied}/{@code skipped}/{@code failed}). 마켓을 부르지 않으므로 중단은 없다
+     * @throws com.pms.exception.ResourceNotFoundException 이 테넌트의 셀에 속하지 않는 옵션 id 가 하나라도
+     *                                                     있으면 404 (D24 — 부분 성공으로 섞지 않는다)
+     */
+    PriceOverrideResult override(List<PriceOverrideRequest.Item> items);
+
+    /**
      * 셀 1건 재계산 — <b>독립 트랜잭션</b>({@code REQUIRES_NEW}). 인터페이스에 있는 이유는 하나다:
      * {@link #recalculate} 가 주입된 <b>프록시</b>로 불러야 트랜잭션 경계가 실제로 열리기 때문이다
      * (자기 호출은 {@code REQUIRES_NEW} 를 무효로 만든다).
@@ -83,6 +107,14 @@ public interface RepricingService {
      * (마켓은 롤백되지 않는다). 전송이 성공한 그 순간의 값만 이 트랜잭션이 커밋한다.</p>
      */
     void pushOne(ListingChannel channel, ProductListingOption option, MarketplaceAccount account);
+
+    /**
+     * 옵션 1건의 「직접 입력 저장 + 이력」 — <b>독립 트랜잭션</b>({@code REQUIRES_NEW}). {@link #pushOne} 과 같은
+     * 이유로 인터페이스에 있다(프록시로 불러야 경계가 열린다).
+     *
+     * <p>🔴 하나로 묶으면 20번째 실패가 <b>이미 저장된 19건을 되돌린다</b>. {@code push} 와 같은 계약이다.</p>
+     */
+    void overrideOne(ProductListingOption option, BigDecimal price);
 
     /** 목록에 담을 행의 범위. 집계({@code groups})는 이 값과 무관하게 항상 전체를 센다. */
     enum Scope {

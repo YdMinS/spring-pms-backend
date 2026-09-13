@@ -67,6 +67,7 @@ class RepricingPushTest {
     @Mock private ListingAssetService listingAssetService;
     @Mock private ListingChannelResolver channelResolver;
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
+    @Mock private PriceHistoryRecorder priceHistoryRecorder;
     @Mock private ListingChannel channel;
 
     private RepricingServiceImpl service;
@@ -75,7 +76,7 @@ class RepricingPushTest {
     void setUp() {
         service = new RepricingServiceImpl(productListingRepository, productListingOptionRepository,
                 productListingProductRepository, priceCalculator, listingAssetService, channelResolver,
-                marketplaceAccountRepository);
+                marketplaceAccountRepository, priceHistoryRecorder);
         ReflectionTestUtils.setField(service, "self", service);
     }
 
@@ -190,6 +191,27 @@ class RepricingPushTest {
                 .containsExactly(10L, 11L);
         verifyNoInteractions(channel);
         verify(productListingOptionRepository, never()).save(any());
+    }
+
+    /**
+     * 🔴 회귀 — 직접 입력(2609_42)이 제외 규칙을 {@code Purpose} 로 나눴다. 전송 전용 사유인 「마켓 옵션
+     * 식별자 없음」이 {@code push} 에서는 그대로 살아 있어야 한다(사유 문장까지 그대로).
+     */
+    @Test
+    void testPushStillSkipsMissingMarketId() {
+        ProductListing cell = cell(CELL_ID, seller);
+        ProductListingOption unregistered = option(11L, cell, "9000.00").toBuilder()
+                .platformOptionId(null).build();
+        given(productListingOptionRepository.findWithConfigByIdIn(anyCollection()))
+                .willReturn(List.of(unregistered));
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
+
+        RepricePushResult result = service.push(List.of(11L));
+
+        assertThat(result.pushed()).isZero();
+        assertThat(result.skipped()).hasSize(1);
+        assertThat(result.skipped().get(0).reason()).isEqualTo("마켓 옵션 식별자 없음");
+        verifyNoInteractions(channel);
     }
 
     @Test

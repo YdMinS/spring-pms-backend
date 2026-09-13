@@ -24,6 +24,7 @@ class RepricingControllerTest extends BaseIntegrationTest {
     private static final String PATH = "/api/admin/repricing/candidates";
     private static final String RECALCULATE_PATH = "/api/admin/repricing/recalculate";
     private static final String PUSH_PATH = "/api/admin/repricing/push";
+    private static final String OVERRIDE_PATH = "/api/admin/repricing/override";
 
     @Test
     void testCandidatesRequiresAuth() throws Exception {
@@ -62,6 +63,26 @@ class RepricingControllerTest extends BaseIntegrationTest {
                         .contentType(APPLICATION_JSON).content("{\"optionIds\":[1]}"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    @Test
+    void testOverrideForbiddenForNonAdmin() throws Exception {
+        mockMvc.perform(post(OVERRIDE_PATH).header("Authorization", "Bearer " + userToken)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"items\":[{\"optionId\":1,\"price\":10000}]}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    /** 리스트 안쪽 {@code Item} 검증이 실제로 도는지(= {@code @Valid} 누락 회귀) — 음수 가격은 400 이다. */
+    @Test
+    void testOverrideNegativePriceReturns400() throws Exception {
+        mockMvc.perform(post(OVERRIDE_PATH).header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"items\":[{\"optionId\":1,\"price\":-1}]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value("FAILURE"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("0보다 커야")));
     }
 
     /** 상한은 서비스가 아니라 요청 DTO 가 소유한다(D11·D18) — 201개는 마켓을 치기 전에 400 이다. */

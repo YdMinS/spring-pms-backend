@@ -48,6 +48,7 @@ class RepricingRecalculateTest {
     @Mock private ListingAssetService listingAssetService;
     @Mock private ListingChannelResolver channelResolver;
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
+    @Mock private PriceHistoryRecorder priceHistoryRecorder;
 
     private RepricingServiceImpl service;
 
@@ -55,7 +56,7 @@ class RepricingRecalculateTest {
     void setUp() {
         service = new RepricingServiceImpl(productListingRepository, productListingOptionRepository,
                 productListingProductRepository, priceCalculator, listingAssetService, channelResolver,
-                marketplaceAccountRepository);
+                marketplaceAccountRepository, priceHistoryRecorder);
         ReflectionTestUtils.setField(service, "self", service);
     }
 

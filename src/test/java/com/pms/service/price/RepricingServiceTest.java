@@ -72,6 +72,7 @@ class RepricingServiceTest {
     @Mock private ListingAssetService listingAssetService;
     @Mock private ListingChannelResolver channelResolver;
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
+    @Mock private PriceHistoryRecorder priceHistoryRecorder;
 
     private RepricingServiceImpl service;
 
@@ -82,7 +83,7 @@ class RepricingServiceTest {
         // 실행(02) 협력자는 조회 경로에서 한 번도 쓰이지 않는다 — mock 을 넘기되 어떤 스텁도 두지 않는다.
         service = new RepricingServiceImpl(productListingRepository, productListingOptionRepository,
                 productListingProductRepository, priceCalculator, listingAssetService, channelResolver,
-                marketplaceAccountRepository);
+                marketplaceAccountRepository, priceHistoryRecorder);
     }
 
     // ---------------------------------------------------------------- fixtures

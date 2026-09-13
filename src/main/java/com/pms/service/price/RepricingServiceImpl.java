@@ -8,6 +8,9 @@ import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
+import com.pms.domain.PriceChangeReason;
+import com.pms.dto.request.PriceOverrideRequest;
+import com.pms.dto.response.PriceOverrideResult;
 import com.pms.dto.response.RecalculateResult;
 import com.pms.dto.response.RepricePushResult;
 import com.pms.dto.response.RepricingCandidatesResponse;
@@ -75,6 +78,8 @@ public class RepricingServiceImpl implements RepricingService {
     private final ListingAssetService listingAssetService;
     private final ListingChannelResolver channelResolver;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
+    /** 가격 이력을 쓰는 유일한 창구(2609_28 D23). 직접 입력도 예외가 아니다 — 사람이 친 값이야말로 근거가 남아야 한다. */
+    private final PriceHistoryRecorder priceHistoryRecorder;
 
     /**
      * 자기 자신의 프록시. {@code recalculateOne}/{@code pushOne} 을 이걸로 불러야 {@code REQUIRES_NEW} 광고가
@@ -229,7 +234,7 @@ public class RepricingServiceImpl implements RepricingService {
             ProductListing cell = option.getProductListing();
 
             // 🔴 화면이 걸렀다고 믿지 않는다: 요청은 id 로 오므로 제외 규칙을 서버가 다시 판정한다.
-            String skipReason = skipReason(cell, option);
+            String skipReason = skipReason(cell, option, Purpose.PUSH);
             if (skipReason != null) {
                 skipped.add(new RepricePushResult.SkippedOption(optionId, option.getOptionName(), skipReason));
                 continue;
@@ -291,6 +296,73 @@ public class RepricingServiceImpl implements RepricingService {
                 .build());
     }
 
+    // ---------------------------------------------------------------- 직접 입력 (로컬 전용, 2609_42)
+
+    /**
+     * 사람이 친 판매가를 그대로 로컬에 적는다. <b>마켓 호출 0회</b>(2609_42 D1).
+     *
+     * <p>🔴 이 메서드에도 {@code @Transactional} 을 붙이지 않는다 — 옵션마다 독립 커밋이어야 20번째 실패가
+     * 이미 저장된 19건을 되돌리지 않는다({@code push} 와 같은 계약).</p>
+     *
+     * <p>🔴 채널·계정을 <b>해석하지 않는다</b>: 마켓에 나가지 않으므로 필요 없고, 부르면 어댑터가 없는 플랫폼의
+     * 옵션이 이유 없이 막힌다.</p>
+     */
+    @Override
+    public PriceOverrideResult override(List<PriceOverrideRequest.Item> items) {
+        List<Long> optionIds = items.stream().map(PriceOverrideRequest.Item::optionId).toList();
+        Map<Long, ProductListingOption> byId = loadScopedOptions(optionIds);   // D24: 스코프 밖이면 404
+
+        int applied = 0;
+        List<PriceOverrideResult.SkippedOption> skipped = new ArrayList<>();
+        List<PriceOverrideResult.FailedOption> failed = new ArrayList<>();
+
+        for (PriceOverrideRequest.Item item : items) {
+            ProductListingOption option = byId.get(item.optionId());
+            ProductListing cell = option.getProductListing();
+
+            // 🔴 화면이 걸렀다고 믿지 않는다: 요청은 id 로 오므로 제외 규칙을 서버가 다시 판정한다.
+            String skipReason = skipReason(cell, option, Purpose.OVERRIDE);
+            if (skipReason != null) {
+                skipped.add(new PriceOverrideResult.SkippedOption(item.optionId(), option.getOptionName(),
+                        skipReason));
+                continue;
+            }
+            try {
+                self.overrideOne(option, item.price());   // 프록시 → REQUIRES_NEW: 옵션마다 독립 커밋
+                applied++;
+            } catch (Exception e) {
+                log.warn("[REPRICE-OVERRIDE] optionId={} save failed: {}", item.optionId(), e.getMessage());
+                failed.add(new PriceOverrideResult.FailedOption(item.optionId(), option.getOptionName(),
+                        e.getMessage()));
+            }
+        }
+        return new PriceOverrideResult(applied, skipped, failed);
+    }
+
+    /**
+     * 옵션 1건: 입력값을 {@code selling_price} 에 적고 이력을 남긴다.
+     *
+     * <p>🔴 {@code toBuilder()} 가 {@code priceSource} 를 그대로 복사한다(D2) — 이 경로는 그 칸을 절대 쓰지
+     * 않는다. 쓰는 순간 그 옵션이 {@code MANUAL_OVERRIDE} 가 되어 다음 재계산부터 영구 제외되고, 「이번
+     * 한 번만」이라는 이 기능의 정의가 뒤집힌다.</p>
+     *
+     * <p>🔴 {@code marketPrice}·{@code marketPriceAt} 도 건드리지 않는다(D10) — 그대로 둬야 다음 조회에서
+     * 「아직 안 밀림」이 켜져 사람이 [마켓 반영]을 눌러야 한다는 사실이 화면에 드러난다.</p>
+     *
+     * <p>⚠️ {@code originalPrice}(할인 전 표시가)도 이 경로가 만지지 않는다 — 그 칸은 공식 재계산이 소유한다.</p>
+     */
+    @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void overrideOne(ProductListingOption option, BigDecimal price) {
+        BigDecimal oldPrice = option.getSellingPrice();
+        productListingOptionRepository.save(option.toBuilder()
+                .sellingPrice(price)
+                .build());
+        // D5: 사유는 기존 MANUAL 재사용 — 두 경로 모두 답은 "사람이 직접 넣었다"다. DRAFT 셀 걸러내기는
+        // recorder 가 스스로 한다.
+        priceHistoryRecorder.recordSellingPrice(option, oldPrice, price, PriceChangeReason.MANUAL);
+    }
+
     /**
      * 요청 옵션 id 를 <b>부모 셀을 통해</b> 스코프 검증하며 읽는다(D24).
      *
@@ -321,21 +393,38 @@ public class RepricingServiceImpl implements RepricingService {
         return byId;
     }
 
-    /** 전송 대상이 아닌 사유. null = 보낸다. 순서는 「채널 → 셀 상태 → 식별자 → 가격 소유자」다. */
-    private static String skipReason(ProductListing cell, ProductListingOption option) {
-        if (cell.getPlatform() != Platform.COUPANG) {
+    /**
+     * 대상이 아닌 사유. null = 처리한다. 순서는 {@code PUSH} 기준으로 「채널 → 셀 상태 → 식별자 → 가격
+     * 소유자」이고, {@code OVERRIDE} 는 그 중 <b>전송에만 필요한 두 가지</b>를 건너뛴다.
+     *
+     * <p>🔴 채널 지원 여부와 마켓 식별자는 <b>전송 전용</b> 조건이다(2609_42): 아직 등록 전인 셀이나 어댑터가
+     * 없는 플랫폼의 셀도 <b>로컬 판매가는 정할 수 있다</b>. 직접 입력에서 이 둘로 막으면 이유 없이 막는 것이다.</p>
+     *
+     * <p>⚠️ 분기는 {@code purpose} 하나로만 갈린다 — 판정 <b>순서</b>는 두 경로가 같아서 {@code push} 가
+     * 돌려주던 사유 문장이 한 글자도 달라지지 않는다.</p>
+     */
+    private static String skipReason(ProductListing cell, ProductListingOption option, Purpose purpose) {
+        if (purpose == Purpose.PUSH && cell.getPlatform() != Platform.COUPANG) {
             return "가격 전송을 지원하지 않는 채널";   // D17
         }
         if (cell.getStatus() != ListingStatus.SELLING) {
             return "판매중인 상품이 아님";              // D20 — 팔지 않는 상품의 가격을 바꾸지 않는다
         }
-        if (option.getPlatformOptionId() == null) {
+        if (purpose == Purpose.PUSH && option.getPlatformOptionId() == null) {
             return "마켓 옵션 식별자 없음";
         }
         if (option.getPriceSource() == GeneratedContentSource.MANUAL_OVERRIDE) {
             return "직접 지정한 가격";                  // D6·D23 — 해제는 [기본값으로 변경] 경로가 소유한다
         }
         return null;
+    }
+
+    /** 제외 규칙을 쓰는 두 경로. 전송({@code PUSH})만 채널·마켓 식별자를 따진다. */
+    private enum Purpose {
+        /** ② 마켓 반영 — 실제로 마켓에 나간다. */
+        PUSH,
+        /** 판매가 직접 입력(2609_42) — 로컬 저장뿐이다. */
+        OVERRIDE
     }
 
     /**
