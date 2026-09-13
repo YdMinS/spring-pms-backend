@@ -2,8 +2,10 @@ package com.pms.controller;
 
 import com.pms.domain.Platform;
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.PriceOverrideRequest;
 import com.pms.dto.request.RecalculateRequest;
 import com.pms.dto.request.RepricePushRequest;
+import com.pms.dto.response.PriceOverrideResult;
 import com.pms.dto.response.RecalculateResult;
 import com.pms.dto.response.RepricePushResult;
 import com.pms.dto.response.RepricingCandidatesResponse;
@@ -80,5 +82,20 @@ public class RepricingController {
             @Valid @RequestBody RepricePushRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(
                 repricingService.push(request.optionIds())));
+    }
+
+    /**
+     * 판매가 직접 입력 — 사람이 친 값을 로컬 판매가에 적는다. <b>마켓 호출 0회</b>.
+     *
+     * <p>🔴 {@code price_source} 는 그대로다(2609_42 / D2) — 다음 재계산이 공식값으로 덮는 것이 정상이다.
+     * 입력값을 마켓에 반영하려면 {@code push} 를 따로 부른다(D1).</p>
+     *
+     * <p>부분 건너뜀은 정상 경로다(200 + {@code skipped}): 직접 지정가(D4)·판매중이 아닌 셀은 저장하지 않는다.</p>
+     */
+    @PostMapping("/override")
+    public ResponseEntity<ResponseDTO<PriceOverrideResult>> override(
+            @Valid @RequestBody PriceOverrideRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                repricingService.override(request.items())));
     }
 }
