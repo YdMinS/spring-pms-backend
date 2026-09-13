@@ -31,6 +31,8 @@ public interface PriceChangeLogRepository extends JpaRepository<PriceChangeLog, 
      * History rows, newest first. Every filter is optional; {@code pageable} only caps the size
      * (the ordering lives in the query).
      *
+     * @param sellerId 2609_43: the seller that owns the cell. 🔴 {@code PRODUCT_COST} rows have no cell,
+     *                 so giving this drops them — "per seller" means "per cell" by definition
      * @param start inclusive lower bound on the change timestamp, or null
      * @param end   <b>exclusive</b> upper bound, or null — the caller turns a to-date into the next
      *              day so a change made at 23:59 on that date is still included
@@ -48,9 +50,11 @@ public interface PriceChangeLogRepository extends JpaRepository<PriceChangeLog, 
               left join l.listingOption o
               left join o.productListing cell
               left join cell.masterProduct mp
+              left join cell.seller sl
             where (:productId is null or p.id = :productId)
               and (:optionId is null or o.id = :optionId)
               and (:listingId is null or cell.id = :listingId)
+              and (:sellerId is null or sl.id = :sellerId)
               and (:masterProductId is null or mp.id = :masterProductId)
               and (:platform is null or cell.platform = :platform)
               and (:targetType is null or l.targetType = :targetType)
@@ -62,6 +66,7 @@ public interface PriceChangeLogRepository extends JpaRepository<PriceChangeLog, 
                                  @Param("optionId") Long optionId,
                                  @Param("listingId") Long listingId,
                                  @Param("masterProductId") Long masterProductId,
+                                 @Param("sellerId") Long sellerId,
                                  @Param("platform") Platform platform,
                                  @Param("targetType") PriceTargetType targetType,
                                  @Param("start") LocalDateTime start,

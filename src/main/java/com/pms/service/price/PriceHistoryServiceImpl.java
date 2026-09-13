@@ -34,15 +34,15 @@ public class PriceHistoryServiceImpl implements PriceHistoryService {
 
     @Override
     public List<PriceChangeView> search(Long productId, Long optionId, Long listingId, Long masterProductId,
-                                        Platform platform, PriceTargetType targetType,
+                                        Long sellerId, Platform platform, PriceTargetType targetType,
                                         LocalDate from, LocalDate to) {
         boolean filtered = productId != null || optionId != null || listingId != null
-                || masterProductId != null || platform != null || targetType != null;
+                || masterProductId != null || sellerId != null || platform != null || targetType != null;
         LocalDateTime start = (from == null) ? null : from.atStartOfDay();
         // Exclusive upper bound at the next midnight: `<= to.atStartOfDay()` would drop everything
         // that happened during the last day of the range.
         LocalDateTime end = (to == null) ? null : to.plusDays(1).atStartOfDay();
-        return priceChangeLogRepository.search(productId, optionId, listingId, masterProductId,
+        return priceChangeLogRepository.search(productId, optionId, listingId, masterProductId, sellerId,
                 platform, targetType, start, end,
                 PageRequest.of(0, filtered ? MAX_LIMIT : DEFAULT_LIMIT));
     }
