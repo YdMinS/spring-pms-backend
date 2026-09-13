@@ -153,6 +153,37 @@ public class PriceCalculator {
     }
 
     /**
+     * Break-even selling price (FEATURE_2609_44 / PLAN D1·D2) — the price at which the margin is exactly zero:
+     * it covers cost + delivery + box and the channel commission (VAT included) and leaves nothing.
+     * <b>Selling below this loses money.</b>
+     *
+     * <p>Same formula as {@link #prices}, <b>only the margin rate is 0</b>:
+     * {@code (costSum + delivery + box) / (1 − effectiveCommissionRate)}. Deriving it anywhere else (e.g. from
+     * the amounts already on screen) would drift, because the screen has no rate and the amounts are rounded.</p>
+     *
+     * <p>Unlike {@link #prices} this <b>returns {@code null} instead of throwing</b>: it is one extra column on
+     * a list, so an unusable input must not fail the row (the caller marks the row UNCALCULABLE on its own).</p>
+     *
+     * @return {@code null} when the input is missing or the denominator is ≤ 0 (commission ≥ 100%)
+     */
+    public BigDecimal breakEvenPrice(PricingBasis basis, BigDecimal costSum) {
+        if (basis == null || costSum == null || basis.effectiveCommissionRate() == null
+                || basis.delivery() == null || basis.box() == null) {
+            return null;
+        }
+        // A commission of 100%+ (bad seed data) would divide by zero or hand back a negative price.
+        BigDecimal denominator = BigDecimal.ONE.subtract(basis.effectiveCommissionRate());
+        if (denominator.compareTo(BigDecimal.ZERO) <= 0) {
+            return null;
+        }
+        // Rounding kept identical to prices(): nearest 10 won, scale 2 — the two must be comparable on screen.
+        return costSum.add(basis.delivery()).add(basis.box())
+                .divide(denominator, 4, RoundingMode.HALF_UP)
+                .setScale(-1, RoundingMode.HALF_UP)
+                .setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /**
      * Split the margin of a price that is <b>already live</b> (PLAN 2609_39 / D3) — the reverse of
      * {@link #prices}. Persists nothing, sends nothing.
      *

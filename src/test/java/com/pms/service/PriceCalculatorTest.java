@@ -253,6 +253,62 @@ class PriceCalculatorTest {
                 .hasMessageContaining("실효 수수료율 0.506");
     }
 
+    // --- FEATURE_2609_44 / 01: break-even selling price (PLAN D1·D2) ---
+
+    /** A basis built by hand so the break-even value can be compared against the very same formula. */
+    private static PriceCalculator.PricingBasis basis(String commission, String marginRate,
+                                                      String delivery, String box) {
+        BigDecimal commissionRate = new BigDecimal(commission);
+        PriceCalculator.CellPricingBasis cellBasis = new PriceCalculator.CellPricingBasis(
+                commissionRate, commissionRate.multiply(BigDecimal.ONE.add(VAT)),
+                new BigDecimal(marginRate), BigDecimal.ZERO, null, null);
+        return new PriceCalculator.PricingBasis(cellBasis, new BigDecimal(delivery), new BigDecimal(box));
+    }
+
+    /**
+     * 🔴 The break-even price is the ordinary selling price with the margin rate set to 0 (D2) — asserted
+     * against {@code prices(...)} itself, not against a hand-typed number, so a change to the formula or to the
+     * rounding can never move only one of the two.
+     */
+    @Test
+    void breakEvenPrice_isPriceAtZeroMargin() {
+        PriceCalculator.PricingBasis withMargin = basis("0.10", "0.15", "2500", "500");
+        PriceCalculator.PricingBasis zeroMargin = basis("0.10", "0", "2500", "500");
+        BigDecimal costSum = new BigDecimal("5000");
+
+        assertThat(priceCalculator.breakEvenPrice(withMargin, costSum))
+                .isEqualByComparingTo(priceCalculator.prices(zeroMargin, costSum).salePrice());
+    }
+
+    /**
+     * 🔴 The claim the screen makes — "below this you lose money" — proven: splitting the margin at the
+     * break-even price leaves nothing. Inputs are chosen so the exact price is a whole 10 won (8900 / 0.89 =
+     * 10000), because the shared 10-won rounding would otherwise move the margin by a few won.
+     */
+    @Test
+    void breakEvenPrice_belowIsLoss() {
+        PriceCalculator.PricingBasis basis = basis("0.10", "0.15", "2500", "500");
+        BigDecimal costSum = new BigDecimal("5900");   // 5900 + 2500 + 500 = 8900; 8900 / (1 − 0.11) = 10000
+
+        BigDecimal breakEven = priceCalculator.breakEvenPrice(basis, costSum);
+
+        assertThat(breakEven).isEqualByComparingTo("10000");
+        assertThat(priceCalculator.breakdown(basis, costSum, breakEven).marginAmount().abs())
+                .isLessThanOrEqualTo(BigDecimal.ONE);
+    }
+
+    /** Commission ≥ 100% (bad seed data) — the denominator is ≤ 0, so there is no break-even price to show. */
+    @Test
+    void breakEvenPrice_commissionOverHundred_null() {
+        assertThat(priceCalculator.breakEvenPrice(basis("0.95", "0.15", "2500", "500"), new BigDecimal("5000")))
+                .isNull();   // 0.95 × 1.1 = 1.045 ≥ 1
+    }
+
+    @Test
+    void breakEvenPrice_nullCost_null() {
+        assertThat(priceCalculator.breakEvenPrice(basis("0.10", "0.15", "2500", "500"), null)).isNull();
+    }
+
     /** The standalone display-price helper (2609_19 / D7) derives from whatever sale price it is handed. */
     @Test
     void displayOriginalPriceFollowsNewSalePrice() {
