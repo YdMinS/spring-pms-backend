@@ -38,6 +38,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -189,6 +190,10 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
                     .sellingPrice(market.salePrice())
                     .originalPrice(market.originalPrice())
                     .priceSource(GeneratedContentSource.MANUAL_OVERRIDE)
+                    // 2609_39/D19 ④: an imported option's price was READ FROM the market, so the two columns
+                    // start out equal. Without this the cell would look "아직 안 밀림" from its first day.
+                    .marketPrice(market.salePrice())
+                    .marketPriceAt(LocalDateTime.now())
                     .stockQuantity(market.stockQuantity())
                     .platformOptionId(market.vendorItemId())
                     .sellerProductItemId(market.sellerProductItemId())

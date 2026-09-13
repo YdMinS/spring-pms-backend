@@ -728,4 +728,48 @@ class LiquibaseChangelogApplyTest {
                     .isZero();
         }
     }
+
+    /**
+     * changeset 089: 최소 마진 기준값 2컬럼 + 마켓 실가격 2컬럼 (FEATURE_2609_39 / PLAN D4·D5).
+     *
+     * <p>🔴 네 컬럼 모두 <b>nullable</b> 이어야 한다. {@code min_margin_*} 의 NULL 은 「그 조건 미사용」이고,
+     * {@code market_price} 의 NULL 은 「마켓 가격을 알 수 없음」이다 — NOT NULL + 기본값을 주면 기존 전 행이
+     * 없는 기준으로 경보되거나(전자) 「아직 안 밀림」으로 쌓인다(후자).</p>
+     *
+     * <p>⚠️ 백필({@code platform_option_id IS NOT NULL} 인 행만 {@code market_price = selling_price})은 이
+     * 빈 DB 에서는 손댈 행이 없다 — 여기서 확인할 수 있는 것은 <b>update 가 오류 없이 적용됐다는 것</b>(부팅
+     * 성공 + DATABASECHANGELOG 기록)과 그 불변식이다. 실제 데이터 백필 결과는 dev 적용 시 확인한다.</p>
+     */
+    @Test
+    void marginThresholdAndMarketPriceApplied() {
+        // 네 컬럼 모두 실존(성공하는 count 가 곧 증거).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM margin_policy "
+                        + "WHERE min_margin_amount IS NULL AND min_margin_rate IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing_option "
+                        + "WHERE market_price IS NULL AND market_price_at IS NULL", Integer.class)).isZero();
+
+        // NULL = 미사용 / 알 수 없음 → nullable 이 아니면 의미가 성립하지 않는다.
+        for (String[] column : new String[][]{
+                {"MARGIN_POLICY", "MIN_MARGIN_AMOUNT"}, {"MARGIN_POLICY", "MIN_MARGIN_RATE"},
+                {"PRODUCT_LISTING_OPTION", "MARKET_PRICE"}, {"PRODUCT_LISTING_OPTION", "MARKET_PRICE_AT"}}) {
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+                            + "WHERE TABLE_NAME = ? AND COLUMN_NAME = ?", String.class, column[0], column[1]))
+                    .as("%s.%s nullable", column[0], column[1])
+                    .isEqualTo("YES");
+        }
+
+        // 백필의 불변식: 마켓 식별자가 있는 행은 market_price 를 갖고, 없는 행은 갖지 않는다.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing_option WHERE "
+                        + "(platform_option_id IS NOT NULL AND (market_price IS NULL OR market_price <> selling_price)) "
+                        + "OR (platform_option_id IS NULL AND market_price IS NOT NULL)", Integer.class)).isZero();
+
+        // update 까지 포함한 changeset 이 기록으로 남았는가(적용 중 SQL 오류가 없었다는 증거).
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID = '089-margin-threshold-market-price'",
+                Integer.class)).isEqualTo(1);
+    }
 }

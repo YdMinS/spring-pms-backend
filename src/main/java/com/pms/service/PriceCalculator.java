@@ -77,6 +77,21 @@ public class PriceCalculator {
      * rate=0 → {@code originalPrice.equals(salePrice)} (no discount shown).</p>
      */
     public PriceResult calculatePrices(ProductListing cell, MasterProductOption masterOption, BigDecimal costSum) {
+        return prices(resolveBasis(cell, masterOption), costSum);
+    }
+
+    /**
+     * Resolve everything the reverse-calc needs that depends on the <b>cell only</b> (FEATURE_2609_39 / D16):
+     * the mapped category's commission, the VAT-loaded effective commission, and the seller×platform margin
+     * preset (target rate, display discount rate and the alert thresholds — they all live on the one preset row).
+     *
+     * <p>⚠️ Exposed so a caller that walks many options of the same cell can cache it. Resolving it per option
+     * re-runs the category-mapping lookup and the margin-preset lookup for every single option — the exact N+1
+     * {@code SalesStatsServiceImpl} avoids with its per-cell {@code commissionCache}.</p>
+     *
+     * @throws IllegalArgumentException (→400) when the category mapping / commission / margin preset is missing
+     */
+    public CellPricingBasis resolveCellBasis(ProductListing cell) {
         // Commission is owned by the mapped PlatformCategory (52). null = the category was not seeded with a
         // commission — a seeding gap, not a runtime fallback: 400. (Prefilled once at import/mapping time.)
         PlatformCategory platformCategory = masterChannelConfigService.resolvePlatformCategory(cell);
@@ -85,29 +100,88 @@ public class PriceCalculator {
             throw new IllegalArgumentException("수수료 미설정 — 카테고리 시드 필요");
         }
 
-        BigDecimal delivery = masterChannelConfigService.resolveDelivery(cell, masterOption).getCost();
-        BigDecimal box = masterChannelConfigService.resolvePackage(cell, masterOption).getCost();
-
         MarginPolicy margin = marginPolicyRepository
                 .findBySellerIdAndPlatform(cell.getSeller().getId(), cell.getPlatform())
                 .orElseThrow(() -> new IllegalArgumentException("마진 프리셋 없음"));
 
         // The commission is settled together with its own VAT (D19), so the reverse-calc must subtract both.
         BigDecimal effectiveCommission = commissionRate.multiply(BigDecimal.ONE.add(feeVatRate));
-        BigDecimal denominator = BigDecimal.ONE.subtract(effectiveCommission).subtract(margin.getMarginRate());
+        return new CellPricingBasis(commissionRate, effectiveCommission, margin.getMarginRate(),
+                margin.getDisplayDiscountRate(), margin.getMinMarginAmount(), margin.getMinMarginRate());
+    }
+
+    /**
+     * Add the per-option part (delivery + box = option override ?? master default) to an already resolved
+     * {@link CellPricingBasis}. Kept separate from {@link #resolveCellBasis} because the shipping/box lookup
+     * genuinely varies per master option while the commission and the margin preset do not.
+     */
+    public PricingBasis resolveBasis(CellPricingBasis cellBasis, ProductListing cell, MasterProductOption masterOption) {
+        BigDecimal delivery = masterChannelConfigService.resolveDelivery(cell, masterOption).getCost();
+        BigDecimal box = masterChannelConfigService.resolvePackage(cell, masterOption).getCost();
+        return new PricingBasis(cellBasis, delivery, box);
+    }
+
+    /** Full resolution for a single option — the one-shot path used by {@link #calculatePrices}. */
+    public PricingBasis resolveBasis(ProductListing cell, MasterProductOption masterOption) {
+        return resolveBasis(resolveCellBasis(cell), cell, masterOption);
+    }
+
+    /**
+     * The reverse-calc itself, over an already resolved basis. This is the <b>single owner of the formula</b>:
+     * {@code salePrice = (costSum + delivery + box) / (1 − commission × (1 + feeVat) − margin)}.
+     *
+     * @throws IllegalArgumentException (→400) when the denominator is ≤ 0
+     */
+    public PriceResult prices(PricingBasis basis, BigDecimal costSum) {
+        BigDecimal denominator = BigDecimal.ONE
+                .subtract(basis.effectiveCommissionRate())
+                .subtract(basis.targetMarginRate());
         if (denominator.compareTo(BigDecimal.ZERO) <= 0) {
             // The effective rate is in the message because the VAT shrinks the denominator: a combination that
             // used to pass can now trip this guard, and the raw commission alone would not explain why.
-            throw new IllegalArgumentException("수수료+마진이 100% 이상 — 실효 수수료율 " + effectiveCommission
-                    + "(수수료 " + commissionRate + " × VAT " + feeVatRate + " 포함) + 마진 " + margin.getMarginRate());
+            throw new IllegalArgumentException("수수료+마진이 100% 이상 — 실효 수수료율 " + basis.effectiveCommissionRate()
+                    + "(수수료 " + basis.commissionRate() + " × VAT " + feeVatRate + " 포함) + 마진 "
+                    + basis.targetMarginRate());
         }
 
-        BigDecimal numerator = costSum.add(delivery).add(box);
+        BigDecimal numerator = costSum.add(basis.delivery()).add(basis.box());
         // Divide with headroom, then round to the nearest 10 won; normalize scale to 2 for the DECIMAL(10,2) column.
         BigDecimal salePrice = numerator.divide(denominator, 4, RoundingMode.HALF_UP)
                 .setScale(-1, RoundingMode.HALF_UP)
                 .setScale(2, RoundingMode.HALF_UP);
-        return new PriceResult(salePrice, originalPrice(salePrice, margin.getDisplayDiscountRate()));
+        return new PriceResult(salePrice, originalPrice(salePrice, basis.displayDiscountRate()));
+    }
+
+    /**
+     * Split the margin of a price that is <b>already live</b> (PLAN 2609_39 / D3) — the reverse of
+     * {@link #prices}. Persists nothing, sends nothing.
+     *
+     * <pre>
+     *   비용합   = costSum + delivery + box
+     *   수수료   = judgedPrice × commissionRate × (1 + feeVatRate)
+     *   마진액   = judgedPrice − 비용합 − 수수료
+     *   마진율   = 마진액 ÷ judgedPrice
+     * </pre>
+     *
+     * <p>It lives next to {@link #prices} on purpose: writing the same interpretation twice is how two screens
+     * start showing different numbers for the same option.</p>
+     *
+     * @param judgedPrice the price the margin is judged on — must be &gt; 0 (the caller decides what to do with
+     *                    a zero/negative price; here it would make the ratio undefined)
+     */
+    public CostBreakdown breakdown(PricingBasis basis, BigDecimal costSum, BigDecimal judgedPrice) {
+        if (judgedPrice == null || judgedPrice.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("판정 가격이 0 이하라 마진을 계산할 수 없습니다");
+        }
+        BigDecimal costTotal = costSum.add(basis.delivery()).add(basis.box());
+        BigDecimal feeAmount = judgedPrice.multiply(basis.effectiveCommissionRate())
+                .setScale(2, RoundingMode.HALF_UP);
+        BigDecimal marginAmount = judgedPrice.subtract(costTotal).subtract(feeAmount)
+                .setScale(2, RoundingMode.HALF_UP);
+        BigDecimal marginRate = marginAmount.divide(judgedPrice, 4, RoundingMode.HALF_UP);
+        return new CostBreakdown(costSum, basis.delivery(), basis.box(), basis.commissionRate(),
+                basis.effectiveCommissionRate(), basis.targetMarginRate(), costTotal, feeAmount,
+                marginAmount, marginRate);
     }
 
     /**
@@ -149,5 +223,45 @@ public class PriceCalculator {
 
     /** Selling price + display original (strike-through) price for one option (73). */
     public record PriceResult(BigDecimal salePrice, BigDecimal originalPrice) {
+    }
+
+    /**
+     * The cell-scoped half of the pricing inputs (FEATURE_2609_39 / D16). Cache this per cell when walking
+     * many options. {@code minMarginAmount}/{@code minMarginRate} ride along because they come from the very
+     * same {@link MarginPolicy} row — looking them up separately would double the preset queries (D4).
+     */
+    public record CellPricingBasis(BigDecimal commissionRate, BigDecimal effectiveCommissionRate,
+                                   BigDecimal targetMarginRate, BigDecimal displayDiscountRate,
+                                   BigDecimal minMarginAmount, BigDecimal minMarginRate) {
+    }
+
+    /** A {@link CellPricingBasis} plus the per-option delivery and box costs. */
+    public record PricingBasis(CellPricingBasis cellBasis, BigDecimal delivery, BigDecimal box) {
+
+        public BigDecimal commissionRate() {
+            return cellBasis.commissionRate();
+        }
+
+        public BigDecimal effectiveCommissionRate() {
+            return cellBasis.effectiveCommissionRate();
+        }
+
+        public BigDecimal targetMarginRate() {
+            return cellBasis.targetMarginRate();
+        }
+
+        public BigDecimal displayDiscountRate() {
+            return cellBasis.displayDiscountRate();
+        }
+    }
+
+    /**
+     * The margin of one option at a given price, split into its parts (FEATURE_2609_39 / D3). Read-only:
+     * nothing here is stored or sent.
+     */
+    public record CostBreakdown(BigDecimal costSum, BigDecimal delivery, BigDecimal box,
+                                BigDecimal commissionRate, BigDecimal effectiveCommissionRate,
+                                BigDecimal targetMarginRate, BigDecimal costTotal, BigDecimal feeAmount,
+                                BigDecimal marginAmount, BigDecimal marginRate) {
     }
 }

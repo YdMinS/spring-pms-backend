@@ -38,6 +38,22 @@ public interface ProductListingProductRepository extends JpaRepository<ProductLi
     List<ProductListingProduct> findByProductListingOptionIdIn(Collection<Long> productListingOptionIds);
 
     /**
+     * BOM lines of several options with their products already loaded, in ONE query
+     * (FEATURE_2609_39 / PLAN D16).
+     *
+     * <p>🔴 {@link #findByProductListingOptionIdIn} is not enough for a cost sum: {@code product} is LAZY, so
+     * reading {@code price} off each line fires a query per product. The margin screen walks every option of a
+     * seller at once — that is the N+1 the whole D16 rule exists to prevent.</p>
+     *
+     * @param productListingOptionIds IDs of the parent ProductListingOptions
+     * @return BOM lines across all given options, products fetched
+     */
+    @Query("SELECT b FROM ProductListingProduct b JOIN FETCH b.product "
+            + "WHERE b.productListingOption.id IN :productListingOptionIds")
+    List<ProductListingProduct> findWithProductByOptionIdIn(
+            @Param("productListingOptionIds") Collection<Long> productListingOptionIds);
+
+    /**
      * Delete all product compositions for a specific listing option.
      * Useful when updating an option's composition.
      *

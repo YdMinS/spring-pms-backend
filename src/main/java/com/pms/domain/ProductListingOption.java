@@ -6,6 +6,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.Map;
 
 /**
@@ -203,6 +204,25 @@ public class ProductListingOption extends BaseEntity {
     @Column(name = "category_notices", columnDefinition = "TEXT")
     @Schema(description = "Per-cell-option category notice override")
     private Map<String, String> categoryNotices;
+
+    /**
+     * 마켓에 <b>실제로 걸린 판매가</b>(FEATURE_2609_39 / PLAN D5). null = 알 수 없음(한 번도 밀린 적이 없거나
+     * 089 백필 대상이 아니었던 행).
+     *
+     * <p>⚠️ {@link #sellingPrice} 와 역할이 다르다: 그쪽은 <b>로컬</b> 값이라 재계산이 덮어쓴다. 재계산 후에는
+     * "지금 마켓에서 얼마에 팔리는지"도 "무엇이 아직 안 밀렸는지"도 이 칸으로만 알 수 있다.</p>
+     *
+     * <p>🔴 채우는 자리는 넷뿐이다(PLAN D19): 옵션 편집 화면의 <b>전송 성공</b> · 등록 승인 동기화(식별자를 처음
+     * 받는 순간) · 편입(마켓에서 읽어온 실가격) · 일괄 마켓 반영. 전송하지 않은 옵션에 이 값을 쓰면 거짓이 된다.</p>
+     */
+    @Column(precision = 10, scale = 2, name = "market_price")
+    @Schema(description = "Price actually live on the marketplace", example = "12999.99")
+    private BigDecimal marketPrice;
+
+    /** {@link #marketPrice} 가 마켓에 전송된 시각. 과거 시각은 알 수 없으므로 백필하지 않는다(NULL 허용). */
+    @Column(name = "market_price_at")
+    @Schema(description = "When the market price was last pushed")
+    private LocalDateTime marketPriceAt;
 
     /** 채널 전용 옵션 = 마스터에 대응 옵션이 없다(2609_22/D2). */
     public boolean isChannelOnly() {
