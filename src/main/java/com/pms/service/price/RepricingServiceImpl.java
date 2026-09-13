@@ -536,7 +536,8 @@ public class RepricingServiceImpl implements RepricingService {
                 cell.getSeller().getId(), cell.getPlatform().name(),
                 judgedPrice, breakdown.costSum(), breakdown.delivery(), breakdown.box(),
                 breakdown.feeAmount(), breakdown.marginAmount(), breakdown.marginRate(),
-                newPrice, marketPrice, sellingPrice, pendingPush, below,
+                newPrice, priceCalculator.breakEvenPrice(optionBasis.basis(), costSum),
+                marketPrice, sellingPrice, pendingPush, below,
                 manual ? Exclusion.MANUAL : null,
                 manual ? "직접 지정한 가격" : null);
     }
@@ -553,7 +554,7 @@ public class RepricingServiceImpl implements RepricingService {
     }
 
     /**
-     * 계산 불가 행. 🔴 {@code below = false} — 마진을 못 냈는데 「기준 미달」이라고 말할 수는 없다. 직접 지정가
+     * 계산 불가 행. 금액 칸은 전부 null 이고 손익분기가도 null 이다(2609_44 / D3). 🔴 {@code below = false} — 마진을 못 냈는데 「기준 미달」이라고 말할 수는 없다. 직접 지정가
      * 이면서 계산까지 불가한 행은 더 강한 쪽인 {@code UNCALCULABLE} 로 표시한다(어차피 실행 대상이 아니다).
      */
     private static Row uncalculable(ProductListing cell, ProductListingOption option, BigDecimal judgedPrice,
@@ -562,7 +563,7 @@ public class RepricingServiceImpl implements RepricingService {
         return new Row(cell.getId(), cell.getName(), option.getId(), option.getOptionName(),
                 cell.getSeller().getId(), cell.getPlatform().name(),
                 judgedPrice, null, null, null, null, null, null,
-                null, marketPrice, sellingPrice, pendingPush, false,
+                null, null, marketPrice, sellingPrice, pendingPush, false,
                 Exclusion.UNCALCULABLE, reason);
     }
 

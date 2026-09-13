@@ -35,6 +35,8 @@ public record RepricingCandidatesResponse(List<Group> groups, List<Row> rows) {
      *
      * @param judgedPrice  마진을 판정한 가격 = {@code marketPrice ?? sellingPrice}(D15)
      * @param newPrice     지금 공식으로 다시 계산한 판매가. 계산 불가면 null
+     * @param breakEvenPrice 손익분기 판매가 = 마진이 0이 되는 가격(2609_44 / D1·D2). 판매가와 <b>같은 공식에
+     *                       마진율만 0</b> 을 넣은 값이라 이 아래로 팔면 손해다. 계산 불가면 null(D3)
      * @param pendingPush  {@code marketPrice != null && marketPrice != sellingPrice}. 🔴 null 은 false(D15)
      * @param below        대응 필요 여부. 직접 지정가·실행 불가 행도 똑같이 판정한다(D23)
      * @param excluded     🔴 2609_43 D1 이후 {@code MANUAL} 은 <b>공식 재계산에서만</b> 빠진다는 뜻이다
@@ -46,7 +48,8 @@ public record RepricingCandidatesResponse(List<Group> groups, List<Row> rows) {
                       Long sellerId, String platform,
                       BigDecimal judgedPrice, BigDecimal costSum, BigDecimal delivery, BigDecimal box,
                       BigDecimal feeAmount, BigDecimal marginAmount, BigDecimal marginRate,
-                      BigDecimal newPrice, BigDecimal marketPrice, BigDecimal sellingPrice,
+                      BigDecimal newPrice, BigDecimal breakEvenPrice,
+                      BigDecimal marketPrice, BigDecimal sellingPrice,
                       boolean pendingPush, boolean below, Exclusion excluded, String excludedReason) {
     }
 

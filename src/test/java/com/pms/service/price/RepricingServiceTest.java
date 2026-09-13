@@ -330,6 +330,30 @@ class RepricingServiceTest {
         assertThat(goodRow.marginAmount()).isEqualByComparingTo("400");
     }
 
+    // 8-1. 2609_44 / D3: 계산 불가 행은 손익분기가도 null 이고, 그 때문에 요청 전체가 실패하지 않는다.
+    //       정상 행은 (5000 + 3000 + 500) / (1 − 0.11) = 9550.56… → 9550 을 함께 내려보낸다.
+    @Test
+    void candidates_uncalculableRow_breakEvenNull() {
+        ProductListing good = cell(CELL_ID);
+        ProductListing broken = cell(200L);
+        MasterProductOption mo = masterOption(10L);
+        givenCandidates(policy("1000", null), List.of(good, broken),
+                List.of(option(50L, good, mo, "10000", "10000"), option(51L, broken, mo, "10000", "10000")));
+        givenPricingConfig(good, mo);
+        given(masterChannelConfigService.resolvePlatformCategory(broken))
+                .willThrow(new IllegalArgumentException("수수료 미설정 — 카테고리 시드 필요"));
+
+        RepricingCandidatesResponse response = service.candidates(null, null, RepricingService.Scope.ALL);
+
+        assertThat(response.rows()).hasSize(2);
+        Row brokenRow = response.rows().stream().filter(r -> r.optionId().equals(51L)).findFirst().orElseThrow();
+        assertThat(brokenRow.excluded()).isEqualTo(Exclusion.UNCALCULABLE);
+        assertThat(brokenRow.breakEvenPrice()).isNull();
+
+        Row goodRow = response.rows().stream().filter(r -> r.optionId().equals(50L)).findFirst().orElseThrow();
+        assertThat(goodRow.breakEvenPrice()).isEqualByComparingTo("9550");
+    }
+
     // 9. 🔴 D16: 같은 셀의 옵션이 3개여도 카테고리 매핑·마진 프리셋 조회는 셀당 1회다.
     //    이 테스트가 없으면 N+1 이 조용히 되돌아온다.
     @Test
