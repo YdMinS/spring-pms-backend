@@ -271,8 +271,12 @@ class CoupangClaimActionAdapterTest {
         ClaimActionOutcome outcome = adapter.execute(account(), List.of(exchangeClaim("RECEIPT", null)),
                 new ClaimActionCommand(ClaimAction.EXCHANGE_REJECT, null, null, null, "SOLDOUT"));
 
+        ArgumentCaptor<String> path = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
-        verify(coupangApiClient).patch(anyString(), body.capture(), any());
+        verify(coupangApiClient).patch(path.capture(), body.capture(), any());
+        // 교환 액션도 전부 v4 다 — 조회 경로가 틀렸던 사고(FEATURE_2609_46)가 액션으로 번지지 않게 고정한다.
+        assertThat(path.getValue()).isEqualTo(
+                "/v2/providers/openapi/apis/api/v4/vendors/A001/exchangeRequests/40362/rejection");
         assertThat(objectMapper.readTree(body.getValue()).get("exchangeRejectCode").asText())
                 .isEqualTo("SOLDOUT");
         assertThat(outcome.succeeded()).isTrue();
