@@ -54,6 +54,17 @@ public class MasterFromChannelRequest {
     @Schema(description = "The master's component products (user picked)", example = "[11, 12]")
     private List<Long> componentProductIds;
 
+    /**
+     * 2609_47/D6: 마스터 기본 택배(선택). 백엔드는 필수로 막지 않는다 — 일반 생성 경로와 같은 계약을 유지하고
+     * 필수 여부는 화면이 강제한다. 여기서만 400 을 만들면 두 입구의 계약이 갈린다.
+     */
+    @Schema(description = "Default carrier rate id for the new master (optional)", example = "2")
+    private Long defaultDeliveryId;
+
+    /** 2609_47/D6: 마스터 기본 상자(선택). {@code defaultDeliveryId} 와 같은 규칙. */
+    @Schema(description = "Default package id for the new master (optional)", example = "5")
+    private Long defaultPackageId;
+
     @NotEmpty(message = "Options cannot be empty")
     @Valid
     @Schema(description = "One entry per marketplace option; the set must equal the marketplace's")

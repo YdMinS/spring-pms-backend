@@ -54,8 +54,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Listing-asset endpoints: regenerate authority (401/403/200) + 404, and the generated read (404 before,
- * 200 after). {@link ThumbnailRenderer} / {@link ImageStorageService} / {@link ProductImageLoader} are
+ * Listing-asset endpoints: regenerate authority (401/403/200) + 404, and the generated read (the cell's own
+ * values before generation, assets after — 2609_47/D3 dropped the "not generated yet" 404). {@link ThumbnailRenderer} / {@link ImageStorageService} / {@link ProductImageLoader} are
  * mocked so the render runs without disk/network. Price precision is covered by {@code PriceCalculatorTest}.
  */
 class ListingAssetControllerTest extends BaseIntegrationTest {
@@ -224,13 +224,27 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.status").value("FAILURE"));
     }
 
-    // ---- generated read: 404 before generation, 200 after ----
+    // ---- generated read: the cell's own values before generation, assets after ----
 
+    /**
+     * 2609_47/D3: 자동생성물이 없어도 404 가 아니다 — 셀이 가진 값(태그·옵션 판매가)은 그대로 실려 오고
+     * 자동생성 산출물(썸네일·상세)만 비어 있다.
+     */
     @Test
-    void getGenerated_beforeRegenerate_returns404() throws Exception {
+    void getGenerated_beforeRegenerate_returnsCellValues() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + listingId + "/tags")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json")
+                        .content("{\"tags\":[\"운동화\"]}"))
+                .andExpect(status().isOk());
+
         mockMvc.perform(get(PATH + "/" + listingId + "/generated")
                         .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.thumbnailUrl").doesNotExist())
+                .andExpect(jsonPath("$.data.detailHtml").doesNotExist())
+                .andExpect(jsonPath("$.data.tags[0]").value("운동화"))
+                .andExpect(jsonPath("$.data.optionPrices[0].sellingPrice").value(0));
     }
 
     @Test
