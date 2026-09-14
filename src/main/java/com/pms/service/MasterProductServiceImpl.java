@@ -120,6 +120,7 @@ public class MasterProductServiceImpl implements MasterProductService {
     private final TagMergeService tagMergeService;
     private final RegistrationNameGenerator registrationNameGenerator;
     private final OptionCheckSuffixResolver optionCheckSuffixResolver;
+    private final MasterChannelConfigService masterChannelConfigService;
 
     private static final String IMAGE_STORAGE_CATEGORY = "master";
 
@@ -261,6 +262,9 @@ public class MasterProductServiceImpl implements MasterProductService {
         Map<Long, String> sellerNames = sellerRepository.findAllById(sellerIds).stream()
                 .collect(Collectors.toMap(Seller::getId, Seller::getSellerName));
 
+        // (platform, code) → resolved category. One entry per distinct pair, not per cell.
+        Map<String, MasterChannelConfigService.ChannelCategory> categoryCache = new LinkedHashMap<>();
+
         List<MatrixRow> rows = accounts.stream().map(acc -> {
             Long sellerId = acc.getSeller().getId();
             ProductListing pl = listingByKey.get(matchKey(sellerId, acc.getPlatform()));
@@ -273,6 +277,20 @@ public class MasterProductServiceImpl implements MasterProductService {
                 // already-loaded account (row) + seller (from the sellerNames findAllById, same session) + master
                 // — NO per-cell account re-query (resolve(cell) would be N DB calls).
                 OptionCheckSuffix suffix = optionCheckSuffixResolver.resolve(acc, master, acc.getSeller());
+                // 2609_45/D9: the category this cell ACTUALLY uses + whether it is the channel's own.
+                // Cached by (platform, code) — the master is fixed for this matrix, so the resolution is a
+                // pure function of those two and would otherwise cost a lookup per cell.
+                MasterChannelConfigService.ChannelCategory category = categoryCache.computeIfAbsent(
+                        pl.getPlatform().name() + "|" + (pl.getPlatformCategoryCode() == null
+                                ? "" : pl.getPlatformCategoryCode()),
+                        key -> {
+                            try {
+                                return masterChannelConfigService.resolveChannelCategory(pl);
+                            } catch (IllegalArgumentException e) {
+                                // No standard category / no mapping — the matrix must still render.
+                                return null;
+                            }
+                        });
                 cell = MatrixCell.builder()
                         .productListingId(pl.getId())
                         .name(pl.getName())
@@ -280,6 +298,10 @@ public class MasterProductServiceImpl implements MasterProductService {
                         .sellingPrice(priceByListing.get(pl.getId()))
                         .registrationName(registrationNameGenerator.generate(master, activeOptions, suffix))
                         .status(pl.getStatus() != null ? pl.getStatus().name() : null)
+                        .categoryCode(category == null ? null : category.category().getCode())
+                        .categoryName(category == null ? null : category.category().getName())
+                        // ⚠️ never `platformCategoryCode != null` — see the field note (D10-1/D11).
+                        .usesOwnCategory(category != null && category.own())
                         .build();
             }
             return MatrixRow.builder()
@@ -296,6 +318,9 @@ public class MasterProductServiceImpl implements MasterProductService {
         return ListingMatrixResponse.builder()
                 .masterId(master.getId())
                 .masterName(master.getName())
+                // 2609_45/D13: the "A → B" confirmation needs the master side's name. Same for every cell,
+                // so it sits at the top level rather than on each row.
+                .masterCategoryName(master.getCategory() == null ? null : master.getCategory().getName())
                 .rows(rows)
                 .build();
     }

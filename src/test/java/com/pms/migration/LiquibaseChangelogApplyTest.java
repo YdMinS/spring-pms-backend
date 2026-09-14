@@ -789,6 +789,28 @@ class LiquibaseChangelogApplyTest {
                 Integer.class)).isEqualTo(1);
     }
 
+    /**
+     * changeset 092: 채널 카테고리의 고시 품목군 (FEATURE_2609_45 / D12).
+     *
+     * <p>nullable 이어야 한다 — {@code null} = 마스터의 품목군을 따른다(기존 셀 전부가 여기 해당).</p>
+     */
+    @Test
+    void listingCategoryNoticeGroupApplied() {
+        // 컬럼이 실존한다(성공하는 count 가 곧 증거). 빈 DB 라 행은 없다.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_listing WHERE category_notice_group IS NOT NULL",
+                Integer.class)).isZero();
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE TABLE_NAME = 'PRODUCT_LISTING' AND COLUMN_NAME = 'CATEGORY_NOTICE_GROUP'",
+                String.class)).isEqualTo("YES");
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID = '092-listing-category-notice-group'",
+                Integer.class)).isEqualTo(1);
+    }
+
     @Test
     void tenantDimensionApplied() {
         // changeset 002: tenant table created + seeded with the default tenant (id=1).

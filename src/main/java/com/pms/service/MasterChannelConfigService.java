@@ -35,14 +35,42 @@ import com.pms.domain.ProductListing;
  */
 public interface MasterChannelConfigService {
 
+    /**
+     * The category this cell actually uses, plus whether that category is the <b>channel's own</b>
+     * (2609_45/D10). One return type on purpose: if each consumer re-derived {@code own} the judgement would
+     * drift (the payload could send the channel category while the attribute merge still assumed the master's).
+     *
+     * @param category the resolved marketplace category node (never null — the resolver throws instead)
+     * @param own      2609_45/D10-1: the resolved code <b>differs from the master's</b> resolved code. NOT
+     *                 "the cell has a code": the import stores {@code platformCategoryCode} whether or not it
+     *                 matches, so code-presence would mark every legacy imported cell as channel-owned.
+     */
+    record ChannelCategory(PlatformCategory category, boolean own) {
+    }
+
     /** Standard category for this cell = its master's single {@code category}. 400 if unset (commission id use). */
     Category resolveStandardCategory(ProductListing cell);
 
     /**
+     * 2609_45/D9·D10 — the single promotion point: a cell that carries its own marketplace category code keeps
+     * that category (payload, commission, attribute/notice schema), otherwise it follows the master.
+     *
+     * <p>Fallback to the master (with {@code own=false}) when the code is absent, when no
+     * {@link PlatformCategory} row exists for it, or when that row has no commission rate (D11 — without a
+     * commission the selling-price reverse-calc is a 400, so we would break pricing to honour the category).</p>
+     *
+     * <p>400 conditions are those of {@link #resolvePlatformCategory(ProductListing)} <b>only when the master
+     * is the one being used</b>: a cell with a usable own category survives a master with no category/mapping.</p>
+     */
+    ChannelCategory resolveChannelCategory(ProductListing cell);
+
+    /**
      * Marketplace category node ({@link PlatformCategory}) that owns the mall code + commission for this cell
-     * (FEATURE_2608_06 / 52) = the standard category's {@link com.pms.domain.CategoryMapping} for
-     * {@code cell.platform} → its linked {@code platformCategory} FK. 400 if the standard category is unset, if
-     * there is no mapping for that platform, or if the mapping is not yet linked to a PlatformCategory.
+     * (FEATURE_2608_06 / 52). Since 2609_45/D10 this is {@code resolveChannelCategory(cell).category()} — the
+     * channel's own category when it has one, else the standard category's
+     * {@link com.pms.domain.CategoryMapping} for {@code cell.platform} → its linked {@code platformCategory} FK.
+     * 400 when the master is used and the standard category is unset, there is no mapping for that platform,
+     * or the mapping is not yet linked to a PlatformCategory.
      */
     PlatformCategory resolvePlatformCategory(ProductListing cell);
 

@@ -219,16 +219,35 @@ public class ProductListing extends BaseEntity {
     private List<String> tags;
 
     /**
-     * 가져오기 시점의 마켓 원본 카테고리 코드(2609_22/D16). **표시·비교 전용**이다.
-     * ⚠️ 등록·수정 payload 의 displayCategoryCode 는 계속 마스터 카테고리에서 해석한다
-     * (MasterChannelConfigService.resolvePlatformCategoryCode). 이 값을 payload 에 쓰지 말 것.
+     * 채널이 마켓에서 가져온 자기 카테고리 코드(2609_22/D16 → 2609_45/D9 로 <b>번복</b>).
      *
-     * <p>{@code null} = 가져오기로 만들어진 셀이 아니다(채널추가·legacy 생성 경로는 채우지 않는다). See changeset 061.</p>
+     * <p>⚠️ 2609_22/D16 은 이 컬럼을 "표시·비교 전용, payload 에 절대 쓰지 말 것" 으로 못박았다.
+     * 2609_45/D9 가 그것을 번복한다 — 이제 <b>실제 사용값</b>이다: 전송 payload 의 displayCategoryCode ·
+     * 수수료(판매가 역산·정산 대사·매출 통계) · 필수 속성/고시 스키마가 전부 이 코드로 해석된다
+     * ({@code MasterChannelConfigService.resolveChannelCategory}).</p>
+     *
+     * <p>번복 사유: 같은 마스터에 서로 다른 판매자의 마켓 상품이 붙으면, 마스터 카테고리로 통일하는 순간
+     * 다음 [수정 요청]에서 그 상품의 카테고리가 바뀌어 재심사에 들어가고, 그때까지 마진도 남의 카테고리
+     * 수수료율로 계산된다(실측: 상품 73170 vs 마스터 58630, 2026-09-14).</p>
+     *
+     * <p>{@code null} = 마스터 카테고리를 따른다(채널추가·legacy 생성 경로는 채우지 않는다). See changeset 061.</p>
      */
     @Column(name = "platform_category_code", length = 50)
-    @Schema(description = "Marketplace category code captured at import time (display/compare only)",
+    @Schema(description = "Marketplace category code this channel actually uses (null = follow the master)",
             example = "72882")
     private String platformCategoryCode;
+
+    /**
+     * 채널이 자기 카테고리를 쓸 때의 고시 품목군(쿠팡 {@code noticeCategoryName}, 예 "가공식품") — 2609_45/D12.
+     *
+     * <p>{@code null} = 마스터의 품목군({@code MasterProduct.categoryNoticeGroup})을 따른다.
+     * {@link #platformCategoryCode} 와 <b>짝으로만</b> 의미가 있다: 가져오기가 셀 카테고리를 유지하기로
+     * 판정했을 때만 채워지고, [마스터 카테고리로 변경] 토글이 둘을 함께 비운다. See changeset 092.</p>
+     */
+    @Column(name = "category_notice_group", length = 100)
+    @Schema(description = "Notice group of the channel's own category (null = follow the master)",
+            example = "가공식품")
+    private String categoryNoticeGroup;
 
     /**
      * Per-channel shipping overrides (FEATURE_2608_06 / 75): key = an override field name (whitelist =

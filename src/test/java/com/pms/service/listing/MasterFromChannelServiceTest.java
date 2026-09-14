@@ -442,4 +442,37 @@ class MasterFromChannelServiceTest {
         // 신규 마스터는 태그가 비어 차집합이 항상 원본과 같다 — 쿠팡 태그를 그대로 넣는다.
         assertThat(cell.getTags()).containsExactly("생수", "2L");
     }
+
+    // D. 🔴 2609_45/D2-1: 역조회가 실패(또는 다른 카테고리로 해석)해 사용자가 **다른** 표준 카테고리를 고른
+    //    경우, 그 셀은 쿠팡 코드를 갖고 있으므로 02 의 해석에서 자기 카테고리로 살아난다 → 셀 옵션 메타를
+    //    채워야 한다(안 채우면 [수정 요청]이 필수 속성 없이 나간다).
+    @Test
+    void create_userPickedDifferentCategory_fillsCellOptionMeta() {
+        givenAccount();
+        givenMarket(marketProduct(marketOption("6입", "8123", "12900", Map.of("수량", "6"))));
+        givenComponents(PRODUCT_A);
+        givenCreationSucceeds("6입");
+        // 쿠팡 카테고리는 다른 표준 카테고리(999)로 해석되고, 그 카테고리에는 수수료가 있다(D11 통과).
+        PlatformCategory platformCategory = PlatformCategory.builder()
+                .id(50L).platform(PLATFORM).code(COUPANG_CATEGORY).name("생수")
+                .commissionRate(new BigDecimal("0.11")).build();
+        given(platformCategoryRepository.findByPlatformAndCode(PLATFORM, COUPANG_CATEGORY))
+                .willReturn(Optional.of(platformCategory));
+        given(categoryMappingRepository.findByPlatformCategoryId(50L))
+                .willReturn(Optional.of(CategoryMapping.builder()
+                        .id(60L).platform(PLATFORM)
+                        .category(Category.builder().id(999L).name("다른 카테고리").build())
+                        .platformCategory(platformCategory).build()));
+
+        service.create(createRequest(List.of(PRODUCT_A), spec("6입", "8123", 6, null)));
+
+        ArgumentCaptor<ProductListingOption> optionCaptor = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository).save(optionCaptor.capture());
+        assertThat(optionCaptor.getValue().getCategoryAttributes()).containsEntry("수량", "6");
+        assertThat(optionCaptor.getValue().getCategoryNotices()).containsEntry("제품명", "상품 상세페이지 참조");
+
+        ArgumentCaptor<ProductListing> cellCaptor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(cellCaptor.capture());
+        assertThat(cellCaptor.getValue().getCategoryNoticeGroup()).isEqualTo("가공식품");
+    }
 }
