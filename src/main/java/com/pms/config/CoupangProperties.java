@@ -143,10 +143,14 @@ public class CoupangProperties {
 
     /**
      * exchangeRequests(교환 요청 목록) 조회 경로. {vendorId} 치환.
-     * ⚠️ 실계정 검증 전이라 상수가 아니라 설정으로 뺀다(ordersheet-by-order-path 와 같은 판단).
+     *
+     * <p>🔴 v4 다. 2026-09-14 이전까지 {@code v1/marketplace} 로 박혀 있어 prod 에서 매 동기화마다
+     * 404 PRECONDITION_FAILED 가 났고, 교환 조회가 한 번도 성공한 적이 없다. 쿠팡 공식 목록에서
+     * 교환 4종(목록조회·입고확인·거부·송장업로드)이 전부 v4 이며, 액션 3종은 처음부터 v4 였다
+     * (FEATURE_2609_46 / PLAN D12).
      */
     private String exchangeRequestsPath =
-            "/v2/providers/openapi/apis/api/v1/marketplace/vendors/{vendorId}/exchangeRequests";
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/exchangeRequests";
 
     /**
      * 교환 신규 조회 창(일). ⚠️ 쿠팡 상한이 7일이라 이 값을 넘기지 말 것(D9·PLAN §4) —

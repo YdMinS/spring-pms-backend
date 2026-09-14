@@ -65,6 +65,23 @@ class CoupangClaimAdapterTest {
     }
 
     @Test
+    void syncExchanges_usesV4Path() {
+        // 🔴 v1/marketplace 로 박혀 있던 시절 prod 가 매 동기화마다 404 를 맞았다(FEATURE_2609_46 / D12).
+        // contains("v4") 같은 느슨한 단언은 그 사고를 잡지 못한다 — 전체 경로를 고정한다.
+        MarketplaceAccount vendorAccount = MarketplaceAccountFixture.coupangStubBuilder("A00611826", null)
+                .id(1L).build();
+        givenNoOpenClaims();
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(emptyData());
+
+        adapter.syncExchanges(vendorAccount);
+
+        ArgumentCaptor<String> path = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient, times(1)).get(path.capture(), anyString(), eq(vendorAccount));
+        assertThat(path.getValue())
+                .isEqualTo("/v2/providers/openapi/apis/api/v4/vendors/A00611826/exchangeRequests");
+    }
+
+    @Test
     void syncExchanges_newWindow_usesConfiguredWindowAndPageSizeWithoutStatusFilter() {
         // status 를 지정하면 상태 수만큼 호출이 는다(PLAN §4) — 생략 = 전 상태 조회가 전제다.
         givenNoOpenClaims();

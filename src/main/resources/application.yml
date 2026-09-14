@@ -96,9 +96,9 @@ oklyx:
     return-approval-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/returnRequests/{receiptId}/approval
     # Collect-invoice registration, shared by returns and exchanges (returnExchangeDeliveryType picks one).
     return-exchange-invoice-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/return-exchange-invoices/manual
-    # Exchange actions (FEATURE_2609_21 / 05). Same v4-vs-lookup split as returns: the exchange LIST above is
-    # api/v1/marketplace, so copying its prefix would 404 every action. Unverified against a live account ->
-    # if all three 404 in dev, try the v1/marketplace prefix and record it in PLAN 6-1.
+    # Exchange actions (FEATURE_2609_21 / 05). All exchange APIs — list query included — are v4
+    # (Coupang API index, verified 2026-09-14). The list query was wrongly pinned to api/v1/marketplace
+    # until FEATURE_2609_46 and 404'd on every sync; do not reintroduce that prefix anywhere.
     exchange-receive-confirm-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/exchangeRequests/{exchangeId}/receiveConfirmation
     # Rejecting an exchange is irreversible. Reject codes (SOLDOUT / WITHDRAW) live in the adapter, not here.
     exchange-rejection-path: /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/exchangeRequests/{exchangeId}/rejection
