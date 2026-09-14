@@ -20,7 +20,10 @@ import lombok.*;
  * master-/image-scoped finders). Immutable (no {@code @Setter}); re-order rebuilds via delete-then-insert.</p>
  */
 @Entity
-@Table(name = "master_image_zone_assignment")
+// 🔴 The unique constraint mirrors changeset 024 so the generated test schema matches production. Leaving it
+// out let delete-then-insert ordering bugs pass every test and only surface as a 500 on MySQL.
+@Table(name = "master_image_zone_assignment", uniqueConstraints = @UniqueConstraint(
+        name = "uq_miza_image_zone", columnNames = {"master_product_image_id", "zone_id"}))
 @Getter
 @NoArgsConstructor
 @AllArgsConstructor
