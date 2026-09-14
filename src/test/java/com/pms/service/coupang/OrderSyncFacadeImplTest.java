@@ -6,12 +6,14 @@ import com.pms.domain.Platform;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.security.TenantContext;
 import com.pms.service.claim.ClaimOrderBackfillService;
 import com.pms.service.claim.ClaimSyncAdapter;
 import com.pms.service.inquiry.InquirySyncAdapter;
 import com.pms.service.coupang.CoupangOrderSyncService.SyncResult;
 import com.pms.service.coupang.CoupangReturnSyncService.CancelSyncResult;
 import com.pms.service.coupang.OrderSyncFacade.OrderSyncResult;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -24,6 +26,8 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.AbstractExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -31,6 +35,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.willAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -38,7 +43,10 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * OrderSyncFacadeImpl — 호출 순서(ordersheets→cancels), 셀러 범위, 계정 격리, not-found 검증.
+ * OrderSyncFacadeImpl — 호출 순서(ordersheets→cancels), 셀러 범위, 계정 격리, 테넌트 처리, not-found 검증.
+ *
+ * <p>계정 병렬 실행(FEATURE_2609_46 / 03)은 <b>동기 실행기</b>를 주입해 결정적으로 검증한다 —
+ * 병렬 타이밍 자체를 테스트로 재현하지 않는다.
  */
 @ExtendWith(MockitoExtension.class)
 class OrderSyncFacadeImplTest {
@@ -67,13 +75,59 @@ class OrderSyncFacadeImplTest {
     void setUp() {
         facade = new OrderSyncFacadeImpl(marketplaceAccountRepository, new CoupangProperties(),
                 coupangOrderSyncService, coupangReturnSyncService, syncStatusRecorder,
-                claimOrderBackfillService, claimSyncAdapters, inquirySyncAdapters);
+                claimOrderBackfillService, claimSyncAdapters, inquirySyncAdapters,
+                new SameThreadExecutorService());
+    }
+
+    @AfterEach
+    void tearDown() {
+        TenantContext.clear();   // 테스트가 세팅한 요청 테넌트를 다음 테스트로 흘리지 않는다
     }
 
     private MarketplaceAccount account(Long id) {
+        return account(id, 1L);
+    }
+
+    private MarketplaceAccount account(Long id, Long tenantId) {
         return MarketplaceAccountFixture.coupangStubBuilder("V" + id, null)
-                .id(id).platform(Platform.COUPANG)
+                .id(id).platform(Platform.COUPANG).tenantId(tenantId)
                 .isActive(true).build();
+    }
+
+    /** 제출 스레드에서 그대로 실행하는 실행기 — 병렬 타이밍을 없애 결정적으로 만든다. */
+    private static final class SameThreadExecutorService extends AbstractExecutorService {
+        private volatile boolean shutdown;
+
+        @Override
+        public void execute(Runnable command) {
+            command.run();
+        }
+
+        @Override
+        public void shutdown() {
+            shutdown = true;
+        }
+
+        @Override
+        public List<Runnable> shutdownNow() {
+            shutdown = true;
+            return List.of();
+        }
+
+        @Override
+        public boolean isShutdown() {
+            return shutdown;
+        }
+
+        @Override
+        public boolean isTerminated() {
+            return shutdown;
+        }
+
+        @Override
+        public boolean awaitTermination(long timeout, TimeUnit unit) {
+            return true;
+        }
     }
 
     @Test
@@ -364,6 +418,71 @@ class OrderSyncFacadeImplTest {
 
         assertThatThrownBy(() -> facade.syncPeriod(999L, LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 31)))
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void syncAll_aggregatesAllAccounts() {
+        MarketplaceAccount a1 = account(1L);
+        MarketplaceAccount a2 = account(2L);
+        MarketplaceAccount a3 = account(3L);
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(a1, a2, a3));
+        given(coupangOrderSyncService.syncAccount(any(), eq(OrderSyncScope.FULL)))
+                .willReturn(new SyncResult(1, 0, 0, List.of()));
+        given(coupangReturnSyncService.syncCancels(any())).willReturn(new CancelSyncResult(0, 1));
+
+        OrderSyncResult result = facade.syncAll();
+
+        assertThat(result.newOrders()).isEqualTo(3);   // 병렬이어도 합산은 그대로
+    }
+
+    @Test
+    void syncEach_clearsTenantAfterEachAccount() {
+        // 풀 스레드는 복원이 아니라 clear 다(PLAN 2609_46 D8) — 남의 테넌트를 되살리면 교차 유출이다.
+        MarketplaceAccount a1 = account(1L, 7L);
+        MarketplaceAccount a2 = account(2L, 9L);
+        List<Long> captured = new ArrayList<>();
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(a1, a2));
+        willAnswer(inv -> {
+            captured.add(TenantContext.get());
+            return new SyncResult(1, 0, 0, List.of());
+        }).given(coupangOrderSyncService).syncAccount(any(), eq(OrderSyncScope.FULL));
+        given(coupangReturnSyncService.syncCancels(any())).willReturn(new CancelSyncResult(0, 1));
+
+        facade.syncAll();
+
+        assertThat(captured).containsExactly(7L, 9L);
+        assertThat(TenantContext.get()).isNull();
+    }
+
+    @Test
+    void syncOne_singleAccount_setsTenant() {
+        MarketplaceAccount acc = account(1L, 9L);
+        List<Long> captured = new ArrayList<>();
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        willAnswer(inv -> {
+            captured.add(TenantContext.get());
+            return new SyncResult(1, 0, 1, List.of());
+        }).given(coupangOrderSyncService).syncAccount(acc, OrderSyncScope.FULL);
+        given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(0, 1));
+
+        facade.sync(1L);
+
+        assertThat(captured).containsExactly(9L);
+    }
+
+    @Test
+    void sync_singleAccount_keepsRequestTenantAfterReturn() {
+        // 웹 요청 스레드는 복원한다(D14) — clear 하면 직후 목록 조회가 빈 배열이 된다.
+        MarketplaceAccount acc = account(1L, 9L);
+        TenantContext.set(5L);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        given(coupangOrderSyncService.syncAccount(acc, OrderSyncScope.FULL))
+                .willReturn(new SyncResult(1, 0, 1, List.of()));
+        given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(0, 1));
+
+        facade.sync(1L);
+
+        assertThat(TenantContext.get()).isEqualTo(5L);
     }
 
     @Test

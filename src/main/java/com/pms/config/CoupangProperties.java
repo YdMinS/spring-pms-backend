@@ -337,4 +337,12 @@ public class CoupangProperties {
      * 주기의 절반을 넘으면 곧 못 따라잡는다는 뜻이다.
      */
     private int syncCycleWarnSeconds = 60;
+
+    /**
+     * 계정 동기화 동시 실행 수(PLAN 2609_46 D6). 커넥션 풀(20)과 403(IP 단위, 5초 20에러) 때문에
+     * 제한한다 — 쿠팡 429 한도 때문이 아니다(그건 업체코드별이라 계정끼리 서로 먹지 않는다).
+     *
+     * <p>⚠️ 8 이상으로 올리지 말 것 — 커넥션 풀과 403 을 동시에 압박한다. 올리려면 prod 실측 후.
+     */
+    private int syncConcurrency = 4;
 }
