@@ -139,6 +139,10 @@ public class MasterProductImageServiceImpl implements MasterProductImageService 
         }
 
         assignmentRepository.deleteByImage_MasterProductIdAndZoneId(masterId, zoneId);
+        // 🔴 Flush the deletes BEFORE inserting. The derived delete only queues removals, while the inserts
+        // below fire immediately (IDENTITY ids) — without this the re-inserted rows hit uq_miza_image_zone
+        // (024) and the whole call 500s. Symptom: a zone accepts its first image but never a second one.
+        assignmentRepository.flush();
         List<MasterImageZoneAssignment> toSave = new ArrayList<>();
         for (int i = 0; i < imageIds.size(); i++) {
             toSave.add(MasterImageZoneAssignment.builder()
@@ -158,6 +162,9 @@ public class MasterProductImageServiceImpl implements MasterProductImageService 
         // Single-cover invariant: always clear the existing __source__ mapping first (delete-then-insert).
         assignmentRepository.deleteByImage_MasterProductIdAndZoneId(
                 masterId, MasterImageZoneAssignment.SOURCE_ZONE);
+        // Same flush contract as setZoneImages: re-selecting the image that is already the cover would
+        // otherwise insert a duplicate (image, __source__) row before the delete reaches the database.
+        assignmentRepository.flush();
         if (imageId == null) {
             return null; // cover cleared → reverts to BOM derivation
         }
