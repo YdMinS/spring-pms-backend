@@ -258,7 +258,9 @@ public class RepricingServiceImpl implements RepricingService {
                 self.pushOne(channel.get(), option, account.account());   // 프록시 → REQUIRES_NEW
                 pushed++;
             } catch (CoupangRateLimitedException e) {
-                // 🔴 쿨다운은 프로세스 전역이고 약 10분이다 — 남은 옵션을 계속 치면 차단만 길어진다.
+                // 쿨다운은 계정별이다(FEATURE_2609_46 D1). 여기서 멈추는 이유는 "어차피 전부 맞는다" 가 아니라
+                //    응답의 stopped/retryAfter 가 단일값이라 계정별 중단을 표현할 수 없기 때문이다.
+                //    계정이 섞인 대량 반영에서 남은 계정까지 멈추는 것은 알려진 손실이다(별건).
                 //    여기까지의 결과는 이미 마켓에 나갔으므로 429 로 세우지 않고 200 + stopped 로 돌려준다.
                 log.warn("[REPRICE-PUSH] rate limited, stopping after {} pushed", pushed);
                 stopped = true;

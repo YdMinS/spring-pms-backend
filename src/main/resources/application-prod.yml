@@ -7,6 +7,10 @@ spring:
     username: ${DB_USERNAME:__UNSET__}
     password: ${DB_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      # 계정 병렬 동기화(동시 4~5)가 풀의 절반을 잡는다. Hikari 기본 10 은 빠듯하다.
+      # ⚠️ 서버 자원 문제가 아니라 설정 문제다 — 인스턴스를 늘리는 답으로 가지 말 것(PLAN 2609_46 D11).
+      maximum-pool-size: 20
   liquibase:
     # Liquibase owns the schema. On the pre-existing prod DB the baseline is marked applied ONCE via
     # `changelogSync` (see 03_BACKEND_PROD_CHANGELOGSYNC.md) — never executed. Later changesets auto-apply at boot.
