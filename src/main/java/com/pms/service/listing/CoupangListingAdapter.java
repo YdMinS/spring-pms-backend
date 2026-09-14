@@ -82,6 +82,8 @@ public class CoupangListingAdapter implements ListingChannel {
     private static final int MAX_SELLER_PRODUCT_NAME_LENGTH = 100;
     // 96 ④: a value made of digits only (optionally signed / decimal) is the one that still needs its unit.
     private static final Pattern NUMERIC_VALUE = Pattern.compile("^-?\\d+(\\.\\d+)?$");
+    // 2609_45/D4: "number + trailing text" — group(1) the number, group(2) the suffix (see stripUnit).
+    private static final Pattern NUMBER_WITH_SUFFIX = Pattern.compile("^(-?\\d+(?:\\.\\d+)?)(\\D.*)$");
     // 96 ④: Coupang's documented cap for attributeValueName (warn only — see withUnit).
     private static final int MAX_ATTRIBUTE_VALUE_LENGTH = 30;
 
@@ -144,11 +146,21 @@ public class CoupangListingAdapter implements ListingChannel {
      * {@code originalPrice}·{@code maximumBuyCount}) are inferred from the register payload schema — every
      * one of them parses to {@code null} when absent rather than throwing, and the import service decides
      * what is fatal.</p>
+     *
+     * <p>2609_45/D4: the response also carries the category attributes/notices that were already stored on the
+     * market, per item. They are flattened into the same map shape we store, and numeric attribute values are
+     * stripped back to "number only" (see {@link #stripUnit}).</p>
      */
     @Override
     public ImportedProduct fetchProduct(String platformProductId, MarketplaceAccount acct) {
         String raw = client.get(SELLER_PRODUCTS + "/" + platformProductId, "", acct);
         JsonNode data = readJson(raw).path("data");
+
+        String categoryCode = asTextOrNull(data, "displayCategoryCode");
+        // 2609_45/D4: the 기본 단위 of this category, read ONCE and reused for every item below. Skipped
+        // entirely when no value even looks like "number + suffix" — fetchStatus goes through this same method
+        // and must not pay a second GET for products whose attributes need no stripping.
+        Map<String, String> unitByAttr = unitsForImport(data, categoryCode, acct);
 
         List<ImportedProduct.Option> options = new ArrayList<>();
         for (JsonNode item : data.path("items")) {
@@ -158,7 +170,9 @@ public class CoupangListingAdapter implements ListingChannel {
                     asTextOrNull(item, "sellerProductItemId"),
                     asDecimalOrNull(item, "salePrice"),
                     asDecimalOrNull(item, "originalPrice"),
-                    asIntOrNull(item, "maximumBuyCount")));
+                    asIntOrNull(item, "maximumBuyCount"),
+                    importedAttributes(item, unitByAttr),
+                    importedNotices(item)));
         }
         // 73: searchTags lives at the ITEM level on Coupang → read the first item's set (every item carries
         // the same merged list when we push). No items = no tags, not an error.
@@ -171,10 +185,93 @@ public class CoupangListingAdapter implements ListingChannel {
         }
         return new ImportedProduct(
                 asTextOrNull(data, "sellerProductName"),
-                asTextOrNull(data, "displayCategoryCode"),
+                categoryCode,
                 mapStatus(data.path("statusName").asText("")),
                 tags,
+                // 2609_45/D4-2: 품목군 is a PRODUCT-level fact — every item repeats the same group.
+                asTextOrNull(data.path("items").path(0).path("notices").path(0), "noticeCategoryName"),
                 options);
+    }
+
+    /**
+     * 2609_45/D4: {@code items[].attributes[]} → our stored shape ({@code attributeTypeName → attributeValueName}).
+     * Blank values are dropped (most of them are blank on a live response) so they never overwrite a real value.
+     */
+    private static Map<String, String> importedAttributes(JsonNode item, Map<String, String> unitByAttr) {
+        Map<String, String> attributes = new LinkedHashMap<>();
+        for (JsonNode attribute : item.path("attributes")) {
+            String name = asTextOrNull(attribute, "attributeTypeName");
+            String value = asTextOrNull(attribute, "attributeValueName");
+            if (name == null || name.isBlank() || value == null || value.isBlank()) {
+                continue;
+            }
+            attributes.put(name, stripUnit(name, value, unitByAttr));
+        }
+        return attributes;
+    }
+
+    /** 2609_45/D4: {@code items[].notices[]} → {@code noticeCategoryDetailName → content}. Blank values dropped. */
+    private static Map<String, String> importedNotices(JsonNode item) {
+        Map<String, String> notices = new LinkedHashMap<>();
+        for (JsonNode notice : item.path("notices")) {
+            String key = asTextOrNull(notice, "noticeCategoryDetailName");
+            String content = asTextOrNull(notice, "content");
+            if (key == null || key.isBlank() || content == null || content.isBlank()) {
+                continue;
+            }
+            notices.put(key, content);
+        }
+        return notices;
+    }
+
+    /**
+     * 2609_45/D4: attribute name → 기본 단위 for the product's own category, but only when it is actually
+     * needed. {@code fetchProduct} is also what {@code fetchStatus} calls, so an unconditional meta call would
+     * double the Coupang GETs of every approval refresh.
+     */
+    private Map<String, String> unitsForImport(JsonNode data, String categoryCode, MarketplaceAccount acct) {
+        if (categoryCode == null || categoryCode.isBlank() || !hasUnitSuffixCandidate(data)) {
+            return Map.of();
+        }
+        return metaAdapter.getMeta(acct, categoryCode).attributes().stream()
+                .filter(a -> a.basicUnit() != null)
+                .collect(Collectors.toMap(CategoryAttribute::name, CategoryAttribute::basicUnit, (a, b) -> a));
+    }
+
+    /** True when at least one attribute value looks like "number + suffix" — the only case stripUnit can act on. */
+    private static boolean hasUnitSuffixCandidate(JsonNode data) {
+        for (JsonNode item : data.path("items")) {
+            for (JsonNode attribute : item.path("attributes")) {
+                String value = asTextOrNull(attribute, "attributeValueName");
+                if (value != null && NUMBER_WITH_SUFFIX.matcher(value.trim()).matches()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 2609_45/D4: turn Coupang's {@code attributeValueName} back into our storage convention (number only).
+     *
+     * <p>🔴 The trailing text is dropped <b>only when it equals that attribute's {@code basicUnit} exactly</b>,
+     * and only when what precedes it is a number:
+     * {@code "36.9g"}(basicUnit=g) → {@code "36.9"} · {@code "6개"}(basicUnit=개) → {@code "6"} ·
+     * {@code "1.5kg"}(basicUnit=g) → <b>{@code "1.5kg"} verbatim</b> (dropping it would mean 1.5g —
+     * {@code usableUnits} is not consulted). Non-numeric values (SELECT-type "비건" etc.) are always verbatim.</p>
+     *
+     * <p>⚠️ This is NOT about double units: {@link #withUnit} only appends to bare numbers, so {@code "6개개"}
+     * cannot happen. It exists because the master screen shows a number box + unit dropdown, and {@code "6개"}
+     * in that box cannot be edited by the user.</p>
+     */
+    private static String stripUnit(String name, String value, Map<String, String> unitByAttr) {
+        String trimmed = value.trim();
+        var matcher = NUMBER_WITH_SUFFIX.matcher(trimmed);
+        if (!matcher.matches()) {
+            return value;
+        }
+        String unit = unitByAttr.get(name);
+        return matcher.group(2).equals(unit) ? matcher.group(1) : value;
     }
 
     @Override
@@ -226,11 +323,20 @@ public class CoupangListingAdapter implements ListingChannel {
         boolean bundle = masterProductService.isBundle(master == null ? null : master.getId());
         // 47/59: register targets a single (master × channel) cell → one category → one getMeta call (reusing
         // the Coupang concrete metaAdapter, 61). Empty schema (NAVER) leaves both loops with nothing to check.
-        String code = masterChannelConfigService.resolvePlatformCategoryCode(cell);
-        CategoryMetaSchema schema = metaAdapter.getMeta(acct, code);
+        // 2609_45/D10: ONE resolver call gives both the code and whether it is the channel's own category —
+        // never recompute `own` here (the D10-1 comparison and the D11 fallback live in the resolver).
+        MasterChannelConfigService.ChannelCategory category =
+                masterChannelConfigService.resolveChannelCategory(cell);
+        CategoryMetaSchema schema = metaAdapter.getMeta(acct, category.category().getCode());
+        boolean usesOwnCategory = category.own();
 
-        Map<String, String> masterAttributes = master != null ? master.getCategoryAttributes() : null;
-        Map<String, String> masterNotices = master != null ? master.getCategoryNotices() : null;
+        // 2609_45/D12-1: when the channel uses its OWN category the master values belong to a DIFFERENT
+        // category — they must not seed the merge (see the note on the payload builder). The import stored
+        // everything this channel needs on the cell options.
+        Map<String, String> masterAttributes =
+                master != null && !usesOwnCategory ? master.getCategoryAttributes() : null;
+        Map<String, String> masterNotices =
+                master != null && !usesOwnCategory ? master.getCategoryNotices() : null;
         // 2609_22/D1: master options keyed by id — the single master↔channel matching axis (never the name).
         Map<Long, MasterProductOption> byMasterOptionId = master == null ? Map.of()
                 : masterProductOptionRepository.findByMasterProductId(master.getId()).stream()
@@ -238,8 +344,13 @@ public class CoupangListingAdapter implements ListingChannel {
         // 96 ⑨: the required 고시 of the picked 품목군 (same group rule as the payload, ⑩). A legacy master with
         // no stored group is left alone — we cannot tell which group's required set applies, and demanding
         // every group's would make those masters un-registrable.
-        List<CategoryNotice> requiredNotices = master != null && master.getCategoryNoticeGroup() != null
-                ? noticesOfSelectedGroup(schema, master).stream().filter(CategoryNotice::required).toList()
+        // 🔴 2609_45/D12: the group is now 셀 ?? 마스터. Testing the MASTER's group (as this used to) skipped
+        //    the required-notice check entirely for a cell that carries its own group and no master group —
+        //    exactly the cells this feature creates.
+        String selectedNoticeGroup = selectedNoticeGroup(cell, master);
+        List<CategoryNotice> requiredNotices = selectedNoticeGroup != null
+                ? noticesOfSelectedGroup(schema, selectedNoticeGroup).stream()
+                        .filter(CategoryNotice::required).toList()
                 : List.of();
 
         for (ProductListingOption option : productListingOptionRepository.findByProductListingId(cell.getId())) {
@@ -330,10 +441,15 @@ public class CoupangListingAdapter implements ListingChannel {
         if (forUpdate) {
             payload.put("sellerProductId", cell.getPlatformProductId());
         }
-        // Category code = the master's standard category × platform, resolved from CategoryMapping (44). The
-        // channel-add cell's own category column is null. The resolver THROWS 400 on a missing mapping (never
-        // returns null), so by this point the code is always non-null and reused below for the notice groups.
-        String categoryCode = masterChannelConfigService.resolvePlatformCategoryCode(cell);
+        // Category = this channel's OWN marketplace category when it has one, else the master's standard
+        // category × platform from CategoryMapping (44, 2609_45/D9). ONE resolver call gives both the code and
+        // whether it is the channel's own — never recompute `own` from the column (D10-1/D11 live in the
+        // resolver). The resolver THROWS 400 on a missing mapping (never returns null), so by this point the
+        // code is always non-null and reused below for the notice groups.
+        MasterChannelConfigService.ChannelCategory category =
+                masterChannelConfigService.resolveChannelCategory(cell);
+        String categoryCode = category.category().getCode();
+        boolean usesOwnCategory = category.own();
         payload.put("displayCategoryCode", categoryCode);
         var cred = CoupangCredentials.of(acct);
         payload.put("vendorId", cred.getVendorId());
@@ -393,8 +509,18 @@ public class CoupangListingAdapter implements ListingChannel {
             payload.put("displayProductName", limitName(displayName));
         }
 
-        Map<String, String> masterAttributes = master != null ? master.getCategoryAttributes() : null;
-        Map<String, String> masterNotices = master != null ? master.getCategoryNotices() : null;
+        /*
+         * 2609_45/D12-1: when the channel uses its OWN category the master's values are ANOTHER category's
+         * values — drop them from the merge base. toAttributes does not filter by schema, so a master-only
+         * attribute (e.g. "즉석밥 크기" from the master's rice category) would otherwise be sent on a product
+         * that sits in a different category; Coupang either rejects it or, worse, registers the wrong
+         * attribute. Everything this channel needs was stored on its cell options at import time.
+         * Same category → the usual three-tier merge (master ++ master option ++ cell option, 2609_22/D5).
+         */
+        Map<String, String> masterAttributes =
+                master != null && !usesOwnCategory ? master.getCategoryAttributes() : null;
+        Map<String, String> masterNotices =
+                master != null && !usesOwnCategory ? master.getCategoryNotices() : null;
         // The category meta for this code, fetched ONCE and reused for both the notice groups (61/96 ⑩) and the
         // attribute units (96 ④). ⚠️ Do not call getMeta again inside this method — register already pays two
         // calls in total (validateRegistrable + here, accepted per §60); adding a third is pure waste.
@@ -402,7 +528,7 @@ public class CoupangListingAdapter implements ListingChannel {
         // Notice detail(noticeCategoryDetailName) → group(noticeCategoryName) for this category (61), narrowed
         // to the group the user actually picked (96 ⑩ — 품목군 share notice keys, so a first-wins map tagged the
         // shared ones with whichever group happened to come first).
-        Map<String, String> groupByDetail = noticesOfSelectedGroup(schema, master).stream()
+        Map<String, String> groupByDetail = noticesOfSelectedGroup(schema, selectedNoticeGroup(cell, master)).stream()
                 .filter(n -> n.groupName() != null)
                 .collect(Collectors.toMap(CategoryNotice::key, CategoryNotice::groupName, (a, b) -> a));
         // 96 ④: attribute name → 기본 단위. Coupang has no unit field — the value itself must carry it
@@ -667,14 +793,26 @@ public class CoupangListingAdapter implements ListingChannel {
      * one group only — otherwise the shared keys go out labelled with whichever group came first in the schema.
      * A legacy master with no stored group keeps the old first-wins behaviour (no regression).
      */
-    private static List<CategoryNotice> noticesOfSelectedGroup(CategoryMetaSchema schema, MasterProduct master) {
-        String selected = master != null ? master.getCategoryNoticeGroup() : null;
+    private static List<CategoryNotice> noticesOfSelectedGroup(CategoryMetaSchema schema, String selected) {
         if (selected == null || selected.isBlank()) {
             return schema.notices();
         }
         return schema.notices().stream()
                 .filter(n -> selected.equals(n.groupName()))
                 .toList();
+    }
+
+    /**
+     * 2609_45/D12: 셀 그룹 ?? 마스터 그룹. When a channel keeps its own category, the 품목군 is that category's,
+     * not the master's. null (neither set) keeps 96 ⑩'s first-wins fallback for legacy masters.
+     */
+    private static String selectedNoticeGroup(ProductListing cell, MasterProduct master) {
+        String cellGroup = cell.getCategoryNoticeGroup();
+        if (cellGroup != null && !cellGroup.isBlank()) {
+            return cellGroup;
+        }
+        String masterGroup = master != null ? master.getCategoryNoticeGroup() : null;
+        return masterGroup == null || masterGroup.isBlank() ? null : masterGroup;
     }
 
     /**

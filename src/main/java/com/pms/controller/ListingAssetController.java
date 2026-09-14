@@ -3,6 +3,7 @@ package com.pms.controller;
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.DetailHtmlOverrideRequest;
 import com.pms.dto.request.DetailTemplateSelectRequest;
+import com.pms.dto.request.ListingCategorySourceRequest;
 import com.pms.dto.request.DisplayNameRequest;
 import com.pms.dto.request.FieldValuesRequest;
 import com.pms.dto.request.ShippingOverrideRequest;
@@ -10,8 +11,10 @@ import com.pms.dto.request.TagsRequest;
 import com.pms.dto.response.DetailPreviewResponse;
 import com.pms.dto.response.DetailTemplateResponse;
 import com.pms.dto.response.GeneratedProductResponse;
+import com.pms.dto.response.ListingCategorySourceResponse;
 import com.pms.dto.response.ShippingConfigResponse;
 import com.pms.service.ListingAssetService;
+import com.pms.service.listing.ListingCategorySourceService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -33,6 +36,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class ListingAssetController {
 
     private final ListingAssetService listingAssetService;
+    private final ListingCategorySourceService listingCategorySourceService;
 
     @PostMapping("/{id}/regenerate")
     @Operation(summary = "Regenerate a cell's thumbnail + detail + option prices (backfill consumer)")
@@ -143,6 +147,15 @@ public class ListingAssetController {
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<ShippingConfigResponse>> resolveInheritedShipping(@PathVariable Long id) {
         return ResponseEntity.ok(ResponseDTO.success(listingAssetService.resolveInheritedShipping(id)));
+    }
+
+    @PatchMapping("/{id}/category-source")
+    @Operation(summary = "Switch this cell back to the master category (2609_45/D13; useMasterCategory=false is 400)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<ListingCategorySourceResponse>> updateCategorySource(
+            @PathVariable Long id, @Valid @RequestBody ListingCategorySourceRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(listingCategorySourceService
+                .updateCategorySource(id, Boolean.TRUE.equals(request.getUseMasterCategory()))));
     }
 
 }

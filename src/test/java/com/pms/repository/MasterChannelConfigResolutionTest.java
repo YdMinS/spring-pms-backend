@@ -37,10 +37,12 @@ class MasterChannelConfigResolutionTest {
 
     @Autowired private CategoryMappingRepository categoryMappingRepository;
     @Autowired private CategoryRepository categoryRepository;
+    @Autowired private PlatformCategoryRepository platformCategoryRepository;
     @Autowired private TestEntityManager em;
 
     private MasterChannelConfigServiceImpl service() {
-        return new MasterChannelConfigServiceImpl(categoryMappingRepository, categoryRepository);
+        return new MasterChannelConfigServiceImpl(
+                categoryMappingRepository, categoryRepository, platformCategoryRepository);
     }
 
     private Long persistMasterWithConfig() {

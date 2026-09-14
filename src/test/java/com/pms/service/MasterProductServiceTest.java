@@ -111,6 +111,8 @@ class MasterProductServiceTest {
     @Mock private ListingAssetService listingAssetService;
     @Mock private OptionQuantitySync optionQuantitySync;
     @Mock private MasterOptionChannelSync masterOptionChannelSync;
+    // 2609_45/D9: the matrix now asks the resolver which category each cell actually uses.
+    @Mock private MasterChannelConfigService masterChannelConfigService;
     @InjectMocks private MasterProductServiceImpl service;
 
     private Seller seller(Long id, String name) {

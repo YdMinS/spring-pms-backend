@@ -32,6 +32,13 @@ public class ListingMatrixResponse {
     @Schema(description = "One row per marketplace account (tenant-wide)")
     private List<MatrixRow> rows;
 
+    /**
+     * 마스터 표준 카테고리를 그 플랫폼 코드로 해석한 이름(없으면 null) — 2609_45/D13 의 "A → B 로 변경됩니다"
+     * 안내에 쓸 B 쪽 이름이다. 셀마다 같은 값이라 행이 아니라 매트릭스 최상위에 둔다.
+     */
+    @Schema(description = "Name of the master's standard category (null when unresolvable)", example = "즉석밥")
+    private String masterCategoryName;
+
     @Getter
     @NoArgsConstructor
     @AllArgsConstructor
@@ -93,5 +100,23 @@ public class ListingMatrixResponse {
          */
         @Schema(description = "Listing status (DRAFT/SUBMITTED/SELLING/REJECTED/SUSPENDED)", example = "SELLING")
         private String status;
+
+        /** 이 셀이 <b>실제로</b> 쓰는 마켓 카테고리 코드(2609_45/D9). 해석 불가면 null. */
+        @Schema(description = "Marketplace category code this cell actually uses", example = "73170")
+        private String categoryCode;
+
+        /** 그 카테고리의 이름 — 화면 표시용. */
+        @Schema(description = "Name of the category this cell actually uses", example = "즉석밥")
+        private String categoryName;
+
+        /**
+         * {@code true} = 채널 자기 카테고리, {@code false} = 마스터 카테고리.
+         *
+         * <p>⚠️ {@code platformCategoryCode != null} 로 판정하지 말 것 — 가져오기는 카테고리가 같아도 코드를
+         * 저장하므로(2609_45/D10-1) 기존 셀 전부에 배지가 뜬다. 수수료가 없어 마스터로 폴백한 경우(D11)도
+         * {@code false} 다. 화면 판정과 전송 판정이 갈리면 화면이 거짓말을 한다.</p>
+         */
+        @Schema(description = "True when the cell uses its own (channel) category", example = "true")
+        private boolean usesOwnCategory;
     }
 }
