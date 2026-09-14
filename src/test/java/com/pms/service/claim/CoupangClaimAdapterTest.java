@@ -20,10 +20,14 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -113,7 +117,7 @@ class CoupangClaimAdapterTest {
 
     @Test
     void syncExchanges_openClaimFrom20DaysAgo_addsSlicesOfExchangeWindowWidth() {
-        // 20일 범위 ÷ 7일 폭 = 슬라이스 3개 → 신규 창 1 + 슬라이스 3
+        // 20일 범위 ÷ 6일 폭 = 슬라이스 3개 → 신규 창 1 + 슬라이스 3
         given(orderClaimRepository.findOpen(eq(1L), eq(ClaimType.EXCHANGE), any()))
                 .willReturn(List.of(openClaim(1L, 20)));
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(emptyData());
@@ -127,7 +131,7 @@ class CoupangClaimAdapterTest {
 
     @Test
     void syncExchanges_capsSlices_atConfiguredMax() {
-        // 교환은 폭이 7일이라 슬라이스가 쉽게 늘어난다 — 상한(D10)이 실제로 자르는지 고정한다.
+        // 교환은 폭이 6일이라 슬라이스가 쉽게 늘어난다 — 상한(D10)이 실제로 자르는지 고정한다.
         props.setClaimTrackingMaxSlices(1);
         props.setClaimStaleDays(9999);          // 스윕 비활성 스위치는 없다 — 크게 잡는 것이 유일한 구성법
         given(orderClaimRepository.findOpen(eq(1L), eq(ClaimType.EXCHANGE), any()))
@@ -191,6 +195,32 @@ class CoupangClaimAdapterTest {
         verify(claimUpserter, never()).upsert(any(), any(), any());
         // nextToken 이 남아 있어도 찾았으면 다음 페이지를 치지 않는다.
         verify(coupangApiClient, times(1)).get(anyString(), anyString(), any());
+    }
+
+    @Test
+    void syncExchanges_everyQueryWindow_staysUnderCoupangSevenDayCap() {
+        // 🔴 prod 400 "createdAtTo - createdAtFrom should less then 7day"(2026-09-14). 경로가 404 이던
+        // 시절에는 이 400 이 가려져 있었다. 창은 from 자정 ~ to 23:59:59 라 설정값보다 하루치가 더
+        // 길다 — exchange-window-days=7 이면 7일 24시간이 되어 거절당한다.
+        // 신규 창과 추적 슬라이스가 같은 폭을 쓰므로 한 테스트로 둘 다 고정한다.
+        given(orderClaimRepository.findOpen(eq(1L), eq(ClaimType.EXCHANGE), any()))
+                .willReturn(List.of(openClaim(1L, 20)));
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(emptyData());
+
+        adapter.syncExchanges(account);
+
+        ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient, times(4)).get(anyString(), query.capture(), eq(account));
+        assertThat(query.getAllValues()).isNotEmpty().allSatisfy(q ->
+                assertThat(Duration.between(timeParam(q, "createdAtFrom"), timeParam(q, "createdAtTo")))
+                        .isLessThan(Duration.ofDays(7)));
+    }
+
+    /** 쿼리스트링에서 시각 파라미터 하나를 꺼낸다. */
+    private LocalDateTime timeParam(String query, String name) {
+        Matcher matcher = Pattern.compile(name + "=([^&]+)").matcher(query);
+        assertThat(matcher.find()).as("%s in %s", name, query).isTrue();
+        return LocalDateTime.parse(matcher.group(1), DATE_TIME);
     }
 
     private void givenNoOpenClaims() {

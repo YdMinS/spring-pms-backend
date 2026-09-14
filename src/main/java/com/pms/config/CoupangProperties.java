@@ -153,10 +153,16 @@ public class CoupangProperties {
             "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/exchangeRequests";
 
     /**
-     * 교환 신규 조회 창(일). ⚠️ 쿠팡 상한이 7일이라 이 값을 넘기지 말 것(D9·PLAN §4) —
+     * 교환 신규 조회 창(일). ⚠️ 쿠팡 상한이 <b>7일 미만</b>이라 6 이 최대다(D9·PLAN §4) —
      * 반품과 달리 {@code lastClaimSyncAt} 으로 넓힐 수 없다(넓히면 쿠팡이 거절한다).
+     *
+     * 🔴 <b>7 을 넣으면 안 된다.</b> 실제로 나가는 범위는 {@code from} 자정 ~ {@code to} 23:59:59 라
+     * 이 값보다 하루치가 더 길다 — 7 이면 7일 24시간이 되어 쿠팡이
+     * {@code 400 "createdAtTo - createdAtFrom should less then 7day"} 로 거절한다
+     * (prod 실측 2026-09-14, 경로 교정 전에는 404 에 가려 보이지 않았다).
+     * 같은 값이 {@code ClaimTrackingSlicer} 의 슬라이스 폭이기도 해서 추적 조회도 함께 거절당했다.
      */
-    private int exchangeWindowDays = 7;
+    private int exchangeWindowDays = 6;
 
     /** 교환 조회 페이지 크기. ⚠️ 쿠팡 기본값이 10 이라 명시하지 않으면 페이지 수가 5배가 된다. */
     private int exchangeMaxPerPage = 50;
