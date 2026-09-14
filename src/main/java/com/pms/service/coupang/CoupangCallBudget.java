@@ -17,9 +17,15 @@ import java.util.concurrent.ConcurrentHashMap;
  * 8 calls in 650ms (≈12/s) on a single sync cycle, which is what produced the 429s — the problem
  * was never total volume (a cycle is ~10 calls) but the burst.
  *
- * <p>Token bucket: {@code callsPerSecond} refill, {@code callBurst} capacity. A short job drains
- * the burst and goes out immediately; only a long job gets paced. Blocking is intentional —
- * the caller is a sync that is allowed to take seconds.
+ * <p>Token bucket: {@code callsPerSecond} refill, {@code callBurst} capacity. The bucket cannot tell
+ * a short job from a long one — it only sees whether the caller has been idle. A call that follows
+ * an idle gap finds a token waiting and goes out immediately; back-to-back calls line up at
+ * {@code 1 / callsPerSecond}. A long sync that stalls on a slow Coupang response counts as idle too,
+ * so it gets the same free tokens (prod, 2026-09-14). Blocking is intentional — the caller is a sync
+ * that is allowed to take seconds.
+ *
+ * <p>🔴 Capacity plus refill is the worst case for any one-second window, so keep
+ * {@code callBurst + callsPerSecond <= 5} or the documented limit can be exceeded.
  *
  * <p>🔴 In-memory and therefore single-instance only. Running two app instances silently doubles
  * the effective rate (PLAN D11) — a distributed limiter must land before any horizontal scaling.
