@@ -12,27 +12,29 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * 429 쿨다운 서킷 단위 테스트 — Clock.fixed 로 시간을 밀어 검증한다(Spring 컨텍스트 없음).
+ * 429 쿨다운 서킷 단위 테스트 — Clock 을 밀어 검증한다(Spring 컨텍스트 없음).
  */
 class CoupangRateLimitGuardTest {
 
     private static final Instant T0 = Instant.parse("2026-09-02T00:00:00Z");
     private static final ZoneId UTC = ZoneId.of("UTC");
+    private static final String VENDOR = "A001";
+    private static final String OTHER_VENDOR = "A002";
 
     @Test
     void check_passes_whenNeverTripped() {
         CoupangRateLimitGuard guard = new CoupangRateLimitGuard(Clock.fixed(T0, UTC));
 
-        assertThatCode(guard::check).doesNotThrowAnyException();
+        assertThatCode(() -> guard.check(VENDOR)).doesNotThrowAnyException();
     }
 
     @Test
     void check_throws_duringCooldown() {
         CoupangRateLimitGuard guard = new CoupangRateLimitGuard(Clock.fixed(T0, UTC));
 
-        guard.trip();
+        guard.trip(VENDOR);
 
-        assertThatThrownBy(guard::check).isInstanceOf(CoupangRateLimitedException.class);
+        assertThatThrownBy(() -> guard.check(VENDOR)).isInstanceOf(CoupangRateLimitedException.class);
     }
 
     @Test
@@ -40,37 +42,19 @@ class CoupangRateLimitGuardTest {
         MutableClock clock = new MutableClock(T0);
         CoupangRateLimitGuard guard = new CoupangRateLimitGuard(clock);
 
-        guard.trip();
+        guard.trip(VENDOR);
         clock.advance(Duration.ofMinutes(11));
 
-        assertThatCode(guard::check).doesNotThrowAnyException();
+        assertThatCode(() -> guard.check(VENDOR)).doesNotThrowAnyException();
     }
 
-    /** 쿨다운 경과를 표현하려면 시각이 움직여야 한다 — Clock.fixed 는 고정이라 쓸 수 없다. */
-    private static final class MutableClock extends Clock {
-        private Instant now;
+    /** 🔴 계정별 격리 — 남의 업체코드 429 로 내 계정이 멈추면 안 된다(PLAN 2609_46 D1). */
+    @Test
+    void check_otherVendor_unaffectedByTrip() {
+        CoupangRateLimitGuard guard = new CoupangRateLimitGuard(Clock.fixed(T0, UTC));
 
-        private MutableClock(Instant now) {
-            this.now = now;
-        }
+        guard.trip(VENDOR);
 
-        void advance(Duration amount) {
-            now = now.plus(amount);
-        }
-
-        @Override
-        public ZoneId getZone() {
-            return UTC;
-        }
-
-        @Override
-        public Clock withZone(ZoneId zone) {
-            return this;
-        }
-
-        @Override
-        public Instant instant() {
-            return now;
-        }
+        assertThatCode(() -> guard.check(OTHER_VENDOR)).doesNotThrowAnyException();
     }
 }

@@ -155,8 +155,40 @@ class SettlementSyncServiceImplTest {
     }
 
     @Test
+    void sync_oneAccountRateLimited_othersStillSync() {
+        // 쿨다운은 계정별이다(FEATURE_2609_46 D1) — 1번 계정의 429 로 2번 계정을 중단하지 않는다.
+        MarketplaceAccount second = account.toBuilder().id(8L).accountAlias("서브").build();
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(account, second));
+        willThrow(new CoupangRateLimitedException(Instant.now().plusSeconds(600)))
+                .willAnswer(invocation -> {
+                    consumer(invocation.getArgument(3)).accept(List.of(draft()));
+                    return null;
+                })
+                .given(settlementSource).fetchRevenue(any(), any(), any(), any());
+
+        SettlementSyncResponse response = service.sync(null, null);
+
+        assertThat(response.lines()).isEqualTo(1);
+        assertThat(response.failedAccounts()).hasSize(1);
+        assertThat(response.failedAccounts().get(0)).contains("메인").contains("쿠팡 호출 제한");
+        verify(settlementSyncStatusWriter).writeRevenueSyncAt(8L);
+    }
+
+    @Test
+    void sync_allAccountsRateLimited_throws() {
+        // 성공한 계정이 하나도 없으면 오늘과 같은 429 UX 를 유지한다.
+        MarketplaceAccount second = account.toBuilder().id(8L).accountAlias("서브").build();
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(account, second));
+        willThrow(new CoupangRateLimitedException(Instant.now().plusSeconds(600)))
+                .given(settlementSource).fetchRevenue(any(), any(), any(), any());
+
+        assertThatThrownBy(() -> service.sync(null, null))
+                .isInstanceOf(CoupangRateLimitedException.class);
+    }
+
+    @Test
     void periodRateLimitedIsNotIsolated() {
-        // 🔴 PLAN 2609_31 D9 — 쿨다운은 프로세스 전역이라 격리해도 무의미하다. 429 는 그대로 올라간다.
+        // 기간 백필은 계정 1건 경로다(루프가 아니다) — 성공한 계정이 없으므로 429 가 그대로 올라간다.
         given(marketplaceAccountRepository.findById(7L)).willReturn(Optional.of(account));
         willThrow(new CoupangRateLimitedException(Instant.now().plusSeconds(600)))
                 .given(settlementSource).fetchRevenue(any(), any(), any(), any());

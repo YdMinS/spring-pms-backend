@@ -143,10 +143,14 @@ public class CoupangProperties {
 
     /**
      * exchangeRequests(교환 요청 목록) 조회 경로. {vendorId} 치환.
-     * ⚠️ 실계정 검증 전이라 상수가 아니라 설정으로 뺀다(ordersheet-by-order-path 와 같은 판단).
+     *
+     * <p>🔴 v4 다. 2026-09-14 이전까지 {@code v1/marketplace} 로 박혀 있어 prod 에서 매 동기화마다
+     * 404 PRECONDITION_FAILED 가 났고, 교환 조회가 한 번도 성공한 적이 없다. 쿠팡 공식 목록에서
+     * 교환 4종(목록조회·입고확인·거부·송장업로드)이 전부 v4 이며, 액션 3종은 처음부터 v4 였다
+     * (FEATURE_2609_46 / PLAN D12).
      */
     private String exchangeRequestsPath =
-            "/v2/providers/openapi/apis/api/v1/marketplace/vendors/{vendorId}/exchangeRequests";
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/exchangeRequests";
 
     /**
      * 교환 신규 조회 창(일). ⚠️ 쿠팡 상한이 7일이라 이 값을 넘기지 말 것(D9·PLAN §4) —
@@ -311,4 +315,20 @@ public class CoupangProperties {
 
     /** 쿠팡 API read 타임아웃(ms). 송장시트처럼 무거운 조회도 있어 넉넉히 잡되 무제한은 금지. */
     private int readTimeoutMs = 60_000;
+
+    /**
+     * 업체코드당 초당 호출 상한. 쿠팡 공식 한도는 5/s — 그 아래로 둔다(PLAN 2609_46 D3).
+     *
+     * <p>⚠️ 적응형 자동 상향을 만들지 말 것(D4) — {@code X-CAG-Warnings} 는 관측용이다.
+     */
+    private double callsPerSecond = 4.0;
+
+    /** 버스트 허용치(토큰 버킷 용량). 짧은 작업이 지연 없이 나가게 한다. */
+    private int callBurst = 5;
+
+    /**
+     * 동기화 사이클이 이 초를 넘으면 WARN 을 남긴다(D10). 계정 수가 늘면 여기가 제일 먼저 길어진다.
+     * 주기의 절반을 넘으면 곧 못 따라잡는다는 뜻이다.
+     */
+    private int syncCycleWarnSeconds = 60;
 }

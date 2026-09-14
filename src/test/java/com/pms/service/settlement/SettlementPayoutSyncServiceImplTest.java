@@ -154,12 +154,39 @@ class SettlementPayoutSyncServiceImplTest {
     }
 
     @Test
-    void rateLimitedIsNotIsolated() {
-        // 🔴 PLAN 2609_31 D9 — 429 는 격리 catch 를 통과해 HTTP 429 로 올라간다(200 + failedAccounts 아님).
+    void allRateLimited_throws() {
+        // 계정이 1건뿐이고 그 계정이 쿨다운이면 성공한 계정이 없다 — 429 로 올라간다.
         willThrow(new CoupangRateLimitedException(Instant.now().plusSeconds(600)))
                 .given(settlementSource).fetchPayouts(any(), any());
 
         assertThatThrownBy(() -> service.syncPayouts(7L, MONTH))
+                .isInstanceOf(CoupangRateLimitedException.class);
+    }
+
+    @Test
+    void sync_oneAccountRateLimited_othersStillSync() {
+        // 쿨다운은 계정별이다(FEATURE_2609_46 D1) — 1번 계정의 429 로 2번 계정을 중단하지 않는다.
+        MarketplaceAccount second = account.toBuilder().id(8L).accountAlias("서브").build();
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(account, second));
+        willThrow(new CoupangRateLimitedException(Instant.now().plusSeconds(600)))
+                .willReturn(List.of(draft(SettlementType.WEEKLY, LocalDate.of(2026, 9, 4))))
+                .given(settlementSource).fetchPayouts(any(), any());
+
+        SettlementPayoutSyncResponse response = service.syncPayouts(null, MONTH);
+
+        assertThat(response.payouts()).isEqualTo(1);
+        assertThat(response.failedAccounts()).hasSize(1);
+        assertThat(response.failedAccounts().get(0)).contains("메인").contains("쿠팡 호출 제한");
+    }
+
+    @Test
+    void sync_allAccountsRateLimited_throws() {
+        MarketplaceAccount second = account.toBuilder().id(8L).accountAlias("서브").build();
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(account, second));
+        willThrow(new CoupangRateLimitedException(Instant.now().plusSeconds(600)))
+                .given(settlementSource).fetchPayouts(any(), any());
+
+        assertThatThrownBy(() -> service.syncPayouts(null, MONTH))
                 .isInstanceOf(CoupangRateLimitedException.class);
     }
 

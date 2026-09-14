@@ -1,5 +1,6 @@
 package com.pms.service.coupang;
 
+import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.exception.ResourceNotFoundException;
@@ -64,8 +65,9 @@ class OrderSyncFacadeImplTest {
 
     @BeforeEach
     void setUp() {
-        facade = new OrderSyncFacadeImpl(marketplaceAccountRepository, coupangOrderSyncService,
-                coupangReturnSyncService, syncStatusRecorder, claimOrderBackfillService, claimSyncAdapters, inquirySyncAdapters);
+        facade = new OrderSyncFacadeImpl(marketplaceAccountRepository, new CoupangProperties(),
+                coupangOrderSyncService, coupangReturnSyncService, syncStatusRecorder,
+                claimOrderBackfillService, claimSyncAdapters, inquirySyncAdapters);
     }
 
     private MarketplaceAccount account(Long id) {
