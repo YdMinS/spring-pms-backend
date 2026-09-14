@@ -28,7 +28,9 @@ class CoupangCallBudgetTest {
     void setUp() {
         clock = new MutableClock(T0);
         waits = new ArrayList<>();
-        CoupangProperties properties = new CoupangProperties();   // rate=4/s, burst=5
+        CoupangProperties properties = new CoupangProperties();
+        // 버킷 동작 확인용 고정치다 — 기본 버스트가 얼마인지는 defaultSettings_ 테스트가 고정한다.
+        properties.setCallBurst(5);                               // rate=4/s, burst=5
         // ⚠️ 스텁이 시계를 함께 밀어야 acquire 루프가 무한히 돌지 않는다.
         budget = new CoupangCallBudget(properties, clock, duration -> {
             waits.add(duration);
@@ -69,6 +71,25 @@ class CoupangCallBudgetTest {
         }
 
         assertThat(waits).isEmpty();
+    }
+
+    @Test
+    void defaultSettings_keepAnyOneSecondWindowWithinCoupangsLimit() {
+        // 🔴 어떤 1초 구간에 나갈 수 있는 최대 = 버스트 + 그 사이 보충량. 쿠팡 한도는 업체코드당
+        // 초당 5회다. 버스트가 5 이던 시절 prod 한 구간에 7건이 나갔다(2026-09-14).
+        CoupangCallBudget defaults = new CoupangCallBudget(new CoupangProperties(), clock, duration -> {
+            waits.add(duration);
+            clock.advance(duration);
+        });
+
+        List<Instant> sentAt = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            defaults.acquire(VENDOR);
+            sentAt.add(clock.instant());
+        }
+
+        long withinFirstSecond = sentAt.stream().filter(at -> !at.isAfter(T0.plusSeconds(1))).count();
+        assertThat(withinFirstSecond).isLessThanOrEqualTo(5);
     }
 
     @Test
