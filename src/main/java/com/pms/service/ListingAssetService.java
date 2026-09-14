@@ -25,7 +25,13 @@ public interface ListingAssetService {
     /** Endpoint 4-1: regenerate + persist assets for a tenant-scoped cell (404 if absent). */
     GeneratedProductResponse regenerate(Long listingId);
 
-    /** Endpoint 4-2: read persisted assets (404 if the cell is absent or not yet generated). */
+    /**
+     * Endpoint 4-2: read a cell's assets (404 only when the cell itself is absent/cross-tenant).
+     *
+     * <p>2609_47/D3: a cell whose assets were never generated is <b>not</b> a 404 — the thumbnail/detail
+     * fields come back null while the cell's own values (tags, option prices, stock, shipping, whether it
+     * can be registered) are still returned.</p>
+     */
     GeneratedProductResponse getGenerated(Long listingId);
 
     /**

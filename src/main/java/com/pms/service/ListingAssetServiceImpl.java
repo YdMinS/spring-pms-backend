@@ -113,10 +113,10 @@ public class ListingAssetServiceImpl implements ListingAssetService {
 
     @Override
     public GeneratedProductResponse getGenerated(Long listingId) {
-        ProductListing cell = requireScopedCell(listingId);
-        GeneratedProductData data = generatedProductDataRepository.findByProductListingId(listingId)
-                .orElseThrow(() -> new ResourceNotFoundException("GeneratedProductData", listingId));
-        return toResponse(cell, data);
+        ProductListing cell = requireScopedCell(listingId);      // 셀이 없으면 여기서 404 — 그대로 둔다
+        // 2609_47/D3: 자동생성물이 없는 셀도 자기 값(태그·판매가·재고·배송·등록 가능 여부)은 돌려준다.
+        // toResponse 는 33 부터 null 데이터를 허용한다 — 404 는 그 앞을 막고 있었을 뿐이다.
+        return toResponse(cell, generatedProductDataRepository.findByProductListingId(listingId).orElse(null));
     }
 
     @Override

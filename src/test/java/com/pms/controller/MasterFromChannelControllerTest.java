@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.domain.Category;
 import com.pms.domain.CategoryMapping;
 import com.pms.domain.Platform;
+import com.pms.domain.ProductListingOption;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.Product;
 import com.pms.domain.Role;
@@ -15,6 +16,7 @@ import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.CoupangAccountCredentialRepository;
+import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
@@ -29,6 +31,8 @@ import com.pms.repository.RefreshTokenRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.UserRepository;
 import com.pms.security.TenantContext;
+import com.pms.repository.PriceChangeLogRepository;
+import com.pms.service.ImageStorageService;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.listing.category.CoupangCategoryMeta;
 import org.junit.jupiter.api.AfterEach;
@@ -39,13 +43,20 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import javax.imageio.ImageIO;
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
@@ -85,6 +96,9 @@ class MasterFromChannelControllerTest {
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
     @Autowired private ProductListingProductRepository productListingProductRepository;
+    @Autowired private GeneratedProductDataRepository generatedProductDataRepository;
+    @Autowired private PriceChangeLogRepository priceChangeLogRepository;
+    @Autowired private ImageStorageService imageStorageService;
 
     @MockBean private CoupangApiClient coupangApiClient;
 
@@ -169,6 +183,9 @@ class MasterFromChannelControllerTest {
     void cleanup() {
         TenantContext.set(1L);
         refreshTokenRepository.deleteAll();
+        // 2609_47: 생성 직후 자동생성이 산출물·가격이력을 남길 수 있다 — 셀보다 먼저 지운다(FK).
+        priceChangeLogRepository.deleteAll();
+        generatedProductDataRepository.deleteAll();
         productListingProductRepository.deleteAll();
         productListingOptionRepository.deleteAll();
         productListingRepository.deleteAll();
@@ -258,7 +275,68 @@ class MasterFromChannelControllerTest {
                 .andExpect(jsonPath("$.data.productListingId").isNumber())
                 .andExpect(jsonPath("$.data.optionCount").value(2))
                 // 이미 마켓에서 팔리는 상품이다 — DRAFT 가 아니다.
-                .andExpect(jsonPath("$.data.status").value("SELLING"));
+                .andExpect(jsonPath("$.data.status").value("SELLING"))
+                // 2609_47/D4: 자동생성 성공 여부가 응답에 실린다.
+                .andExpect(jsonPath("$.data.assetsGenerated").exists());
+    }
+
+    /**
+     * 🔴 2609_47/D2: 사진이 하나도 없어 자동생성이 실패해도 마스터·셀은 남는다(400 이 아니다).
+     * 픽스처의 구성상품 이미지는 디스크에 없으므로 썸네일 단계에서 실패한다.
+     */
+    @Test
+    void testCreateWithoutPhotoStillCreatesMaster() throws Exception {
+        mockMvc.perform(post(createPath())
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content(createBody()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.assetsGenerated").value(false))
+                .andExpect(jsonPath("$.data.masterProductId").isNumber())
+                .andExpect(jsonPath("$.data.productListingId").isNumber());
+    }
+
+    /**
+     * 🔴 2609_47/D5 회귀 가드: 자동생성이 <b>실제로 돌아도</b>(assetsGenerated=true) 저장된 옵션 판매가는
+     * 쿠팡 실가 그대로다 — 우리 마진 계산가로 덮이지 않는다. 단위 테스트로는 못 잡는다(거기선 자동생성이
+     * 가짜 객체라 ③판매가 단계에 도달조차 하지 않는다).
+     */
+    @Test
+    void testCreateKeepsMarketPricesAfterAssetGeneration() throws Exception {
+        seedLoadableProductImage();
+
+        String response = mockMvc.perform(post(createPath())
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content(createBody()))
+                .andExpect(status().isOk())
+                // 먼저 자동생성이 성공했는지 단언한다 — false 면 ③판매가 단계에 닿지도 못한 채
+                // "판매가가 그대로"라 통과하는 가짜 그물이 된다.
+                .andExpect(jsonPath("$.data.assetsGenerated").value(true))
+                .andReturn().getResponse().getContentAsString();
+
+        Long listingId = objectMapper.readTree(response).get("data").get("productListingId").asLong();
+        List<ProductListingOption> options =
+                productListingOptionRepository.findByProductListingId(listingId);
+        assertThat(options).hasSize(2);
+        assertThat(options).filteredOn(o -> o.getOptionName().equals("6입"))
+                .allSatisfy(o -> assertThat(o.getSellingPrice()).isEqualByComparingTo("12900"));
+        assertThat(options).filteredOn(o -> o.getOptionName().equals("12입"))
+                .allSatisfy(o -> assertThat(o.getSellingPrice()).isEqualByComparingTo("23900"));
+    }
+
+    /** 첫 구성상품에 실제로 로드되는 이미지를 심는다(테스트 프로파일 저장소 = 로컬 디스크). */
+    private void seedLoadableProductImage() throws Exception {
+        BufferedImage image = new BufferedImage(60, 60, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = image.createGraphics();
+        g.setColor(Color.WHITE);
+        g.fillRect(0, 0, 60, 60);
+        g.dispose();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ImageIO.write(image, "jpg", out);
+
+        String storedPath = imageStorageService.uploadImage(
+                new MockMultipartFile("file", "p.jpg", "image/jpeg", out.toByteArray()), productId);
+        Product product = productRepository.findById(productId).orElseThrow();
+        productRepository.save(product.toBuilder().imageUrl(storedPath).build());
     }
 
     // ---- request validation ----

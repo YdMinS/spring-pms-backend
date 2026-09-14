@@ -525,6 +525,29 @@ class ListingAssetServiceTest {
         assertThat(response.getShippingReady()).isNull();
     }
 
+    /**
+     * 2609_47/D3: 자동생성물이 없어도 예외 없이 셀의 값(태그·옵션 판매가)이 실려 오고, 산출물 필드만 null 이다.
+     */
+    @Test
+    void getGenerated_withoutAssets_returnsCellValues() {
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀")
+                .tags(List.of("운동화")).build();
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID)).willReturn(Optional.empty());
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(
+                ProductListingOption.builder().id(OPTION_ID).optionName("기본")
+                        .sellingPrice(new BigDecimal("12900")).build()));
+        given(listingChannelResolver.resolveOptional(Platform.COUPANG)).willReturn(Optional.empty());
+
+        GeneratedProductResponse response = service.getGenerated(CELL_ID);
+
+        assertThat(response.getThumbnailUrl()).isNull();
+        assertThat(response.getDetailHtml()).isNull();
+        assertThat(response.getTags()).containsExactly("운동화");
+        assertThat(response.getOptionPrices()).hasSize(1);
+        assertThat(response.getOptionPrices().get(0).getSellingPrice()).isEqualByComparingTo("12900");
+    }
+
     // 2609_19/D2: a price the user set for this channel survives a regeneration; AUTO options still recompute.
     // 🔴 2609_43/D2: this stays true after the repricing console opened manual entry and market push to those
     // same options (D1) — skipping the OFFICIAL recalculation is what "manual price" means.

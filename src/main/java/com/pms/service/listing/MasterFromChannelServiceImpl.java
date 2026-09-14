@@ -31,9 +31,14 @@ import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.service.CategoryMetaService;
+import com.pms.service.ListingAssetService;
 import com.pms.service.MasterProductService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -57,10 +62,13 @@ import java.util.stream.Collectors;
  * {@link ListingMasterCreateServiceImpl}(마스터는 {@code masterProductService} 경로로만 만든다)의 합이다.
  * 커밋도 같은 검증을 처음부터 다시 돈다(미리보기를 건너뛴 직접 호출 방어).</p>
  *
- * <p>⚠️ 이 서비스는 {@code ListingAssetService} 에 <b>의존하지 않는다</b>(D5 얕은 생성) — 인터페이스 주석의
- * 이유 그대로다. 의존성이 없는 것이 그 장치다.</p>
+ * <p>🔴 <b>2609_45/D5("얕은 생성") 번복(2609_47/D1)</b>: 이 서비스는 {@link com.pms.service.ListingAssetService}
+ * 에 <b>의존한다</b>. 자동생성은 <b>로컬 산출물(썸네일·상세·판매가)만</b> 만들고 마켓 전송은
+ * {@code register}/{@code updateRequest} 가 소유하므로, 산출물이 생겼다고 해서 판매중인 실물 상품이 우리 빈
+ * 상세로 덮이지 않는다. 안전장치는 "의존성 부재"가 아니라 <b>전송 액션 분리</b>다.</p>
  */
 @Service
+@Slf4j
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class MasterFromChannelServiceImpl implements MasterFromChannelService {
@@ -88,6 +96,17 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
     // 구성 커버리지, leaf/쿠팡 매핑 가드를 전부 우회한다.
     private final MasterProductService masterProductService;
     private final CategoryMetaService categoryMetaService;
+    // 2609_47/D1: 셀 자동생성(썸네일·상세·판매가). 인터페이스로 주입한다 — 구현체를 직접 잡지 말 것.
+    private final ListingAssetService listingAssetService;
+
+    /**
+     * Self proxy: {@code create} 는 트랜잭션 밖에서 {@link #createInTransaction} 을 <b>프록시 경유로</b> 불러
+     * 마스터·옵션·셀을 먼저 커밋시킨다(2609_47/D2). 직접 호출({@code this.createInTransaction})은 프록시를 타지
+     * 않아 {@code @Transactional} 이 무효가 된다.
+     */
+    @Autowired
+    @Lazy
+    private MasterFromChannelServiceImpl self;
 
     // ------------------------------------------------------------------ preview
 
@@ -129,9 +148,30 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
 
     // ------------------------------------------------------------------ create
 
+    /**
+     * 마스터·옵션·셀을 만든 뒤(원자적) <b>커밋된 다음</b> 자동생성을 돌린다(2609_47/D1·D2).
+     *
+     * <p>클래스에 {@code @Transactional(readOnly = true)} 가 걸려 있으므로 {@code NOT_SUPPORTED} 로 명시해
+     * 읽기 전용 트랜잭션이 이 진입점을 감싸지 않게 한다 — 그래야 {@code createInTransaction} 이 자기 트랜잭션을
+     * 열고 <b>커밋</b>한 뒤에 자동생성이 그 셀을 조회할 수 있다.</p>
+     */
     @Override
-    @Transactional
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public ListingMasterCreateResponse create(MasterFromChannelRequest request) {
+        ListingMasterCreateResponse created = self.createInTransaction(request);   // ← 여기서 커밋된다
+        return created.toBuilder()
+                .assetsGenerated(generateAssets(created.getProductListingId()))
+                .build();
+    }
+
+    /**
+     * {@code create} 의 본문. 전부 성공하거나 전부 롤백된다(단일 트랜잭션).
+     *
+     * <p>⚠️ 내부 사정이라 인터페이스에 올리지 않는다 — Spring Boot 기본이 CGLIB 프록시라 구현체 타입({@code self})
+     * 주입으로 프록시를 탄다. 프록시가 잡으려면 <b>public</b> 이어야 한다.</p>
+     */
+    @Transactional
+    public ListingMasterCreateResponse createInTransaction(MasterFromChannelRequest request) {
         // Defence in depth: 미리보기를 건너뛴 직접 호출도 같은 순서로 전부 다시 검증한다.
         Platform platform = Platform.from(request.getPlatform());
         ChannelContext ctx = validate(platform, request.getSellerId(), request.getPlatformProductId());
@@ -168,12 +208,14 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
                     //    그 값에 갇힌다. 쿠팡 재고는 셀 옵션에만 넣는다(아래 4).
                     .build());
         }
-        // ⚠️ defaultDeliveryId/defaultPackageId 는 null — 쿠팡에 우리 택배·박스 개념이 없다. 판매가 계산은
-        //    마스터 상세에서 배송·박스를 지정한 뒤에야 돈다(D5 얕은 생성과 같은 성격).
+        // 2609_47/D6: 택배·박스는 생성 화면이 함께 받는다(미지정이면 null = 기존과 동일). 존재하지 않는 id 는
+        //    createMasterProduct 가 이미 404 를 던지므로 여기서 검증을 새로 만들지 않는다.
         Long masterId = masterProductService.createMasterProduct(MasterProductRequest.builder()
                 .name(request.getMasterName())
                 .componentProductIds(new ArrayList<>(componentProducts.keySet()))
                 .options(optionRequests)
+                .defaultDeliveryId(request.getDefaultDeliveryId())
+                .defaultPackageId(request.getDefaultPackageId())
                 .build()).getId();
 
         // --- 2) 카테고리 지정. leaf 여부·쿠팡 매핑 존재 가드는 setCategory 의 기존 규칙을 그대로 탄다.
@@ -273,13 +315,40 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
             }
         }
 
-        // 7) regenerateAssets 를 호출하지 않는다(D5). 이 서비스에는 그 의존성 자체가 없다.
+        // 7) 커밋 뒤 자동생성(2609_47/D1). 실패해도 되돌리지 않는다(D2) — create 가 이 트랜잭션 밖에서 부른다.
         return ListingMasterCreateResponse.builder()
                 .masterProductId(masterId)
                 .productListingId(cell.getId())
                 .optionCount(request.getOptions().size())
                 .status(cell.getStatus())
                 .build();
+    }
+
+    /**
+     * 셀 자동생성. 트랜잭션 밖에서 부른다 — 마스터·옵션·셀은 이미 커밋됐고 여기서 실패해도 되돌리지 않는다(D2).
+     *
+     * <p>🔴 사진이 하나도 매핑되지 않았으면 {@code resolveBaseImage} 가 400 을 던진다. 그때 마스터까지
+     * 사라지면 "쿠팡 ID 를 넣었는데 아무것도 안 생긴다" 가 된다 — 사진은 나중에 채우고 [재생성] 하면 된다.
+     * 화면은 사진 매핑을 끝낸 뒤 {@code regenerate} 를 한 번 더 부른다(D7).</p>
+     *
+     * <p>⚠️ 엔티티가 아니라 <b>id</b> 를 넘긴다. 여기는 트랜잭션 밖이라 직접 조회한 엔티티는 곧바로 분리(detached)
+     * 되고, 자동생성이 자기 트랜잭션 안에서 {@code cell.getMasterProduct()}·{@code cell.getSeller()} 를 따라갈 때
+     * 터진다({@code open-in-view=false}). {@code regenerate(Long)} 은 자기 트랜잭션 안에서 셀을 다시 조회한다.</p>
+     */
+    private boolean generateAssets(Long listingId) {
+        try {
+            listingAssetService.regenerate(listingId);
+            return true;
+        } catch (IllegalArgumentException e) {
+            // 사진 없음 등 입력 문제 — 예상된 경로.
+            // ⚠️ 이미지 네트워크·읽기 실패도 같은 예외로 감싸여 들어온다(ProductImageLoader). 원인은 메시지에 남는다.
+            log.warn("Asset generation skipped for the new cell {}: {}", listingId, e.getMessage());
+            return false;
+        } catch (Exception e) {
+            // 그 외 = 우리 버그. 삼키되 눈에 띄게 남긴다(둘을 한 catch 로 합치면 운영에서 구분할 방법이 사라진다).
+            log.error("Asset generation failed unexpectedly for the new cell {}", listingId, e);
+            return false;
+        }
     }
 
     // ------------------------------------------------------------------ validation
