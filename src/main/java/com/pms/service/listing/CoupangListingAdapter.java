@@ -82,6 +82,8 @@ public class CoupangListingAdapter implements ListingChannel {
     private static final int MAX_SELLER_PRODUCT_NAME_LENGTH = 100;
     // 96 ④: a value made of digits only (optionally signed / decimal) is the one that still needs its unit.
     private static final Pattern NUMERIC_VALUE = Pattern.compile("^-?\\d+(\\.\\d+)?$");
+    // 2609_45/D4: "number + trailing text" — group(1) the number, group(2) the suffix (see stripUnit).
+    private static final Pattern NUMBER_WITH_SUFFIX = Pattern.compile("^(-?\\d+(?:\\.\\d+)?)(\\D.*)$");
     // 96 ④: Coupang's documented cap for attributeValueName (warn only — see withUnit).
     private static final int MAX_ATTRIBUTE_VALUE_LENGTH = 30;
 
@@ -144,11 +146,21 @@ public class CoupangListingAdapter implements ListingChannel {
      * {@code originalPrice}·{@code maximumBuyCount}) are inferred from the register payload schema — every
      * one of them parses to {@code null} when absent rather than throwing, and the import service decides
      * what is fatal.</p>
+     *
+     * <p>2609_45/D4: the response also carries the category attributes/notices that were already stored on the
+     * market, per item. They are flattened into the same map shape we store, and numeric attribute values are
+     * stripped back to "number only" (see {@link #stripUnit}).</p>
      */
     @Override
     public ImportedProduct fetchProduct(String platformProductId, MarketplaceAccount acct) {
         String raw = client.get(SELLER_PRODUCTS + "/" + platformProductId, "", acct);
         JsonNode data = readJson(raw).path("data");
+
+        String categoryCode = asTextOrNull(data, "displayCategoryCode");
+        // 2609_45/D4: the 기본 단위 of this category, read ONCE and reused for every item below. Skipped
+        // entirely when no value even looks like "number + suffix" — fetchStatus goes through this same method
+        // and must not pay a second GET for products whose attributes need no stripping.
+        Map<String, String> unitByAttr = unitsForImport(data, categoryCode, acct);
 
         List<ImportedProduct.Option> options = new ArrayList<>();
         for (JsonNode item : data.path("items")) {
@@ -158,7 +170,9 @@ public class CoupangListingAdapter implements ListingChannel {
                     asTextOrNull(item, "sellerProductItemId"),
                     asDecimalOrNull(item, "salePrice"),
                     asDecimalOrNull(item, "originalPrice"),
-                    asIntOrNull(item, "maximumBuyCount")));
+                    asIntOrNull(item, "maximumBuyCount"),
+                    importedAttributes(item, unitByAttr),
+                    importedNotices(item)));
         }
         // 73: searchTags lives at the ITEM level on Coupang → read the first item's set (every item carries
         // the same merged list when we push). No items = no tags, not an error.
@@ -171,10 +185,93 @@ public class CoupangListingAdapter implements ListingChannel {
         }
         return new ImportedProduct(
                 asTextOrNull(data, "sellerProductName"),
-                asTextOrNull(data, "displayCategoryCode"),
+                categoryCode,
                 mapStatus(data.path("statusName").asText("")),
                 tags,
+                // 2609_45/D4-2: 품목군 is a PRODUCT-level fact — every item repeats the same group.
+                asTextOrNull(data.path("items").path(0).path("notices").path(0), "noticeCategoryName"),
                 options);
+    }
+
+    /**
+     * 2609_45/D4: {@code items[].attributes[]} → our stored shape ({@code attributeTypeName → attributeValueName}).
+     * Blank values are dropped (most of them are blank on a live response) so they never overwrite a real value.
+     */
+    private static Map<String, String> importedAttributes(JsonNode item, Map<String, String> unitByAttr) {
+        Map<String, String> attributes = new LinkedHashMap<>();
+        for (JsonNode attribute : item.path("attributes")) {
+            String name = asTextOrNull(attribute, "attributeTypeName");
+            String value = asTextOrNull(attribute, "attributeValueName");
+            if (name == null || name.isBlank() || value == null || value.isBlank()) {
+                continue;
+            }
+            attributes.put(name, stripUnit(name, value, unitByAttr));
+        }
+        return attributes;
+    }
+
+    /** 2609_45/D4: {@code items[].notices[]} → {@code noticeCategoryDetailName → content}. Blank values dropped. */
+    private static Map<String, String> importedNotices(JsonNode item) {
+        Map<String, String> notices = new LinkedHashMap<>();
+        for (JsonNode notice : item.path("notices")) {
+            String key = asTextOrNull(notice, "noticeCategoryDetailName");
+            String content = asTextOrNull(notice, "content");
+            if (key == null || key.isBlank() || content == null || content.isBlank()) {
+                continue;
+            }
+            notices.put(key, content);
+        }
+        return notices;
+    }
+
+    /**
+     * 2609_45/D4: attribute name → 기본 단위 for the product's own category, but only when it is actually
+     * needed. {@code fetchProduct} is also what {@code fetchStatus} calls, so an unconditional meta call would
+     * double the Coupang GETs of every approval refresh.
+     */
+    private Map<String, String> unitsForImport(JsonNode data, String categoryCode, MarketplaceAccount acct) {
+        if (categoryCode == null || categoryCode.isBlank() || !hasUnitSuffixCandidate(data)) {
+            return Map.of();
+        }
+        return metaAdapter.getMeta(acct, categoryCode).attributes().stream()
+                .filter(a -> a.basicUnit() != null)
+                .collect(Collectors.toMap(CategoryAttribute::name, CategoryAttribute::basicUnit, (a, b) -> a));
+    }
+
+    /** True when at least one attribute value looks like "number + suffix" — the only case stripUnit can act on. */
+    private static boolean hasUnitSuffixCandidate(JsonNode data) {
+        for (JsonNode item : data.path("items")) {
+            for (JsonNode attribute : item.path("attributes")) {
+                String value = asTextOrNull(attribute, "attributeValueName");
+                if (value != null && NUMBER_WITH_SUFFIX.matcher(value.trim()).matches()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 2609_45/D4: turn Coupang's {@code attributeValueName} back into our storage convention (number only).
+     *
+     * <p>🔴 The trailing text is dropped <b>only when it equals that attribute's {@code basicUnit} exactly</b>,
+     * and only when what precedes it is a number:
+     * {@code "36.9g"}(basicUnit=g) → {@code "36.9"} · {@code "6개"}(basicUnit=개) → {@code "6"} ·
+     * {@code "1.5kg"}(basicUnit=g) → <b>{@code "1.5kg"} verbatim</b> (dropping it would mean 1.5g —
+     * {@code usableUnits} is not consulted). Non-numeric values (SELECT-type "비건" etc.) are always verbatim.</p>
+     *
+     * <p>⚠️ This is NOT about double units: {@link #withUnit} only appends to bare numbers, so {@code "6개개"}
+     * cannot happen. It exists because the master screen shows a number box + unit dropdown, and {@code "6개"}
+     * in that box cannot be edited by the user.</p>
+     */
+    private static String stripUnit(String name, String value, Map<String, String> unitByAttr) {
+        String trimmed = value.trim();
+        var matcher = NUMBER_WITH_SUFFIX.matcher(trimmed);
+        if (!matcher.matches()) {
+            return value;
+        }
+        String unit = unitByAttr.get(name);
+        return matcher.group(2).equals(unit) ? matcher.group(1) : value;
     }
 
     @Override

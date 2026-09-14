@@ -75,6 +75,10 @@ public class MockCoupangApiClient implements CoupangApiClient {
      * 2609_22 가져오기 fixture: 옵션 2건 + 상품명·카테고리·태그·가격까지 실린 조회 응답.
      * ⚠️ {@link #SELLER_PRODUCT_FETCH} 를 확장하지 말 것 — 3c 의 local {@code fetchStatus} 흐름이 그
      * 옵션 1개짜리 응답에 의존한다. 그래서 상품 id 로 분기한다.
+     *
+     * <p>2609_45: {@code items[].attributes}·{@code items[].notices} 는 실계정 응답(2026-09-14) 형태 그대로다 —
+     * 속성은 <b>옵션마다 다르고</b>(수량 6/12) {@code attributeValueName} 에 <b>단위가 붙어서</b> 온다
+     * ({@code "6개"}·{@code "36.9g"}). 고시는 전 옵션 동일(품목군 = 상품 단위).</p>
      */
     private static final String SELLER_PRODUCT_IMPORT =
             "{\"code\":\"SUCCESS\",\"data\":{\"sellerProductId\":222333444,"
@@ -82,10 +86,38 @@ public class MockCoupangApiClient implements CoupangApiClient {
                     + "\"statusName\":\"승인완료\",\"items\":["
                     + "{\"itemName\":\"6입\",\"vendorItemId\":8123,\"sellerProductItemId\":9123,"
                     + "\"salePrice\":12900,\"originalPrice\":15900,\"maximumBuyCount\":50,"
-                    + "\"searchTags\":[\"생수\",\"2L\"]},"
+                    + "\"searchTags\":[\"생수\",\"2L\"],"
+                    + "\"attributes\":["
+                    + "{\"attributeTypeName\":\"수량\",\"attributeValueName\":\"6개\","
+                    + "\"exposed\":\"EXPOSED\",\"editable\":\"EDITABLE\"},"
+                    + "{\"attributeTypeName\":\"최소 중량\",\"attributeValueName\":\"36.9g\","
+                    + "\"exposed\":\"EXPOSED\",\"editable\":\"EDITABLE\"},"
+                    + "{\"attributeTypeName\":\"식품 프리미엄\",\"attributeValueName\":\"해당없음\","
+                    + "\"exposed\":\"NONE\",\"editable\":\"EDITABLE\"},"
+                    + "{\"attributeTypeName\":\"동물종류\",\"attributeValueName\":\"\","
+                    + "\"exposed\":\"NONE\",\"editable\":\"EDITABLE\"}],"
+                    + "\"notices\":["
+                    + "{\"noticeCategoryName\":\"가공식품\",\"noticeCategoryDetailName\":\"제품명\","
+                    + "\"content\":\"상품 상세페이지 참조\"},"
+                    + "{\"noticeCategoryName\":\"가공식품\",\"noticeCategoryDetailName\":\"소비자상담관련 전화번호\","
+                    + "\"content\":\"상품 상세페이지 참조\"}]},"
                     + "{\"itemName\":\"12입\",\"vendorItemId\":8124,\"sellerProductItemId\":9124,"
                     + "\"salePrice\":23900,\"originalPrice\":29900,\"maximumBuyCount\":30,"
-                    + "\"searchTags\":[\"생수\",\"2L\"]}]}}";
+                    + "\"searchTags\":[\"생수\",\"2L\"],"
+                    + "\"attributes\":["
+                    + "{\"attributeTypeName\":\"수량\",\"attributeValueName\":\"12개\","
+                    + "\"exposed\":\"EXPOSED\",\"editable\":\"EDITABLE\"},"
+                    + "{\"attributeTypeName\":\"최소 중량\",\"attributeValueName\":\"36.9g\","
+                    + "\"exposed\":\"EXPOSED\",\"editable\":\"EDITABLE\"},"
+                    + "{\"attributeTypeName\":\"식품 프리미엄\",\"attributeValueName\":\"해당없음\","
+                    + "\"exposed\":\"NONE\",\"editable\":\"EDITABLE\"},"
+                    + "{\"attributeTypeName\":\"동물종류\",\"attributeValueName\":\"\","
+                    + "\"exposed\":\"NONE\",\"editable\":\"EDITABLE\"}],"
+                    + "\"notices\":["
+                    + "{\"noticeCategoryName\":\"가공식품\",\"noticeCategoryDetailName\":\"제품명\","
+                    + "\"content\":\"상품 상세페이지 참조\"},"
+                    + "{\"noticeCategoryName\":\"가공식품\",\"noticeCategoryDetailName\":\"소비자상담관련 전화번호\","
+                    + "\"content\":\"상품 상세페이지 참조\"}]}]}}";
 
     // 45 category lookup fixtures (inline). Tree = data.child[] (displayCategoryCode/name/child/last):
     // 1001 has a nested child + last=false → non-leaf, 1002 has empty child → leaf.

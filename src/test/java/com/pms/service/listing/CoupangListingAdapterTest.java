@@ -600,6 +600,96 @@ class CoupangListingAdapterTest {
         assertThat(result.options()).isEmpty();
     }
 
+
+    // ---------------------------------------------------------------- 2609_45: import-time attributes/notices
+
+    /** 2609_45/D4 실측 응답: 속성은 items[] 마다 오고 attributeValueName 에 단위가 붙어 있다. */
+    private static final String IMPORT_WITH_ATTRIBUTES =
+            "{\"code\":\"SUCCESS\",\"data\":{\"sellerProductName\":\"생수\",\"displayCategoryCode\":\"73170\","
+                    + "\"statusName\":\"승인완료\",\"items\":[{\"itemName\":\"6입\",\"vendorItemId\":8123,"
+                    + "\"sellerProductItemId\":9123,\"salePrice\":12900,\"maximumBuyCount\":85,"
+                    + "\"attributes\":["
+                    + "{\"attributeTypeName\":\"수량\",\"attributeValueName\":\"6개\"},"
+                    + "{\"attributeTypeName\":\"개당 중량\",\"attributeValueName\":\"1.5kg\"},"
+                    + "{\"attributeTypeName\":\"식품 프리미엄\",\"attributeValueName\":\"비건\"},"
+                    + "{\"attributeTypeName\":\"동물종류\",\"attributeValueName\":\"\"}],"
+                    + "\"notices\":[{\"noticeCategoryName\":\"가공식품\",\"noticeCategoryDetailName\":\"제품명\","
+                    + "\"content\":\"상품 상세페이지 참조\"},"
+                    + "{\"noticeCategoryName\":\"가공식품\",\"noticeCategoryDetailName\":\"생산자\","
+                    + "\"content\":\"\"}]}]}}";
+
+    /**
+     * 🔴 2609_45/D4 단위 왕복 가드. 저장 규약은 "숫자만" 이므로 값의 후행 문자열이 그 속성의 basicUnit 과
+     * <b>정확히 같을 때만</b> 떼고(`"6개"`→`"6"`), 다르면 원문 그대로 둔다(`"1.5kg"`, basicUnit=g — 떼면
+     * 1.5g 이 되어 뜻이 바뀐다). 숫자가 아닌 값은 언제나 원문, 빈 값은 버린다.
+     */
+    @Test
+    void fetchProduct_stripsBasicUnitOnlyWhenItMatches() {
+        given(client.get(anyString(), eq(""), any())).willReturn(IMPORT_WITH_ATTRIBUTES);
+        given(metaAdapter.getMeta(any(), eq("73170"))).willReturn(new CategoryMetaSchema(List.of(
+                new CategoryAttribute("수량", true, "NUMBER", List.of(), "개"),
+                new CategoryAttribute("개당 중량", true, "NUMBER", List.of(), "g"),
+                new CategoryAttribute("식품 프리미엄", false, "SELECT", List.of("비건"), null)), List.of()));
+
+        ImportedProduct product = adapter.fetchProduct("222333444", acct());
+
+        ImportedProduct.Option option = product.options().get(0);
+        assertThat(option.attributes()).containsOnly(
+                Map.entry("수량", "6"),           // basicUnit 과 같은 접미사 → 뗀다
+                Map.entry("개당 중량", "1.5kg"),   // basicUnit(g) 과 다른 단위 → 원문 그대로
+                Map.entry("식품 프리미엄", "비건")); // 숫자가 아니면 언제나 원문 (빈 값은 버려졌다)
+        assertThat(option.notices()).containsExactly(Map.entry("제품명", "상품 상세페이지 참조"));
+        assertThat(product.noticeGroup()).isEqualTo("가공식품");
+        assertThat(product.categoryCode()).isEqualTo("73170");
+    }
+
+    /** 🔴 왕복의 반대 방향: 저장된 "6" 은 전송 시 다시 "6개" 가 되고, "1.5kg" 는 그대로 나간다. */
+    @Test
+    void register_reattachesBasicUnitToStoredNumber() throws Exception {
+        MasterProduct master = MasterProduct.builder().id(1L).name("라벨")
+                .categoryAttributes(Map.of("수량", "6", "개당 중량", "1.5kg")).build();
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
+                .platformProductId("123").masterProduct(master).build();
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("6입")
+                        .sellingPrice(new BigDecimal("12900")).active(true).build()));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(masterProductService.isBundle(1L)).willReturn(false);
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("73170");
+        given(metaAdapter.getMeta(any(), eq("73170"))).willReturn(new CategoryMetaSchema(List.of(
+                new CategoryAttribute("수량", true, "NUMBER", List.of(), "개"),
+                new CategoryAttribute("개당 중량", true, "NUMBER", List.of(), "g")), List.of()));
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell, gen, acct());
+
+        JsonNode attributes = objectMapper.readTree(payload.getValue()).path("items").get(0).path("attributes");
+        Map<String, String> byName = new java.util.LinkedHashMap<>();
+        attributes.forEach(a -> byName.put(a.path("attributeTypeName").asText(),
+                a.path("attributeValueName").asText()));
+        assertThat(byName).containsEntry("수량", "6개").containsEntry("개당 중량", "1.5kg");
+    }
+
+    /**
+     * 2609_45: 단위를 뗄 후보가 없으면 카테고리 메타를 부르지 않는다 — fetchStatus 가 같은 메서드를 타므로
+     * 무조건 조회하면 승인 새로고침마다 쿠팡 GET 이 2배가 된다.
+     */
+    @Test
+    void fetchProduct_noUnitCandidate_skipsMetaLookup() {
+        given(client.get(anyString(), eq(""), any())).willReturn(
+                "{\"code\":\"SUCCESS\",\"data\":{\"displayCategoryCode\":\"73170\",\"statusName\":\"승인완료\","
+                        + "\"items\":[{\"itemName\":\"6입\",\"vendorItemId\":8123,\"salePrice\":12900,"
+                        + "\"attributes\":[{\"attributeTypeName\":\"식품 프리미엄\","
+                        + "\"attributeValueName\":\"비건\"}]}]}}");
+
+        ImportedProduct product = adapter.fetchProduct("222333444", acct());
+
+        assertThat(product.options().get(0).attributes()).containsExactly(Map.entry("식품 프리미엄", "비건"));
+        verify(metaAdapter, never()).getMeta(any(), anyString());
+    }
+
     // 77: read-only mirror of requireShippingConfig — same rules, never throws.
     @Test
     void isShippingReady_completeConfig_returnsTrue() {
