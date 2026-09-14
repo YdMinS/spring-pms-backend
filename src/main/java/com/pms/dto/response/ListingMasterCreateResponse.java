@@ -13,7 +13,7 @@ import lombok.Getter;
  * 같은 모양의 DTO 를 새로 만들지 말 것.</p>
  */
 @Getter
-@Builder
+@Builder(toBuilder = true)
 @Schema(description = "Result of creating a master product from a channel cell")
 public class ListingMasterCreateResponse {
 
@@ -29,4 +29,12 @@ public class ListingMasterCreateResponse {
     /** 2609_45: 마켓에서 읽어온 셀의 상태. 2609_22 경로(셀이 이미 있음)에서는 채우지 않는다(null). */
     @Schema(description = "The channel cell's status; null when created from an existing cell", example = "SELLING")
     private ListingStatus status;
+
+    /**
+     * 2609_47: 생성 직후 자동생성(썸네일·상세) 성공 여부. 화면은 사진을 매핑한 뒤 {@code regenerate} 를 한 번 더
+     * 부르므로(D7), 이 값은 <b>사진을 하나도 매핑하지 않은 호출</b>에서 "재생성이 필요한가"를 가르는 데 쓴다.
+     * 2609_22 경로(셀이 이미 있음)에서는 채우지 않는다(null).
+     */
+    @Schema(description = "Whether the channel cell's assets were generated", example = "true")
+    private Boolean assetsGenerated;
 }

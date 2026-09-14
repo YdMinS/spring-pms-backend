@@ -34,14 +34,15 @@ import com.pms.repository.SellerRepository;
 import com.pms.service.CategoryMetaService;
 import com.pms.service.ListingAssetService;
 import com.pms.service.MasterProductService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
-import java.lang.reflect.Field;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
@@ -50,8 +51,10 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
@@ -60,7 +63,8 @@ import static org.mockito.Mockito.verify;
  * 커밋은 마켓을 다시 읽어 마스터·옵션·셀을 한 번에 만든다.
  *
  * <p>가장 중요한 회귀 셋: ① 옵션마다 다른 속성은 <b>그 마스터 옵션</b>에 실린다(D4-1) ② 마스터 옵션에 재고를
- * 넣지 않는다(D3-1, 상한 오염) ③ 이 서비스에는 {@code ListingAssetService} 의존성 자체가 없다(D5).</p>
+ * 넣지 않는다(D3-1, 상한 오염) ③ 커밋 뒤 자동생성을 돌리되 그 실패가 마스터·셀을 되돌리지 않는다
+ * (2609_47/D1·D2 — 2609_45/D5 "얕은 생성" 번복).</p>
  */
 @ExtendWith(MockitoExtension.class)
 class MasterFromChannelServiceTest {
@@ -79,7 +83,16 @@ class MasterFromChannelServiceTest {
     @Mock private MasterProductService masterProductService;
     @Mock private CategoryMetaService categoryMetaService;
     @Mock private ListingChannel channel;
+    @Mock private ListingAssetService listingAssetService;
     @InjectMocks private MasterFromChannelServiceImpl service;
+
+    @BeforeEach
+    void wireSelf() {
+        // @InjectMocks 는 테스트 대상과 같은 타입의 필드를 건너뛴다 → self 가 null 로 남아 create() 가 NPE 로 죽는다.
+        // 단위 테스트에는 프록시가 없으므로 자기 자신을 넣는다(create → createInTransaction 이 그대로 실행된다.
+        // 트랜잭션 경계는 통합 테스트가 본다).
+        ReflectionTestUtils.setField(service, "self", service);
+    }
 
     private static final Long SELLER_ID = 7L;
     private static final Long MASTER_ID = 55L;
@@ -228,6 +241,18 @@ class MasterFromChannelServiceTest {
         verifyNothingSaved();
     }
 
+    /** 2609_47: 미리보기는 자동생성을 건드리지 않는다(쓰기 0회의 일부). */
+    @Test
+    void preview_doesNotTouchAssets() {
+        givenAccount();
+        givenMarket(twoOptionProduct());
+        givenCategoryResolved();
+
+        service.preview(previewRequest());
+
+        verify(listingAssetService, never()).regenerate(anyLong());
+    }
+
     @Test
     void preview_categoryNotMapped_returnsNullCategory() {
         givenAccount();
@@ -304,7 +329,7 @@ class MasterFromChannelServiceTest {
                         org.assertj.core.api.Assertions.tuple(PRODUCT_B, 1));
         // 🔴 D3-1: 마스터 옵션 재고는 비운다 — 채널 재고의 상한이라 한 채널의 값(85)에 다른 채널이 갇힌다.
         assertThat(created.getOptions()).allSatisfy(o -> assertThat(o.getStockQuantity()).isNull());
-        // 택배·박스는 쿠팡에 개념이 없다(D5 얕은 생성과 같은 성격).
+        // 2609_47/D6: 요청이 비웠으면 null — 기존과 동일하다.
         assertThat(created.getDefaultDeliveryId()).isNull();
         assertThat(created.getDefaultPackageId()).isNull();
 
@@ -313,6 +338,61 @@ class MasterFromChannelServiceTest {
         assertThat(response.getProductListingId()).isEqualTo(50L);
         assertThat(response.getOptionCount()).isEqualTo(2);
         assertThat(response.getStatus()).isEqualTo(ListingStatus.SELLING);
+    }
+
+    /** 2609_47/D1: 셀이 만들어진 뒤 자동생성을 정확히 한 번 돌린다. */
+    @Test
+    void create_generatesAssetsAfterCommit() {
+        givenAccount();
+        givenMarket(marketProduct(marketOption("6입", "8123", "12900", Map.of())));
+        givenComponents(PRODUCT_A);
+        givenCreationSucceeds("6입");
+
+        ListingMasterCreateResponse response =
+                service.create(createRequest(List.of(PRODUCT_A), spec("6입", "8123", 6, null)));
+
+        verify(listingAssetService).regenerate(50L);
+        assertThat(response.getAssetsGenerated()).isTrue();
+    }
+
+    /** 🔴 D2 회귀 가드: 자동생성이 실패해도 예외가 새지 않고 마스터·셀은 남는다. */
+    @Test
+    void create_assetFailureKeepsMasterAndCell() {
+        givenAccount();
+        givenMarket(marketProduct(marketOption("6입", "8123", "12900", Map.of())));
+        givenComponents(PRODUCT_A);
+        givenCreationSucceeds("6입");
+        willThrow(new IllegalArgumentException("상품 이미지를 불러올 수 없습니다"))
+                .given(listingAssetService).regenerate(50L);
+
+        ListingMasterCreateResponse response =
+                service.create(createRequest(List.of(PRODUCT_A), spec("6입", "8123", 6, null)));
+
+        assertThat(response.getAssetsGenerated()).isFalse();
+        assertThat(response.getMasterProductId()).isEqualTo(MASTER_ID);
+        assertThat(response.getProductListingId()).isEqualTo(50L);
+    }
+
+    /** 2609_47/D6: 생성 화면이 고른 기본 택배·상자를 마스터 생성에 그대로 얹는다. */
+    @Test
+    void create_passesDefaultDeliveryAndPackage() {
+        givenAccount();
+        givenMarket(marketProduct(marketOption("6입", "8123", "12900", Map.of())));
+        givenComponents(PRODUCT_A);
+        givenCreationSucceeds("6입");
+
+        service.create(MasterFromChannelRequest.builder()
+                .sellerId(SELLER_ID).platform(PLATFORM.name()).platformProductId(PRODUCT_ID)
+                .masterName("노브랜드 생수 2L").categoryId(CATEGORY_ID)
+                .componentProductIds(List.of(PRODUCT_A))
+                .options(List.of(spec("6입", "8123", 6, null)))
+                .defaultDeliveryId(11L).defaultPackageId(22L)
+                .build());
+
+        ArgumentCaptor<MasterProductRequest> captor = ArgumentCaptor.forClass(MasterProductRequest.class);
+        verify(masterProductService).createMasterProduct(captor.capture());
+        assertThat(captor.getValue().getDefaultDeliveryId()).isEqualTo(11L);
+        assertThat(captor.getValue().getDefaultPackageId()).isEqualTo(22L);
     }
 
     @Test
@@ -361,14 +441,6 @@ class MasterFromChannelServiceTest {
                 any(), any());
         // 마스터 공통 맵에는 "수량" 이 없다 — items[0] 값을 전 옵션에 공통 적용하면 6개입 수량이 12개입으로 나간다.
         assertThat(masterAttributes.getValue()).doesNotContainKey("수량");
-    }
-
-    /** 🔴 D5: 이 서비스에 ListingAssetService 필드가 없음을 테스트로 고정한다(주입하면 여기서 드러난다). */
-    @Test
-    void create_neverCallsRegenerateAssets() {
-        assertThat(MasterFromChannelServiceImpl.class.getDeclaredFields())
-                .extracting(Field::getType)
-                .doesNotContain(ListingAssetService.class);
     }
 
     @Test

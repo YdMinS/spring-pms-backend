@@ -20,9 +20,11 @@ import com.pms.dto.response.MasterFromChannelPreviewResponse;
  *       직접 주입하면 seam 이 무의미해진다.</li>
  *   <li>⚠️ 이 기능은 마켓에 <b>읽기 호출만</b> 한다(미리보기·커밋 각각 GET 2회). 등록·수정·가격변경을 이
  *       경로에 넣지 말 것.</li>
- *   <li>🔴 {@code ListingAssetService} 에 <b>의존하지 않는다</b>(D5 얕은 생성). 썸네일·상세가 생기는 순간 이
- *       셀이 [마켓 반영] 대상이 되어 <b>판매중인 실물 상품이 우리 빈 상세로 덮인다</b>. 의존성을 아예 두지
- *       않는 것이 그 장치다 — "친절하게" 주입하지 말 것.</li>
+ *   <li>🔴 <b>2609_45/D5("얕은 생성") 번복(2609_47/D1)</b>: {@code ListingAssetService} 에 <b>의존한다</b> —
+ *       만든 셀도 기존 가져오기({@link CoupangListingImportService})와 같은 상태(썸네일·상세·판매가)가 되어야
+ *       한다. 자동생성은 <b>로컬 산출물만</b> 만들고 마켓 전송은 {@code register}/{@code updateRequest} 가
+ *       소유하므로 판매중인 실물 상품이 우리 빈 상세로 덮이지 않는다 — 안전장치는 "의존성 부재"가 아니라
+ *       <b>전송 액션 분리</b>다.</li>
  * </ul>
  */
 public interface MasterFromChannelService {
@@ -36,10 +38,13 @@ public interface MasterFromChannelService {
     MasterFromChannelPreviewResponse preview(MasterFromChannelPreviewRequest request);
 
     /**
-     * 사용자가 채운 구성으로 마스터·옵션·셀을 만든다. 전부 성공하거나 전부 롤백된다(단일 트랜잭션).
+     * 사용자가 채운 구성으로 마스터·옵션·셀을 만든다. 그 셋은 전부 성공하거나 전부 롤백된다(단일 트랜잭션).
      *
-     * @param request 마스터 이름 + 카테고리 + 구성상품 + 옵션별 수량
-     * @return 새 마스터 id + 새 셀 id + 옵션 수 + 마켓 상태
+     * <p>2609_47/D1·D2: 셀이 <b>커밋된 뒤</b> 자동생성(썸네일·상세·판매가)을 한 번 돌린다. 자동생성 실패는
+     * 생성을 되돌리지 않고 {@code assetsGenerated=false} 로만 알린다 — 사진은 나중에 채우고 재생성하면 된다.</p>
+     *
+     * @param request 마스터 이름 + 카테고리 + 구성상품 + 옵션별 수량 (+ 기본 택배·상자)
+     * @return 새 마스터 id + 새 셀 id + 옵션 수 + 마켓 상태 + 자동생성 성공 여부
      */
     ListingMasterCreateResponse create(MasterFromChannelRequest request);
 }
