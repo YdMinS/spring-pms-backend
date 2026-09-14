@@ -454,4 +454,123 @@ class CoupangListingImportServiceTest {
         assertThat(saved.getMarketPrice()).isEqualByComparingTo(saved.getSellingPrice());
         assertThat(saved.getMarketPriceAt()).isNotNull();
     }
+
+    // ---- 2609_45/D12: cell-scoped category meta ----
+
+    private ImportedProduct.Option marketOptionWithMeta(String name, String vendorItemId, String salePrice) {
+        return new ImportedProduct.Option(name, vendorItemId, "9" + vendorItemId,
+                new BigDecimal(salePrice), new BigDecimal(salePrice).add(BigDecimal.valueOf(3000)), 50,
+                java.util.Map.of("수량", "6"), java.util.Map.of("품목 또는 명칭", "쌀"));
+    }
+
+    private ImportedProduct marketProductWithMeta() {
+        return new ImportedProduct("노브랜드 생수 2L 6입", COUPANG_CATEGORY, ListingStatus.SELLING,
+                List.of("생수", "2L"), "가공식품", List.of(marketOptionWithMeta("6입", "8123", "12900")));
+    }
+
+    /** Guards pass, the market answers with per-option meta, saves hand back ids. */
+    private void givenImportReadyWithMeta() {
+        MasterProductOption existing = masterOption(10L, "1세트");
+        givenMaster();
+        givenForwardMapping(true);
+        givenAccount();
+        givenNoDuplicateChannel();
+        givenMarket(marketProductWithMeta());
+        given(masterProductOptionRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(existing));
+        given(masterProductOptionItemRepository.findByOptionIdIn(List.of(10L))).willReturn(List.of(
+                MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_A)).quantity(6).build(),
+                MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_B)).quantity(1).build()));
+        givenSavesReturnIds();
+    }
+
+    /** Reverse lookup resolves to the SAME standard category the master uses → the categories match. */
+    private void givenCategoryReverseMatch(String commissionRate) {
+        PlatformCategory platformCategory = PlatformCategory.builder()
+                .id(50L).platform(PLATFORM).code(COUPANG_CATEGORY).name("생수")
+                .commissionRate(commissionRate == null ? null : new BigDecimal(commissionRate)).build();
+        given(platformCategoryRepository.findByPlatformAndCode(PLATFORM, COUPANG_CATEGORY))
+                .willReturn(Optional.of(platformCategory));
+        given(categoryMappingRepository.findByPlatformCategoryId(50L))
+                .willReturn(Optional.of(CategoryMapping.builder()
+                        .id(60L).platform(PLATFORM)
+                        .category(Category.builder().id(CATEGORY_ID).name("생수").build())
+                        .platformCategory(platformCategory).build()));
+    }
+
+    /** Reverse lookup resolves to a DIFFERENT standard category, and that category carries a commission. */
+    private void givenCategoryReverseMismatch(String commissionRate) {
+        PlatformCategory platformCategory = PlatformCategory.builder()
+                .id(50L).platform(PLATFORM).code(COUPANG_CATEGORY).name("생수")
+                .commissionRate(commissionRate == null ? null : new BigDecimal(commissionRate)).build();
+        given(platformCategoryRepository.findByPlatformAndCode(PLATFORM, COUPANG_CATEGORY))
+                .willReturn(Optional.of(platformCategory));
+        given(categoryMappingRepository.findByPlatformCategoryId(50L))
+                .willReturn(Optional.of(CategoryMapping.builder()
+                        .id(60L).platform(PLATFORM)
+                        .category(Category.builder().id(999L).name("다른 카테고리").build())
+                        .platformCategory(platformCategory).build()));
+    }
+
+    // 7. Same category → the master's values ARE the answer; copying them would create a second, diverging copy.
+    @Test
+    void testImportSameCategoryLeavesCellMetaNull() {
+        givenImportReadyWithMeta();
+        givenCategoryReverseMatch("0.11");
+
+        service.importListing(MASTER_ID, importRequest(spec("6입", "8123", 6, 1)));
+
+        ArgumentCaptor<ProductListingOption> optionCaptor = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository).save(optionCaptor.capture());
+        assertThat(optionCaptor.getValue().getCategoryAttributes()).isNull();
+        assertThat(optionCaptor.getValue().getCategoryNotices()).isNull();
+
+        ArgumentCaptor<ProductListing> cellCaptor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(cellCaptor.capture());
+        assertThat(cellCaptor.getValue().getCategoryNoticeGroup()).isNull();
+    }
+
+    // 8. Different category WITH a commission → the cell keeps its own category, so it carries the whole
+    //    per-option attribute map (D12-1 removes the master values from the merge base) — and no warning.
+    @Test
+    void testImportDifferentCategoryWithCommissionStoresCellMeta() {
+        givenImportReadyWithMeta();
+        givenCategoryReverseMismatch("0.11");
+
+        var response = service.importListing(MASTER_ID, importRequest(spec("6입", "8123", 6, 1)));
+
+        ArgumentCaptor<ProductListingOption> optionCaptor = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository).save(optionCaptor.capture());
+        assertThat(optionCaptor.getValue().getCategoryAttributes()).containsEntry("수량", "6");
+        assertThat(optionCaptor.getValue().getCategoryNotices()).containsEntry("품목 또는 명칭", "쌀");
+
+        ArgumentCaptor<ProductListing> cellCaptor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(cellCaptor.capture());
+        assertThat(cellCaptor.getValue().getPlatformCategoryCode()).isEqualTo(COUPANG_CATEGORY);
+        assertThat(cellCaptor.getValue().getCategoryNoticeGroup()).isEqualTo("가공식품");
+        // D15 문구는 이제 "수수료 없음"에만 붙는다 — 불일치 자체는 경고가 아니다(채널이 자기 것을 유지한다).
+        assertThat(response.getCategoryWarning()).isNull();
+    }
+
+    // 9. Different category WITHOUT a commission (D11) → resolution falls back to the master, so leaving the
+    //    cell meta behind would mean values of a schema this cell no longer uses. The D15 warning fires here.
+    @Test
+    void testImportDifferentCategoryWithoutCommissionFallsBackAndWarns() {
+        givenImportReadyWithMeta();
+        givenCategoryReverseMismatch(null);
+
+        var response = service.importListing(MASTER_ID, importRequest(spec("6입", "8123", 6, 1)));
+
+        ArgumentCaptor<ProductListingOption> optionCaptor = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository).save(optionCaptor.capture());
+        assertThat(optionCaptor.getValue().getCategoryAttributes()).isNull();
+        assertThat(optionCaptor.getValue().getCategoryNotices()).isNull();
+
+        ArgumentCaptor<ProductListing> cellCaptor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(cellCaptor.capture());
+        // 표시용 코드는 그대로 저장하되 셀 메타·그룹은 넣지 않는다.
+        assertThat(cellCaptor.getValue().getPlatformCategoryCode()).isEqualTo(COUPANG_CATEGORY);
+        assertThat(cellCaptor.getValue().getCategoryNoticeGroup()).isNull();
+        assertThat(response.getCategoryWarning())
+                .isEqualTo(CoupangListingImportServiceImpl.CATEGORY_WARNING);
+    }
 }

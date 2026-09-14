@@ -107,7 +107,7 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
                 .status(fetched.status())
                 .categoryCode(fetched.categoryCode())
                 .categoryMatched(matched)
-                .categoryWarning(matched ? null : CATEGORY_WARNING)
+                .categoryWarning(categoryWarning(matched, platform, fetched.categoryCode()))
                 .channelTags(channelTags(ctx.master(), fetched.tags()))
                 .components(previewComponents(ctx.components()))
                 .options(fetched.options().stream()
@@ -158,14 +158,22 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
 
         // --- 2) the cell itself
         boolean matched = categoryMatches(ctx.master(), platform, fetched.categoryCode());
+        // 2609_45/D9·D12: the cell keeps its own category when it differs from the master's AND that category
+        // carries a commission (D11). Only then do the channel-scoped attributes/notices/group belong on the
+        // cell — with the master category in force they would be values of the wrong schema.
+        boolean keepsOwnCategory = !matched && hasCommission(platform, fetched.categoryCode());
         List<String> channelTags = channelTags(ctx.master(), fetched.tags());
         ProductListing cell = productListingRepository.save(ProductListing.builder()
                 .masterProduct(ctx.master())
                 .seller(ctx.seller())
                 .platform(platform)
                 .platformProductId(request.getPlatformProductId())
-                // D16: the market's own leaf code, kept for display/compare only — never for the payload.
+                // 2609_22/D16 → 2609_45/D9: the market's own leaf code. This is now the category this cell
+                // actually uses (unless it equals the master's, or has no commission — see the resolver).
                 .platformCategoryCode(fetched.categoryCode())
+                // 2609_45/D12: the group of THAT category. null when the master's category is in force —
+                // leaving a stale group would filter the notices of a schema this cell no longer uses.
+                .categoryNoticeGroup(keepsOwnCategory ? fetched.noticeGroup() : null)
                 // The market name is display data; a missing one would violate NOT NULL, so fall back.
                 .name(fetched.productName() == null || fetched.productName().isBlank()
                         ? ctx.master().getName() : fetched.productName())
@@ -201,6 +209,12 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
                     .approvalStatus(market.vendorItemId() != null
                             ? OptionApprovalStatus.APPROVED : OptionApprovalStatus.NOT_APPROVED)
                     .active(true)                                          // it is being sold on the market
+                    // 2609_45/D12: when the cell keeps its own category, the cell option map is that channel's
+                    // ONLY source (D12-1 removes the master values from the merge base) → store the option's
+                    // attributes WHOLE, common ones included. Same category → leave null: the master's values
+                    // are the answer and copying them would create a second, diverging copy.
+                    .categoryAttributes(keepsOwnCategory ? emptyToNull(market.attributes()) : null)
+                    .categoryNotices(keepsOwnCategory ? emptyToNull(market.notices()) : null)
                     .build());
             for (ListingImportRequest.Component component : spec.getComponents()) {
                 productListingProductRepository.save(ProductListingProduct.builder()
@@ -221,7 +235,7 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
                 .productListingId(cell.getId())
                 .status(cell.getStatus().name())
                 .generated(listingAssetService.getGenerated(cell.getId()))
-                .categoryWarning(matched ? null : CATEGORY_WARNING)
+                .categoryWarning(categoryWarning(matched, platform, fetched.categoryCode()))
                 .build();
     }
 
@@ -452,6 +466,39 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
                 .flatMap(pc -> categoryMappingRepository.findByPlatformCategoryId(pc.getId()))
                 .map(cm -> cm.getCategory().getId().equals(master.getCategory().getId()))
                 .orElse(false);
+    }
+
+    /**
+     * 2609_45/D11: 그 마켓 카테고리가 수수료를 갖고 있는가. 없으면(미시드 포함) 셀은 자기 카테고리를 유지하지
+     * 못하고 마스터로 폴백한다 — 수수료를 모르면 판매가 역산이 400 이기 때문이다
+     * ({@code MasterChannelConfigServiceImpl.resolveChannelCategory} 와 같은 판단).
+     */
+    private boolean hasCommission(Platform platform, String marketCategoryCode) {
+        if (marketCategoryCode == null || marketCategoryCode.isBlank()) {
+            return false;
+        }
+        return platformCategoryRepository.findByPlatformAndCode(platform, marketCategoryCode)
+                .map(pc -> pc.getCommissionRate() != null)
+                .orElse(false);
+    }
+
+    /**
+     * 2609_45/D15 재정의 — <b>문구는 그대로, 조건만 바뀐다</b>(문구는 사용자 지정이라 손대지 말 것).
+     *
+     * <p>역조회 실패·불일치 자체는 더 이상 경고가 아니다(그 셀은 자기 카테고리를 유지하므로 어긋날 것이
+     * 없다). 경고는 <b>수수료가 없어 마스터 카테고리로 폴백한 경우</b>에만 — 그때만 마진 오차가 실제로
+     * 생긴다.</p>
+     */
+    private String categoryWarning(boolean matched, Platform platform, String marketCategoryCode) {
+        if (matched || hasCommission(platform, marketCategoryCode)) {
+            return null;
+        }
+        return CATEGORY_WARNING;
+    }
+
+    /** 빈 맵은 "override 없음"(null)으로 저장한다 — 빈 맵을 남기면 컨버터가 {@code {}} 를 적어 둔다. */
+    private static Map<String, String> emptyToNull(Map<String, String> values) {
+        return values == null || values.isEmpty() ? null : new LinkedHashMap<>(values);
     }
 
     /**

@@ -173,3 +173,5 @@ databaseChangeLog:
       file: db/changelog/changes/090-shipment-parcel.yaml
   - include:
       file: db/changelog/changes/091-box-kind-recipe.yaml
+  - include:
+      file: db/changelog/changes/092-listing-category-notice-group.yaml

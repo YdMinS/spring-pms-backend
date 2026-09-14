@@ -323,11 +323,20 @@ public class CoupangListingAdapter implements ListingChannel {
         boolean bundle = masterProductService.isBundle(master == null ? null : master.getId());
         // 47/59: register targets a single (master × channel) cell → one category → one getMeta call (reusing
         // the Coupang concrete metaAdapter, 61). Empty schema (NAVER) leaves both loops with nothing to check.
-        String code = masterChannelConfigService.resolvePlatformCategoryCode(cell);
-        CategoryMetaSchema schema = metaAdapter.getMeta(acct, code);
+        // 2609_45/D10: ONE resolver call gives both the code and whether it is the channel's own category —
+        // never recompute `own` here (the D10-1 comparison and the D11 fallback live in the resolver).
+        MasterChannelConfigService.ChannelCategory category =
+                masterChannelConfigService.resolveChannelCategory(cell);
+        CategoryMetaSchema schema = metaAdapter.getMeta(acct, category.category().getCode());
+        boolean usesOwnCategory = category.own();
 
-        Map<String, String> masterAttributes = master != null ? master.getCategoryAttributes() : null;
-        Map<String, String> masterNotices = master != null ? master.getCategoryNotices() : null;
+        // 2609_45/D12-1: when the channel uses its OWN category the master values belong to a DIFFERENT
+        // category — they must not seed the merge (see the note on the payload builder). The import stored
+        // everything this channel needs on the cell options.
+        Map<String, String> masterAttributes =
+                master != null && !usesOwnCategory ? master.getCategoryAttributes() : null;
+        Map<String, String> masterNotices =
+                master != null && !usesOwnCategory ? master.getCategoryNotices() : null;
         // 2609_22/D1: master options keyed by id — the single master↔channel matching axis (never the name).
         Map<Long, MasterProductOption> byMasterOptionId = master == null ? Map.of()
                 : masterProductOptionRepository.findByMasterProductId(master.getId()).stream()
@@ -335,8 +344,13 @@ public class CoupangListingAdapter implements ListingChannel {
         // 96 ⑨: the required 고시 of the picked 품목군 (same group rule as the payload, ⑩). A legacy master with
         // no stored group is left alone — we cannot tell which group's required set applies, and demanding
         // every group's would make those masters un-registrable.
-        List<CategoryNotice> requiredNotices = master != null && master.getCategoryNoticeGroup() != null
-                ? noticesOfSelectedGroup(schema, master).stream().filter(CategoryNotice::required).toList()
+        // 🔴 2609_45/D12: the group is now 셀 ?? 마스터. Testing the MASTER's group (as this used to) skipped
+        //    the required-notice check entirely for a cell that carries its own group and no master group —
+        //    exactly the cells this feature creates.
+        String selectedNoticeGroup = selectedNoticeGroup(cell, master);
+        List<CategoryNotice> requiredNotices = selectedNoticeGroup != null
+                ? noticesOfSelectedGroup(schema, selectedNoticeGroup).stream()
+                        .filter(CategoryNotice::required).toList()
                 : List.of();
 
         for (ProductListingOption option : productListingOptionRepository.findByProductListingId(cell.getId())) {
@@ -427,10 +441,15 @@ public class CoupangListingAdapter implements ListingChannel {
         if (forUpdate) {
             payload.put("sellerProductId", cell.getPlatformProductId());
         }
-        // Category code = the master's standard category × platform, resolved from CategoryMapping (44). The
-        // channel-add cell's own category column is null. The resolver THROWS 400 on a missing mapping (never
-        // returns null), so by this point the code is always non-null and reused below for the notice groups.
-        String categoryCode = masterChannelConfigService.resolvePlatformCategoryCode(cell);
+        // Category = this channel's OWN marketplace category when it has one, else the master's standard
+        // category × platform from CategoryMapping (44, 2609_45/D9). ONE resolver call gives both the code and
+        // whether it is the channel's own — never recompute `own` from the column (D10-1/D11 live in the
+        // resolver). The resolver THROWS 400 on a missing mapping (never returns null), so by this point the
+        // code is always non-null and reused below for the notice groups.
+        MasterChannelConfigService.ChannelCategory category =
+                masterChannelConfigService.resolveChannelCategory(cell);
+        String categoryCode = category.category().getCode();
+        boolean usesOwnCategory = category.own();
         payload.put("displayCategoryCode", categoryCode);
         var cred = CoupangCredentials.of(acct);
         payload.put("vendorId", cred.getVendorId());
@@ -490,8 +509,18 @@ public class CoupangListingAdapter implements ListingChannel {
             payload.put("displayProductName", limitName(displayName));
         }
 
-        Map<String, String> masterAttributes = master != null ? master.getCategoryAttributes() : null;
-        Map<String, String> masterNotices = master != null ? master.getCategoryNotices() : null;
+        /*
+         * 2609_45/D12-1: when the channel uses its OWN category the master's values are ANOTHER category's
+         * values — drop them from the merge base. toAttributes does not filter by schema, so a master-only
+         * attribute (e.g. "즉석밥 크기" from the master's rice category) would otherwise be sent on a product
+         * that sits in a different category; Coupang either rejects it or, worse, registers the wrong
+         * attribute. Everything this channel needs was stored on its cell options at import time.
+         * Same category → the usual three-tier merge (master ++ master option ++ cell option, 2609_22/D5).
+         */
+        Map<String, String> masterAttributes =
+                master != null && !usesOwnCategory ? master.getCategoryAttributes() : null;
+        Map<String, String> masterNotices =
+                master != null && !usesOwnCategory ? master.getCategoryNotices() : null;
         // The category meta for this code, fetched ONCE and reused for both the notice groups (61/96 ⑩) and the
         // attribute units (96 ④). ⚠️ Do not call getMeta again inside this method — register already pays two
         // calls in total (validateRegistrable + here, accepted per §60); adding a third is pure waste.
@@ -499,7 +528,7 @@ public class CoupangListingAdapter implements ListingChannel {
         // Notice detail(noticeCategoryDetailName) → group(noticeCategoryName) for this category (61), narrowed
         // to the group the user actually picked (96 ⑩ — 품목군 share notice keys, so a first-wins map tagged the
         // shared ones with whichever group happened to come first).
-        Map<String, String> groupByDetail = noticesOfSelectedGroup(schema, master).stream()
+        Map<String, String> groupByDetail = noticesOfSelectedGroup(schema, selectedNoticeGroup(cell, master)).stream()
                 .filter(n -> n.groupName() != null)
                 .collect(Collectors.toMap(CategoryNotice::key, CategoryNotice::groupName, (a, b) -> a));
         // 96 ④: attribute name → 기본 단위. Coupang has no unit field — the value itself must carry it
@@ -764,14 +793,26 @@ public class CoupangListingAdapter implements ListingChannel {
      * one group only — otherwise the shared keys go out labelled with whichever group came first in the schema.
      * A legacy master with no stored group keeps the old first-wins behaviour (no regression).
      */
-    private static List<CategoryNotice> noticesOfSelectedGroup(CategoryMetaSchema schema, MasterProduct master) {
-        String selected = master != null ? master.getCategoryNoticeGroup() : null;
+    private static List<CategoryNotice> noticesOfSelectedGroup(CategoryMetaSchema schema, String selected) {
         if (selected == null || selected.isBlank()) {
             return schema.notices();
         }
         return schema.notices().stream()
                 .filter(n -> selected.equals(n.groupName()))
                 .toList();
+    }
+
+    /**
+     * 2609_45/D12: 셀 그룹 ?? 마스터 그룹. When a channel keeps its own category, the 품목군 is that category's,
+     * not the master's. null (neither set) keeps 96 ⑩'s first-wins fallback for legacy masters.
+     */
+    private static String selectedNoticeGroup(ProductListing cell, MasterProduct master) {
+        String cellGroup = cell.getCategoryNoticeGroup();
+        if (cellGroup != null && !cellGroup.isBlank()) {
+            return cellGroup;
+        }
+        String masterGroup = master != null ? master.getCategoryNoticeGroup() : null;
+        return masterGroup == null || masterGroup.isBlank() ? null : masterGroup;
     }
 
     /**

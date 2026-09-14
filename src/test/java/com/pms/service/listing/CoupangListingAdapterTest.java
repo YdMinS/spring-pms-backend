@@ -93,6 +93,15 @@ class CoupangListingAdapterTest {
                 .isActive(true).build();
     }
 
+    /**
+     * 2609_45/D10: the adapter now asks the resolver for {code, own} in one call. {@code own=false} = the cell
+     * follows the master category, which is what every pre-existing test assumes (merge base intact).
+     */
+    private MasterChannelConfigService.ChannelCategory channelCategory(String code, boolean own) {
+        return new MasterChannelConfigService.ChannelCategory(
+                com.pms.domain.PlatformCategory.builder().platform(Platform.COUPANG).code(code).build(), own);
+    }
+
     /** A fully-populated resolved shipping config (75) — no missing required field. extraInfoMessage null. */
     private ResolvedShippingConfig fullResolved() {
         return new ResolvedShippingConfig(
@@ -111,7 +120,7 @@ class CoupangListingAdapterTest {
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
         // Category code now comes from the master's standard category × platform mapping (44).
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         given(client.post(anyString(), payload.capture(), any()))
                 .willReturn("{\"code\":\"SUCCESS\",\"data\":987654321}");
@@ -119,7 +128,7 @@ class CoupangListingAdapterTest {
         String sellerProductId = adapter.register(cell(), gen, acct());
 
         assertThat(sellerProductId).isEqualTo("987654321");
-        // displayCategoryCode = resolvePlatformCategoryCode result (44).
+        // displayCategoryCode = resolveChannelCategory result (44 → 2609_45/D9).
         assertThat(payload.getValue()).contains("\"displayCategoryCode\":\"cat-1\"");
     }
 
@@ -135,7 +144,7 @@ class CoupangListingAdapterTest {
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         // 2609_22/D7: the generator receives the cell's active option ROWS (it resolves the master option
         // through each row's FK, and falls back to the cell BOM for a channel-only option).
         given(registrationNameGenerator.generate(eq(master), anyList(), any()))
@@ -171,7 +180,7 @@ class CoupangListingAdapterTest {
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of(moA));
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         // 61: the notice group (noticeCategoryName) is derived from the category meta for this code.
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(), List.of(new CategoryNotice("제품소재", "제품소재", true, "의류"))));
@@ -205,7 +214,7 @@ class CoupangListingAdapterTest {
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         // Meta only knows "제품소재" → "미매핑detail" has no group → skipped.
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(), List.of(new CategoryNotice("제품소재", "제품소재", true, "의류"))));
@@ -232,7 +241,7 @@ class CoupangListingAdapterTest {
                 .willReturn(List.of(active1, inactive, active2));
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
 
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
@@ -255,7 +264,7 @@ class CoupangListingAdapterTest {
                         .sellingPrice(new BigDecimal("12000")).active(true).build()));
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
         given(masterProductService.isBundle(1L)).willReturn(false);   // 1 component → SINGLE
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
@@ -282,7 +291,7 @@ class CoupangListingAdapterTest {
                         .sellingPrice(new BigDecimal("20000")).active(true).build()));
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
         given(masterProductService.isBundle(1L)).willReturn(true);   // 2+ components → AB
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         // 61: notices need a noticeCategoryName group mapping to survive the payload — stub it so the AB notice
         // is emitted (attributes are forbidden for AB, but notices are not).
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
@@ -308,7 +317,7 @@ class CoupangListingAdapterTest {
                 ProductListingOption.builder().id(1L).optionName("A")
                         .sellingPrice(new BigDecimal("6000")).active(true).build()));
         given(masterProductService.isBundle(null)).willReturn(false);
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
@@ -329,7 +338,7 @@ class CoupangListingAdapterTest {
         given(masterProductService.isBundle(1L)).willReturn(true);
         // 96 ⑨: AB no longer returns before the meta lookup (it still has to validate notices) → the category
         // code and the schema must be reachable.
-        given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(cell)).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(new CategoryAttribute("원산지", true, "TEXT", List.of(), null)), List.of()));
 
@@ -347,7 +356,7 @@ class CoupangListingAdapterTest {
         ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
         given(masterProductService.isBundle(1L)).willReturn(false);
-        given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(cell)).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(new CategoryAttribute("원산지", true, "TEXT", List.of(), null)), List.of()));
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
@@ -370,7 +379,7 @@ class CoupangListingAdapterTest {
         ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
         given(masterProductService.isBundle(1L)).willReturn(false);
-        given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(cell)).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(new CategoryAttribute("최소 중량", true, "NUMBER", List.of(), "g", "1"),
                         new CategoryAttribute("최소 용량", true, "NUMBER", List.of(), "ml", "1")),
@@ -392,7 +401,7 @@ class CoupangListingAdapterTest {
         ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
         given(masterProductService.isBundle(1L)).willReturn(false);
-        given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(cell)).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(new CategoryAttribute("최소 중량", true, "NUMBER", List.of(), "g", "1"),
                         new CategoryAttribute("최소 용량", true, "NUMBER", List.of(), "ml", "1")),
@@ -416,7 +425,7 @@ class CoupangListingAdapterTest {
                         .sellingPrice(new BigDecimal("10000")).originalPrice(new BigDecimal("12500"))
                         .active(true).build()));
         given(masterProductService.isBundle(null)).willReturn(false);
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
@@ -465,7 +474,7 @@ class CoupangListingAdapterTest {
                 ProductListingOption.builder().id(1L).optionName("1세트")
                         .sellingPrice(new BigDecimal("10000")).active(true).build()));   // no originalPrice
         given(masterProductService.isBundle(null)).willReturn(false);
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
@@ -482,7 +491,7 @@ class CoupangListingAdapterTest {
         given(shippingConfigResolver.resolve(any())).willReturn(
                 new ResolvedShippingConfig(null, null, null, null, null, null, null, null, null,
                         null, null, null, null, null, null, null, null));
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
 
         assertThatThrownBy(() -> adapter.register(cell(), gen, acct()))
@@ -497,7 +506,7 @@ class CoupangListingAdapterTest {
                 "OUT-1", null, "반품담당", "021234567", "06000", "서울시", "1층",
                 new BigDecimal("2500"), new BigDecimal("2500"),
                 "SEQUENCIAL", "KGB", "FREE", new BigDecimal("0"), null, "N", "NOT_UNION_DELIVERY", null));
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
 
         assertThatThrownBy(() -> adapter.register(cell(), gen, acct()))
@@ -518,7 +527,7 @@ class CoupangListingAdapterTest {
                 ProductListingOption.builder().id(1L).optionName("1세트")
                         .sellingPrice(new BigDecimal("6000")).active(true).build()));
         given(masterProductService.isBundle(null)).willReturn(false);
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
@@ -536,7 +545,7 @@ class CoupangListingAdapterTest {
                 ProductListingOption.builder().id(1L).optionName("1세트")
                         .sellingPrice(new BigDecimal("6000")).active(true).build()));
         given(masterProductService.isBundle(null)).willReturn(false);
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
@@ -553,7 +562,7 @@ class CoupangListingAdapterTest {
                 "OUT-1", "RC-1", "반품담당", "021234567", "06000", "서울시", "1층",
                 new BigDecimal("2500"), new BigDecimal("2500"),
                 "SEQUENCIAL", "KGB", "CHARGE_RECEIVED", new BigDecimal("0"), null, "N", "UNION_DELIVERY", null));
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
 
         assertThatThrownBy(() -> adapter.register(cell(), gen, acct()))
@@ -566,7 +575,7 @@ class CoupangListingAdapterTest {
     void register_missingVendorUserId_throws400() {
         MarketplaceAccount noUser = MarketplaceAccountFixture.coupangStubBuilder("V1", null)
                 .isActive(true).build();   // no vendorUserId
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
 
         assertThatThrownBy(() -> adapter.register(cell(), gen, noUser))
@@ -655,7 +664,7 @@ class CoupangListingAdapterTest {
                         .sellingPrice(new BigDecimal("12900")).active(true).build()));
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
         given(masterProductService.isBundle(1L)).willReturn(false);
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("73170");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("73170", false));
         given(metaAdapter.getMeta(any(), eq("73170"))).willReturn(new CategoryMetaSchema(List.of(
                 new CategoryAttribute("수량", true, "NUMBER", List.of(), "개"),
                 new CategoryAttribute("개당 중량", true, "NUMBER", List.of(), "g")), List.of()));
@@ -712,7 +721,7 @@ class CoupangListingAdapterTest {
     @Test
     void register_blankDetailHtml_throws() {
         // the @BeforeEach getMeta stub matches anyString() → the category code must be non-null to reach the guard
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").build();   // no detailHtml
 
         assertThatThrownBy(() -> adapter.register(cell(), gen, acct()))
@@ -730,7 +739,7 @@ class CoupangListingAdapterTest {
         ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
         given(masterProductService.isBundle(1L)).willReturn(false);
-        given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(cell)).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(new CategoryAttribute("사이즈", false, "TEXT", List.of(), null)), List.of()));
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
@@ -756,7 +765,7 @@ class CoupangListingAdapterTest {
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         String longName = "가".repeat(120);
         given(registrationNameGenerator.generate(eq(master), anyList(), any()))
                 .willReturn(longName);
@@ -787,7 +796,7 @@ class CoupangListingAdapterTest {
                 ProductListingOption.builder().id(1L).optionName("A")
                         .sellingPrice(new BigDecimal("6000")).active(true).build()));
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(new CategoryAttribute("개당 중량", true, "NUMBER", List.of(), "g"),
                         new CategoryAttribute("개당 용량", true, "NUMBER", List.of(), "ml"),
@@ -841,7 +850,7 @@ class CoupangListingAdapterTest {
                 ProductListingOption.builder().id(1L).optionName("A")
                         .sellingPrice(new BigDecimal("6000")).active(true).build()));
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(sharedNoticeKeySchema());
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
@@ -863,7 +872,7 @@ class CoupangListingAdapterTest {
                 ProductListingOption.builder().id(1L).optionName("A")
                         .sellingPrice(new BigDecimal("6000")).active(true).build()));
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(sharedNoticeKeySchema());
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
@@ -890,7 +899,7 @@ class CoupangListingAdapterTest {
                 ProductListingOption.builder().id(1L).optionName("1세트")
                         .sellingPrice(new BigDecimal("6000")).active(true).build()));
         given(masterProductService.isBundle(null)).willReturn(false);
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
@@ -924,7 +933,7 @@ class CoupangListingAdapterTest {
     void validateRegistrable_requiredNoticeBlank_throws() {
         ProductListing cell = cellMissingRequiredNotice();
         given(masterProductService.isBundle(1L)).willReturn(false);
-        given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(cell)).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(new CategoryAttribute("원산지", true, "TEXT", List.of(), null)),
                 sharedNoticeKeySchema().notices()));
@@ -941,7 +950,7 @@ class CoupangListingAdapterTest {
     void validateRegistrable_emptyNoticeSchema_skips() {
         ProductListing cell = cellMissingRequiredNotice();
         given(masterProductService.isBundle(1L)).willReturn(false);
-        given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(cell)).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(new CategoryAttribute("원산지", true, "TEXT", List.of(), null)), List.of()));
         givenOneActiveOption();
@@ -955,7 +964,7 @@ class CoupangListingAdapterTest {
     void validateRegistrable_abMaster_stillValidatesNotices() {
         ProductListing cell = cellMissingRequiredNotice();
         given(masterProductService.isBundle(1L)).willReturn(true);   // AB → attributes skipped, notices are not
-        given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(cell)).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(new CategoryAttribute("원산지", true, "TEXT", List.of(), null)),
                 sharedNoticeKeySchema().notices()));
@@ -970,7 +979,7 @@ class CoupangListingAdapterTest {
     void validateRegistrable_emptyAttributeSchema_stillValidatesNotices() {
         ProductListing cell = cellMissingRequiredNotice();
         given(masterProductService.isBundle(1L)).willReturn(false);
-        given(masterChannelConfigService.resolvePlatformCategoryCode(cell)).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(cell)).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(), sharedNoticeKeySchema().notices()));   // notices-only category
         givenOneActiveOption();
@@ -990,7 +999,7 @@ class CoupangListingAdapterTest {
                 ProductListingOption.builder().id(1L).optionName("1세트")
                         .sellingPrice(new BigDecimal("10000")).active(true).build()));
         given(masterProductService.isBundle(null)).willReturn(false);
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
@@ -1013,7 +1022,7 @@ class CoupangListingAdapterTest {
                         .sellingPrice(new BigDecimal("10000")).active(true)
                         .sellerProductItemId("777").platformOptionId("888").build()));
         given(masterProductService.isBundle(null)).willReturn(false);
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
@@ -1035,7 +1044,7 @@ class CoupangListingAdapterTest {
                 ProductListingOption.builder().id(2L).optionName("2세트")
                         .sellingPrice(new BigDecimal("20000")).active(true).build()));   // ids null
         given(masterProductService.isBundle(null)).willReturn(false);
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
@@ -1067,7 +1076,7 @@ class CoupangListingAdapterTest {
                         .sellingPrice(new BigDecimal("10000")).active(true)
                         .stockQuantity(channelStock).build()));
         given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of(masterOption));
-        given(masterChannelConfigService.resolvePlatformCategoryCode(any())).willReturn("cat-1");
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
@@ -1141,5 +1150,116 @@ class CoupangListingAdapterTest {
                 option, new BigDecimal("10990.00"), MarketplaceAccount.builder().build()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("판매중인 상품이 아닙니다");
+    }
+
+    // ---- 2609_45/D12·D12-1: channel-owned category isolates the merge base ----
+
+    /** Master values that must NOT leak into a foreign category's payload. */
+    private MasterProduct masterWithOwnCategoryValues() {
+        return MasterProduct.builder().id(1L).name("마스터")
+                .categoryAttributes(Map.of("즉석밥 크기", "210g"))
+                .categoryNotices(Map.of("제품소재", "쌀 100%"))
+                .categoryNoticeGroup("가공식품")
+                .build();
+    }
+
+    /** Register with one active option and return the captured payload. */
+    private JsonNode registerAndCapture(ProductListing cell, ProductListingOption option,
+                                        List<MasterProductOption> masterOptions,
+                                        CategoryMetaSchema schema, boolean own) throws Exception {
+        given(productListingOptionRepository.findByProductListingId(cell.getId()))
+                .willReturn(List.of(option));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(masterOptions);
+        given(masterChannelConfigService.resolveChannelCategory(any()))
+                .willReturn(channelCategory("73170", own));
+        given(metaAdapter.getMeta(any(), eq("73170"))).willReturn(schema);
+        GeneratedProductData gen = GeneratedProductData.builder()
+                .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell, gen, acct());
+
+        return objectMapper.readTree(payload.getValue());
+    }
+
+    // A. The channel uses its own category → the master's (other category's) attributes are NOT sent.
+    @Test
+    void register_channelOwnCategory_dropsMasterAttributesFromTheMergeBase() throws Exception {
+        MasterProduct master = masterWithOwnCategoryValues();
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
+                .platformProductId("123456789").masterProduct(master)
+                .platformCategoryCode("73170").categoryNoticeGroup("가공식품").build();
+        ProductListingOption option = ProductListingOption.builder().id(1L).optionName("A")
+                .sellingPrice(new BigDecimal("6000")).active(true)
+                .categoryAttributes(Map.of("수량", "6")).build();
+
+        JsonNode item = registerAndCapture(cell, option, List.of(),
+                new CategoryMetaSchema(List.of(), List.of()), true).path("items").get(0);
+
+        assertThat(item.path("attributes")).hasSize(1);
+        assertThat(item.path("attributes").get(0).path("attributeTypeName").asText()).isEqualTo("수량");
+    }
+
+    // B. 🔴 D10-1 regression: a cell whose code EQUALS the master's (= every pre-existing imported cell) keeps
+    //    the master values in the merge base. Judging by code-presence would strip them.
+    @Test
+    void register_cellCodeMatchingMaster_keepsMasterAttributes() throws Exception {
+        MasterProduct master = masterWithOwnCategoryValues();
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
+                .platformProductId("123456789").masterProduct(master)
+                .platformCategoryCode("73170").build();
+        ProductListingOption option = ProductListingOption.builder().id(1L).optionName("A")
+                .sellingPrice(new BigDecimal("6000")).active(true).build();
+
+        JsonNode item = registerAndCapture(cell, option, List.of(),
+                new CategoryMetaSchema(List.of(), List.of()), false).path("items").get(0);
+
+        assertThat(item.path("attributes")).hasSize(1);
+        assertThat(item.path("attributes").get(0).path("attributeTypeName").asText()).isEqualTo("즉석밥 크기");
+    }
+
+    // C. Notices follow the same rule — and the group comes from the CELL (D12).
+    @Test
+    void register_channelOwnCategory_dropsMasterNoticesAndUsesTheCellGroup() throws Exception {
+        MasterProduct master = masterWithOwnCategoryValues();
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
+                .platformProductId("123456789").masterProduct(master)
+                .platformCategoryCode("73170").categoryNoticeGroup("농수축산물").build();
+        ProductListingOption option = ProductListingOption.builder().id(1L).optionName("A")
+                .sellingPrice(new BigDecimal("6000")).active(true)
+                .categoryNotices(Map.of("품목 또는 명칭", "쌀")).build();
+        CategoryMetaSchema schema = new CategoryMetaSchema(List.of(), List.of(
+                new CategoryNotice("품목 또는 명칭", "품목 또는 명칭", false, "농수축산물"),
+                new CategoryNotice("제품소재", "제품소재", false, "가공식품")));
+
+        JsonNode item = registerAndCapture(cell, option, List.of(), schema, true).path("items").get(0);
+
+        assertThat(item.path("notices")).hasSize(1);
+        assertThat(item.path("notices").get(0).path("noticeCategoryDetailName").asText())
+                .isEqualTo("품목 또는 명칭");
+        assertThat(item.path("notices").get(0).path("noticeCategoryName").asText()).isEqualTo("농수축산물");
+    }
+
+    // D. 🔴 Step 3 regression: a cell with its own group and NO master group must still be gated on the
+    //    required notices of that group (the old master-only condition skipped the check entirely).
+    @Test
+    void validateRegistrable_cellGroupWithoutMasterGroup_stillEnforcesRequiredNotices() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터").build();   // 마스터 그룹 없음
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
+                .masterProduct(master).platformCategoryCode("73170").categoryNoticeGroup("가공식품").build();
+        given(masterProductService.isBundle(1L)).willReturn(false);
+        given(masterChannelConfigService.resolveChannelCategory(cell))
+                .willReturn(channelCategory("73170", true));
+        given(metaAdapter.getMeta(any(), eq("73170"))).willReturn(new CategoryMetaSchema(
+                List.of(), List.of(new CategoryNotice("제조연월일", "제조연월일", true, "가공식품"))));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("A")
+                        .sellingPrice(new BigDecimal("6000")).active(true).build()));
+
+        assertThatThrownBy(() -> adapter.validateRegistrable(cell, null, acct()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("필수 고시 누락");
     }
 }

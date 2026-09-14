@@ -192,6 +192,13 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
         MasterProduct master = masterProductRepository.findScopedById(masterId)
                 .orElseThrow(() -> new ResourceNotFoundException("MasterProduct", masterId));
 
+        // 🔴 2609_45/D2-1·D12: D2 의 "마스터 = 마켓 카테고리" 전제는 **역조회가 성공했을 때만** 성립한다.
+        //    역조회가 실패해 사용자가 다른 카테고리를 고르면 그 셀은 쿠팡 코드를 갖고 있으므로 02 의 해석에서
+        //    자기 카테고리로 살아나는데, 셀 메타가 비어 있으면 필수 속성 없이 전송된다.
+        //    → 01·02 어느 경로로 만들어졌든 판정은 하나다: 셀 카테고리 ≠ 마스터 카테고리면 셀 메타를 채운다.
+        boolean keepsOwnCategory = !categoryMatches(platform, fetched.categoryCode(), request.getCategoryId())
+                && hasCommission(platform, fetched.categoryCode());
+
         // --- 4) 셀
         String marketName = fetched.productName();
         ProductListing cell = productListingRepository.save(ProductListing.builder()
@@ -200,6 +207,8 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
                 .platform(platform)
                 .platformProductId(request.getPlatformProductId())
                 .platformCategoryCode(fetched.categoryCode())
+                // 2609_45/D12: 셀이 자기 카테고리를 유지할 때만 그 카테고리의 고시 품목군을 셀에 둔다.
+                .categoryNoticeGroup(keepsOwnCategory ? fetched.noticeGroup() : null)
                 // The market name is display data; a missing one would violate NOT NULL, so fall back.
                 .name(marketName == null || marketName.isBlank() ? request.getMasterName() : marketName)
                 // The product is already live on the market — take its status, and it is not pending sync.
@@ -247,9 +256,13 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
                     .approvalStatus(market.vendorItemId() != null
                             ? OptionApprovalStatus.APPROVED : OptionApprovalStatus.NOT_APPROVED)
                     .active(true)                                          // it is being sold on the market
-                    // ⚠️ categoryAttributes/categoryNotices 를 넣지 않는다 — 마스터 카테고리 = 마켓 카테고리라
+                    // ⚠️ 카테고리가 같으면(정상 경로) categoryAttributes/categoryNotices 를 넣지 않는다 —
                     //    마스터 값이 곧 정답이고, 셀에 복사하면 같은 값이 두 벌 생겨 나중에 마스터를 고쳐도
                     //    셀이 옛 값을 계속 이긴다(3단 병합에서 셀이 이긴다).
+                    // 🔴 다르면(D2-1) 셀 옵션 맵이 그 채널의 유일한 출처다(D12-1 이 마스터 베이스를 뺀다) →
+                    //    공통/상이로 나누지 않고 그 옵션의 속성 **전체**를 담는다.
+                    .categoryAttributes(keepsOwnCategory ? emptyToNull(market.attributes()) : null)
+                    .categoryNotices(keepsOwnCategory ? emptyToNull(market.notices()) : null)
                     .build());
             for (MasterFromChannelRequest.Component component : spec.getComponents()) {
                 productListingProductRepository.save(ProductListingProduct.builder()
@@ -440,6 +453,34 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
      * 마스터가 아직 없으니 폴백할 카테고리도 없다 — 실패 = 빈 값을 내리고 프론트가 사용자에게 고르게 한다
      * (2609_22/D15 경고 문구는 이 경로에서 쓰지 않는다. 불일치할 대상 자체가 없다).
      */
+    /**
+     * 2609_45/D2-1: 마켓 카테고리가 사용자가 고른 표준 카테고리와 같은가(역조회 기준 —
+     * {@code CoupangListingImportServiceImpl.categoryMatches} 와 같은 판단).
+     */
+    private boolean categoryMatches(Platform platform, String categoryCode, Long chosenCategoryId) {
+        return reverseLookup(platform, categoryCode)
+                .map(mapping -> mapping.getCategory().getId().equals(chosenCategoryId))
+                .orElse(false);
+    }
+
+    /**
+     * 2609_45/D11: 그 마켓 카테고리에 수수료가 있어야 셀이 자기 카테고리를 유지한다(없으면 해석이 마스터로
+     * 폴백하므로 셀 메타를 남기면 스키마가 어긋난다).
+     */
+    private boolean hasCommission(Platform platform, String categoryCode) {
+        if (categoryCode == null || categoryCode.isBlank()) {
+            return false;
+        }
+        return platformCategoryRepository.findByPlatformAndCode(platform, categoryCode)
+                .map(pc -> pc.getCommissionRate() != null)
+                .orElse(false);
+    }
+
+    /** 빈 맵은 "override 없음"(null)으로 저장한다. */
+    private static Map<String, String> emptyToNull(Map<String, String> values) {
+        return values == null || values.isEmpty() ? null : new LinkedHashMap<>(values);
+    }
+
     private Optional<CategoryMapping> reverseLookup(Platform platform, String categoryCode) {
         if (categoryCode == null || categoryCode.isBlank()) {
             return Optional.empty();

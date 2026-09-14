@@ -1,0 +1,18 @@
+# 채널이 자기 카테고리를 쓸 때의 고시 품목군 (FEATURE_2609_45 / D12).
+# product_listing.category_notice_group = 쿠팡 noticeCategoryName (예 "가공식품").
+# null = 마스터의 품목군을 따른다. platform_category_code 와 **짝으로만** 의미가 있다 — 셀이 자기
+# 카테고리를 유지할 때에만 채워지고, [마스터 카테고리로 변경] 토글이 둘을 함께 비운다.
+# 기존 행은 전부 NULL → 백필 없음, 데이터 이동 없음. boolean 컬럼 없음 → MySQL BIT 후속(006) 불필요.
+databaseChangeLog:
+
+  - changeSet:
+      id: 092-listing-category-notice-group
+      author: oclyx
+      comment: "FEATURE_2609_45/D12: product_listing.category_notice_group (채널 카테고리의 고시 품목군)."
+      changes:
+        - addColumn:
+            tableName: product_listing
+            columns:
+              - column: { name: category_notice_group, type: VARCHAR(100) }   # null = 마스터 품목군을 따름
+      rollback:
+        - dropColumn: { tableName: product_listing, columnName: category_notice_group }
