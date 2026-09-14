@@ -311,4 +311,20 @@ public class CoupangProperties {
 
     /** 쿠팡 API read 타임아웃(ms). 송장시트처럼 무거운 조회도 있어 넉넉히 잡되 무제한은 금지. */
     private int readTimeoutMs = 60_000;
+
+    /**
+     * 업체코드당 초당 호출 상한. 쿠팡 공식 한도는 5/s — 그 아래로 둔다(PLAN 2609_46 D3).
+     *
+     * <p>⚠️ 적응형 자동 상향을 만들지 말 것(D4) — {@code X-CAG-Warnings} 는 관측용이다.
+     */
+    private double callsPerSecond = 4.0;
+
+    /** 버스트 허용치(토큰 버킷 용량). 짧은 작업이 지연 없이 나가게 한다. */
+    private int callBurst = 5;
+
+    /**
+     * 동기화 사이클이 이 초를 넘으면 WARN 을 남긴다(D10). 계정 수가 늘면 여기가 제일 먼저 길어진다.
+     * 주기의 절반을 넘으면 곧 못 따라잡는다는 뜻이다.
+     */
+    private int syncCycleWarnSeconds = 60;
 }

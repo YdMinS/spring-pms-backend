@@ -70,6 +70,8 @@ public class SettlementSyncServiceImpl implements SettlementSyncService {
         UpsertResult total = UpsertResult.empty();
         List<String> failed = new ArrayList<>();
         int skippedCount = 0;
+        int rateLimited = 0;
+        CoupangRateLimitedException lastRateLimited = null;
         LocalDateTime nextAvailableAt = null;
 
         LocalDate to = LocalDate.now(SyncWindow.KST);
@@ -88,15 +90,21 @@ public class SettlementSyncServiceImpl implements SettlementSyncService {
             try {
                 total = total.plus(runAccount(account, from, to, true));
             } catch (CoupangRateLimitedException e) {
-                // 🔴 PLAN 2609_31 D9 — 쿨다운은 프로세스 전역이라 격리해도 나머지 계정이 전부 같은 예외를 맞는다.
-                //    200 + failedAccounts 로 내려가면 프론트가 남은 달을 계속 던져 왕복만 늘고, 재시도 가능 시각
-                //    문구가 사용자에게 안 보인다. 429 로 즉시 끊는다.
-                throw e;
+                // 쿨다운은 계정별이다(FEATURE_2609_46 D1) — 한 계정의 429 로 나머지 계정을 중단하지 않는다.
+                // 다만 계정이 전부 쿨다운이면 200 + failedAccounts 에는 재시도 가능 시각 문구가 화면에 뜨지 않으므로
+                // (그 UX 는 429 응답에만 있다) 그때만 전파한다.
+                rateLimited++;
+                lastRateLimited = e;
+                failed.add(describeFailure(account, e));   // 메시지에 재시도 가능 시각이 들어 있다
             } catch (RuntimeException e) {
                 log.warn("Settlement revenue sync failed for account={}, isolated and continue",
                         account.getId(), e);
                 failed.add(describeFailure(account, e));
             }
+        }
+
+        if (rateLimited > 0 && rateLimited + skippedCount == accounts.size()) {
+            throw lastRateLimited;      // 성공한 계정이 하나도 없다 — 오늘과 같은 429 UX 를 유지한다
         }
 
         boolean allSkipped = !accounts.isEmpty() && skippedCount == accounts.size();
@@ -121,9 +129,9 @@ public class SettlementSyncServiceImpl implements SettlementSyncService {
             // 창 분할(31일 상한)은 어댑터가 한다 — 여기서 400 을 사용자에게 그대로 보여주지 않는다.
             total = runAccount(account, from, to, false);
         } catch (CoupangRateLimitedException e) {
-            // 🔴 PLAN 2609_31 D9 — 쿨다운은 프로세스 전역이다. 200 + failedAccounts 로 내려가면 프론트의 월
-            //    루프가 남은 달을 계속 던져 왕복만 늘고, 재시도 가능 시각 문구가 사용자에게 안 보인다.
-            //    429 로 즉시 끊는다.
+            // 기간 백필은 계정 1건 경로다(루프가 아니다) — 그 하나가 쿨다운이면 성공한 계정이 없으므로,
+            //    200 + failedAccounts 로 내려가면 프론트의 월 루프가 남은 달을 계속 던져 왕복만 늘고,
+            //    재시도 가능 시각 문구가 사용자에게 안 보인다. 429 로 즉시 끊는다.
             throw e;
         } catch (RuntimeException e) {
             log.warn("Settlement period backfill failed for account={}", account.getId(), e);

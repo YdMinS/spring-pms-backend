@@ -1,5 +1,6 @@
 package com.pms.service.coupang;
 
+import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.exception.ResourceNotFoundException;
@@ -40,6 +41,7 @@ import java.util.stream.Collectors;
 public class OrderSyncFacadeImpl implements OrderSyncFacade {
 
     private final MarketplaceAccountRepository marketplaceAccountRepository;
+    private final CoupangProperties coupangProperties;
     private final CoupangOrderSyncService coupangOrderSyncService;
     private final CoupangReturnSyncService coupangReturnSyncService;
     private final SyncStatusRecorder syncStatusRecorder;
@@ -107,16 +109,27 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
      * 불렀는지 구분 없이 도는 호출이라 범위를 실어 보낼 자리가 아니다.
      */
     private OrderSyncResult syncEach(List<MarketplaceAccount> accounts) {
+        long startedAt = System.nanoTime();
+        int processed = 0;
         OrderSyncResult total = OrderSyncResult.empty();
         for (MarketplaceAccount account : accounts) {
             if (!Platform.COUPANG.equals(account.getPlatform())) {
                 continue;
             }
+            processed++;
             try {
                 total = total.plus(syncOne(account, OrderSyncScope.FULL));
             } catch (Exception e) {
                 log.warn("Order sync failed for account={}, isolated and continue", account.getId(), e);
             }
+        }
+        long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000;
+        // accounts = 이 사이클이 실제로 돈 쿠팡 계정 수(플랫폼 필터를 통과한 수)다. 넘겨받은 전체 계정 수가 아니다.
+        // 계정 수가 늘면 여기가 제일 먼저 길어진다. 주기의 절반을 넘으면 곧 못 따라잡는다는 뜻이다.
+        log.info("Order sync cycle done: accounts={} elapsedMs={}", processed, elapsedMs);
+        if (elapsedMs > coupangProperties.getSyncCycleWarnSeconds() * 1000L) {
+            log.warn("[COUPANG][ALERT] 동기화 사이클 {}초 초과 — accounts={} elapsedMs={}",
+                    coupangProperties.getSyncCycleWarnSeconds(), processed, elapsedMs);
         }
         return total;
     }
