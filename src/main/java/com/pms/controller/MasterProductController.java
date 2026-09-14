@@ -5,6 +5,8 @@ import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.CategoryAttributesRequest;
 import com.pms.dto.request.ImportProductImagesRequest;
 import com.pms.dto.request.MasterCategoryRequest;
+import com.pms.dto.request.MasterFromChannelPreviewRequest;
+import com.pms.dto.request.MasterFromChannelRequest;
 import com.pms.dto.request.MasterOptionRequest;
 import com.pms.dto.request.MasterProductQuery;
 import com.pms.dto.request.MasterProductRequest;
@@ -18,8 +20,10 @@ import com.pms.dto.request.TagsRequest;
 import com.pms.dto.response.ApplyOptionNamesResponse;
 import com.pms.dto.response.CategoryMetaResponse;
 import com.pms.dto.response.ChannelSyncPreviewResponse;
+import com.pms.dto.response.ListingMasterCreateResponse;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.MasterCategoryResponse;
+import com.pms.dto.response.MasterFromChannelPreviewResponse;
 import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductImageResponse;
 import com.pms.dto.response.MasterProductResponse;
@@ -27,6 +31,7 @@ import com.pms.dto.response.ShippingForceApplyResponse;
 import com.pms.service.CategoryMetaService;
 import com.pms.service.MasterProductImageService;
 import com.pms.service.MasterProductService;
+import com.pms.service.listing.MasterFromChannelService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -56,6 +61,7 @@ public class MasterProductController {
     private final MasterProductService masterProductService;
     private final MasterProductImageService masterProductImageService;
     private final CategoryMetaService categoryMetaService;
+    private final MasterFromChannelService masterFromChannelService;
 
     /**
      * Paged master list (110). {@code @ParameterObject} makes springdoc expand {@link MasterProductQuery}
@@ -101,6 +107,28 @@ public class MasterProductController {
             @Valid @RequestBody MasterProductRequest request) {
         MasterProductResponse response = masterProductService.createMasterProduct(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ResponseDTO.success(response));
+    }
+
+    // ---------------------------------------------------------------- master from a marketplace product (2609_45)
+
+    @PostMapping("/from-channel/preview")
+    @Operation(summary = "Preview a marketplace product before creating a master product from it",
+            description = "마켓 상품 id 하나로 옵션·카테고리·속성을 조회한다. 읽기 전용 — 저장 0회.")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<MasterFromChannelPreviewResponse>> previewMasterFromChannel(
+            @Valid @RequestBody MasterFromChannelPreviewRequest request) {
+        // 200, not 201 — nothing is created here.
+        return ResponseEntity.ok(ResponseDTO.success(masterFromChannelService.preview(request)));
+    }
+
+    @PostMapping("/from-channel")
+    @Operation(summary = "Create a master product (+ options + channel cell) from a marketplace product",
+            description = "쿠팡에 없는 정보(마스터 이름·구성상품·옵션별 수량·표준 카테고리)만 받고, 가격·재고·"
+                    + "옵션 식별자·상태·태그는 커밋 시 마켓을 다시 조회해 서버가 확정한다.")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<ListingMasterCreateResponse>> createMasterFromChannel(
+            @Valid @RequestBody MasterFromChannelRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(masterFromChannelService.create(request)));
     }
 
     @PatchMapping("/{id}")
