@@ -67,11 +67,11 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
 
     @Override
     public OrderSyncResult sync(Long accountId) {
-        return sync(accountId, OrderSyncScope.FULL);
+        return sync(accountId, OrderSyncPreset.QUICK);
     }
 
     @Override
-    public OrderSyncResult sync(Long accountId, OrderSyncScope scope) {
+    public OrderSyncResult sync(Long accountId, OrderSyncPreset preset) {
         MarketplaceAccount account = marketplaceAccountRepository.findById(accountId)
                 .orElseThrow(() -> new ResourceNotFoundException("MarketplaceAccount", accountId));
         // 🔴 여기는 웹 요청 스레드다 — 풀 스레드(syncOneIsolated)와 달리 이전 값을 복원한다(PLAN 2609_46 D14).
@@ -80,7 +80,8 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
         Long previousTenant = TenantContext.get();
         try {
             TenantContext.set(account.getTenantId());
-            return syncOne(account, scope);   // 단건은 격리 없이 예외 전파
+            // scheduled=false — 수동 회차라 실패·부분 실패를 그대로 기록한다(D13).
+            return syncOne(account, preset, false);   // 단건은 격리 없이 예외 전파
         } finally {
             if (previousTenant != null) {
                 TenantContext.set(previousTenant);
@@ -92,12 +93,19 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
 
     @Override
     public OrderSyncResult syncBySeller(Long sellerId) {
-        return syncEach(marketplaceAccountRepository.findBySeller_IdAndIsActiveTrue(sellerId));
+        return syncEach(marketplaceAccountRepository.findBySeller_IdAndIsActiveTrue(sellerId),
+                OrderSyncPreset.QUICK, false);
     }
 
     @Override
     public OrderSyncResult syncAll() {
-        return syncEach(marketplaceAccountRepository.findByIsActiveTrue());
+        return syncEach(marketplaceAccountRepository.findByIsActiveTrue(), OrderSyncPreset.QUICK, false);
+    }
+
+    @Override
+    public OrderSyncResult syncAll(OrderSyncPreset preset) {
+        // 스케줄 경로 — scheduled=true 로 실패 낙인을 끈다(FEATURE_2609_49 / D13).
+        return syncEach(marketplaceAccountRepository.findByIsActiveTrue(), preset, true);
     }
 
     @Override
@@ -141,10 +149,14 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
     /**
      * 계정 목록을 격리 동기화해 합산 (COUPANG 만, 한 계정 실패는 로그 후 계속).
      *
-     * 범위는 항상 {@link OrderSyncScope#FULL} 이다(PLAN 2609_16 D4) — 셀러/전체 동기화는 어느 화면이
-     * 불렀는지 구분 없이 도는 호출이라 범위를 실어 보낼 자리가 아니다.
+     * <p>프리셋을 받는다(FEATURE_2609_49 / D7) — 화면이 부르는 셀러/전체 동기화는 {@code QUICK},
+     * 새벽 리컨실 스케줄만 {@code RECONCILE} 이다. 프리셋이 정하는 건 주문 조회의 상태·창뿐이고
+     * 나머지 단계는 동일하게 돈다.
+     *
+     * @param scheduled 스케줄 회차인가 — {@code true} 면 실패·부분 실패를 기록하지 않는다(D13)
      */
-    private OrderSyncResult syncEach(List<MarketplaceAccount> accounts) {
+    private OrderSyncResult syncEach(List<MarketplaceAccount> accounts, OrderSyncPreset preset,
+                                     boolean scheduled) {
         long startedAt = System.nanoTime();
         List<MarketplaceAccount> targets = accounts.stream()
                 .filter(a -> Platform.COUPANG.equals(a.getPlatform()))
@@ -154,7 +166,7 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
         // 계정마다 동시에 던진다 — 쿠팡 예산이 업체코드별이라 서로의 몫을 먹지 않는다(PLAN 2609_46 D6).
         // ❌ parallelStream() 금지 — 공용 ForkJoinPool 이라 동시 실행 수를 제어할 수 없고 다른 작업과 섞인다.
         List<Future<OrderSyncResult>> futures = targets.stream()
-                .map(account -> coupangSyncExecutor.submit(() -> syncOneIsolated(account)))
+                .map(account -> coupangSyncExecutor.submit(() -> syncOneIsolated(account, preset, scheduled)))
                 .toList();
 
         // 합산은 제출 스레드에서 순차로 한다 — OrderSyncResult 는 immutable record 라 값은 안전하지만
@@ -171,8 +183,10 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
         // 그중 skipped 만큼은 락에 막혀 쿠팡을 치지 않았다(2609_48 D5) — 실제로 돈 수는 accounts - skipped 다.
         // 병렬화(2609_46 D6) 이후 이 값은 계정 수에 비례하지 않는다 — 비례하기 시작하면 동시 실행 수
         // (oklyx.coupang.sync-concurrency)가 포화됐다는 뜻이다.
-        log.info("Order sync cycle done: accounts={} skipped={} elapsedMs={}",
-                processed, total.skippedAccounts(), elapsedMs);
+        // 🔴 preset 을 로그에 싣는다(2609_49) — 야간 전량 회차와 15분 회차를 구분하지 못하면
+        // 이후 튜닝(어느 쪽이 얼마나 걸리나)의 근거가 사라진다.
+        log.info("Order sync cycle done: preset={} accounts={} skipped={} elapsedMs={}",
+                preset, processed, total.skippedAccounts(), elapsedMs);
         if (elapsedMs > coupangProperties.getSyncCycleWarnSeconds() * 1000L) {
             log.warn("[COUPANG][ALERT] 동기화 사이클 {}초 초과 — accounts={} elapsedMs={}",
                     coupangProperties.getSyncCycleWarnSeconds(), processed, elapsedMs);
@@ -185,17 +199,18 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
      *
      * <p>🔴 {@code finally} 에서 <b>복원이 아니라</b> {@link TenantContext#clear()} 다(PLAN 2609_46 D8).
      * 풀 스레드에 남아 있는 "이전 값"은 직전에 그 스레드를 쓴 <b>남의 테넌트</b> 것이라 복원하면
-     * 교차 테넌트 유출 경로가 된다. 웹 요청 스레드에서 도는 {@link #sync(Long, OrderSyncScope)} 는
+     * 교차 테넌트 유출 경로가 된다. 웹 요청 스레드에서 도는 {@link #sync(Long, OrderSyncPreset)} 는
      * 반대로 복원해야 한다 — 두 방식이 다른 이유는 그쪽 주석 참조(D14).
      *
      * <p>🔴 실패 계정은 {@code OrderSyncResult.empty()} 가 아니라 {@code null} 이다. {@code plus()} 가
      * {@code other.syncedAt} 을 취하므로 empty 를 더하면 마지막 계정이 실패했을 때 합계의 동기화 시각이
      * 실제로 동기화되지 않은 {@code now()} 로 덮인다.
      */
-    private OrderSyncResult syncOneIsolated(MarketplaceAccount account) {
+    private OrderSyncResult syncOneIsolated(MarketplaceAccount account, OrderSyncPreset preset,
+                                            boolean scheduled) {
         try {
             TenantContext.set(account.getTenantId());
-            return syncOne(account, OrderSyncScope.FULL);
+            return syncOne(account, preset, scheduled);
         } catch (Exception e) {
             log.warn("Order sync failed for account={}, isolated and continue", account.getId(), e);
             return null;
@@ -224,7 +239,7 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
      * 단건({@code sync(accountId)})과 전체/셀러({@code syncEach → syncOneIsolated})가 둘 다 여기를
      * 지나므로 락은 이 한 자리에만 건다.
      */
-    private OrderSyncResult syncOne(MarketplaceAccount account, OrderSyncScope scope) {
+    private OrderSyncResult syncOne(MarketplaceAccount account, OrderSyncPreset preset, boolean scheduled) {
         AccountSyncLock.Lease lease =
                 accountSyncLock.tryAcquire(AccountSyncLock.SyncWork.ORDER, account.getId());
         if (lease == null) {
@@ -239,28 +254,41 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
         // try-with-resources 라 본문이 예외를 던져도 빠져나가기 전에 풀린다 —
         // "실패했으니 곧바로 다시 누른다" 가 성립해야 한다.
         try (lease) {
-            return syncOneLocked(account, scope);
+            return syncOneLocked(account, preset, scheduled);
         }
     }
 
     /**
      * 락을 쥔 상태의 실제 동기화 본문.
      *
-     * {@code scope} 는 ordersheets 가 조회할 상태만 좁힌다 — 취소 보정과 상태 기록은 범위와 무관하게
-     * 그대로 돈다(PLAN 2609_16 D5·D6).
+     * {@code preset} 은 ordersheets 가 조회할 상태와 창만 고른다 — 취소 보정·클레임·문의 단계와
+     * 상태 기록은 프리셋과 무관하게 그대로 돈다(2609_16 D5·D6 · 2609_49 D7).
+     *
+     * {@code scheduled} 는 <b>기록기 호출만</b> 가른다(2609_49 / D13) — 스케줄 회차는 실패·부분 실패를
+     * 기록하지 않는다. 🔴 프리셋으로 대신할 수 없다: QUICK 은 수동 버튼과 15분 스케줄이 공유한다.
      */
-    private OrderSyncResult syncOneLocked(MarketplaceAccount account, OrderSyncScope scope) {
+    private OrderSyncResult syncOneLocked(MarketplaceAccount account, OrderSyncPreset preset,
+                                          boolean scheduled) {
         // 🔴 테넌트는 호출자가 세팅한다 — 여기서는 저장·복원하지 않는다(PLAN 2609_46 D8·D14).
         //   - syncEach → syncOneIsolated: 풀 스레드라 finally 에서 clear() (남의 테넌트 복원 금지)
         //   - sync(accountId): 웹 요청 스레드라 finally 에서 이전 값 복원 (직후 목록 조회가 빈다)
         // 계정의 테넌트를 쓰는 이유는 그대로다 — 저장되는 order_line/shopping_list_item(@TenantId) 이
         // 트리거(웹 관리자·SecurityContext 없는 배치)와 무관하게 그 계정의 테넌트로 들어가야 한다.
         // ⚠️ syncPeriod 는 syncOne 을 부르지 않는 별도 경로라 자체 저장·복원을 그대로 둔다.
+        // 주문 조회 = 프리셋이 정한다(2609_49 D1·D6). 나머지 단계는 프리셋과 무관하게 전부 돈다.
         SyncResult orders;
         try {
-            orders = coupangOrderSyncService.syncAccount(account, scope);
+            orders = switch (preset) {
+                case QUICK -> coupangOrderSyncService.syncAccount(account, OrderSyncScope.ACTIVE);
+                // 🔴 전량 리컨실은 앵커를 쓰지 않는다 — QUICK 이 15분마다 앵커를 찍어 종결 창이 3일로
+                // 붕괴하기 때문이다(OrderSyncPreset.RECONCILE 주석). 이 오버로드는 전 상태에 한 창을 쓴다.
+                case RECONCILE -> coupangOrderSyncService.syncAccount(
+                        account, SyncWindow.recent(coupangProperties.getSyncDays()));
+            };
         } catch (RuntimeException e) {
-            syncStatusRecorder.recordFailure(account.getId(), e);
+            if (!scheduled) {
+                syncStatusRecorder.recordFailure(account.getId(), e);
+            }
             throw e;                    // 격리는 syncEach 담당, 단건은 전파(D4)
         }
 
@@ -282,9 +310,11 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
         } catch (RuntimeException e) {
             // Orders landed but cancellations did not: canceled lines can still look purchasable,
             // so this is NOT a success (PLAN D8). 취소 보정 사유를 앞에 둔다(더 위험한 쪽).
-            String reason = "취소 보정 실패 — " + SyncStatusRecorder.summarize(e)
-                    + (orderPartial == null ? "" : " / " + orderPartial);
-            syncStatusRecorder.recordPartial(account.getId(), reason, orderPartial == null, false);
+            if (!scheduled) {
+                String reason = "취소 보정 실패 — " + SyncStatusRecorder.summarize(e)
+                        + (orderPartial == null ? "" : " / " + orderPartial);
+                syncStatusRecorder.recordPartial(account.getId(), reason, orderPartial == null, false);
+            }
             throw e;
         }
 
@@ -337,8 +367,12 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
         }
 
         if (orderPartial != null) {
-            syncStatusRecorder.recordPartial(account.getId(), orderPartial, false, true);
+            // 스케줄 회차는 PARTIAL 을 낙인하지 않는다(D13) — 위 WARN 로그가 유일한 흔적이다.
+            if (!scheduled) {
+                syncStatusRecorder.recordPartial(account.getId(), orderPartial, false, true);
+            }
         } else {
+            // 🔴 성공은 스케줄 회차에서도 기록한다 — lastOrderSyncAt 이 배너·조회 창 앵커의 원천이다.
             syncStatusRecorder.recordSuccess(account.getId());
         }
         return new OrderSyncResult(

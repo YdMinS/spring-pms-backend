@@ -10,6 +10,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
@@ -132,6 +133,22 @@ public class GlobalExceptionHandler {
         log.warn("MissingServletRequestParameterException: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ResponseDTO.failure("Missing required parameter: " + e.getParameterName()));
+    }
+
+    /**
+     * 요청 파라미터 타입 변환 실패(알 수 없는 enum 값, 숫자 자리에 문자 등) → 400.
+     *
+     * <p>🔴 이 핸들러가 없으면 아래 {@code Exception} catch-all 이 먼저 잡아 <b>500</b> 이 나간다 —
+     * Spring 기본(DefaultHandlerExceptionResolver)은 이 예외를 400 으로 매핑하므로, 여기서 그 기본값을
+     * 되돌리는 것이다. 클라이언트가 보낸 값이 잘못된 것이지 서버가 고장난 것이 아니다.
+     * (예: {@code POST /api/orders/sync?preset=NOPE})
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ResponseDTO<Void>> handleMethodArgumentTypeMismatchException(
+            MethodArgumentTypeMismatchException e) {
+        log.warn("MethodArgumentTypeMismatchException: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ResponseDTO.failure("Invalid value for parameter: " + e.getName()));
     }
 
     @ExceptionHandler(AccessDeniedException.class)

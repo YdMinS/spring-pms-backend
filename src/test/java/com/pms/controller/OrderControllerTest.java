@@ -18,10 +18,14 @@ import com.pms.repository.OrderRepository;
 import com.pms.repository.OrderShipmentRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.coupang.OrderSyncFacade;
+import com.pms.service.coupang.OrderSyncPreset;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.mockito.ArgumentCaptor;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.test.mock.mockito.SpyBean;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -30,7 +34,9 @@ import java.time.format.DateTimeFormatter;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -51,6 +57,9 @@ class OrderControllerTest extends BaseIntegrationTest {
     @Autowired private CoupangOrderLineRepository coupangOrderLineRepository;
 
     @MockBean private CoupangApiClient coupangApiClient;   // 동기화 시 빈 데이터 반환
+
+    /** 실제 동기화는 그대로 돌리되, 컨트롤러가 어떤 프리셋을 넘겼는지 확인하기 위한 스파이. */
+    @SpyBean private OrderSyncFacade syncFacade;
 
     @BeforeEach
     void seedOrder() {
@@ -132,16 +141,43 @@ class OrderControllerTest extends BaseIntegrationTest {
     }
 
     @Test
-    void postSync_withActiveScope_returns200() throws Exception {
-        // scope 는 계정 단건에만 적용된다(D4) → accountId 를 반드시 함께 보낸다.
+    void postSync_withoutPreset_defaultsToQuick() throws Exception {
+        // 🔴 기본값이 뒤집혔다(FEATURE_2609_49 / D6) — 예전 기본은 전 상태였다.
+        // preset 은 계정 단건에만 적용된다(2609_16 D4) → accountId 를 반드시 함께 보낸다.
         Long accountId = marketplaceAccountRepository.findAll().get(0).getId();
 
         mockMvc.perform(post("/api/orders/sync")
                         .param("accountId", String.valueOf(accountId))
-                        .param("scope", "ACTIVE")
                         .header("Authorization", "Bearer " + userToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.syncedAt").exists());
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<OrderSyncPreset> preset = ArgumentCaptor.forClass(OrderSyncPreset.class);
+        verify(syncFacade).sync(eq(accountId), preset.capture());
+        assertThat(preset.getValue()).isEqualTo(OrderSyncPreset.QUICK);
+    }
+
+    @Test
+    void postSync_withReconcilePreset_passesItThrough() throws Exception {
+        Long accountId = marketplaceAccountRepository.findAll().get(0).getId();
+
+        mockMvc.perform(post("/api/orders/sync")
+                        .param("accountId", String.valueOf(accountId))
+                        .param("preset", "RECONCILE")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk());
+
+        verify(syncFacade).sync(accountId, OrderSyncPreset.RECONCILE);
+    }
+
+    @Test
+    void postSync_withUnknownPreset_returns400() throws Exception {
+        Long accountId = marketplaceAccountRepository.findAll().get(0).getId();
+
+        mockMvc.perform(post("/api/orders/sync")
+                        .param("accountId", String.valueOf(accountId))
+                        .param("preset", "NOPE")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isBadRequest());
     }
 
     @Test
