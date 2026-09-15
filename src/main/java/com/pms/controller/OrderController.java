@@ -1,20 +1,25 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.OrderRefreshRequest;
 import com.pms.dto.response.OrderItemResponse;
 import com.pms.dto.response.OrderMonthResponse;
 import com.pms.dto.response.OrderSyncResponse;
 import com.pms.dto.response.SyncTargetResponse;
 import com.pms.service.coupang.OrderQueryService;
+import com.pms.service.coupang.OrderRefreshResult;
+import com.pms.service.coupang.OrderRefreshService;
 import com.pms.service.coupang.OrderSyncFacade;
 import com.pms.service.coupang.OrderSyncFacade.OrderSyncResult;
 import com.pms.service.coupang.OrderSyncPreset;
 import com.pms.service.coupang.SyncTargetService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -35,6 +40,7 @@ public class OrderController {
     private final OrderQueryService queryService;
     private final OrderSyncFacade syncFacade;
     private final SyncTargetService syncTargetService;
+    private final OrderRefreshService orderRefreshService;
 
     /**
      * 주문 목록 조회. sellerId 없으면 전체.
@@ -92,6 +98,22 @@ public class OrderController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
         return ResponseEntity.ok(ResponseDTO.success(syncFacade.syncPeriod(accountId, from, to)));
+    }
+
+    /**
+     * 선택한 주문을 쿠팡에서 다시 읽어 로컬 상태를 맞춘다 (FEATURE_2609_50).
+     *
+     * 정기·야간 동기화의 조회 창(주문일 기준)을 벗어나 고착된 주문을 손으로 푸는 수단이다.
+     * 쿠팡 단건 조회는 상태·날짜 조건이 없어 며칠이 지난 주문도 잡힌다.
+     * 한 번에 주문 50건까지(라인 수가 아니다 — 같은 주문의 여러 줄은 1건으로 센다).
+     *
+     * <p>🔴 {@link OrderSyncFacade} 를 거치지 않는다 — 파사드는 계정 단위 전량 동기화의 단일
+     * 진입점이라 계정 락·동기화 상태 기록이 딸려 온다(D4 가 깨진다). 이건 주문 단위 조회다.
+     */
+    @PostMapping("/refresh")
+    public ResponseEntity<ResponseDTO<OrderRefreshResult>> refresh(
+            @Valid @RequestBody OrderRefreshRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(orderRefreshService.refresh(request)));
     }
 
     /**
