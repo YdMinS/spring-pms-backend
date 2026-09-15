@@ -62,6 +62,8 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
      * (설정 파일이 없으면 {@code @RequiredArgsConstructor} 가 어노테이션을 조용히 버린다).
      */
     private final ExecutorService coupangSyncExecutor;
+    /** 채널별 동기화 락(FEATURE_2609_48 / D1·D8) — 같은 채널을 동시에 두 벌 돌리지 않는다. */
+    private final AccountSyncLock accountSyncLock;
 
     @Override
     public OrderSyncResult sync(Long accountId) {
@@ -107,22 +109,31 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
         }
         SyncWindow window = new SyncWindow(from, to);      // 검증은 record 생성자
 
-        // syncOne 을 재사용하지 않는다 — 취소 보정과 상태 기록이 붙어 있다(D4·D5).
-        Long previousTenant = TenantContext.get();
-        try {
-            TenantContext.set(account.getTenantId());
-            SyncResult orders = coupangOrderSyncService.syncAccount(account, window);
-            if (!orders.failedStatuses().isEmpty()) {
-                log.warn("Period sync partial: account={} window={} failedStatuses={}",
-                        accountId, window, orders.failedStatuses());
-            }
-            // 취소 보정 없음(D4) → canceledUpdated = 0. 상태 기록 없음(D5).
-            return new OrderSyncResult(LocalDateTime.now(), orders.newCount(), orders.updatedCount(), 0);
-        } finally {
-            if (previousTenant != null) {
-                TenantContext.set(previousTenant);
-            } else {
-                TenantContext.clear();
+        // 과거 달 불러오기도 정기 동기화와 같은 열쇠를 쓴다(FEATURE_2609_48 / D6) — 둘 다 같은 채널에
+        // 주문을 적재하므로 동시에 돌면 같은 주문을 두 번 쓴다.
+        AccountSyncLock.Lease lease = accountSyncLock.tryAcquire(AccountSyncLock.SyncWork.ORDER, accountId);
+        if (lease == null) {
+            log.info("Period sync skipped (already running): account={}", accountId);
+            return OrderSyncResult.skipped();
+        }
+        try (lease) {
+            // syncOne 을 재사용하지 않는다 — 취소 보정과 상태 기록이 붙어 있다(D4·D5).
+            Long previousTenant = TenantContext.get();
+            try {
+                TenantContext.set(account.getTenantId());
+                SyncResult orders = coupangOrderSyncService.syncAccount(account, window);
+                if (!orders.failedStatuses().isEmpty()) {
+                    log.warn("Period sync partial: account={} window={} failedStatuses={}",
+                            accountId, window, orders.failedStatuses());
+                }
+                // 취소 보정 없음(D4) → canceledUpdated = 0. 상태 기록 없음(D5).
+                return new OrderSyncResult(LocalDateTime.now(), orders.newCount(), orders.updatedCount(), 0, 0);
+            } finally {
+                if (previousTenant != null) {
+                    TenantContext.set(previousTenant);
+                } else {
+                    TenantContext.clear();
+                }
             }
         }
     }
@@ -156,10 +167,12 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
             }
         }
         long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000;
-        // accounts = 이 사이클이 실제로 돈 쿠팡 계정 수(플랫폼 필터를 통과한 수)다. 넘겨받은 전체 계정 수가 아니다.
+        // accounts = 이 사이클이 다룬 쿠팡 계정 수(플랫폼 필터를 통과한 수)다. 넘겨받은 전체 계정 수가 아니고,
+        // 그중 skipped 만큼은 락에 막혀 쿠팡을 치지 않았다(2609_48 D5) — 실제로 돈 수는 accounts - skipped 다.
         // 병렬화(2609_46 D6) 이후 이 값은 계정 수에 비례하지 않는다 — 비례하기 시작하면 동시 실행 수
         // (oklyx.coupang.sync-concurrency)가 포화됐다는 뜻이다.
-        log.info("Order sync cycle done: accounts={} elapsedMs={}", processed, elapsedMs);
+        log.info("Order sync cycle done: accounts={} skipped={} elapsedMs={}",
+                processed, total.skippedAccounts(), elapsedMs);
         if (elapsedMs > coupangProperties.getSyncCycleWarnSeconds() * 1000L) {
             log.warn("[COUPANG][ALERT] 동기화 사이클 {}초 초과 — accounts={} elapsedMs={}",
                     coupangProperties.getSyncCycleWarnSeconds(), processed, elapsedMs);
@@ -207,10 +220,36 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
     /**
      * 한 계정: ordersheets 먼저 → 취소 보정(이미 적재된 주문 위에 보정).
      *
+     * <p>락을 잡고 돈다 — 이 채널이 이미 돌고 있으면 쿠팡을 치지 않고 건너뛴다(FEATURE_2609_48 / D8).
+     * 단건({@code sync(accountId)})과 전체/셀러({@code syncEach → syncOneIsolated})가 둘 다 여기를
+     * 지나므로 락은 이 한 자리에만 건다.
+     */
+    private OrderSyncResult syncOne(MarketplaceAccount account, OrderSyncScope scope) {
+        AccountSyncLock.Lease lease =
+                accountSyncLock.tryAcquire(AccountSyncLock.SyncWork.ORDER, account.getId());
+        if (lease == null) {
+            // 🔴 SyncStatusRecorder 를 부르지 않는다 — 건너뛴 회차는 성공도 실패도 아니다. 기록을 남기면
+            // 화면의 "마지막 동기화" 시각이 실제로 조회하지 않은 시각으로 밀리고, lastOrderSyncAt 은 다음
+            // 쿠팡 조회 창을 정하는 앵커라 조회 구간까지 어긋난다.
+            log.info("Order sync skipped (already running): account={} heldSec={}",
+                    account.getId(),
+                    accountSyncLock.heldSeconds(AccountSyncLock.SyncWork.ORDER, account.getId()));
+            return OrderSyncResult.skipped();
+        }
+        // try-with-resources 라 본문이 예외를 던져도 빠져나가기 전에 풀린다 —
+        // "실패했으니 곧바로 다시 누른다" 가 성립해야 한다.
+        try (lease) {
+            return syncOneLocked(account, scope);
+        }
+    }
+
+    /**
+     * 락을 쥔 상태의 실제 동기화 본문.
+     *
      * {@code scope} 는 ordersheets 가 조회할 상태만 좁힌다 — 취소 보정과 상태 기록은 범위와 무관하게
      * 그대로 돈다(PLAN 2609_16 D5·D6).
      */
-    private OrderSyncResult syncOne(MarketplaceAccount account, OrderSyncScope scope) {
+    private OrderSyncResult syncOneLocked(MarketplaceAccount account, OrderSyncScope scope) {
         // 🔴 테넌트는 호출자가 세팅한다 — 여기서는 저장·복원하지 않는다(PLAN 2609_46 D8·D14).
         //   - syncEach → syncOneIsolated: 풀 스레드라 finally 에서 clear() (남의 테넌트 복원 금지)
         //   - sync(accountId): 웹 요청 스레드라 finally 에서 이전 값 복원 (직후 목록 조회가 빈다)
@@ -306,6 +345,7 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
                 LocalDateTime.now(),
                 orders.newCount(),
                 orders.updatedCount(),
-                cancels.matchedUpdated());
+                cancels.matchedUpdated(),
+                0);
     }
 }

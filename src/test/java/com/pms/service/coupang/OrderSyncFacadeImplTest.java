@@ -12,6 +12,7 @@ import com.pms.service.claim.ClaimSyncAdapter;
 import com.pms.service.inquiry.InquirySyncAdapter;
 import com.pms.service.coupang.CoupangOrderSyncService.SyncResult;
 import com.pms.service.coupang.CoupangReturnSyncService.CancelSyncResult;
+import com.pms.service.coupang.AccountSyncLock.SyncWork;
 import com.pms.service.coupang.OrderSyncFacade.OrderSyncResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -22,6 +23,7 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -38,6 +40,7 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -59,6 +62,8 @@ class OrderSyncFacadeImplTest {
 
     @Mock private ClaimSyncAdapter claimSyncAdapter;
 
+    private static final Instant LOCK_T0 = Instant.parse("2026-09-15T00:00:00Z");
+
     /**
      * ⚠️ @InjectMocks 를 쓰지 않는다 — 생성자의 {@code List<ClaimSyncAdapter>} 에는 목이 주입되지 않아
      * null 이 들어가고, 파사드의 격리 try/catch 가 그 NPE 를 삼켜 어댑터 호출이 조용히 사라진다.
@@ -71,12 +76,22 @@ class OrderSyncFacadeImplTest {
 
     private OrderSyncFacadeImpl facade;
 
+    /**
+     * 🔴 락은 목이 아니라 실인스턴스다(FEATURE_2609_48 / Step 7-2) — 테스트가 미리 {@code tryAcquire} 해
+     * "이미 돌고 있는" 상태를 만든다. 스레드로 동시성을 재현하지 않는다.
+     * 테스트마다 새로 만들어지므로 잡아둔 락이 다음 테스트로 새지 않는다.
+     */
+    private AccountSyncLock accountSyncLock;
+
     @BeforeEach
     void setUp() {
-        facade = new OrderSyncFacadeImpl(marketplaceAccountRepository, new CoupangProperties(),
+        // 파사드와 락이 같은 설정 인스턴스를 본다 — 따로 만들면 설정값 변경이 한쪽에만 먹는다.
+        CoupangProperties coupangProperties = new CoupangProperties();
+        accountSyncLock = new AccountSyncLock(coupangProperties, new MutableClock(LOCK_T0));
+        facade = new OrderSyncFacadeImpl(marketplaceAccountRepository, coupangProperties,
                 coupangOrderSyncService, coupangReturnSyncService, syncStatusRecorder,
                 claimOrderBackfillService, claimSyncAdapters, inquirySyncAdapters,
-                new SameThreadExecutorService());
+                new SameThreadExecutorService(), accountSyncLock);
     }
 
     @AfterEach
@@ -491,5 +506,117 @@ class OrderSyncFacadeImplTest {
 
         assertThatThrownBy(() -> facade.sync(999L))
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    // ---------------------------------------------------------------------
+    // 채널별 동기화 락 (FEATURE_2609_48) — 락을 미리 잡아 "이미 돌고 있는" 상태를 만든다
+    // ---------------------------------------------------------------------
+
+    @Test
+    void sync_whenLockHeld_skipsWithoutCallingCoupang() {
+        MarketplaceAccount acc = account(1L);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        accountSyncLock.tryAcquire(SyncWork.ORDER, 1L);          // 다른 요청이 이미 돌고 있다
+
+        OrderSyncResult result = facade.sync(1L);
+
+        verify(coupangOrderSyncService, never()).syncAccount(any(), any(OrderSyncScope.class));
+        assertThat(result.skippedAccounts()).isEqualTo(1);
+        // 건너뛴 회차는 성공도 실패도 아니다 — 기록하면 "마지막 동기화" 배너와 조회 창 앵커가 밀린다.
+        verifyNoInteractions(syncStatusRecorder);
+    }
+
+    @Test
+    void sync_releasesLock_soNextCallRuns() {
+        MarketplaceAccount acc = account(1L);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        given(coupangOrderSyncService.syncAccount(acc, OrderSyncScope.FULL)).willReturn(new SyncResult(1, 0, 1, List.of()));
+        given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(0, 1));
+
+        facade.sync(1L);
+        OrderSyncResult second = facade.sync(1L);
+
+        verify(coupangOrderSyncService, times(2)).syncAccount(acc, OrderSyncScope.FULL);
+        assertThat(second.skippedAccounts()).isZero();
+    }
+
+    @Test
+    void sync_releasesLockOnFailure() {
+        // 🔴 실패 직후 재시도가 락에 막히면 안 된다 — try-with-resources 가 예외 전파 전에 푼다.
+        MarketplaceAccount acc = account(1L);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        when(coupangOrderSyncService.syncAccount(acc, OrderSyncScope.FULL))
+                .thenThrow(new RuntimeException("coupang down"))
+                .thenReturn(new SyncResult(2, 0, 1, List.of()));
+        given(coupangReturnSyncService.syncCancels(acc)).willReturn(new CancelSyncResult(0, 1));
+
+        assertThatThrownBy(() -> facade.sync(1L)).isInstanceOf(RuntimeException.class);
+        OrderSyncResult second = facade.sync(1L);
+
+        assertThat(second.newOrders()).isEqualTo(2);
+        assertThat(second.skippedAccounts()).isZero();
+    }
+
+    @Test
+    void syncAll_oneChannelBusy_otherStillRuns() {
+        MarketplaceAccount a1 = account(1L);
+        MarketplaceAccount a2 = account(2L);
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(a1, a2));
+        given(coupangOrderSyncService.syncAccount(a2, OrderSyncScope.FULL)).willReturn(new SyncResult(3, 0, 1, List.of()));
+        given(coupangReturnSyncService.syncCancels(a2)).willReturn(new CancelSyncResult(0, 1));
+        accountSyncLock.tryAcquire(SyncWork.ORDER, 1L);
+
+        OrderSyncResult result = facade.syncAll();
+
+        verify(coupangOrderSyncService, never()).syncAccount(eq(a1), any(OrderSyncScope.class));
+        verify(coupangOrderSyncService).syncAccount(a2, OrderSyncScope.FULL);
+        assertThat(result.skippedAccounts()).isEqualTo(1);
+        assertThat(result.newOrders()).isEqualTo(3);
+    }
+
+    @Test
+    void syncAll_lastChannelSkipped_keepsRealSyncedAt() {
+        // 🔴 D9 — 마지막 계정이 건너뛰어도 합계 시각은 실제로 조회한 계정의 시각이어야 한다.
+        MarketplaceAccount a1 = account(1L);
+        MarketplaceAccount a2 = account(2L);
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(a1, a2));
+        given(coupangOrderSyncService.syncAccount(a1, OrderSyncScope.FULL)).willReturn(new SyncResult(1, 0, 1, List.of()));
+        given(coupangReturnSyncService.syncCancels(a1)).willReturn(new CancelSyncResult(0, 1));
+        accountSyncLock.tryAcquire(SyncWork.ORDER, 2L);
+
+        OrderSyncResult result = facade.syncAll();
+
+        assertThat(result.syncedAt()).isNotNull();
+        assertThat(result.newOrders()).isEqualTo(1);
+        assertThat(result.skippedAccounts()).isEqualTo(1);
+    }
+
+    @Test
+    void syncAll_allChannelsSkipped_syncedAtIsNull() {
+        // 🔴 D9 — 누산 씨앗 empty() 가 now() 였다면 여기서 가짜 시각이 남는다.
+        MarketplaceAccount a1 = account(1L);
+        MarketplaceAccount a2 = account(2L);
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(a1, a2));
+        accountSyncLock.tryAcquire(SyncWork.ORDER, 1L);
+        accountSyncLock.tryAcquire(SyncWork.ORDER, 2L);
+
+        OrderSyncResult result = facade.syncAll();
+
+        assertThat(result.syncedAt()).isNull();
+        assertThat(result.skippedAccounts()).isEqualTo(2);
+        verifyNoInteractions(coupangOrderSyncService);
+    }
+
+    @Test
+    void syncPeriod_whenOrderLockHeld_skips() {
+        // D6 — 과거 달 불러오기도 정기 동기화와 같은 열쇠를 쓴다.
+        MarketplaceAccount acc = account(1L);
+        given(marketplaceAccountRepository.findById(1L)).willReturn(Optional.of(acc));
+        accountSyncLock.tryAcquire(SyncWork.ORDER, 1L);
+
+        OrderSyncResult result = facade.syncPeriod(1L, LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 31));
+
+        verify(coupangOrderSyncService, never()).syncAccount(any(), any(SyncWindow.class));
+        assertThat(result.skippedAccounts()).isEqualTo(1);
     }
 }
