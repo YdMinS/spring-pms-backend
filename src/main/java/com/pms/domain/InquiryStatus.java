@@ -1,5 +1,8 @@
 package com.pms.domain;
 
+import java.util.Arrays;
+import java.util.List;
+
 /**
  * 플랫폼 중립 고객문의 상태 (FEATURE_2609_23 / PLAN §3.1 · D7).
  *
@@ -19,5 +22,15 @@ public enum InquiryStatus {
     /** 아직 우리가 답해야 하는 상태 = 앵커(D8)·STALE 스윕(D9)의 대상. */
     public boolean isOpen() {
         return this == UNANSWERED;
+    }
+
+    /**
+     * 아직 우리가 답해야 하는 상태 집합 — 배지 카운트(FEATURE_2609_49 / D9)의 조회 인자.
+     *
+     * ⚠️ 목록을 손으로 나열하지 말 것. {@link #isOpen()} 에서 파생해야 상태가 늘어도 "무엇이 미답변인가"
+     * 의 정의가 두 벌이 되지 않는다({@link ClaimStatus#closedStatuses()} 와 같은 자세).
+     */
+    public static List<InquiryStatus> openStatuses() {
+        return Arrays.stream(values()).filter(InquiryStatus::isOpen).toList();
     }
 }

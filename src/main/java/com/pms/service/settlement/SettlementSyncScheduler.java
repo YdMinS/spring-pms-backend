@@ -21,6 +21,11 @@ import java.util.List;
  * 테넌트를 명시 순회한다(backend CLAUDE.md §9). 계정 단위 tenant 세팅은
  * {@code SettlementSyncServiceImpl.runAccount} 가 한 번 더 한다(웹·배치 공통 경로).
  *
+ * <p>🔴 <b>모든 cron 에 {@code zone = "Asia/Seoul"} 을 명시한다</b>(FEATURE_2609_49 / D11). 서버 컨테이너에
+ * TZ 설정이 없어 JVM 기본이 UTC 라, zone 이 없으면 아래 주석의 "04:30 KST"·"05:00 KST" 가 실제로는
+ * 13:30·14:00 KST 에 돌았다. 🔴 {@code OrderSyncScheduler}(새벽 3시 전량 리컨실)와 <b>같은 zone</b> 이어야
+ * "리컨실이 정산보다 먼저" 라는 순서가 성립한다 — 한쪽만 바꾸지 말 것.
+ *
  * <p>⚠️ {@code @Scheduled} 는 <b>인스턴스 내부</b>다. 현재 단일 인스턴스라 분산 락을 넣지 않았으므로,
  * <b>애플리케이션을 다중화하면 이 작업이 인스턴스 수만큼 중복 실행된다</b>. 적재 자체는 멱등이라
  * 데이터가 깨지지는 않지만 마켓 호출이 배수가 된다 — 다중화 시점에 분산 락이 필요하다.
@@ -34,7 +39,7 @@ public class SettlementSyncScheduler {
     private final SettlementPayoutSyncService settlementPayoutSyncService;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
 
-    @Scheduled(cron = "${oclyx.settlement.revenue-sync-cron:0 30 4 * * *}")
+    @Scheduled(cron = "${oclyx.settlement.revenue-sync-cron:0 30 4 * * *}", zone = "Asia/Seoul")
     public void syncRevenueDaily() {
         List<Long> tenantIds = marketplaceAccountRepository.findDistinctTenantIds();
         for (Long tenantId : tenantIds) {
@@ -55,14 +60,14 @@ public class SettlementSyncScheduler {
     }
 
     /**
-     * 지급내역(지급 묶음) 주 1회 적재 (FEATURE_2609_30 / 02 · PLAN D11).
+     * 지급내역(지급 묶음) 주 1회 적재 — 월요일 05:00 KST (FEATURE_2609_30 / 02 · PLAN D11).
      *
      * <p>매출내역과 달리 <b>주 1회</b>인 이유 = 지급내역은 월 집계라 하루에 여러 번 읽어도 값이 바뀌지 않는다.
      * 🔴 이 작업이 지급 묶음을 만들고 라인 귀속·대사를 수행한다 — 돌지 않으면 정산 화면이 영영 비어 있다.
      *
      * <p>⚠️ 매출내역 스케줄과 같은 주의사항(테넌트 명시 순회 · 다중화 시 중복 실행)이 그대로 적용된다.
      */
-    @Scheduled(cron = "${oclyx.settlement.payout-sync-cron:0 0 5 * * MON}")
+    @Scheduled(cron = "${oclyx.settlement.payout-sync-cron:0 0 5 * * MON}", zone = "Asia/Seoul")
     public void syncPayoutsWeekly() {
         List<Long> tenantIds = marketplaceAccountRepository.findDistinctTenantIds();
         for (Long tenantId : tenantIds) {

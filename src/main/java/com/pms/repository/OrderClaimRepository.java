@@ -112,4 +112,18 @@ public interface OrderClaimRepository extends JpaRepository<OrderClaim, Long> {
     /** 단건 상세 — GET /api/claims/{id}. */
     @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller", "orderLine"})
     Optional<OrderClaim> findWithAccountById(Long id);
+
+    /**
+     * 미완결 클레임 건수 — 알림 배지(FEATURE_2609_49 / D9·D14).
+     *
+     * <p>🔴 <b>타입 무관·기간 무관</b>이다. 목록 화면의 기본값(반품 탭 + 최근 sync-days)과 일부러 다르다 —
+     * 배지의 질문은 "처리할 일이 몇 건인가"라, 20일 전에 접수돼 아직 안 끝난 반품도 여전히 처리할 일이다.
+     * 기간으로 자르면 오래된 미처리 건이 배지에서 사라지는데, 그 건들이야말로 배지의 존재 이유다.
+     * 실질 상한은 {@code ClaimStaleSweeper}(claim-stale-days 30일)가 만든다.
+     *
+     * <p>호출부는 {@link ClaimStatus#closedStatuses()} 를 넘긴다 — 상태 목록을 쿼리에 나열하면
+     * "무엇이 종결인가" 의 정의가 두 벌이 된다.
+     * ⚠️ {@code @TenantId} 가 자동 적용된다 — 테넌트 조건을 손으로 붙이지 않는다.
+     */
+    long countByStatusNotIn(Collection<ClaimStatus> statuses);
 }
