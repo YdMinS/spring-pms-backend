@@ -71,7 +71,7 @@ public class StockLedgerServiceImpl implements StockLedgerService {
                 .location(StockLocationPolicy.resolve(product))
                 .reason(request.reason())
                 .reasonNote(request.reasonNote())
-                .unitPrice(resolveUnitPrice(request, type, purchaseRecord))
+                .unitPrice(resolveUnitPrice(request, type, product, purchaseRecord))
                 .orderClaim(orderClaim)
                 .purchaseRecord(purchaseRecord)
                 .movedOn(request.movedOn())
@@ -170,9 +170,6 @@ public class StockLedgerServiceImpl implements StockLedgerService {
             if (reason == StockReason.PURCHASE && request.purchaseRecordId() == null) {
                 throw new IllegalArgumentException("구매기록을 선택하세요");
             }
-            if (reason == StockReason.OPENING && request.unitPrice() == null) {
-                throw new IllegalArgumentException("기초재고는 단가를 입력해야 합니다");
-            }
         } else if (request.purchaseRecordId() != null) {
             throw new IllegalArgumentException("이 이동 유형은 구매기록을 참조할 수 없습니다");
         }
@@ -189,16 +186,23 @@ public class StockLedgerServiceImpl implements StockLedgerService {
      * <p>⚠️ {@code PURCHASE} copies the amount from the purchase ledger and <b>ignores the request
      * value</b> — the money-side row is the source of truth. If that amount is unknown the movement
      * is still stored with a null price; substituting 0 would silently claim the goods were free.
+     *
+     * <p>⚠️ {@code OPENING} falls back to the product's registered price when the request carries no
+     * unit price — the snapshot the reason was designed around. It is a fallback, not a forced
+     * value: a typed price still wins, because the goods on the shelf may have been bought at a
+     * different price than the one the product carries today. A product with no price stays null
+     * ("amount unknown"), never 0.
      */
     private BigDecimal resolveUnitPrice(StockMovementRequest request, StockMovementType type,
-                                        PurchaseRecord purchaseRecord) {
+                                        Product product, PurchaseRecord purchaseRecord) {
         if (type != StockMovementType.STOCK_IN) {
             return null;
         }
         return switch (request.reason()) {
             case PURCHASE -> purchaseRecord == null ? null : purchaseRecord.getUnitPrice();
             case FREE -> BigDecimal.ZERO;
-            default -> request.unitPrice();   // OPENING (required) / ETC (optional)
+            case OPENING -> request.unitPrice() != null ? request.unitPrice() : product.getPrice();
+            default -> request.unitPrice();   // ETC (optional)
         };
     }
 
