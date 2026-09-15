@@ -8,7 +8,7 @@ import com.pms.dto.response.SyncTargetResponse;
 import com.pms.service.coupang.OrderQueryService;
 import com.pms.service.coupang.OrderSyncFacade;
 import com.pms.service.coupang.OrderSyncFacade.OrderSyncResult;
-import com.pms.service.coupang.OrderSyncScope;
+import com.pms.service.coupang.OrderSyncPreset;
 import com.pms.service.coupang.SyncTargetService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -62,16 +62,19 @@ public class OrderController {
      * 동기화 트리거(새로고침). 동기화 후 목록까지 함께 반환(클라 추가 GET 불필요).
      * 우선순위: accountId(단건) > sellerId(셀러 단위) > 전체.
      *
-     * {@code scope=ACTIVE} 는 결제완료·상품준비중만 조회한다 — 종결 상태가 필요 없는 화면(출고관리)이
-     * 쿠팡 왕복을 6 → 2 로 줄이는 값이다. 생략하면 {@code FULL}(전 상태) = 오늘과 동일하다.
-     * ⚠️ <b>계정 단건(accountId)에만 적용된다</b>(FEATURE_2609_16 D4) — 셀러/전체 경로는 항상 FULL.
+     * <p>{@code preset} 은 주문 조회의 상태·창을 고른다 — 생략하면 {@code QUICK}(활성 2상태)이다.
+     * 🔴 <b>기본값이 뒤집혔다</b>(FEATURE_2609_49 / D6): 예전 기본은 전 상태였다. 버튼 한 번의 쿠팡
+     * 왕복이 14 → 6~7 로 줄어드는 대신, <b>종결 상태 전이(배송완료)는 버튼으로 즉시 확인되지 않는다</b> —
+     * 새벽 3시 전량 리컨실 스케줄({@code OrderSyncScheduler})이 따라잡는다.
+     * <p>취소 보정·클레임·문의 단계는 프리셋과 무관하게 전부 돈다.
+     * ⚠️ <b>계정 단건(accountId)에만 적용된다</b>(2609_16 D4) — 셀러/전체 경로는 항상 QUICK 이다.
      */
     @PostMapping("/sync")
     public ResponseEntity<ResponseDTO<OrderSyncResponse>> sync(
             @RequestParam(required = false) Long sellerId,
             @RequestParam(required = false) Long accountId,
-            @RequestParam(required = false, defaultValue = "FULL") OrderSyncScope scope) {
-        OrderSyncResult result = (accountId != null) ? syncFacade.sync(accountId, scope)
+            @RequestParam(required = false, defaultValue = "QUICK") OrderSyncPreset preset) {
+        OrderSyncResult result = (accountId != null) ? syncFacade.sync(accountId, preset)
                 : (sellerId != null) ? syncFacade.syncBySeller(sellerId)
                 : syncFacade.syncAll();
         return ResponseEntity.ok(ResponseDTO.success(

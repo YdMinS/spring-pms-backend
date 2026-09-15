@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -83,4 +84,17 @@ public interface CustomerInquiryRepository extends JpaRepository<CustomerInquiry
     /** 단건 상세 — GET /api/inquiries/{id}. 스레드는 별도 조회다(컬렉션 fetch 금지). */
     @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller", "orderLine", "productListing"})
     Optional<CustomerInquiry> findWithAccountById(Long id);
+
+    /**
+     * 미답변 문의 건수 — 알림 배지(FEATURE_2609_49 / D9·D14).
+     *
+     * <p>🔴 클레임 배지와 같은 자세로 <b>유형 무관·기간 무관</b>이다 — 목록 화면의 기본 필터와 다른 것이
+     * 정상이며, 실질 상한은 inquiry-stale-days(30) 스윕이 만든다.
+     *
+     * <p>호출부는 {@link InquiryStatus#openStatuses()} 를 넘긴다. {@code countByStatus(UNANSWERED)} 로
+     * 값을 박지 않는다 — 판정은 {@link InquiryStatus#isOpen()} 이 이미 소유하고 있고, 상태가 늘 때
+     * 한쪽만 갈리는 것을 막는다.
+     * ⚠️ {@code @TenantId} 가 자동 적용된다 — 테넌트 조건을 손으로 붙이지 않는다.
+     */
+    long countByStatusIn(Collection<InquiryStatus> statuses);
 }

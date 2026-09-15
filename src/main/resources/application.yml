@@ -143,6 +143,15 @@ oklyx:
     read-timeout-ms: 60000
 
 oclyx:
+  order-sync:
+    # 15분 티어 — 활성 주문 + 취소 보정 + 반품/교환 + 문의 (FEATURE_2609_49 / D2).
+    # 계정당 6~7 왕복이라 하루 96틱 x 채널 수도 쿠팡 한도(업체코드당 5/s)의 1% 수준이다.
+    # Property so dev can lower it (or set "-" to disable) without a redeploy.
+    # ⚠️ All crons here are interpreted in Asia/Seoul (zone on @Scheduled), NOT the container's UTC.
+    quick-cron: "0 0/15 * * * *"
+    # 전량 리컨실 — 전 상태 x sync-days 창 (D1). 정산 매출 동기화(04:30 KST)보다 먼저 끝나야 대사가 맞는다.
+    full-cron: "0 0 3 * * *"
+
   settlement:
     # Server-side minimum interval (minutes) between two MANUAL settlement refreshes of the same channel.
     # The settlement screen is opened often and the [갱신] button is easy to spam; this keeps that from
@@ -151,9 +160,11 @@ oclyx:
     manual-min-interval-minutes: 10
     # Daily revenue-history load, 04:30 KST. Kept as a property so dev can lower it (e.g. "0 */5 * * * *")
     # to verify the schedule actually fires without a redeploy.
+    # ⚠️ Interpreted in Asia/Seoul (zone on @Scheduled), NOT the container's UTC (FEATURE_2609_49 / D11).
     revenue-sync-cron: "0 30 4 * * *"
     # Weekly payment-history (payout) load, Monday 05:00 KST (PLAN D11). Property for the same reason
     # as revenue-sync-cron: dev lowers it to watch the schedule actually fire.
+    # ⚠️ Interpreted in Asia/Seoul, same as revenue-sync-cron.
     payout-sync-cron: "0 0 5 * * MON"
     # Reconciliation tolerance in KRW PER LINE (PLAN D9). The effective tolerance is
     # max(10, this x lineCount): truncation error accumulates per line, so a flat 10 KRW turns into a

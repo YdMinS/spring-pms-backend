@@ -14,23 +14,37 @@ import java.time.LocalDateTime;
  */
 public interface OrderSyncFacade {
 
-    /** 계정 1개 동기화(전 상태). 없는 계정이면 ResourceNotFoundException. */
+    /**
+     * 계정 1개 동기화. 없는 계정이면 ResourceNotFoundException.
+     *
+     * <p>{@link OrderSyncPreset#QUICK} 으로 위임한다(FEATURE_2609_49 / D6) — 사용자 대기 경로의
+     * 기본값은 좁은 조회다. 전 상태 리컨실은 스케줄러({@link #syncAll(OrderSyncPreset)})가 돈다.
+     */
     OrderSyncResult sync(Long accountId);
 
     /**
-     * 계정 1개를 <b>지정 범위</b>로 동기화 (FEATURE_2609_16).
+     * 계정 1개를 <b>지정 프리셋</b>으로 동기화 (FEATURE_2609_49 / D7).
      *
-     * 달라지는 건 <b>조회할 주문 상태뿐</b>이다 — 취소 보정(returnRequests)과 동기화 상태 기록은
-     * {@link #sync(Long)} 과 완전히 동일하게 돈다(PLAN 2609_16 D5·D6). 출고관리처럼 종결 상태가
-     * 필요 없는 화면이 {@link OrderSyncScope#ACTIVE} 로 쿠팡 왕복을 6 → 2 로 줄이는 자리다.
+     * 달라지는 건 <b>주문 조회의 상태 집합과 창뿐</b>이다 — 취소 보정(returnRequests)·클레임·문의
+     * 단계와 동기화 상태 기록은 프리셋과 무관하게 동일하게 돈다(D6·D7).
      */
-    OrderSyncResult sync(Long accountId, OrderSyncScope scope);
+    OrderSyncResult sync(Long accountId, OrderSyncPreset preset);
 
-    /** 한 셀러의 활성 COUPANG 계정 전체 동기화 (계정 단위 격리). */
+    /** 한 셀러의 활성 COUPANG 계정 전체 동기화 (계정 단위 격리). 항상 {@link OrderSyncPreset#QUICK} 이다. */
     OrderSyncResult syncBySeller(Long sellerId);
 
-    /** 모든 셀러의 활성 COUPANG 계정 전체 동기화 (계정 단위 격리). */
+    /** 모든 셀러의 활성 COUPANG 계정 전체 동기화 (계정 단위 격리). 항상 {@link OrderSyncPreset#QUICK} 이다. */
     OrderSyncResult syncAll();
+
+    /**
+     * 모든 셀러의 활성 COUPANG 계정을 <b>지정 프리셋</b>으로 동기화 — 스케줄러의 유일한 입구
+     * (FEATURE_2609_49 / D1·D2).
+     *
+     * <p>🔴 이 경로의 회차는 실패·부분 실패를 {@code SyncStatusRecorder} 에 <b>낙인하지 않는다</b>(D13).
+     * 누르지도 않은 사용자에게 화면 배너가 상주하기 때문이다 — 실패는 로그로만 남는다.
+     * 성공·단계별 앵커 기록은 그대로 한다({@code lastOrderSyncAt} 이 배너·조회 창의 원천).
+     */
+    OrderSyncResult syncAll(OrderSyncPreset preset);
 
     /**
      * 지정 기간을 계정 1건에 대해 불러온다 (과거 기간 백필, FEATURE_2609_10).
