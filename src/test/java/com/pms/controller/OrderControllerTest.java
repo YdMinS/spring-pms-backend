@@ -31,6 +31,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
+import org.springframework.http.MediaType;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -269,6 +271,40 @@ class OrderControllerTest extends BaseIntegrationTest {
     void months_returns401_whenNoToken() throws Exception {
         mockMvc.perform(get("/api/orders/months"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    // ── 주문 최신화 (FEATURE_2609_50) ─────────────────────────────────────
+
+    @Test
+    void postRefresh_requiresAuth() throws Exception {
+        mockMvc.perform(post("/api/orders/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"orderItemIds\":[1]}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void postRefresh_allowsNonAdminUser() throws Exception {
+        // 🔴 D2 회귀 방지 — 조회해서 로컬만 갱신하므로 ADMIN 이 아니다.
+        //    쿠팡 조회는 @MockBean 이 빈 봉투를 돌려준다(0박스 = empty, 실패 아님).
+        Long lineId = orderLineRepository.findAll().get(0).getId();
+
+        mockMvc.perform(post("/api/orders/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"orderItemIds\":[" + lineId + "]}")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.requestedOrders").value(1))
+                .andExpect(jsonPath("$.data.empty[0]").value("O1"));
+    }
+
+    @Test
+    void postRefresh_emptySelection_returns400() throws Exception {
+        mockMvc.perform(post("/api/orders/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"orderItemIds\":[]}")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isBadRequest());
     }
 
     @Test
