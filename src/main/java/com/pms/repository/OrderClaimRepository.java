@@ -126,4 +126,37 @@ public interface OrderClaimRepository extends JpaRepository<OrderClaim, Long> {
      * ⚠️ {@code @TenantId} 가 자동 적용된다 — 테넌트 조건을 손으로 붙이지 않는다.
      */
     long countByStatusNotIn(Collection<ClaimStatus> statuses);
+
+    /**
+     * 미완결 클레임 한 장 — 알림 목록(FEATURE_2609_51 / D8·D12). 기간·커서·건수 상한이 모두 걸린다.
+     *
+     * <p>🔴 <b>동률을 쿼리에서 자른다</b>: {@code (t < :cursorTime or (t = :cursorTime and id < :cursorTieId))}.
+     * "{@code <=} 로 넉넉히 읽고 서비스가 여유분(+N)으로 거르는" 방식을 쓰지 말 것 — 같은 시각 건이
+     * 여유분보다 많으면(동기화는 초 단위로 뭉쳐 들어온다) 그 행들이 <b>조용히 사라진다.</b>
+     * {@code cursorTieId} 는 서비스가 소스별로 계산해 넘긴다(커서와 같은 종류면 커서 id, 종류 순서상
+     * 뒤면 {@code Long.MAX_VALUE}, 앞이면 {@code Long.MIN_VALUE}).
+     *
+     * <p>⚠️ {@code Pageable} 로 정확히 페이지 크기만 읽는다 — <b>기간 안 전부를 읽지 않는다.</b>
+     * ⚠️ {@code @EntityGraph} 가 필요하다: 응답이 {@code seller.getSellerName()} 을 읽는데
+     * open-in-view=false 라 지연로딩이면 LazyInitializationException 이다(2026-07-15 실제 장애).
+     */
+    @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller"})
+    @Query("select c from OrderClaim c where c.status not in :closed and c.receivedAt >= :from "
+            + "and (c.receivedAt < :cursorTime or (c.receivedAt = :cursorTime and c.id < :cursorTieId)) "
+            + "order by c.receivedAt desc, c.id desc")
+    List<OrderClaim> findOpenForAlerts(@Param("closed") Collection<ClaimStatus> closed,
+                                       @Param("from") LocalDateTime from,
+                                       @Param("cursorTime") LocalDateTime cursorTime,
+                                       @Param("cursorTieId") Long cursorTieId,
+                                       Pageable pageable);
+
+    /**
+     * 종 배지용 미완결 클레임 건수 (FEATURE_2609_51 / D3).
+     *
+     * <p>🔴 목록과 <b>같은 기간 조건</b>이어야 한다 — 한쪽만 기간을 걸면 "3건이라는데 2건만 보인다"가 된다.
+     * 🔴 사이드바 배지용 {@link #countByStatusNotIn}(기간 무관)은 <b>건드리지 말 것</b> — 질문이 다르다.
+     */
+    @Query("select count(c) from OrderClaim c where c.status not in :closed and c.receivedAt >= :from")
+    long countOpenForAlerts(@Param("closed") Collection<ClaimStatus> closed,
+                            @Param("from") LocalDateTime from);
 }
