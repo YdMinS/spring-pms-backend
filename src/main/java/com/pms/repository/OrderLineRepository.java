@@ -4,6 +4,7 @@ import com.pms.domain.OrderLine;
 import com.pms.domain.OrderStatus;
 import com.pms.dto.response.CostBasisBreakdown;
 import com.pms.dto.response.MonthlyChannelSales;
+import com.pms.dto.response.NewOrderAlertRow;
 import com.pms.dto.response.SalesLineGroup;
 import com.pms.dto.response.SalesLineView;
 import org.springframework.data.domain.Pageable;
@@ -314,4 +315,65 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
     List<MonthlyChannelSales> aggregateMonthlySales(@Param("from") LocalDateTime from,
                                                     @Param("toExclusive") LocalDateTime toExclusive,
                                                     @Param("sellerId") Long sellerId);
+    // ── 알림 (FEATURE_2609_51 / PLAN D5·D6·D7·D8·D12) ────────────────────────
+
+    /**
+     * 결제완료 주문 한 장 — 새 주문 알림(FEATURE_2609_51 / D5·D12).
+     *
+     * <p>🔴 <b>주문 단위로 묶어서</b> 반환한다. 라인을 전부 읽어 메모리에서 묶으면 14일치 상품 줄
+     * (하루 300건이면 4천 행)을 매번 읽게 되고, 그러면 "주문 50건" 이라는 페이지 크기 자체가 성립하지 않는다.
+     * 집계 방식의 선례 = {@link #aggregateSales}·{@link #aggregateMonthlySales}.
+     *
+     * <p>🔴 {@code (cancelQty + holdQty) < orderQty} 는 {@link OrderLine#isFullyCancelled()} 의 SQL
+     * 표현이다(D6). 판정은 도메인이 소유하지만 DB 에서 걸러야 하는 자리라 여기서만 복제한다 —
+     * <b>도메인 메서드가 바뀌면 이 조건도 같이 바꾼다.</b> 빼면 이미 취소된 주문을 "발주처리하라"고
+     * 재촉하게 된다.
+     *
+     * <p>대표 상품명은 {@code min(l.itemName)} 이다 — "첫 라인"은 JPQL 로 표현할 수 없고, 화면은 대표 한 줄과
+     * {@code 상품 N개} 만 보여주므로 어느 줄이든 무방하다(무방하다는 사실 자체를 여기 적어 둔다).
+     * 🔴 JPQL 표준 함수만 쓸 것 — MySQL 전용 함수는 H2 테스트에서 깨진다.
+     *
+     * <p>⚠️ 동률(같은 {@code orderedAt})은 {@code cursorTieId} 로 쿼리에서 자른다 — 서비스가 여유분으로
+     * 거르는 방식은 같은 시각 건이 여유분보다 많을 때 행을 조용히 잃는다(D12).
+     */
+    @Query("""
+            select new com.pms.dto.response.NewOrderAlertRow(
+                   o.id, o.externalOrderId, o.orderedAt, o.platform, s.sellerName,
+                   min(l.itemName), count(l))
+            from OrderLine l
+              join l.order o
+              join o.marketplaceAccount a
+              join a.seller s
+            where l.status = :status and o.orderedAt >= :from
+              and (o.orderedAt < :cursorTime or (o.orderedAt = :cursorTime and o.id < :cursorTieId))
+              and l.orderQty > 0 and (l.cancelQty + l.holdQty) < l.orderQty
+            group by o.id, o.externalOrderId, o.orderedAt, o.platform, s.sellerName
+            order by o.orderedAt desc, o.id desc
+            """)
+    List<NewOrderAlertRow> findNewOrderAlerts(@Param("status") OrderStatus status,
+                                              @Param("from") LocalDateTime from,
+                                              @Param("cursorTime") LocalDateTime cursorTime,
+                                              @Param("cursorTieId") Long cursorTieId,
+                                              Pageable pageable);
+
+    /**
+     * 결제완료 상품(라인) 수 = {@code 출고관리} 메뉴 배지 (FEATURE_2609_51 / D7).
+     *
+     * <p>🔴 <b>기간 상한이 없다</b>(D8) — "지금 발주처리해야 할 상품 수"라서 오래된 것도 세야 맞다.
+     * 그래서 이 숫자가 알림의 새 주문 수보다 큰 것이 정상이다. 🔴 전량취소 제외는 목록과 같다(D6).
+     */
+    @Query("select count(l) from OrderLine l where l.status = :status "
+            + "and l.orderQty > 0 and (l.cancelQty + l.holdQty) < l.orderQty")
+    long countPaidLines(@Param("status") OrderStatus status);
+
+    /**
+     * 새 주문 알림 건수 = <b>주문 단위</b>(distinct) (FEATURE_2609_51 / D3).
+     *
+     * <p>🔴 기간·취소 조건이 {@link #findNewOrderAlerts} 와 <b>같아야 한다</b> — 갈리면 배지 숫자와
+     * 목록 행 수가 어긋난다.
+     */
+    @Query("select count(distinct o.id) from OrderLine l join l.order o "
+            + "where l.status = :status and o.orderedAt >= :from "
+            + "and l.orderQty > 0 and (l.cancelQty + l.holdQty) < l.orderQty")
+    long countNewOrders(@Param("status") OrderStatus status, @Param("from") LocalDateTime from);
 }
