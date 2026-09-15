@@ -22,7 +22,10 @@ public enum StockReason {
     /** Bought from a supplier — the unit price is inherited from {@code purchase_record} (D8). */
     PURCHASE(StockMovementType.STOCK_IN),
 
-    /** Goods already in the warehouse when the ledger started (D10). Unit price = Product.price snapshot. */
+    /**
+     * Goods already in the warehouse when the ledger started (D10). Unit price is optional: a typed
+     * price wins, otherwise the product's registered price is snapshotted.
+     */
     OPENING(StockMovementType.STOCK_IN),
 
     /** Received for free (sample, promotion) — unit price forced to 0 (D8). */

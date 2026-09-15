@@ -70,7 +70,8 @@ class StockLedgerServiceImplTest {
         SecurityContextHolder.clearContext();
     }
 
-    private static final Product PRODUCT = Product.builder().id(PRODUCT_ID).productName("양말A").build();
+    private static final Product PRODUCT = Product.builder().id(PRODUCT_ID).productName("양말A")
+            .price(new BigDecimal("3000")).build();
     private static final Seller SELLER = Seller.builder().id(SELLER_ID).sellerName("셀러A").build();
 
     /** Stubs the write path: product + seller lookup and save echoing its argument back. */
@@ -131,10 +132,23 @@ class StockLedgerServiceImplTest {
     }
 
     @Test
-    void testStockInOpeningRequiresUnitPrice() {
-        assertThatThrownBy(() -> service.record(stockIn(StockReason.OPENING, 5, null, null)))
-                .isInstanceOf(IllegalArgumentException.class);
-        verify(stockMovementRepository, never()).save(any());
+    void testStockInOpeningWithoutUnitPriceFallsBackToProductPrice() {
+        stubSave();
+
+        service.record(stockIn(StockReason.OPENING, 5, null, null));
+
+        // No price typed -> the product's registered price is snapshotted (D10).
+        assertThat(captureSaved().getUnitPrice()).isEqualByComparingTo("3000");
+    }
+
+    @Test
+    void testStockInOpeningKeepsTypedUnitPrice() {
+        stubSave();
+
+        service.record(stockIn(StockReason.OPENING, 5, new BigDecimal("2500"), null));
+
+        // The fallback never overrides what the user typed — old stock can have a different price.
+        assertThat(captureSaved().getUnitPrice()).isEqualByComparingTo("2500");
     }
 
     @Test
