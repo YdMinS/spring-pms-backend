@@ -43,18 +43,35 @@ public interface OrderSyncFacade {
      */
     OrderSyncResult syncPeriod(Long accountId, LocalDate from, LocalDate to);
 
-    /** 동기화 결과 집계 (신규/갱신 주문 수 + 취소 보정 수). */
-    record OrderSyncResult(LocalDateTime syncedAt, int newOrders, int updatedOrders, int canceledUpdated) {
+    /** 동기화 결과 집계 (신규/갱신 주문 수 + 취소 보정 수 + 건너뛴 채널 수). */
+    record OrderSyncResult(LocalDateTime syncedAt, int newOrders, int updatedOrders, int canceledUpdated,
+                           int skippedAccounts) {
+
+        /**
+         * 이미 같은 채널이 돌고 있어 쿠팡을 치지 않은 회차(FEATURE_2609_48 / D5).
+         * 실패가 아니라 "지금 하는 중"이다.
+         *
+         * <p>🔴 {@code syncedAt} 이 {@code null} 인 이유(D9): 이 회차는 조회를 하지 않았다.
+         * {@code now()} 를 실으면 {@link #plus} 가 그것을 취해, 전체 동기화의 마지막 계정이
+         * 건너뛰었을 때 합계 시각이 실제로 조회하지 않은 시각으로 덮인다.
+         */
+        static OrderSyncResult skipped() {
+            return new OrderSyncResult(null, 0, 0, 0, 1);
+        }
+
+        /** 🔴 씨앗도 {@code null} 이다(D9) — 전 채널이 건너뛰면 여기 실은 시각이 그대로 합계로 남는다. */
         public static OrderSyncResult empty() {
-            return new OrderSyncResult(LocalDateTime.now(), 0, 0, 0);
+            return new OrderSyncResult(null, 0, 0, 0, 0);
         }
 
         public OrderSyncResult plus(OrderSyncResult other) {
             return new OrderSyncResult(
-                    other.syncedAt,
+                    // 🔴 실제로 조회한 시각만 남긴다(D9). 건너뛴 회차는 시각이 없으므로 앞의 값을 유지한다.
+                    other.syncedAt != null ? other.syncedAt : syncedAt,
                     newOrders + other.newOrders,
                     updatedOrders + other.updatedOrders,
-                    canceledUpdated + other.canceledUpdated);
+                    canceledUpdated + other.canceledUpdated,
+                    skippedAccounts + other.skippedAccounts);
         }
     }
 }
