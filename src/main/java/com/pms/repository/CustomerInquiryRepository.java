@@ -3,6 +3,7 @@ package com.pms.repository;
 import com.pms.domain.CustomerInquiry;
 import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -97,4 +98,35 @@ public interface CustomerInquiryRepository extends JpaRepository<CustomerInquiry
      * ⚠️ {@code @TenantId} 가 자동 적용된다 — 테넌트 조건을 손으로 붙이지 않는다.
      */
     long countByStatusIn(Collection<InquiryStatus> statuses);
+
+    /**
+     * 미답변 문의 한 장 — 알림 목록(FEATURE_2609_51 / D8·D12). 기간·커서·건수 상한이 모두 걸린다.
+     *
+     * <p>🔴 <b>동률을 쿼리에서 자른다</b>: {@code (t < :cursorTime or (t = :cursorTime and id < :cursorTieId))}.
+     * "{@code <=} 로 넉넉히 읽고 서비스가 여유분(+N)으로 거르는" 방식을 쓰지 말 것 — 같은 시각 건이
+     * 여유분보다 많으면 그 행들이 <b>조용히 사라진다.</b> {@code cursorTieId} 는 서비스가 소스별로 준다.
+     *
+     * <p>⚠️ {@code Pageable} 로 정확히 페이지 크기만 읽는다 — <b>기간 안 전부를 읽지 않는다.</b>
+     * ⚠️ 응답이 {@code seller.getSellerName()} 을 읽으므로 {@code @EntityGraph} 가 필요하다
+     * (open-in-view=false). 목록은 {@code replies} 를 fetch 하지 않는다.
+     */
+    @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller"})
+    @Query("select i from CustomerInquiry i where i.status in :open and i.inquiredAt >= :from "
+            + "and (i.inquiredAt < :cursorTime or (i.inquiredAt = :cursorTime and i.id < :cursorTieId)) "
+            + "order by i.inquiredAt desc, i.id desc")
+    List<CustomerInquiry> findOpenForAlerts(@Param("open") Collection<InquiryStatus> open,
+                                            @Param("from") LocalDateTime from,
+                                            @Param("cursorTime") LocalDateTime cursorTime,
+                                            @Param("cursorTieId") Long cursorTieId,
+                                            Pageable pageable);
+
+    /**
+     * 종 배지용 미답변 문의 건수 (FEATURE_2609_51 / D3).
+     *
+     * <p>🔴 목록과 <b>같은 기간 조건</b>이어야 한다 — 한쪽만 기간을 걸면 배지와 목록 건수가 어긋난다.
+     * 🔴 사이드바 배지용 {@link #countByStatusIn}(기간 무관)은 <b>건드리지 말 것</b> — 질문이 다르다.
+     */
+    @Query("select count(i) from CustomerInquiry i where i.status in :open and i.inquiredAt >= :from")
+    long countOpenForAlerts(@Param("open") Collection<InquiryStatus> open,
+                            @Param("from") LocalDateTime from);
 }
