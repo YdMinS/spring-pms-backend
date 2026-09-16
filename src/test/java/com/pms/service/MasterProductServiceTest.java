@@ -656,6 +656,159 @@ class MasterProductServiceTest {
         verify(optionRepository, never()).save(any());
     }
 
+    // ------------------------------------------------------------- duplicate component set (2609_46)
+    //
+    // A master's identity is its component set — the SAME set must never get a second master (quantity
+    // differences are that master's options). Set equality itself is enforced by the two repository
+    // queries (covers-all + same total count), so these mock tests pin the service's reaction to each
+    // outcome; the real order-independent / subset / superset semantics are proven end-to-end against a
+    // live DB in MasterProductControllerTest.
+
+    /** The duplicate lookup found a master for this set → the create is refused before any save. */
+    private void givenDuplicateMaster(long size, MasterProduct duplicate) {
+        given(componentRepository.findMasterIdsCoveringAll(any(), eq(size)))
+                .willReturn(List.of(duplicate.getId()));
+        given(componentRepository.findMasterIdsWithComponentCount(any(), eq(size)))
+                .willReturn(List.of(duplicate.getId()));
+        given(masterProductRepository.findScopedByIdIn(any())).willReturn(List.of(duplicate));
+    }
+
+    @Test
+    void createMasterProduct_sameComponentSet_throws400AndDoesNotSaveMaster() {
+        given(productRepository.findAllById(any()))
+                .willReturn(List.of(product(1L, "상품1"), product(2L, "상품2")));
+        givenDuplicateMaster(2L, MasterProduct.builder().id(9L).name("기존마스터").active(true).build());
+
+        MasterProductRequest request = MasterProductRequest.builder()
+                .name("또만든마스터").componentProductIds(List.of(1L, 2L))
+                .options(List.of(MasterOptionRequest.builder()
+                        .name("1세트").items(List.of(item(1L, 1), item(2L, 1))).build()))
+                .build();
+
+        assertThatThrownBy(() -> service.createMasterProduct(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("기존마스터(id=9)");
+        // Nothing half-written: the guard runs before the master row exists.
+        verify(masterProductRepository, never()).save(any());
+        verify(componentRepository, never()).save(any());
+        verify(optionRepository, never()).save(any());
+    }
+
+    @Test
+    void createMasterProduct_sameSetInDifferentOrder_throws400() {
+        // Order must not matter: the service hands the repository a SET, so [2, 1] and [1, 2] are one key.
+        given(productRepository.findAllById(any()))
+                .willReturn(List.of(product(1L, "상품1"), product(2L, "상품2")));
+        givenDuplicateMaster(2L, MasterProduct.builder().id(9L).name("기존마스터").active(true).build());
+
+        MasterProductRequest request = MasterProductRequest.builder()
+                .name("역순마스터").componentProductIds(List.of(2L, 1L))
+                .options(List.of(MasterOptionRequest.builder()
+                        .name("1세트").items(List.of(item(2L, 1), item(1L, 1))).build()))
+                .build();
+
+        assertThatThrownBy(() -> service.createMasterProduct(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("이미 있습니다");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Collection<Long>> captor = ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(componentRepository).findMasterIdsCoveringAll(captor.capture(), eq(2L));
+        assertThat(captor.getValue()).containsExactlyInAnyOrder(1L, 2L);
+    }
+
+    @Test
+    void createMasterProduct_softDeletedDuplicate_throws400NamingItAsDeleted() {
+        // A soft-deleted master is invisible on the list screen — say so, or the user "fixes" it by
+        // creating yet another one.
+        given(productRepository.findAllById(any())).willReturn(List.of(product(1L, "상품1")));
+        givenDuplicateMaster(1L, MasterProduct.builder().id(9L).name("숨은마스터").active(false).build());
+
+        MasterProductRequest request = MasterProductRequest.builder()
+                .name("새마스터").componentProductIds(List.of(1L))
+                .options(List.of(MasterOptionRequest.builder()
+                        .name("1개").items(List.of(item(1L, 1))).build()))
+                .build();
+
+        assertThatThrownBy(() -> service.createMasterProduct(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("삭제된 마스터");
+        verify(masterProductRepository, never()).save(any());
+    }
+
+    @Test
+    void createMasterProduct_supersetMasterOnly_savesMaster() {
+        // A master that merely CONTAINS these products (extra components) is a different master: the
+        // covers-all query hits it, the exact-count query drops it → the create must go through.
+        given(productRepository.findAllById(any()))
+                .willReturn(List.of(product(1L, "상품1"), product(2L, "상품2")));
+        given(componentRepository.findMasterIdsCoveringAll(any(), eq(2L))).willReturn(List.of(9L));
+        given(componentRepository.findMasterIdsWithComponentCount(any(), eq(2L))).willReturn(List.of());
+        given(masterProductRepository.save(any()))
+                .willReturn(MasterProduct.builder().id(5L).name("마스터A").active(true).build());
+        given(optionRepository.save(any()))
+                .willReturn(MasterProductOption.builder().id(10L).name("1세트").build());
+        given(componentRepository.findByMasterProductId(5L)).willReturn(List.of());
+        given(optionRepository.findByMasterProductId(5L)).willReturn(List.of());
+
+        MasterProductRequest request = MasterProductRequest.builder()
+                .name("마스터A").componentProductIds(List.of(1L, 2L))
+                .options(List.of(MasterOptionRequest.builder()
+                        .name("1세트").items(List.of(item(1L, 1), item(2L, 1))).build()))
+                .build();
+
+        assertThat(service.createMasterProduct(request).getId()).isEqualTo(5L);
+        verify(masterProductRepository, times(1)).save(any());
+        // The tenant-scoped resolve is never reached — the exact-count filter already emptied the set.
+        verify(masterProductRepository, never()).findScopedByIdIn(any());
+    }
+
+    @Test
+    void findByComponents_match_returnsMasterWithOptionCount() {
+        MasterProduct master = MasterProduct.builder().id(9L).name("기존마스터").active(true).build();
+        givenDuplicateMaster(2L, master);
+        given(optionRepository.findByMasterProductIdIn(List.of(9L))).willReturn(List.of(
+                MasterProductOption.builder().id(1L).masterProduct(master).name("1세트").build(),
+                MasterProductOption.builder().id(2L).masterProduct(master).name("2세트").build()));
+
+        var found = service.findByComponents(List.of(2L, 1L));
+
+        assertThat(found).hasSize(1);
+        assertThat(found.get(0).getId()).isEqualTo(9L);
+        assertThat(found.get(0).getName()).isEqualTo("기존마스터");
+        assertThat(found.get(0).getActive()).isTrue();
+        assertThat(found.get(0).getOptionCount()).isEqualTo(2);
+    }
+
+    @Test
+    void findByComponents_noMatch_returnsEmptyWithoutFurtherQueries() {
+        given(componentRepository.findMasterIdsCoveringAll(any(), eq(2L))).willReturn(List.of());
+
+        assertThat(service.findByComponents(List.of(1L, 2L))).isEmpty();
+        verify(componentRepository, never()).findMasterIdsWithComponentCount(any(), any(Long.class));
+        verify(masterProductRepository, never()).findScopedByIdIn(any());
+    }
+
+    @Test
+    void findByComponents_emptyRequest_returnsEmptyWithoutQuerying() {
+        assertThat(service.findByComponents(List.of())).isEmpty();
+        assertThat(service.findByComponents(null)).isEmpty();
+        verify(componentRepository, never()).findMasterIdsCoveringAll(any(), any(Long.class));
+    }
+
+    @Test
+    void findByComponents_duplicateIdsInRequest_areDedupedBeforeMatching() {
+        // [1, 1, 2] is the two-product set {1, 2} — the size handed to the query must be 2, not 3.
+        given(componentRepository.findMasterIdsCoveringAll(any(), eq(2L))).willReturn(List.of());
+
+        assertThat(service.findByComponents(List.of(1L, 1L, 2L))).isEmpty();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Collection<Long>> captor = ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(componentRepository).findMasterIdsCoveringAll(captor.capture(), eq(2L));
+        assertThat(captor.getValue()).containsExactly(1L, 2L);
+    }
+
     // ------------------------------------------------------------- option coverage validation
 
     @Test

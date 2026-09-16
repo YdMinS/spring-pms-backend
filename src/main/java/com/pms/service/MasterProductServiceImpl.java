@@ -30,6 +30,7 @@ import com.pms.dto.response.ListingMatrixResponse.MatrixCell;
 import com.pms.dto.response.ListingMatrixResponse.MatrixRow;
 import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterOptionResponse;
+import com.pms.dto.response.MasterProductByComponentsResponse;
 import com.pms.dto.response.MasterProductResponse;
 import com.pms.exception.MasterProductInUseException;
 import com.pms.exception.ValidationException;
@@ -517,12 +518,93 @@ public class MasterProductServiceImpl implements MasterProductService {
 
     // ---------------------------------------------------------------- master CRUD
 
+    // ---------------------------------------------------------------- duplicate component set (2609_46)
+
+    @Override
+    public List<MasterProductByComponentsResponse> findByComponents(List<Long> productIds) {
+        Set<Long> wanted = normaliseComponentIds(productIds);
+        if (wanted.isEmpty()) {
+            return List.of();
+        }
+        List<MasterProduct> masters = findMastersWithComponentSet(wanted);
+        if (masters.isEmpty()) {
+            return List.of();
+        }
+
+        // N+1 guard: one query for every candidate's options (candidates are 0..a couple of rows).
+        Map<Long, Long> optionCounts = optionRepository
+                .findByMasterProductIdIn(masters.stream().map(MasterProduct::getId).toList()).stream()
+                .collect(Collectors.groupingBy(o -> o.getMasterProduct().getId(), Collectors.counting()));
+
+        return masters.stream()
+                .sorted(Comparator.comparing(MasterProduct::getId))
+                .map(m -> MasterProductByComponentsResponse.builder()
+                        .id(m.getId())
+                        .name(m.getName())
+                        .active(Boolean.TRUE.equals(m.getActive()))
+                        .optionCount(optionCounts.getOrDefault(m.getId(), 0L).intValue())
+                        .build())
+                .toList();
+    }
+
+    /** Deduped, null-free component ids (order preserved); the request order never affects matching. */
+    private Set<Long> normaliseComponentIds(Collection<Long> productIds) {
+        if (productIds == null) {
+            return Set.of();
+        }
+        return productIds.stream().filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    /**
+     * Masters whose component set equals {@code wanted} exactly (3 fixed queries, never N+1):
+     * covers-all → same total count → tenant-scoped resolve. Superset/subset masters drop out at step 2,
+     * other tenants' masters at step 3.
+     */
+    private List<MasterProduct> findMastersWithComponentSet(Set<Long> wanted) {
+        List<Long> covering = componentRepository.findMasterIdsCoveringAll(wanted, wanted.size());
+        if (covering.isEmpty()) {
+            return List.of();
+        }
+        List<Long> exact = componentRepository.findMasterIdsWithComponentCount(covering, wanted.size());
+        if (exact.isEmpty()) {
+            return List.of();
+        }
+        return masterProductRepository.findScopedByIdIn(exact);
+    }
+
+    /**
+     * MUST-KEEP: refuse to create a second master for a component set that already has one (2609_46).
+     *
+     * <p>The screen checks this before unlocking the rest of the form, but the screen is bypassable — this
+     * is the final line. The message names the existing master so the user can go add an option to it, and
+     * calls out a soft-deleted one (invisible on the list screen, which is why they got here).</p>
+     */
+    private void assertComponentSetIsFree(Set<Long> componentIds) {
+        List<MasterProduct> duplicates = findMastersWithComponentSet(componentIds);
+        if (duplicates.isEmpty()) {
+            return;
+        }
+        String names = duplicates.stream()
+                .sorted(Comparator.comparing(MasterProduct::getId))
+                .map(m -> m.getName() + "(id=" + m.getId() + ")"
+                        + (Boolean.TRUE.equals(m.getActive()) ? "" : " — 삭제된 마스터"))
+                .collect(Collectors.joining(", "));
+        throw new ValidationException(
+                "이 구성상품으로 만든 마스터가 이미 있습니다: " + names
+                        + ". 새로 만들지 말고 그 마스터에 옵션을 추가하세요.");
+    }
+
     @Override
     @Transactional
     public MasterProductResponse createMasterProduct(MasterProductRequest request) {
         List<Product> products = requireProducts(request.getComponentProductIds());
         Set<Long> componentIds = products.stream().map(Product::getId)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        // 2609_46: identity first — the component set defines the master, so a set that already has a
+        // master is rejected before anything else is judged (and before any save).
+        assertComponentSetIsFree(componentIds);
 
         // Atomicity: pre-validate every option (coverage + quantity) BEFORE any save. A violation throws
         // here, so the master is never persisted — provable by mock (masterProductRepository.save is never

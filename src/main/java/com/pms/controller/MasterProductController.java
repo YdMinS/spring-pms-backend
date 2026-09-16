@@ -25,6 +25,7 @@ import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterFromChannelPreviewResponse;
 import com.pms.dto.response.MasterOptionResponse;
+import com.pms.dto.response.MasterProductByComponentsResponse;
 import com.pms.dto.response.MasterProductImageResponse;
 import com.pms.dto.response.MasterProductResponse;
 import com.pms.dto.response.ShippingForceApplyResponse;
@@ -77,6 +78,21 @@ public class MasterProductController {
     public ResponseEntity<ResponseDTO<Page<MasterProductResponse>>> getMasterProducts(
             @ParameterObject @ModelAttribute MasterProductQuery query) {
         return ResponseEntity.ok(ResponseDTO.success(masterProductService.getMasterProducts(query)));
+    }
+
+    /**
+     * Duplicate check for the create screen (2609_46). Declared before {@code /{id}} for readability —
+     * the literal path always beats the template in Spring's pattern comparator either way.
+     */
+    @GetMapping("/by-components")
+    @Operation(summary = "Find master products built from the exact same component set",
+            description = "구성상품(물품) 조합이 **정확히 같은** 마스터를 돌려준다. 순서 무관, 부분집합·상위집합은 "
+                    + "다른 마스터로 보고 제외한다. 삭제된 마스터도 `active:false` 로 함께 내려간다 "
+                    + "(목록에 안 보여서 또 만드는 것을 막기 위함). 없으면 빈 배열.")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<List<MasterProductByComponentsResponse>>> findByComponents(
+            @RequestParam("productIds") List<Long> productIds) {
+        return ResponseEntity.ok(ResponseDTO.success(masterProductService.findByComponents(productIds)));
     }
 
     @GetMapping("/{id}")
