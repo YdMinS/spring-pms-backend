@@ -447,10 +447,11 @@ class MasterProductControllerTest extends BaseIntegrationTest {
     }
 
     // 84: an option that is live on the market (the seeded cell has platformProductId + an active option
-    // named "기본") is locked — its quantity vector cannot be changed. Wiring only; the judgement matrix and
+    // named "기본") is locked for RENAME and DELETE — but its quantity vector stays editable, which is the
+    // only way back from a quantity mistyped at registration time. Wiring only; the judgement matrix and
     // the other guards live in MasterProductServiceTest.
     @Test
-    void updateOption_marketRegistered_quantityChange_returns400() throws Exception {
+    void updateOption_marketRegistered_quantityChange_returns200() throws Exception {
         String create = "{\"name\":\"기본\",\"items\":["
                 + "{\"productId\":" + productId1 + ",\"quantity\":2},"
                 + "{\"productId\":" + productId2 + ",\"quantity\":2}]}";
@@ -468,6 +469,17 @@ class MasterProductControllerTest extends BaseIntegrationTest {
         mockMvc.perform(patch(PATH + "/" + masterId + "/options/" + optionId)
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON).content(update))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.marketRegistered").value(true))    // still locked for rename/delete
+                .andExpect(jsonPath("$.data.items[?(@.productId == " + productId1 + ")].quantity").value(3));
+
+        // The rename guard is the half that stays: same option, new name → 400.
+        String rename = "{\"name\":\"기본2\",\"items\":["
+                + "{\"productId\":" + productId1 + ",\"quantity\":3},"
+                + "{\"productId\":" + productId2 + ",\"quantity\":2}]}";
+        mockMvc.perform(patch(PATH + "/" + masterId + "/options/" + optionId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(rename))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.status").value("FAILURE"));
     }
