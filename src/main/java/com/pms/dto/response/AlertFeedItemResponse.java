@@ -20,8 +20,9 @@ import java.time.LocalDateTime;
  * @param refId           ORDER = {@code orders.id} · CLAIM = {@code order_claim.id} · INQUIRY = {@code customer_inquiry.id}
  * @param externalOrderId ORDER 의 딥링크 키(출고관리 주문번호 검색어, D9). 다른 타입은 참고용
  * @param itemName        ORDER 는 <b>대표 상품 1개</b>(첫 라인)
- * @param itemCount       ORDER 의 상품(라인) 수 — 화면이 {@code 상품 3개} 로 그린다. 🔴 메뉴 배지는
- *                        라인 수, 알림은 주문 수라 숫자가 다른데(D7) 이 값이 그 이유를 화면에서 설명한다
+ * @param itemCount       ORDER 의 상품(라인) 수 — 화면이 {@code 상품 3개} 로 그린다.
+ *                        ⚠️ 2026-09-16 이후 <b>메뉴 배지도 주문 단위</b>({@code paidOrders})라 단위 차이는 없다.
+ *                        남은 차이는 기간뿐이다 — 메뉴는 상한이 없고 알림은 최근 {@code sync-days} 다
  * @param detail          클레임=사유, 문의=본문 앞부분, 주문=null. 🔴 <b>200자에서 자른다</b>
  * @param occurredAt      ORDER=주문일 · CLAIM=접수일 · INQUIRY=문의일. 정렬 기준
  * @param claimType       CLAIM 일 때만 채운다(RETURN·EXCHANGE) — 웹이 반품/교환 탭을 고르는 데 쓴다(D9)
