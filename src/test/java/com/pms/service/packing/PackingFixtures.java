@@ -46,7 +46,8 @@ final class PackingFixtures {
         Seller seller = Seller.builder().id(SELLER_ID).sellerName("셀러A").build();
         MarketplaceAccount account = MarketplaceAccount.builder().id(1L).seller(seller).build();
         Order order = Order.builder().id(7L).marketplaceAccount(account)
-                .externalOrderId("ORD-1").orderedAt(ORDERED_AT).build();
+                .externalOrderId("ORD-1").orderedAt(ORDERED_AT)
+                .ordererName("김주문").receiverName("박수취").build();
         return OrderShipment.builder().id(SHIPMENT_ID).order(order).externalShipmentId("BOX-1").build();
     }
 
@@ -88,7 +89,11 @@ final class PackingFixtures {
     }
 
     static Product product(Long id, String name, String barcode) {
-        return Product.builder().id(id).productName(name).barcodeId(barcode).build();
+        return product(id, name, barcode, null);
+    }
+
+    static Product product(Long id, String name, String barcode, String imageUrl) {
+        return Product.builder().id(id).productName(name).barcodeId(barcode).imageUrl(imageUrl).build();
     }
 
     static RemainingLine remaining(Long lineId, Long productId, int required, int confirmed) {

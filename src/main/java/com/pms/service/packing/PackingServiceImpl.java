@@ -1,5 +1,6 @@
 package com.pms.service.packing;
 
+import com.pms.domain.Order;
 import com.pms.domain.OrderLine;
 import com.pms.domain.Package;
 import com.pms.domain.ParcelStatus;
@@ -98,7 +99,7 @@ public class PackingServiceImpl implements PackingService {
 
         List<PackingRemainingItem> remaining = new ArrayList<>();
         List<OutboundUnexpandedView> unexpanded = new ArrayList<>();
-        Map<Long, String> barcodes = barcodesOf(remainingLines);
+        Map<Long, Product> products = productsOf(remainingLines);
         for (RemainingLine remainingLine : remainingLines) {
             OrderLine line = linesById.get(remainingLine.orderLineId());
             if (remainingLine.failed()) {
@@ -109,8 +110,15 @@ public class PackingServiceImpl implements PackingService {
             }
             remainingLine.products().stream()
                     .filter(p -> p.remainingQty() > 0)
-                    .forEach(p -> remaining.add(new PackingRemainingItem(line.getId(), line.getItemName(),
-                            p.productId(), p.productName(), barcodes.get(p.productId()), p.remainingQty())));
+                    .forEach(p -> {
+                        // 지워진 물품은 맵에 없다 — 바코드·사진 없이 그대로 내린다(예전 barcodes.get 도 null 을 허용했다).
+                        Product product = products.get(p.productId());
+                        remaining.add(new PackingRemainingItem(line.getId(), line.getItemName(),
+                                p.productId(), p.productName(),
+                                product == null ? null : product.getBarcodeId(),
+                                p.remainingQty(),
+                                product == null ? null : product.getImageUrl()));
+                    });
         }
 
         return new PackingScanResponse(
@@ -427,8 +435,12 @@ public class PackingServiceImpl implements PackingService {
                 .sum();
     }
 
-    /** 화면이 스캔을 로컬로 맞추도록 바코드를 함께 내린다(D11). */
-    private Map<Long, String> barcodesOf(List<RemainingLine> remainingLines) {
+    /**
+     * 담을 물품들을 id 로 한 번에 읽는다. 바코드(D11)와 사진(2609_54/D4)이 여기서 같이 나온다.
+     *
+     * <p>🔴 사진 때문에 쿼리를 새로 만들지 않는다 — 이 한 번이 이미 두 값을 다 들고 있다.
+     */
+    private Map<Long, Product> productsOf(List<RemainingLine> remainingLines) {
         Set<Long> productIds = remainingLines.stream()
                 .filter(line -> !line.failed())
                 .flatMap(line -> line.products().stream())
@@ -438,11 +450,11 @@ public class PackingServiceImpl implements PackingService {
         if (productIds.isEmpty()) {
             return Map.of();
         }
-        Map<Long, String> barcodes = new LinkedHashMap<>();
+        Map<Long, Product> products = new LinkedHashMap<>();
         for (Product product : productRepository.findAllById(productIds)) {
-            barcodes.put(product.getId(), product.getBarcodeId());
+            products.put(product.getId(), product);
         }
-        return barcodes;
+        return products;
     }
 
     private ShipmentParcel parcel(Long parcelId) {
@@ -465,8 +477,10 @@ public class PackingServiceImpl implements PackingService {
     }
 
     private PackingScanResponse.OrderView orderView(ShipmentParcel parcel) {
-        return new PackingScanResponse.OrderView(
-                parcel.getOrderShipment().getOrder().getExternalOrderId(), sellerNameOf(parcel));
+        // 🔴 Order 를 새로 조회하지 않는다 — 이미 트랜잭션 안에서 타고 있는 경로다(open-in-view 가 꺼져 있다).
+        Order order = parcel.getOrderShipment().getOrder();
+        return new PackingScanResponse.OrderView(order.getExternalOrderId(), sellerNameOf(parcel),
+                order.getOrdererName(), order.getReceiverName());
     }
 
     /** 판매자는 {@code 박스 → 배송묶음 → 주문 → 계정 → 판매자} 로 유도한다(출고·재고와 같은 축). */

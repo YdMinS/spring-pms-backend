@@ -9,7 +9,10 @@ package com.pms.dto.response;
  *
  * @param remainingQty 아직 안 나간 수량 = {@code 필요 − STOCK_OUT 합계}. 이미 완료된 다른 박스의 수량은
  *                     그 박스가 출고를 남겼으므로 <b>자동으로 빠져 있다</b>
+ * @param imageUrl     물품 사진(`product.image_url`). 없으면 {@code null} — 화면이 회색 자리를 그린다.
+ *                     포장 화면은 사진으로 물건을 찾는다(2609_54/D2), 이름은 보조다
  */
 public record PackingRemainingItem(Long orderLineId, String itemName, Long productId,
-                                   String productName, String barcodeId, int remainingQty) {
+                                   String productName, String barcodeId, int remainingQty,
+                                   String imageUrl) {
 }
