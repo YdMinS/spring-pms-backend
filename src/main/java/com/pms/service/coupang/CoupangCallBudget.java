@@ -25,8 +25,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * that is allowed to take seconds.
  *
  * <p>🔴 Capacity plus refill is the worst case for any one-second window, so keep
- * {@code callBurst + callsPerSecond < 5}. Sitting exactly ON the documented limit is not a margin:
- * prod paced calls 250ms apart (4/s + burst 1 = 5) and still took a 429 on 2026-09-16.
+ * {@code callBurst + callsPerSecond <= 5} or the documented limit can be exceeded.
  *
  * <p>🔴 In-memory and therefore single-instance only. Running two app instances silently doubles
  * the effective rate (PLAN D11) — a distributed limiter must land before any horizontal scaling.
