@@ -25,10 +25,15 @@ import java.util.concurrent.ConcurrentHashMap;
  * that is allowed to take seconds.
  *
  * <p>🔴 Capacity plus refill is the worst case for any one-second window, so keep
- * {@code callBurst + callsPerSecond <= 5} or the documented limit can be exceeded.
+ * {@code callBurst + callsPerSecond < 5}. Sitting exactly ON the documented limit is not a margin:
+ * prod paced calls 250ms apart (4/s + burst 1 = 5) and still took a 429 on 2026-09-16.
  *
  * <p>🔴 In-memory and therefore single-instance only. Running two app instances silently doubles
  * the effective rate (PLAN D11) — a distributed limiter must land before any horizontal scaling.
+ * This is not theoretical: the dev and prod containers share a host AND a vendor id, so once the
+ * 15-minute order-sync schedule landed they fired on the same cron tick and Coupang saw 8/s
+ * (2026-09-16 09:15 KST). Until one process owns the outbound calls, every marketplace schedule
+ * stays off on dev ({@code application-dev.yml}).
  */
 @Component
 public class CoupangCallBudget {
