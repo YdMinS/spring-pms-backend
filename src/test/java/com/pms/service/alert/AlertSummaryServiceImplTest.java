@@ -86,15 +86,15 @@ class AlertSummaryServiceImplTest {
 
     /** 🔴 종 배지 = 새 주문 + 기간이 걸린 클레임·문의 (D3). 클라이언트가 더하지 않게 서버가 준다. */
     @Test
-    void summaryAddsPaidLinesNewOrdersAndTodoCount() {
-        given(orderLineRepository.countPaidLines(OrderStatus.PAID)).willReturn(9L);
+    void summaryAddsPaidOrdersNewOrdersAndTodoCount() {
+        given(orderLineRepository.countPaidOrders(OrderStatus.PAID)).willReturn(9L);
         given(orderLineRepository.countNewOrders(eq(OrderStatus.PAID), any())).willReturn(4L);
         given(orderClaimRepository.countOpenForAlerts(any(), any())).willReturn(2L);
         given(customerInquiryRepository.countOpenForAlerts(any(), any())).willReturn(1L);
 
         AlertSummaryResponse result = service.summary();
 
-        assertThat(result.paidLines()).isEqualTo(9);
+        assertThat(result.paidOrders()).isEqualTo(9);
         assertThat(result.newOrders()).isEqualTo(4);
         assertThat(result.todoCount()).isEqualTo(7);      // 4 + 2 + 1
 
@@ -117,17 +117,17 @@ class AlertSummaryServiceImplTest {
     }
 
     /**
-     * 🔴 {@code paidLines}(기간 없음, 라인 수)와 {@code newOrders}(기간 있음, 주문 수)는 서로 다른 숫자다
-     * (D7·D8). 한쪽을 다른 쪽에 맞추는 회귀를 막는다.
+     * 🔴 {@code paidOrders}(기간 없음)와 {@code newOrders}(최근 sync-days)는 <b>같은 주문 단위</b>지만
+     * 기간이 달라 여전히 다른 숫자다(D8) — 한쪽을 다른 쪽에 맞추는 회귀를 막는다.
      */
     @Test
-    void summaryPaidLinesAndNewOrdersAreDifferentNumbers() {
-        given(orderLineRepository.countPaidLines(OrderStatus.PAID)).willReturn(12L);
+    void summaryPaidOrdersAndNewOrdersAreDifferentNumbers() {
+        given(orderLineRepository.countPaidOrders(OrderStatus.PAID)).willReturn(12L);
         given(orderLineRepository.countNewOrders(eq(OrderStatus.PAID), any())).willReturn(5L);
 
         AlertSummaryResponse result = service.summary();
 
-        assertThat(result.paidLines()).isEqualTo(12);
+        assertThat(result.paidOrders()).isEqualTo(12);
         assertThat(result.newOrders()).isEqualTo(5);
     }
 }

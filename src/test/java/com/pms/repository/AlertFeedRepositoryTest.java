@@ -92,7 +92,7 @@ class AlertFeedRepositoryTest {
         em.clear();
 
         assertThat(newOrders(WINDOW_FROM, CURSOR_NOW, Long.MAX_VALUE, PageRequest.of(0, 50))).isEmpty();
-        assertThat(orderLineRepository.countPaidLines(OrderStatus.PAID)).isZero();
+        assertThat(orderLineRepository.countPaidOrders(OrderStatus.PAID)).isZero();
         assertThat(orderLineRepository.countNewOrders(OrderStatus.PAID, WINDOW_FROM)).isZero();
     }
 
@@ -108,8 +108,25 @@ class AlertFeedRepositoryTest {
     }
 
     /**
-     * 🔴 D8: 기간 밖 주문은 피드·{@code countNewOrders} 에서 빠지지만 {@code countPaidLines} 에는 <b>남는다</b>
-     * (메뉴 배지는 "지금 발주처리해야 할 상품 수"라 오래된 것도 세야 맞다). 클레임·문의도 각자 기간 밖이면 빠진다.
+     * 🔴 메뉴 배지도 <b>주문 단위</b>다(2026-09-16) — 상품 3개짜리 주문 하나는 1 이다.
+     * 상품 수로 세면 같은 일이 메뉴에서는 3, 종 배지에서는 1 로 보인다.
+     */
+    @Test
+    void countsPaidOrdersByOrderNotByLine() {
+        Order order = order("O-MULTI", ORDERED_AT);
+        line(order, 1, 0, 0, "양말세트");
+        line(order, 2, 0, 0, "수건세트");
+        line(order, 1, 0, 0, "비누세트");
+        em.flush();
+        em.clear();
+
+        assertThat(orderLineRepository.countPaidOrders(OrderStatus.PAID)).isEqualTo(1);
+        assertThat(orderLineRepository.countNewOrders(OrderStatus.PAID, WINDOW_FROM)).isEqualTo(1);
+    }
+
+    /**
+     * 🔴 D8: 기간 밖 주문은 피드·{@code countNewOrders} 에서 빠지지만 {@code countPaidOrders} 에는 <b>남는다</b>
+     * (메뉴 배지는 "지금 발주처리해야 할 주문 수"라 오래된 것도 세야 맞다). 클레임·문의도 각자 기간 밖이면 빠진다.
      */
     @Test
     void excludesRowsOutsideWindow() {
@@ -121,7 +138,7 @@ class AlertFeedRepositoryTest {
 
         assertThat(newOrders(WINDOW_FROM, CURSOR_NOW, Long.MAX_VALUE, PageRequest.of(0, 50))).isEmpty();
         assertThat(orderLineRepository.countNewOrders(OrderStatus.PAID, WINDOW_FROM)).isZero();
-        assertThat(orderLineRepository.countPaidLines(OrderStatus.PAID)).isEqualTo(1);
+        assertThat(orderLineRepository.countPaidOrders(OrderStatus.PAID)).isEqualTo(1);
 
         assertThat(openClaims(WINDOW_FROM, CURSOR_NOW, Long.MAX_VALUE, PageRequest.of(0, 50))).isEmpty();
         assertThat(orderClaimRepository.countOpenForAlerts(ClaimStatus.closedStatuses(), WINDOW_FROM)).isZero();

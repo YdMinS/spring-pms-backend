@@ -27,7 +27,7 @@ import java.time.LocalDateTime;
 @Transactional(readOnly = true)
 public class AlertSummaryServiceImpl implements AlertSummaryService {
 
-    /** 결제완료 = 출고관리 배지·새 주문 알림의 조건(2609_51 D5·D7). */
+    /** 결제완료 = 출고관리 배지·새 주문 알림의 조건(2609_51 D5·D7). 🔴 두 숫자 모두 <b>주문 단위</b>다. */
     private static final OrderStatus PAID = OrderStatus.PAID;
 
     private final OrderClaimRepository orderClaimRepository;
@@ -49,7 +49,7 @@ public class AlertSummaryServiceImpl implements AlertSummaryService {
                 // 🔴 기존 두 값은 기간 무관이다 — 값이 바뀌면 사이드바 배지가 조용히 달라진다.
                 orderClaimRepository.countByStatusNotIn(ClaimStatus.closedStatuses()),
                 customerInquiryRepository.countByStatusIn(InquiryStatus.openStatuses()),
-                orderLineRepository.countPaidLines(PAID),
+                orderLineRepository.countPaidOrders(PAID),
                 newOrders,
                 newOrders + openClaimsInWindow + openInquiriesInWindow);
     }
