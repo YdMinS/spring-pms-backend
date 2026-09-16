@@ -40,7 +40,14 @@ public record PackingScanResponse(
                              int totalParcels, ParcelStatus status) {
     }
 
-    /** 화면 상단에 주문을 확인시켜 주는 최소 정보. */
-    public record OrderView(String externalOrderId, String sellerName) {
+    /**
+     * 화면 상단에 주문을 확인시켜 주는 최소 정보.
+     *
+     * <p>🔴 이름 두 개를 <b>그대로</b> 싣고 무엇을 보일지는 화면이 정한다(2609_54/D5) — 서버가 고르면
+     * 화면 문구가 서버에 묶인다. 마스킹하지 않는다: 작업자가 실물 송장의 받는 사람과 대조하는 값이다.
+     * 🔴 연락처·주소는 싣지 않는다 — 2026-07-11 PII 미저장 결정에서 <b>이름만</b> 완화됐다(2609_06).
+     */
+    public record OrderView(String externalOrderId, String sellerName,
+                            String ordererName, String receiverName) {
     }
 }
