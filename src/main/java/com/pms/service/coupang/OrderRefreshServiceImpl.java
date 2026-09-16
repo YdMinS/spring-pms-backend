@@ -8,10 +8,13 @@ import com.pms.domain.OrderLine;
 import com.pms.domain.Platform;
 import com.pms.dto.request.OrderRefreshRequest;
 import com.pms.repository.OrderLineRepository;
+import com.pms.service.coupang.OrderRefreshResult.CancelledOrder;
 import com.pms.service.coupang.OrderRefreshResult.FailedOrder;
+import com.pms.service.coupang.OrderUpserter.CancelMarkCount;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -87,6 +90,7 @@ public class OrderRefreshServiceImpl implements OrderRefreshService {
 
         int refreshed = 0;
         List<String> empty = new ArrayList<>();
+        List<CancelledOrder> cancelled = new ArrayList<>();
         List<FailedOrder> failed = new ArrayList<>();
 
         for (Map.Entry<String, MarketplaceAccount> entry : accountByOrderId.entrySet()) {
@@ -100,18 +104,26 @@ public class OrderRefreshServiceImpl implements OrderRefreshService {
                     empty.add(orderId);
                 }
             } catch (Exception e) {
+                // 🔴 분기를 catch 절로 나누지 말 것 — catch 블록에서 다시 던진 예외는 형제 catch 가
+                //    잡지 못해 루프 전체가 중단된다(D8 위반). 한 catch 안에서 갈래를 판정한다.
+                CancelledOrder marked = markCancelledIfGone(account, orderId, e);
+                if (marked != null) {
+                    // 쿠팡이 "이미 끝난 주문"이라고 확정해 준 경우 — 실패가 아니라 로컬을 정리할 신호다.
+                    cancelled.add(marked);
+                    continue;
+                }
                 // 한 주문의 실패가 다음 주문을 막지 않는다(D8). 주문번호를 남긴다 — 문의 추적 단서다.
                 log.warn("Order refresh failed: account={} orderId={}", account.getId(), orderId, e);
                 failed.add(new FailedOrder(orderId, e.getMessage()));
             }
         }
 
-        log.info("Order refresh: orders={} refreshed={} empty={} failed={} elapsedMs={}",
-                accountByOrderId.size(), refreshed, empty.size(), failed.size(),
+        log.info("Order refresh: orders={} refreshed={} empty={} cancelled={} failed={} elapsedMs={}",
+                accountByOrderId.size(), refreshed, empty.size(), cancelled.size(), failed.size(),
                 System.currentTimeMillis() - startedAt);
 
         return new OrderRefreshResult(
-                accountByOrderId.size(), refreshed, empty, failed, unsupported);
+                accountByOrderId.size(), refreshed, empty, cancelled, failed, unsupported);
     }
 
     /**
@@ -141,6 +153,43 @@ public class OrderRefreshServiceImpl implements OrderRefreshService {
         }
         orderUpserter.upsertBoxes(account, data);
         return true;
+    }
+
+    /**
+     * 쿠팡이 "이미 취소·반품된 주문"이라고 답했으면 로컬을 정리하고 그 결과를, 아니면 null 을 준다.
+     *
+     * <p>정리 자체가 실패하면 null 을 돌려 <b>원래 사유로</b> 실패 보고되게 둔다 — 사용자가 다시 눌러
+     * 재시도할 수 있고, 조용히 성공으로 보이는 것보다 낫다.
+     */
+    private CancelledOrder markCancelledIfGone(MarketplaceAccount account, String orderId, Exception e) {
+        if (!(e instanceof RestClientResponseException response) || !alreadyCancelledOrReturned(response)) {
+            return null;
+        }
+        try {
+            CancelMarkCount marked = orderUpserter.markCancelledIfNotShipped(account, orderId);
+            return new CancelledOrder(orderId, marked.cancelledLines(), marked.keptLines());
+        } catch (Exception markFailed) {
+            log.warn("Order refresh: 취소 반영 실패 account={} orderId={}", account.getId(), orderId, markFailed);
+            return null;
+        }
+    }
+
+    /**
+     * 쿠팡이 "이 주문은 이미 취소 또는 반품됐다"고 답한 응답인가 (2026-09-16 prod 실응답).
+     *
+     * <pre>400 {"code":400,"message":"해당 주문이 취소 또는 반품 되었습니다."}</pre>
+     *
+     * <p>🔴 <b>메시지 문구로 판정한다</b> — 쿠팡이 이 경우에만 쓰는 전용 코드를 주지 않는다. 그래서
+     * 400 전부가 아니라 <b>취소·반품 두 단어가 함께 있는 400</b> 만 이 경로로 보낸다. 잘못된 vendorId
+     * 같은 다른 400 은 종전처럼 실패로 남아야 한다(사용자가 고칠 수 있는 정보가 사유에 담긴다).
+     * 문구가 바뀌면 이 판정이 조용히 false 가 되고 동작은 옛 모습(실패 보고)으로 돌아간다 — 안전한 방향이다.
+     */
+    private boolean alreadyCancelledOrReturned(RestClientResponseException e) {
+        if (e.getStatusCode().value() != 400) {
+            return false;
+        }
+        String body = e.getResponseBodyAsString();
+        return body != null && body.contains("취소") && body.contains("반품");
     }
 
     private JsonNode readTree(String body) {
