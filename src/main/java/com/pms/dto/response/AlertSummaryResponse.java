@@ -15,8 +15,10 @@ package com.pms.dto.response;
  *
  * @param openClaims           미완결 클레임 수(DONE·REJECTED·WITHDRAWN·STALE 이 아닌 것). 기간 무관
  * @param unansweredInquiries  미답변 고객문의 수. 기간 무관
- * @param paidLines  결제완료 상품(라인) 수 = {@code 출고관리} 메뉴 배지(2609_51 D7). 🔴 <b>라인 수</b>이고
- *                   기간 상한이 없다(D8) — 알림의 새 주문 수보다 크게 나오는 것이 정상이다
+ * @param paidOrders 결제완료 <b>주문</b> 수 = {@code 출고관리} 메뉴 배지(2609_51 D7, 2026-09-16 단위 변경).
+ *                   🔴 {@code newOrders} 와 <b>같은 주문 단위</b>다 — 상품 수로 세면 상품 2개짜리 주문 하나가
+ *                   메뉴 2 · 종 1 로 보인다. 다만 <b>기간 상한은 없으므로</b>(D8) 14일이 지난 결제완료 주문이
+ *                   있으면 {@code newOrders} 보다 큰 것은 여전히 정상이다
  * @param newOrders  새 주문 알림 건수 = <b>주문 단위</b>, 최근 {@code coupang.sync-days}(D5·D8)
  * @param todoCount  종 아이콘 배지 = {@code newOrders + 기간이 걸린 미완결 클레임 + 기간이 걸린 미답변 문의}.
  *                   🔴 알림 목록의 <b>행 수와 정확히 같다</b>(D3) — 클라이언트가 따로 더하지 않게 서버가 준다.
@@ -25,5 +27,5 @@ package com.pms.dto.response;
  *                   달라진다 — 그 차이 자체가 고장 신호다
  */
 public record AlertSummaryResponse(long openClaims, long unansweredInquiries,
-                                   long paidLines, long newOrders, long todoCount) {
+                                   long paidOrders, long newOrders, long todoCount) {
 }

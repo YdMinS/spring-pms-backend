@@ -357,14 +357,18 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
                                               Pageable pageable);
 
     /**
-     * 결제완료 상품(라인) 수 = {@code 출고관리} 메뉴 배지 (FEATURE_2609_51 / D7).
+     * 결제완료 <b>주문</b> 수 = {@code 출고관리} 메뉴 배지 (FEATURE_2609_51 / D7, 2026-09-16 단위 변경).
      *
-     * <p>🔴 <b>기간 상한이 없다</b>(D8) — "지금 발주처리해야 할 상품 수"라서 오래된 것도 세야 맞다.
-     * 그래서 이 숫자가 알림의 새 주문 수보다 큰 것이 정상이다. 🔴 전량취소 제외는 목록과 같다(D6).
+     * <p>🔴 <b>주문 단위(distinct)</b>다 — 상품 수로 세면 상품 2개짜리 주문 하나가 메뉴에서는 2,
+     * 종 배지에서는 1 로 잡혀 사용자가 같은 일을 두 숫자로 본다. {@link #countNewOrders} 와 <b>같은 단위</b>다.
+     *
+     * <p>🔴 <b>기간 상한은 여전히 없다</b>(D8) — "지금 발주처리해야 할 주문 수"라서 오래된 것도 세야 맞다.
+     * 그래서 14일이 지난 결제완료 주문이 있으면 알림의 새 주문 수보다 큰 것이 정상이다.
+     * 🔴 전량취소 제외는 목록과 같다(D6).
      */
-    @Query("select count(l) from OrderLine l where l.status = :status "
+    @Query("select count(distinct l.order.id) from OrderLine l where l.status = :status "
             + "and l.orderQty > 0 and (l.cancelQty + l.holdQty) < l.orderQty")
-    long countPaidLines(@Param("status") OrderStatus status);
+    long countPaidOrders(@Param("status") OrderStatus status);
 
     /**
      * 새 주문 알림 건수 = <b>주문 단위</b>(distinct) (FEATURE_2609_51 / D3).
