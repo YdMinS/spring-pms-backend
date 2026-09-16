@@ -855,9 +855,12 @@ public class MasterProductServiceImpl implements MasterProductService {
         if (locked && renamed) {
             throw new ValidationException("쿠팡에 등록된 옵션은 이름을 바꿀 수 없습니다.");
         }
-        if (locked && quantitiesChanged) {
-            throw new ValidationException("쿠팡에 등록된 옵션은 수량을 바꿀 수 없습니다.");
-        }
+        // ⚠️ A locked option's QUANTITIES stay editable on purpose. The quantity vector is our own ledger
+        // (cost, stock, price basis), not something the market owns, and a mistyped quantity at registration
+        // time used to be unfixable: the option could not be edited, deleted, nor its cell/master removed.
+        // The market-visible consequence (the 수량/계량 고시 text drifting from what Coupang shows) is handled
+        // by resyncChannels raising needsMarketSync, which prompts [수정 요청] rather than blocking the fix.
+        // The name and the delete guard stay locked — those are the ones Coupang cannot take back.
         if (renamed) {
             assertNameUnique(masterId, request.getName(), optionId);
         }
@@ -1046,9 +1049,15 @@ public class MasterProductServiceImpl implements MasterProductService {
 
     /**
      * Which option names of each master are <b>locked</b> because they are live on a marketplace
-     * (FEATURE_2608_06 / 84). A locked option may not be renamed, re-quantified or deleted: the product
-     * already exists on Coupang, where an option change means a full re-submission + re-approval and an
-     * approved option cannot be removed at all — that cleanup happens outside this system.
+     * (FEATURE_2608_06 / 84). A locked option may not be renamed or deleted: the product already exists on
+     * Coupang, where a rename permanently breaks option matching and an approved option cannot be removed
+     * at all — that cleanup happens outside this system.
+     *
+     * <p>⚠️ The quantity vector is deliberately NOT part of the lock. It is our own ledger (cost, stock,
+     * price basis) rather than something the market owns, and locking it left a mistyped registration
+     * quantity with no way back — the option could be neither edited, deleted, nor its cell or master
+     * removed. The market-visible side effect is handled by {@link #resyncChannels} raising
+     * {@code needsMarketSync}, not by refusing the edit.</p>
      *
      * <p>An option counts as market-registered when it sits on a cell that reached the market
      * ({@code platformProductId != null}) AND <b>any</b> of these holds:</p>
@@ -1118,9 +1127,9 @@ public class MasterProductServiceImpl implements MasterProductService {
     }
 
     /**
-     * 84 Step 4 — narrow channel re-sync after an unlocked option was edited: cascade a rename onto the
-     * cells, then (only when the quantity vector actually moved) push the new quantities down the linked
-     * BOM lines and recompute that cell's option prices.
+     * 84 Step 4 — narrow channel re-sync after an option was edited: cascade a rename onto the cells, then
+     * (only when the quantity vector actually moved) push the new quantities down the linked BOM lines,
+     * recompute that cell's option prices and flag the market-registered cells for re-approval.
      *
      * <p>2609_22/D1: both steps match on {@code master_product_option_id}, so the order between them no
      * longer matters for correctness (it is kept for readability).</p>
@@ -1129,9 +1138,11 @@ public class MasterProductServiceImpl implements MasterProductService {
      * deliberately NOT regenerated: {@code regenerateAssets} would cost an S3 GET + Java2D render + S3 PUT
      * per cell (plus every zone image when a processing preset is attached) for one edited option row.</p>
      *
-     * <p>⚠️ {@code needsMarketSync} is deliberately NOT raised: by the lock rule an editable option is, on
-     * every market-registered cell, inactive AND without a market id AND never approved — so it is not in
-     * that cell's next push payload anyway. Nothing changed that the market can see.</p>
+     * <p>⚠️ {@code needsMarketSync} is raised only for a cell that is on the market AND actually carries
+     * this option there: a quantity change rewrites the 수량 속성 / 계량 고시 text, so that cell now
+     * disagrees with Coupang. An option that is off on the cell (or never reached the market) changes
+     * nothing the market can see, so flagging it would put a permanent [수정 요청] badge on a clean cell.
+     * The push itself is never automatic — the flag only surfaces the button.</p>
      */
     private void resyncChannels(Long masterId, MasterProductOption updated,
                                 String oldName, boolean renamed, boolean quantitiesChanged) {
@@ -1159,6 +1170,13 @@ public class MasterProductServiceImpl implements MasterProductService {
             matched.forEach(cellOption -> optionQuantitySync.syncLines(cellOption, updated));
             // Same transaction: the lines saved just above are visible to the cost sum via JPA auto-flush.
             listingAssetService.recalculateOptionPrices(cell);
+            // A quantity change moves the 수량 속성 / 계량 고시 text, so a cell that already carries this
+            // option on the market now disagrees with what Coupang shows. Mark it pending re-approval; the
+            // push itself stays manual ([수정 요청]), per the no-auto-push rule.
+            if (cell.getPlatformProductId() != null && matched.stream().anyMatch(MasterProductServiceImpl::isOnMarket)
+                    && !cell.isNeedsMarketSync()) {
+                productListingRepository.save(cell.toBuilder().needsMarketSync(true).build());
+            }
         }
     }
 

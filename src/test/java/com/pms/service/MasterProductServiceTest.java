@@ -1341,15 +1341,42 @@ class MasterProductServiceTest {
         verify(optionRepository, never()).save(any());
     }
 
+    /**
+     * A locked option's QUANTITIES are editable — this is the only way back from a quantity mistyped at
+     * registration time (the option can be neither renamed, deleted, nor its cell/master removed). The
+     * market-visible drift is reported by flagging the cell for re-approval, not by refusing the edit.
+     */
     @Test
-    void updateOption_lockedOption_quantityChangeThrows400() {
-        givenEditableOption(true);
+    void updateOption_lockedOption_quantityChange_passesAndFlagsCellForReapproval() {
+        MasterProductOption option = masterOption(10L, "2세트");
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(LOCK_MASTER));
+        given(optionRepository.findById(10L)).willReturn(Optional.of(option));
+        given(optionItemRepository.findByOptionId(10L)).willReturn(List.of(
+                MasterProductOptionItem.builder().option(option).product(product(1L, "상품1")).quantity(2).build()));
+        ProductListing cell = onMarketCell(100L);
+        // Locked AND linked by FK (2609_22/D1) — an imported cell arrives exactly like this.
+        ProductListingOption channelOption =
+                cellOption(5L, cell, "2세트", true, "VI-1", OptionApprovalStatus.APPROVED)
+                        .toBuilder().masterProductOption(option).build();
+        given(productListingRepository.findByMasterProductIdIn(List.of(1L))).willReturn(List.of(cell));
+        given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of(channelOption));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cell));
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(channelOption));
+        given(optionRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+        given(componentRepository.findByMasterProductId(1L))
+                .willReturn(List.of(component(LOCK_MASTER, product(1L, "상품1"))));
+        given(productRepository.findAllById(any())).willReturn(List.of(product(1L, "상품1")));
 
-        assertThatThrownBy(() -> service.updateOption(1L, 10L, MasterOptionRequest.builder()
-                .name("2세트").items(List.of(item(1L, 3))).build()))
-                .isInstanceOf(ValidationException.class)
-                .hasMessage("쿠팡에 등록된 옵션은 수량을 바꿀 수 없습니다.");
-        verify(optionItemRepository, never()).deleteByOptionId(any());
+        MasterOptionResponse response = service.updateOption(1L, 10L, MasterOptionRequest.builder()
+                .name("2세트").items(List.of(item(1L, 3))).build());
+
+        assertThat(response.getMarketRegistered()).isTrue();     // still locked for rename/delete
+        verify(optionItemRepository).deleteByOptionId(10L);
+        verify(optionQuantitySync).syncLines(eq(channelOption), any(MasterProductOption.class));
+        verify(listingAssetService).recalculateOptionPrices(any());
+        ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(captor.capture());
+        assertThat(captor.getValue().isNeedsMarketSync()).isTrue();
     }
 
     @Test
@@ -1484,6 +1511,8 @@ class MasterProductServiceTest {
         assertThat(captor.getValue().getId()).isEqualTo(200L);
         // ⚠️ Cost guard (the core of the narrow re-sync): no thumbnail / detail regeneration.
         verify(listingAssetService, never()).regenerateAssets(any());
+        // A DRAFT cell shows nothing on the market yet → no [수정 요청] badge.
+        verify(productListingRepository, never()).save(any());
     }
 
     @Test
