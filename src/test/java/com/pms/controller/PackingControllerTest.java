@@ -41,7 +41,7 @@ public class PackingControllerTest extends BaseIntegrationTest {
         given(packingService.scan(any())).willReturn(new PackingScanResponse(
                 new PackingScanResponse.ParcelView(1L, "123456789012", "롯데택배", 1, 1,
                         ParcelStatus.PENDING),
-                new PackingScanResponse.OrderView("ORD-1", "셀러A"),
+                new PackingScanResponse.OrderView("ORD-1", "셀러A", "김주문", "박수취"),
                 List.of(), List.of(), List.of(), true));
 
         mockMvc.perform(get(SCAN_PATH).param("invoiceNumber", "123456789012")
