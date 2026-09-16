@@ -47,3 +47,22 @@ server:
   tomcat:
     max-http-post-size: 20971520
     max-swallow-size: 20971520
+
+# 🔴 Every marketplace-calling schedule is OFF on dev ("-" = Spring's disabled-cron marker).
+#
+# Dev and prod run side by side on the same host and the dev DB holds the SAME Coupang vendor
+# (A00611826). The outbound rate limiter (CoupangCallBudget) and the 429 cooldown circuit
+# (CoupangRateLimitGuard) are per-process in-memory maps, so two containers each honouring 4/s
+# look like 8/s to Coupang — over the per-vendor limit of 5/s. That is exactly what happened on
+# 2026-09-16 09:15 KST: both schedulers fired on the same cron tick and prod took a 429 plus a
+# 10-minute cooldown (FEATURE_2609_46 / PLAN D11, "instance count is the real limit").
+#
+# ⚠️ Do NOT re-enable these here. If dev ever needs a live marketplace round trip, use the manual
+# button on a dev-only account — never a schedule that shares a vendor id with prod.
+oclyx:
+  order-sync:
+    quick-cron: "-"
+    full-cron: "-"
+  settlement:
+    revenue-sync-cron: "-"
+    payout-sync-cron: "-"
