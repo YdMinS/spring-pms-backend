@@ -76,6 +76,28 @@ public interface MasterProductService {
      */
     ChannelSyncPreviewResponse previewChannelSync(Long masterId);
 
+    /**
+     * Masters already built from the <b>exact same</b> component (product) set (2609_46).
+     *
+     * <p>A master's identity is its component set — quantity differences (1개 / 5개 묶음) are options of the
+     * same master, never a second master. Matching is set equality, order-independent and duplicate-tolerant:
+     * a subset or a superset is a <i>different</i> master and is not returned.</p>
+     *
+     * <p>Soft-deleted masters are included, flagged by {@code active = false} — a duplicate hidden from the
+     * list screen is exactly the one a user would otherwise re-create.</p>
+     *
+     * @param productIds component product ids (null/empty → empty result; deduped before matching)
+     * @return matching masters ordered by id, empty when the combination is free
+     */
+    List<com.pms.dto.response.MasterProductByComponentsResponse> findByComponents(List<Long> productIds);
+
+    /**
+     * Create a master + its options atomically.
+     *
+     * <p>⚠️ Rejects (400) a component set that an existing master already uses — see
+     * {@link #findByComponents}. The create screen checks the same rule up front; this is the
+     * server-side backstop. The update path is deliberately <b>not</b> guarded.</p>
+     */
     MasterProductResponse createMasterProduct(MasterProductRequest request);
 
     MasterProductResponse updateMasterProduct(Long id, MasterProductUpdateRequest request);

@@ -3,6 +3,7 @@ package com.pms.repository;
 import com.pms.domain.MasterProductOption;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -14,4 +15,10 @@ import java.util.List;
 public interface MasterProductOptionRepository extends JpaRepository<MasterProductOption, Long> {
 
     List<MasterProductOption> findByMasterProductId(Long masterProductId);
+
+    /**
+     * Options of several masters in one query (N+1 guard) — used by the by-components lookup to report
+     * each duplicate's option count. Callers must have tenant-scoped {@code masterProductIds} first.
+     */
+    List<MasterProductOption> findByMasterProductIdIn(Collection<Long> masterProductIds);
 }

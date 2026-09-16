@@ -75,6 +75,9 @@ class MasterProductControllerTest extends BaseIntegrationTest {
     private Long masterId;
     private Long productId1;
     private Long productId2;
+    // 2609_46: the seeded master owns {product1, product2}, so every create test needs a component set
+    // that is NOT that one — product3 is the spare that keeps those creates out of the duplicate guard.
+    private Long productId3;
     private Long categoryId;
 
     @BeforeEach
@@ -91,8 +94,11 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .productName("상품1").build());
         Product product2 = productRepository.save(Product.builder()
                 .productName("상품2").build());
+        Product product3 = productRepository.save(Product.builder()
+                .productName("상품3").build());
         productId1 = product1.getId();
         productId2 = product2.getId();
+        productId3 = product3.getId();
         Category category = categoryRepository.save(Category.builder()
                 .name("신발").platform(Platform.COUPANG).platformCategoryId("cat-1").build());
         categoryId = category.getId();
@@ -259,14 +265,137 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.components.length()").value(2));
     }
 
+    // ------------------------------------------------------------- duplicate component set (2609_46)
+    //
+    // Real DB, so these prove the set-equality semantics the mock-level service tests cannot: the seeded
+    // master owns exactly {product1, product2}.
+
+    @Test
+    void byComponents_noToken_returns401() throws Exception {
+        mockMvc.perform(get(PATH + "/by-components").param("productIds", productId1 + "," + productId2))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void byComponents_userToken_returns403() throws Exception {
+        mockMvc.perform(get(PATH + "/by-components").param("productIds", productId1 + "," + productId2)
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void byComponents_sameSet_returnsTheExistingMaster() throws Exception {
+        mockMvc.perform(get(PATH + "/by-components").param("productIds", productId1 + "," + productId2)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].id").value(masterId))
+                .andExpect(jsonPath("$.data[0].name").value("마스터A"))
+                .andExpect(jsonPath("$.data[0].active").value(true));
+    }
+
+    @Test
+    void byComponents_sameSetReversed_returnsTheExistingMaster() throws Exception {
+        // Order-independent: {2, 1} is the same combination as {1, 2}.
+        mockMvc.perform(get(PATH + "/by-components").param("productIds", productId2 + "," + productId1)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].id").value(masterId));
+    }
+
+    @Test
+    void byComponents_subset_returnsEmpty() throws Exception {
+        // {product1} alone is a different master's job — a subset is never a duplicate.
+        mockMvc.perform(get(PATH + "/by-components").param("productIds", String.valueOf(productId1))
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(0));
+    }
+
+    @Test
+    void byComponents_superset_returnsEmpty() throws Exception {
+        // {product1, product2, product3} contains the seeded set but is not equal to it.
+        mockMvc.perform(get(PATH + "/by-components")
+                        .param("productIds", productId1 + "," + productId2 + "," + productId3)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(0));
+    }
+
+    @Test
+    void byComponents_softDeletedMaster_isStillReportedAsInactive() throws Exception {
+        MasterProduct master = masterProductRepository.findById(masterId).orElseThrow();
+        masterProductRepository.save(master.toBuilder().active(false).build());
+
+        mockMvc.perform(get(PATH + "/by-components").param("productIds", productId1 + "," + productId2)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].id").value(masterId))
+                .andExpect(jsonPath("$.data[0].active").value(false));
+    }
+
+    @Test
+    void createMasterProduct_sameComponentSet_returns400() throws Exception {
+        String body = "{\"name\":\"중복마스터\",\"componentProductIds\":[" + productId1 + "," + productId2 + "],"
+                + "\"options\":[{\"name\":\"1세트\",\"items\":["
+                + "{\"productId\":" + productId1 + ",\"quantity\":1},"
+                + "{\"productId\":" + productId2 + ",\"quantity\":1}]}]}";
+        mockMvc.perform(post(PATH).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value("FAILURE"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("마스터A")));
+    }
+
+    @Test
+    void createMasterProduct_sameComponentSetReversed_returns400() throws Exception {
+        // The screen can post the products in any order — sorting must not be a way around the guard.
+        String body = "{\"name\":\"역순중복\",\"componentProductIds\":[" + productId2 + "," + productId1 + "],"
+                + "\"options\":[{\"name\":\"1세트\",\"items\":["
+                + "{\"productId\":" + productId2 + ",\"quantity\":1},"
+                + "{\"productId\":" + productId1 + ",\"quantity\":1}]}]}";
+        mockMvc.perform(post(PATH).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void createMasterProduct_supersetOfAnExistingSet_returns201() throws Exception {
+        // Adding a product makes it a different master — the guard must not block it.
+        String body = "{\"name\":\"3종마스터\",\"componentProductIds\":["
+                + productId1 + "," + productId2 + "," + productId3 + "],"
+                + "\"options\":[{\"name\":\"1세트\",\"items\":["
+                + "{\"productId\":" + productId1 + ",\"quantity\":1},"
+                + "{\"productId\":" + productId2 + ",\"quantity\":1},"
+                + "{\"productId\":" + productId3 + ",\"quantity\":1}]}]}";
+        mockMvc.perform(post(PATH).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.components.length()").value(3));
+    }
+
+    @Test
+    void createMasterProduct_subsetOfAnExistingSet_returns201() throws Exception {
+        // {product1} alone is its own master (single-product), even though product1 is inside 마스터A.
+        String body = "{\"name\":\"단품마스터\",\"componentProductIds\":[" + productId1 + "],"
+                + "\"options\":[{\"name\":\"1개\",\"items\":[{\"productId\":" + productId1 + ",\"quantity\":1}]}]}";
+        mockMvc.perform(post(PATH).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.components.length()").value(1));
+    }
+
     // ------------------------------------------------------------- atomic create (master + options, 27)
 
     @Test
     void createMasterProduct_withOptions_returns201() throws Exception {
-        String body = "{\"name\":\"원자마스터\",\"componentProductIds\":[" + productId1 + "," + productId2 + "],"
+        String body = "{\"name\":\"원자마스터\",\"componentProductIds\":[" + productId1 + "," + productId3 + "],"
                 + "\"options\":[{\"name\":\"2세트\",\"items\":["
                 + "{\"productId\":" + productId1 + ",\"quantity\":2},"
-                + "{\"productId\":" + productId2 + ",\"quantity\":2}]}]}";
+                + "{\"productId\":" + productId3 + ",\"quantity\":2}]}]}";
         mockMvc.perform(post(PATH).header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isCreated())
@@ -277,8 +406,8 @@ class MasterProductControllerTest extends BaseIntegrationTest {
 
     @Test
     void createMasterProduct_invalidOption_returns400() throws Exception {
-        // option omits productId2 → subset of the component set; nothing is persisted (400).
-        String body = "{\"name\":\"원자마스터\",\"componentProductIds\":[" + productId1 + "," + productId2 + "],"
+        // option omits productId3 → subset of the component set; nothing is persisted (400).
+        String body = "{\"name\":\"원자마스터\",\"componentProductIds\":[" + productId1 + "," + productId3 + "],"
                 + "\"options\":[{\"name\":\"불완전\",\"items\":[{\"productId\":" + productId1 + ",\"quantity\":2}]}]}";
         mockMvc.perform(post(PATH).header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON).content(body))
@@ -713,10 +842,11 @@ class MasterProductControllerTest extends BaseIntegrationTest {
     }
 
     /** 84: a master must be created with at least one option covering the full component set. */
+    /** {product1, product3} — deliberately NOT the seeded master's set, so the 2609_46 guard stays out. */
     private String createMasterBody() {
-        return "{\"name\":\"신규마스터\",\"componentProductIds\":[" + productId1 + "," + productId2 + "],"
+        return "{\"name\":\"신규마스터\",\"componentProductIds\":[" + productId1 + "," + productId3 + "],"
                 + "\"options\":[{\"name\":\"1세트\",\"items\":["
                 + "{\"productId\":" + productId1 + ",\"quantity\":1},"
-                + "{\"productId\":" + productId2 + ",\"quantity\":1}]}]}";
+                + "{\"productId\":" + productId3 + ",\"quantity\":1}]}]}";
     }
 }

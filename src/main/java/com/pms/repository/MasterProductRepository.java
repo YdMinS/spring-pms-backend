@@ -24,6 +24,17 @@ public interface MasterProductRepository extends JpaRepository<MasterProduct, Lo
     Optional<MasterProduct> findScopedById(@Param("id") Long id);
 
     /**
+     * Tenant-scoped batch fetch by id — the plural of {@link #findScopedById}. Cross-tenant ids are simply
+     * absent from the result (Hibernate @TenantId filter), which is how the by-components lookup keeps
+     * another tenant's masters out of the duplicate check.
+     *
+     * <p>Includes soft-deleted ({@code active = false}) masters on purpose: a hidden duplicate is exactly
+     * the case the create screen must warn about.</p>
+     */
+    @Query("select m from MasterProduct m where m.id in :ids")
+    java.util.List<MasterProduct> findScopedByIdIn(@Param("ids") java.util.Collection<Long> ids);
+
+    /**
      * Active masters only — excludes soft-deleted (active=false) rows. @TenantId auto-filters tenant
      * (derived queries are HQL-based, so the filter applies; only the inherited PK findById is exempt).
      *
