@@ -12,14 +12,18 @@ import com.pms.domain.Seller;
 import com.pms.dto.request.OrderRefreshRequest;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.OrderLineRepository;
+import com.pms.service.coupang.OrderUpserter.CancelMarkCount;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientException;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -189,6 +193,49 @@ class OrderRefreshServiceImplTest {
                 .hasMessageContaining("주문 라인을 찾을 수 없습니다");
     }
 
+    /**
+     * 🔴 쿠팡이 400 + "취소 또는 반품" 으로 답하면 실패가 아니라 <b>로컬을 정리할 신호</b>다
+     * (2026-09-16 prod 실사례: 6월 주문이 3개월째 결제완료로 남아 배지에 잡혔다).
+     */
+    @Test
+    void refreshMarksOrderCancelledWhenCoupangSaysItIsGone() {
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        given(orderLineRepository.findWithAccountByIdIn(any())).willReturn(List.of(line(1L, account, "4000000011")));
+        given(coupangProperties.getOrdersheetByOrderPath()).willReturn(BY_ORDER_PATH);
+        given(coupangApiClient.get(anyString(), anyString(), any())).willThrow(cancelledOrReturned());
+        given(orderUpserter.markCancelledIfNotShipped(any(), eq("4000000011")))
+                .willReturn(new CancelMarkCount(2, 1));
+
+        OrderRefreshResult result = service.refresh(request(1L));
+
+        assertThat(result.cancelled()).hasSize(1);
+        assertThat(result.cancelled().get(0).externalOrderId()).isEqualTo("4000000011");
+        assertThat(result.cancelled().get(0).cancelledLines()).isEqualTo(2);
+        assertThat(result.cancelled().get(0).keptLines()).isEqualTo(1);
+        assertThat(result.failed()).isEmpty();
+        assertThat(result.refreshed()).isZero();
+    }
+
+    /**
+     * 🔴 다른 400 은 <b>여전히 실패</b>다 — 400 전부를 "취소됨"으로 읽으면 잘못된 vendorId 같은
+     * 고칠 수 있는 오류가 조용히 취소 처리로 둔갑한다.
+     */
+    @Test
+    void refreshKeepsOtherBadRequestsAsFailures() {
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        given(orderLineRepository.findWithAccountByIdIn(any())).willReturn(List.of(line(1L, account, "4000000011")));
+        given(coupangProperties.getOrdersheetByOrderPath()).willReturn(BY_ORDER_PATH);
+        given(coupangApiClient.get(anyString(), anyString(), any())).willThrow(
+                HttpClientErrorException.create(HttpStatus.BAD_REQUEST, "Bad Request", null,
+                        "{\"code\":400,\"message\":\"vendorId 가 올바르지 않습니다.\"}".getBytes(StandardCharsets.UTF_8), null));
+
+        OrderRefreshResult result = service.refresh(request(1L));
+
+        assertThat(result.cancelled()).isEmpty();
+        assertThat(result.failed()).hasSize(1);
+        verify(orderUpserter, never()).markCancelledIfNotShipped(any(), anyString());
+    }
+
     // ── 헬퍼 ──────────────────────────────────────────────────────────────
 
     private OrderRefreshRequest request(Long... ids) {
@@ -210,6 +257,13 @@ class OrderRefreshServiceImplTest {
         return OrderLine.builder()
                 .id(id).order(order)
                 .orderQty(1).cancelQty(0).holdQty(0).status(OrderStatus.PREPARING).build();
+    }
+
+    /** 쿠팡 실응답(2026-09-16) — 이미 취소·반품된 주문의 단건 조회. */
+    private HttpClientErrorException cancelledOrReturned() {
+        return HttpClientErrorException.create(HttpStatus.BAD_REQUEST, "Bad Request", null,
+                "{\"code\":400,\"message\":\"해당 주문이 취소 또는 반품 되었습니다.\"}".getBytes(StandardCharsets.UTF_8),
+                null);
     }
 
     /** 박스 1개짜리 정상 봉투. */

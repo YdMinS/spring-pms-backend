@@ -93,6 +93,50 @@ public class OrderUpserter {
         return total;
     }
 
+    /**
+     * 쿠팡이 "이미 취소 또는 반품된 주문"이라고 답했을 때 로컬을 정리한다 (2026-09-16).
+     *
+     * <p>단건 조회가 <b>400</b> 으로 거부하는 주문은 더 이상 가져올 상태가 없다 — 그대로 두면
+     * 결제완료인 채로 영원히 남아 "처리할 일" 배지에 계속 잡힌다(실제 사례: 2026-06-23 주문이
+     * 3개월째 결제완료).
+     *
+     * <p>🔴 <b>발송 전 라인만</b> 전량취소로 확정한다. 쿠팡 메시지가 취소와 반품을 구분해 주지 않는데,
+     * 반품은 <b>배송까지 끝나 매출로 잡힌</b> 건이라 취소로 지우면 있었던 매출이 사라진다. 발송 이후
+     * ({@link OrderStatus#isTerminal()}) 라인은 수량·금액을 건드리지 않고 그대로 둔다 — 반품이라면
+     * 반품/교환 쪽이 다룰 몫이다.
+     *
+     * <p>⚠️ 이미 전량취소인 라인은 다시 쓰지 않는다(멱등). 상태 컬럼은 손대지 않는다 —
+     * {@code CANCELLED} 는 저장되는 값이 아니라 수량에서 파생된다({@link OrderLine#effectiveStatus()}).
+     *
+     * @return 취소로 확정한 라인 수와 발송 이후라 남긴 라인 수
+     */
+    @Transactional
+    public CancelMarkCount markCancelledIfNotShipped(MarketplaceAccount account, String externalOrderId) {
+        int cancelled = 0;
+        int kept = 0;
+        for (OrderLine line : orderLineRepository.findByExternalOrderId(externalOrderId)) {
+            // 주문번호는 계정 안에서만 유일하다 — 다른 계정의 같은 번호를 건드리지 않는다.
+            if (!account.getId().equals(line.getOrder().getMarketplaceAccount().getId())) {
+                continue;
+            }
+            if (line.isFullyCancelled()) {
+                continue;
+            }
+            if (line.getStatus() != null && line.getStatus().isTerminal()) {
+                kept++;
+                continue;
+            }
+            orderLineRepository.save(line.toBuilder().cancelQty(line.getOrderQty()).build());
+            cancelled++;
+        }
+        log.info("[order-upsert] marked cancelled from marketplace: orderId={} cancelledLines={} keptLines={}",
+                externalOrderId, cancelled, kept);
+        return new CancelMarkCount(cancelled, kept);
+    }
+
+    /** {@link #markCancelledIfNotShipped} 결과 — 취소로 확정한 라인 수 / 발송 이후라 남긴 라인 수. */
+    public record CancelMarkCount(int cancelledLines, int keptLines) {}
+
     private UpsertCount upsertOneBox(MarketplaceAccount account, JsonNode box) {
         String platformStatus = box.path("status").asText(null);
         Optional<OrderStatus> mapped = OrderStatus.fromCoupang(platformStatus);

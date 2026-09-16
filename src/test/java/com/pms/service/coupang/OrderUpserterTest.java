@@ -334,6 +334,69 @@ class OrderUpserterTest {
                         .build()));
     }
 
+    // ── 마켓에서 사라진 주문 정리 (2026-09-16) ──────────────────────────────
+
+    /** 🔴 발송 전 라인만 전량취소로 확정한다 — 상태 컬럼은 손대지 않는다(취소는 수량에서 파생). */
+    @Test
+    void marksOnlyPreShipmentLinesAsCancelled() {
+        OrderLine paid = lineOf(11L, OrderStatus.PAID, 3, 0);
+        OrderLine delivered = lineOf(12L, OrderStatus.DELIVERED, 2, 0);
+        given(orderLineRepository.findByExternalOrderId(ORDER_ID)).willReturn(List.of(paid, delivered));
+
+        OrderUpserter.CancelMarkCount count = upserter.markCancelledIfNotShipped(account, ORDER_ID);
+
+        assertThat(count.cancelledLines()).isEqualTo(1);
+        assertThat(count.keptLines()).isEqualTo(1);
+        ArgumentCaptor<OrderLine> saved = ArgumentCaptor.forClass(OrderLine.class);
+        verify(orderLineRepository, times(1)).save(saved.capture());
+        assertThat(saved.getValue().getId()).isEqualTo(11L);
+        assertThat(saved.getValue().getCancelQty()).isEqualTo(3);
+        assertThat(saved.getValue().getStatus()).isEqualTo(OrderStatus.PAID);
+        assertThat(saved.getValue().isFullyCancelled()).isTrue();
+    }
+
+    /** 이미 전량취소인 라인은 다시 쓰지 않는다 — 다시 눌러도 같은 결과여야 한다. */
+    @Test
+    void markCancelledIsIdempotent() {
+        given(orderLineRepository.findByExternalOrderId(ORDER_ID))
+                .willReturn(List.of(lineOf(11L, OrderStatus.PAID, 2, 2)));
+
+        OrderUpserter.CancelMarkCount count = upserter.markCancelledIfNotShipped(account, ORDER_ID);
+
+        assertThat(count.cancelledLines()).isZero();
+        assertThat(count.keptLines()).isZero();
+        verify(orderLineRepository, never()).save(any(OrderLine.class));
+    }
+
+    /** 🔴 주문번호는 계정 안에서만 유일하다 — 다른 계정의 같은 번호를 건드리지 않는다. */
+    @Test
+    void markCancelledSkipsOtherAccounts() {
+        MarketplaceAccount other = MarketplaceAccountFixture.coupangStubBuilder("B00099999", null)
+                .id(2L).platform(Platform.COUPANG).isActive(true).build();
+        given(orderLineRepository.findByExternalOrderId(ORDER_ID)).willReturn(List.of(
+                lineOf(11L, OrderStatus.PAID, 1, 0, other)));
+
+        OrderUpserter.CancelMarkCount count = upserter.markCancelledIfNotShipped(account, ORDER_ID);
+
+        assertThat(count.cancelledLines()).isZero();
+        verify(orderLineRepository, never()).save(any(OrderLine.class));
+    }
+
+    private OrderLine lineOf(Long id, OrderStatus status, int orderQty, int cancelQty) {
+        return lineOf(id, status, orderQty, cancelQty, account);
+    }
+
+    private OrderLine lineOf(Long id, OrderStatus status, int orderQty, int cancelQty,
+                             MarketplaceAccount owner) {
+        Order order = Order.builder()
+                .id(5L).marketplaceAccount(owner).platform(Platform.COUPANG)
+                .externalOrderId(ORDER_ID).build();
+        return OrderLine.builder()
+                .id(id).order(order).status(status)
+                .orderQty(orderQty).cancelQty(cancelQty).holdQty(0)
+                .build();
+    }
+
     private OrderLine existingLine() {
         return OrderLine.builder()
                 .id(99L)
