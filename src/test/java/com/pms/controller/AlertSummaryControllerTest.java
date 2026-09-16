@@ -27,7 +27,7 @@ class AlertSummaryControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.openClaims").exists())
                 .andExpect(jsonPath("$.data.unansweredInquiries").exists())
-                .andExpect(jsonPath("$.data.paidLines").exists())
+                .andExpect(jsonPath("$.data.paidOrders").exists())
                 .andExpect(jsonPath("$.data.newOrders").exists())
                 .andExpect(jsonPath("$.data.todoCount").exists());
     }
