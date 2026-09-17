@@ -1,5 +1,6 @@
 package com.pms.service.packing;
 
+import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Order;
 import com.pms.domain.OrderLine;
 import com.pms.domain.Package;
@@ -479,8 +480,11 @@ public class PackingServiceImpl implements PackingService {
     private PackingScanResponse.OrderView orderView(ShipmentParcel parcel) {
         // 🔴 Order 를 새로 조회하지 않는다 — 이미 트랜잭션 안에서 타고 있는 경로다(open-in-view 가 꺼져 있다).
         Order order = parcel.getOrderShipment().getOrder();
+        // 🔴 계정은 판매자와 같은 경로에서 나온다(아래 sellerNameOf) — 추가 조회 없음.
+        MarketplaceAccount account = order.getMarketplaceAccount();
         return new PackingScanResponse.OrderView(order.getExternalOrderId(), sellerNameOf(parcel),
-                order.getOrdererName(), order.getReceiverName());
+                order.getOrdererName(), order.getReceiverName(),
+                account.getPlatform().name(), account.getAccountAlias());
     }
 
     /** 판매자는 {@code 박스 → 배송묶음 → 주문 → 계정 → 판매자} 로 유도한다(출고·재고와 같은 축). */
