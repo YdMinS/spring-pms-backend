@@ -68,6 +68,7 @@ import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -300,6 +301,37 @@ class ListingImportControllerTest {
                 .andExpect(jsonPath("$.data.productListingId").isNumber())
                 // D19: the product is already live on the market — not a DRAFT.
                 .andExpect(jsonPath("$.data.status").value("SELLING"));
+    }
+
+    /**
+     * 🔴 회귀 가드: 물품에 사진이 없으면 자동생성이 400 을 던진다. 그 실패가 셀·옵션·BOM 까지 되돌리면
+     * "쿠팡 ID 를 넣었는데 아무것도 안 생긴다" 가 된다 — 사진은 나중에 채우고 [재생성] 하면 된다.
+     * {@link com.pms.service.listing.MasterFromChannelServiceImpl} 과 같은 방식(2609_47/D2).
+     */
+    @Test
+    void testImportAssetFailureKeepsCell() throws Exception {
+        given(productImageLoader.load(any()))
+                .willThrow(new IllegalArgumentException("상품 이미지를 불러올 수 없습니다: 이미지가 없습니다"));
+        given(productImageLoader.loadUrl(anyString()))
+                .willThrow(new IllegalArgumentException("상품 이미지를 불러올 수 없습니다: 이미지가 없습니다"));
+
+        mockMvc.perform(post(importPath())
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content(importBody()))
+                // 400 이 아니다 — 자산 생성 실패는 응답 플래그로만 드러난다.
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.productListingId").isNumber())
+                .andExpect(jsonPath("$.data.assetsGenerated").value(false));
+
+        // 🔴 진짜 검증: 트랜잭션이 커밋됐다(이 테스트는 @Transactional 이 아니라 실제 커밋을 본다).
+        TenantContext.set(1L);
+        try {
+            assertThat(productListingRepository.findAll()).hasSize(1);
+            assertThat(productListingOptionRepository.findAll()).hasSize(1);
+            assertThat(productListingProductRepository.findAll()).hasSize(1);
+        } finally {
+            TenantContext.clear();
+        }
     }
 
     // ---- request validation ----

@@ -18,6 +18,7 @@ import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
 import com.pms.dto.request.ListingImportPreviewRequest;
 import com.pms.dto.request.ListingImportRequest;
+import com.pms.dto.response.ChannelAddResponse;
 import com.pms.dto.response.ListingImportPreviewResponse;
 import com.pms.exception.DuplicateChannelException;
 import com.pms.repository.CategoryMappingRepository;
@@ -39,6 +40,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -49,6 +51,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -80,6 +84,15 @@ class CoupangListingImportServiceTest {
     @Mock private ListingAssetService listingAssetService;
     @Mock private ListingChannel channel;
     @InjectMocks private CoupangListingImportServiceImpl service;
+
+    @org.junit.jupiter.api.BeforeEach
+    void wireSelf() {
+        // @InjectMocks skips a field whose type is the class under test → `self` would stay null and
+        // importListing() would die with an NPE. A unit test has no proxy, so inject the instance itself
+        // (importListing → importInTransaction runs straight through; the transaction boundary is the
+        // integration test's job).
+        ReflectionTestUtils.setField(service, "self", service);
+    }
 
     private static final Long MASTER_ID = 1L;
     private static final Long SELLER_ID = 7L;
@@ -418,6 +431,66 @@ class CoupangListingImportServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("쿠팡 옵션이 변경되었습니다");
         verifyNothingSaved();
+    }
+
+    // ---- asset generation (runs AFTER the cell is committed) ----
+
+    /** The normal path: the cell is committed, then assets are generated exactly once. */
+    @Test
+    void testImportGeneratesAssetsAfterCommit() {
+        MasterProductOption existing = masterOption(10L, "6입");
+        givenImportReady(marketProduct(marketOption("6입", "8123", "12900")), List.of(existing),
+                List.of(MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_A)).quantity(6).build(),
+                        MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_B)).quantity(1).build()));
+
+        ChannelAddResponse response = service.importListing(MASTER_ID, importRequest(spec("6입", "8123", 6, 1)));
+
+        verify(listingAssetService).regenerate(50L);
+        assertThat(response.getAssetsGenerated()).isTrue();
+        assertThat(response.getProductListingId()).isEqualTo(50L);
+    }
+
+    /**
+     * 🔴 Regression guard: a product with no photo makes asset generation throw 400, and that must NOT
+     * take the cell/options/BOM with it — the user fills the photo in later and hits [재생성].
+     */
+    @Test
+    void testImportAssetFailureKeepsCellOptionsAndBom() {
+        MasterProductOption existing = masterOption(10L, "6입");
+        givenImportReady(marketProduct(marketOption("6입", "8123", "12900")), List.of(existing),
+                List.of(MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_A)).quantity(6).build(),
+                        MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_B)).quantity(1).build()));
+        willThrow(new IllegalArgumentException("상품 이미지를 불러올 수 없습니다: 이미지가 없습니다"))
+                .given(listingAssetService).regenerate(50L);
+
+        ChannelAddResponse response = service.importListing(MASTER_ID, importRequest(spec("6입", "8123", 6, 1)));
+
+        // No exception escaped, and the cell graph was written.
+        assertThat(response.getAssetsGenerated()).isFalse();
+        assertThat(response.getProductListingId()).isEqualTo(50L);
+        verify(productListingRepository).save(any());
+        verify(productListingOptionRepository).save(any());
+        verify(productListingProductRepository, times(2)).save(any());
+    }
+
+    /**
+     * 🔴 The catch is narrow on purpose: everything that is NOT asset generation (stale options, missing
+     * component, duplicate channel, missing mapping…) must still blow up and roll the cell back.
+     */
+    @Test
+    void testImportNonAssetFailureStillFails() {
+        givenMaster();
+        givenForwardMapping(true);
+        givenAccount();
+        givenNoDuplicateChannel();
+        givenMarket(marketProduct(marketOption("6입", "8123", "12900"), marketOption("12입", "8124", "23900")));
+
+        assertThatThrownBy(() -> service.importListing(MASTER_ID, importRequest(spec("6입", "8123", 6, 1))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("쿠팡 옵션이 변경되었습니다");
+        verifyNothingSaved();
+        // The commit never reached the asset step, so nothing was generated either.
+        verify(listingAssetService, never()).regenerate(anyLong());
     }
 
     /** Everything a successful commit needs: guards pass, the market answers, and saves hand back ids. */
