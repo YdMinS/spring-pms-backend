@@ -35,7 +35,10 @@ import com.pms.service.ListingAssetService;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
@@ -52,9 +55,14 @@ import java.util.stream.Collectors;
 /**
  * 마켓 상품 가져오기 (FEATURE_2609_22 / D8~D20). See {@link CoupangListingImportService}.
  *
- * <p>구조는 {@code ChannelAddServiceImpl} 을 따른다(검증 → 셀 → 옵션·BOM → {@code regenerateAssets} → 응답).
- * ⚠️ 단 {@code REQUIRES_NEW} + self-proxy 는 복제하지 않았다 — 그 패턴은 배치가 셀마다 독립 커밋을 해야 해서
- * 있는 것이고, 가져오기는 단건이라 격리할 형제 트랜잭션이 없다(self 주입은 순환참조 위험만 남는다).</p>
+ * <p>구조는 {@code ChannelAddServiceImpl} 을 따른다(검증 → 셀 → 옵션·BOM → 자동생성 → 응답).
+ * ⚠️ 단 {@code ChannelAddServiceImpl} 의 {@code REQUIRES_NEW}(배치가 셀마다 독립 커밋을 해야 해서 있는 것)는
+ * 복제하지 않았다 — 가져오기는 단건이라 격리할 형제 트랜잭션이 없다.</p>
+ *
+ * <p>🔴 자동생성만은 {@link MasterFromChannelServiceImpl} 과 <b>같은 방식</b>이다(2609_47/D2): 셀·옵션·BOM 을
+ * 먼저 커밋하고 <b>트랜잭션 밖에서</b> 자동생성을 돌린다. 사진이 하나도 없는 물품이면 자동생성이 400 을 던지는데,
+ * 같은 트랜잭션 안에서 부르면 그 실패가 셀까지 되돌려 "쿠팡 ID 를 넣었는데 아무것도 안 생긴다" 가 된다.
+ * 사진은 나중에 채우고 [재생성] 하면 된다.</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -92,6 +100,15 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
     private final MasterOptionChannelSync masterOptionChannelSync;
     private final ListingAssetService listingAssetService;
 
+    /**
+     * Self proxy: {@code importListing} 은 트랜잭션 밖에서 {@link #importInTransaction} 을 <b>프록시 경유로</b>
+     * 불러 셀·옵션·BOM 을 먼저 커밋시킨다(2609_47/D2). 직접 호출({@code this.importInTransaction})은 프록시를
+     * 타지 않아 {@code @Transactional} 이 무효가 된다.
+     */
+    @Autowired
+    @Lazy
+    private CoupangListingImportServiceImpl self;
+
     // ------------------------------------------------------------------ preview
 
     @Override
@@ -124,9 +141,34 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
 
     // ------------------------------------------------------------------ commit
 
+    /**
+     * 셀·옵션·BOM 을 만든 뒤(원자적) <b>커밋된 다음</b> 자동생성을 돌린다 — {@link MasterFromChannelServiceImpl}
+     * 과 같은 방식(2609_47/D1·D2).
+     *
+     * <p>클래스에 {@code @Transactional(readOnly = true)} 가 걸려 있으므로 {@code NOT_SUPPORTED} 로 명시해
+     * 읽기 전용 트랜잭션이 이 진입점을 감싸지 않게 한다 — 그래야 {@link #importInTransaction} 이 자기 트랜잭션을
+     * 열고 <b>커밋</b>한 뒤에 자동생성이 그 셀을 조회할 수 있다.</p>
+     */
     @Override
-    @Transactional
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public ChannelAddResponse importListing(Long masterProductId, ListingImportRequest request) {
+        ChannelAddResponse imported = self.importInTransaction(masterProductId, request);   // ← 여기서 커밋된다
+        Long listingId = imported.getProductListingId();
+        return imported.toBuilder()
+                .assetsGenerated(generateAssets(listingId))
+                // 자동생성이 실패해도 404 가 아니다(2609_47/D3) — 썸네일·상세만 null 로 돌아온다.
+                .generated(listingAssetService.getGenerated(listingId))
+                .build();
+    }
+
+    /**
+     * {@code importListing} 의 본문. 전부 성공하거나 전부 롤백된다(단일 트랜잭션).
+     *
+     * <p>⚠️ 내부 사정이라 인터페이스에 올리지 않는다 — Spring Boot 기본이 CGLIB 프록시라 구현체 타입({@code self})
+     * 주입으로 프록시를 탄다. 프록시가 잡으려면 <b>public</b> 이어야 한다.</p>
+     */
+    @Transactional
+    public ChannelAddResponse importInTransaction(Long masterProductId, ListingImportRequest request) {
         // Defence in depth: a direct call may skip the preview entirely, so every preview guard runs again.
         Platform platform = Platform.from(request.getPlatform());
         ImportContext ctx = validate(masterProductId, request.getSellerId(),
@@ -227,16 +269,42 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
         // Flush so the reused seam reads the options/BOM we just wrote.
         productListingRepository.flush();
 
-        // --- 5) thumbnail/detail from OUR master (D19). ⚠️ recalculateOptionPrices inside skips every
-        //        MANUAL_OVERRIDE option, which is why the imported prices survive this call.
-        listingAssetService.regenerateAssets(cell);
-
+        // --- 5) 자동생성(썸네일·상세·판매가)은 이 트랜잭션이 커밋된 뒤 importListing 이 돌린다 — 사진 없는
+        //        물품이 셀까지 되돌리면 안 되기 때문이다. generated/assetsGenerated 도 거기서 채운다.
         return ChannelAddResponse.builder()
                 .productListingId(cell.getId())
                 .status(cell.getStatus().name())
-                .generated(listingAssetService.getGenerated(cell.getId()))
                 .categoryWarning(categoryWarning(matched, platform, fetched.categoryCode()))
                 .build();
+    }
+
+    /**
+     * 셀 자동생성. 트랜잭션 밖에서 부른다 — 셀·옵션·BOM 은 이미 커밋됐고 여기서 실패해도 되돌리지 않는다.
+     *
+     * <p>🔴 사진이 하나도 매핑되지 않았으면 {@code ProductImageLoader} 가 400 을 던진다. 그때 셀까지 사라지면
+     * "쿠팡 ID 를 넣었는데 아무것도 안 생긴다" 가 된다 — 사진은 나중에 채우고 [재생성] 하면 된다.</p>
+     *
+     * <p>⚠️ 엔티티가 아니라 <b>id</b> 를 넘긴다. 여기는 트랜잭션 밖이라 직접 조회한 엔티티는 곧바로 분리(detached)
+     * 되고, 자동생성이 자기 트랜잭션 안에서 {@code cell.getMasterProduct()}·{@code cell.getSeller()} 를 따라갈 때
+     * 터진다({@code open-in-view=false}). {@code regenerate(Long)} 은 자기 트랜잭션 안에서 셀을 다시 조회한다.</p>
+     *
+     * <p>⚠️ {@code regenerateAssets} 안의 {@code recalculateOptionPrices} 는 MANUAL_OVERRIDE 옵션을 모두
+     * 건너뛴다 — 가져온 마켓 이름·가격(D12/D13)이 이 호출에도 그대로 살아남는 이유다.</p>
+     */
+    private boolean generateAssets(Long listingId) {
+        try {
+            listingAssetService.regenerate(listingId);
+            return true;
+        } catch (IllegalArgumentException e) {
+            // 사진 없음 등 입력 문제 — 예상된 경로.
+            // ⚠️ 이미지 네트워크·읽기 실패도 같은 예외로 감싸여 들어온다(ProductImageLoader). 원인은 메시지에 남는다.
+            log.warn("Asset generation skipped for the imported cell {}: {}", listingId, e.getMessage());
+            return false;
+        } catch (Exception e) {
+            // 그 외 = 우리 버그. 삼키되 눈에 띄게 남긴다(둘을 한 catch 로 합치면 운영에서 구분할 방법이 사라진다).
+            log.error("Asset generation failed unexpectedly for the imported cell {}", listingId, e);
+            return false;
+        }
     }
 
     // ------------------------------------------------------------------ validation
