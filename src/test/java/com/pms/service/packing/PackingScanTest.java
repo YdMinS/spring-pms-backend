@@ -205,6 +205,19 @@ class PackingScanTest {
     }
 
     @Test
+    void scanCarriesChannel() {
+        // 포장 화면은 판매자와 **채널**을 함께 보여준다 — 계정은 판매자와 같은 경로에서 나온다.
+        givenParcel(PackingFixtures.parcel(PARCEL_ID, shipment, ParcelStatus.PENDING, 1));
+        givenLines(List.of(PackingFixtures.line(LINE_ID, shipment)), 4, 0);
+
+        PackingScanResponse response = service.scan(INVOICE);
+
+        assertThat(response.order().sellerName()).isEqualTo("셀러A");
+        assertThat(response.order().platform()).isEqualTo("COUPANG");
+        assertThat(response.order().accountAlias()).isEqualTo("본계정");
+    }
+
+    @Test
     void scanReadsProductsOnce() {
         // 🔴 이 조각의 핵심 검문 — 사진을 얻으려고 물품별로 읽는 코드가 들어오면 여기서 깨진다.
         givenParcel(PackingFixtures.parcel(PARCEL_ID, shipment, ParcelStatus.PENDING, 1));

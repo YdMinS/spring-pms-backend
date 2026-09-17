@@ -7,6 +7,7 @@ import com.pms.domain.OrderShipment;
 import com.pms.domain.OrderStatus;
 import com.pms.domain.ParcelStatus;
 import com.pms.domain.Product;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.domain.ShipmentParcel;
 import com.pms.dto.response.OutboundProductLine;
@@ -44,7 +45,8 @@ final class PackingFixtures {
 
     static OrderShipment shipment() {
         Seller seller = Seller.builder().id(SELLER_ID).sellerName("셀러A").build();
-        MarketplaceAccount account = MarketplaceAccount.builder().id(1L).seller(seller).build();
+        MarketplaceAccount account = MarketplaceAccount.builder().id(1L).seller(seller)
+                .platform(Platform.COUPANG).accountAlias("본계정").build();
         Order order = Order.builder().id(7L).marketplaceAccount(account)
                 .externalOrderId("ORD-1").orderedAt(ORDERED_AT)
                 .ordererName("김주문").receiverName("박수취").build();

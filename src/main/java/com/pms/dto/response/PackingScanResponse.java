@@ -46,8 +46,15 @@ public record PackingScanResponse(
      * <p>🔴 이름 두 개를 <b>그대로</b> 싣고 무엇을 보일지는 화면이 정한다(2609_54/D5) — 서버가 고르면
      * 화면 문구가 서버에 묶인다. 마스킹하지 않는다: 작업자가 실물 송장의 받는 사람과 대조하는 값이다.
      * 🔴 연락처·주소는 싣지 않는다 — 2026-07-11 PII 미저장 결정에서 <b>이름만</b> 완화됐다(2609_06).
+     *
+     * <p>🔴 채널은 {@code platform}(enum 이름)과 {@code accountAlias}(계정 별칭) <b>둘 다</b> 싣는다 —
+     * 무엇을 보일지는 화면이 정한다(위 이름 두 개와 같은 규칙). 별칭은 없을 수 있다.
+     *
+     * @param platform      판매 채널 enum 이름({@code "COUPANG"}). API 경계라 {@code String} 이다
+     * @param accountAlias  같은 채널에 계정이 여럿일 때 구분하는 별칭. 없으면 {@code null}
      */
     public record OrderView(String externalOrderId, String sellerName,
-                            String ordererName, String receiverName) {
+                            String ordererName, String receiverName,
+                            String platform, String accountAlias) {
     }
 }
