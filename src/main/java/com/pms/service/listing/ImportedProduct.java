@@ -22,15 +22,35 @@ import java.util.Map;
  * @param tags         marketplace search tags (item level on Coupang); never null, empty when absent
  * @param noticeGroup  2609_45/D4-2: 고시 품목군({@code notices[0].noticeCategoryName}, 예 "가공식품").
  *                     품목군은 <b>상품 단위</b>라 옵션마다 갈리지 않는다 — 옵션으로 내리지 말 것.
+ * @param thumbnailImages 대표/썸네일 이미지 URL({@code items[].images[].cdnPath}), 마켓 순서 그대로.
+ *                     🔴 <b>마켓 가공본이다</b> — 문구·테두리가 얹힌 이미지라 제품 사진으로 그대로 쓸 수 없다.
+ *                     {@code detailImages} 와 <b>절대 합치지 말 것</b>(소비자가 가공본을 구분할 수 없게 된다).
+ *                     never null, empty when absent
+ * @param detailImages 상세 콘텐츠 이미지 URL({@code items[].contents[].contentDetails[]} — {@code IMAGE}
+ *                     타입이면 {@code content} 자체가 URL, 아니면 HTML 안의 {@code img src}), 설명 흐름 순서
+ *                     그대로. 원본에 가까운 제품 사진은 여기 있다. never null, empty when absent
  * @param options      marketplace options; never null, empty when absent
  */
 public record ImportedProduct(String productName, String categoryCode, ListingStatus status,
-                              List<String> tags, String noticeGroup, List<Option> options) {
+                              List<String> tags, String noticeGroup, List<String> thumbnailImages,
+                              List<String> detailImages, List<Option> options) {
+
+    /** 이미지를 읽지 않는 호출부(테스트·레거시)를 위한 편의 생성자 — 이미지 목록 둘 다 빈 List. */
+    public ImportedProduct(String productName, String categoryCode, ListingStatus status,
+                           List<String> tags, String noticeGroup, List<Option> options) {
+        this(productName, categoryCode, status, tags, noticeGroup, List.of(), List.of(), options);
+    }
 
     /** 고시 품목군을 읽지 않는 호출부(테스트·레거시)를 위한 편의 생성자 — {@code noticeGroup = null}. */
     public ImportedProduct(String productName, String categoryCode, ListingStatus status,
                            List<String> tags, List<Option> options) {
         this(productName, categoryCode, status, tags, null, options);
+    }
+
+    /** 이미지 목록의 "없음"은 null 이 아니라 빈 List 다 — 호출부가 null 검사를 하지 않도록. */
+    public ImportedProduct {
+        thumbnailImages = thumbnailImages == null ? List.of() : thumbnailImages;
+        detailImages = detailImages == null ? List.of() : detailImages;
     }
 
     /**

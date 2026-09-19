@@ -140,6 +140,10 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
                                 .attributes(differingAttributes(option, common))
                                 .build())
                         .collect(Collectors.toList()))
+                // 온보딩(2026-09-19): 마켓 이미지 URL 노출까지가 범위다(적재는 소비자 몫).
+                // 썸네일은 마켓 가공본, 상세는 원본에 가까운 사진 — 분리해서 내려준다.
+                .thumbnailImages(fetched.thumbnailImages())
+                .detailImages(fetched.detailImages())
                 .commonAttributes(common)
                 .notices(productNotices(fetched.options()))
                 .noticeGroup(fetched.noticeGroup())
