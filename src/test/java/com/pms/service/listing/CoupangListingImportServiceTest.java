@@ -20,7 +20,6 @@ import com.pms.dto.request.ListingImportPreviewRequest;
 import com.pms.dto.request.ListingImportRequest;
 import com.pms.dto.response.ChannelAddResponse;
 import com.pms.dto.response.ListingImportPreviewResponse;
-import com.pms.exception.DuplicateChannelException;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterProductComponentRepository;
@@ -129,8 +128,10 @@ class CoupangListingImportServiceTest {
     }
 
     private ImportedProduct marketProduct(ImportedProduct.Option... options) {
+        // 온보딩(2026-09-19): 마켓 사진 2종(가공된 썸네일 / 상세 원본)은 미리보기가 그대로 내보낸다.
         return new ImportedProduct("노브랜드 생수 2L 6입", COUPANG_CATEGORY, ListingStatus.SELLING,
-                List.of("생수", "2L"), List.of(options));
+                List.of("생수", "2L"), null,
+                List.of("https://cdn/rep.jpg"), List.of("https://cdn/detail.jpg"), List.of(options));
     }
 
     private ListingImportPreviewRequest previewRequest() {
@@ -177,11 +178,6 @@ class CoupangListingImportServiceTest {
                         .id(9L).platform(PLATFORM).isActive(true).build()));
     }
 
-    private void givenNoDuplicateChannel() {
-        given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(MASTER_ID, SELLER_ID, PLATFORM))
-                .willReturn(false);
-    }
-
     private void givenMarket(ImportedProduct product) {
         given(productListingRepository.existsByPlatformProductId(PRODUCT_ID)).willReturn(false);
         given(resolver.resolve(PLATFORM)).willReturn(channel);
@@ -223,7 +219,6 @@ class CoupangListingImportServiceTest {
         givenMaster();
         givenForwardMapping(true);
         givenAccount();
-        givenNoDuplicateChannel();
         givenMarket(marketProduct(marketOption("6입", "8123", "12900"), marketOption("12입", "8124", "23900")));
         given(platformCategoryRepository.findByPlatformAndCode(PLATFORM, COUPANG_CATEGORY))
                 .willReturn(Optional.empty());
@@ -241,6 +236,9 @@ class CoupangListingImportServiceTest {
                 .containsExactly(PRODUCT_A, PRODUCT_B);
         // D17: the master already carries "생수" → only the remainder becomes a channel tag.
         assertThat(response.getChannelTags()).containsExactly("2L");
+        // 온보딩(2026-09-19): 사진 URL 은 두 종류를 구분해 그대로 노출한다(적재는 소비자 몫).
+        assertThat(response.getThumbnailImages()).containsExactly("https://cdn/rep.jpg");
+        assertThat(response.getDetailImages()).containsExactly("https://cdn/detail.jpg");
         // 🔴 A preview must never write: the user has not entered the composition yet.
         verifyNothingSaved();
     }
@@ -250,7 +248,6 @@ class CoupangListingImportServiceTest {
         givenMaster();
         givenForwardMapping(true);
         givenAccount();
-        givenNoDuplicateChannel();
         givenMarket(marketProduct(marketOption("6입", "8123", "12900")));
         givenCategoryReverseMismatch();
         given(productRepository.findAllById(List.of(PRODUCT_A, PRODUCT_B)))
@@ -279,18 +276,24 @@ class CoupangListingImportServiceTest {
         verifyNothingSaved();
     }
 
+    /**
+     * 🔴 온보딩(2026-09-19), 2609_22/D18 부분 번복: 같은 물건을 같은 판매자 계정에서 쿠팡 페이지 여러 개로
+     * 파는 것은 정상이다(실측 139건). 이미 그 (마스터, 판매자) 조합의 셀이 있어도 편입은 막히지 않는다 —
+     * 애초에 그 질문을 하지 않는다.
+     */
     @Test
-    void testPreviewDuplicateChannelThrows() {
-        givenMaster();
-        givenForwardMapping(true);
-        givenAccount();
-        given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(MASTER_ID, SELLER_ID, PLATFORM))
-                .willReturn(true);
+    void testImportAllowsSecondCellForSameMasterAndSeller() {
+        MasterProductOption existing = masterOption(10L, "6입");
+        givenImportReady(marketProduct(marketOption("6입", "8123", "12900")), List.of(existing),
+                List.of(MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_A)).quantity(6).build(),
+                        MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_B)).quantity(1).build()));
 
-        // 409, not 400 — 03 branches on this status code.
-        assertThatThrownBy(() -> service.preview(MASTER_ID, previewRequest()))
-                .isInstanceOf(DuplicateChannelException.class);
-        verifyNothingSaved();
+        ChannelAddResponse response = service.importListing(MASTER_ID, importRequest(spec("6입", "8123", 6, 1)));
+
+        assertThat(response.getProductListingId()).isEqualTo(50L);
+        verify(productListingRepository).save(any());
+        verify(productListingRepository, never())
+                .existsByMasterProductIdAndSellerIdAndPlatform(any(), any(), any());
     }
 
     @Test
@@ -298,7 +301,6 @@ class CoupangListingImportServiceTest {
         givenMaster();
         givenForwardMapping(true);
         givenAccount();
-        givenNoDuplicateChannel();
         given(productListingRepository.existsByPlatformProductId(PRODUCT_ID)).willReturn(true);
 
         assertThatThrownBy(() -> service.preview(MASTER_ID, previewRequest()))
@@ -408,7 +410,6 @@ class CoupangListingImportServiceTest {
         givenMaster();
         givenForwardMapping(true);
         givenAccount();
-        givenNoDuplicateChannel();
         givenMarket(marketProduct(marketOption("6입", "8123", "12900")));
 
         // D9: the master has two components; sending only one must fail before anything is written.
@@ -423,7 +424,6 @@ class CoupangListingImportServiceTest {
         givenMaster();
         givenForwardMapping(true);
         givenAccount();
-        givenNoDuplicateChannel();
         // The re-read shows an option the request does not know about → the preview is stale.
         givenMarket(marketProduct(marketOption("6입", "8123", "12900"), marketOption("12입", "8124", "23900")));
 
@@ -482,7 +482,6 @@ class CoupangListingImportServiceTest {
         givenMaster();
         givenForwardMapping(true);
         givenAccount();
-        givenNoDuplicateChannel();
         givenMarket(marketProduct(marketOption("6입", "8123", "12900"), marketOption("12입", "8124", "23900")));
 
         assertThatThrownBy(() -> service.importListing(MASTER_ID, importRequest(spec("6입", "8123", 6, 1))))
@@ -499,7 +498,6 @@ class CoupangListingImportServiceTest {
         givenMaster();
         givenForwardMapping(true);
         givenAccount();
-        givenNoDuplicateChannel();
         givenMarket(product);
         given(platformCategoryRepository.findByPlatformAndCode(PLATFORM, COUPANG_CATEGORY))
                 .willReturn(Optional.empty());
@@ -547,7 +545,6 @@ class CoupangListingImportServiceTest {
         givenMaster();
         givenForwardMapping(true);
         givenAccount();
-        givenNoDuplicateChannel();
         givenMarket(marketProductWithMeta());
         given(masterProductOptionRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(existing));
         given(masterProductOptionItemRepository.findByOptionIdIn(List.of(10L))).willReturn(List.of(

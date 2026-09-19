@@ -117,8 +117,10 @@ class MasterFromChannelServiceTest {
     }
 
     private ImportedProduct marketProduct(ImportedProduct.Option... options) {
+        // 온보딩(2026-09-19): 마켓 사진 2종(가공된 썸네일 / 상세 원본)은 미리보기가 그대로 내보낸다.
         return new ImportedProduct("노브랜드 생수 2L 6입", COUPANG_CATEGORY, ListingStatus.SELLING,
-                List.of("생수", "2L"), "가공식품", List.of(options));
+                List.of("생수", "2L"), "가공식품",
+                List.of("https://cdn/rep.jpg"), List.of("https://cdn/detail.jpg"), List.of(options));
     }
 
     /** 옵션 2개: 공통 속성(개당 중량) + 옵션마다 다른 속성(수량). */
@@ -237,6 +239,9 @@ class MasterFromChannelServiceTest {
         assertThat(response.getOptions().get(1).getAttributes()).containsExactly(Map.entry("수량", "12"));
         assertThat(response.getNotices()).containsEntry("제품명", "상품 상세페이지 참조");
         assertThat(response.getNoticeGroup()).isEqualTo("가공식품");
+        // 온보딩(2026-09-19): 사진 URL 은 두 종류를 구분해 그대로 노출한다(적재는 소비자 몫).
+        assertThat(response.getThumbnailImages()).containsExactly("https://cdn/rep.jpg");
+        assertThat(response.getDetailImages()).containsExactly("https://cdn/detail.jpg");
         // 🔴 미리보기는 아무것도 쓰지 않는다.
         verifyNothingSaved();
     }

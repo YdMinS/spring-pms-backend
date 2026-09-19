@@ -166,6 +166,40 @@ class MasterProductServiceTest {
         assertThat(matrix.getRows().get(0).getCell().getStatus()).isEqualTo("SELLING");
     }
 
+    /**
+     * 🔴 온보딩(2026-09-19) 회귀 가드: 한 계정이 같은 마스터로 쿠팡 페이지를 여럿 갖는 것은 정상이다.
+     * 예전에는 (판매자|플랫폼) 키로 first-wins 인덱싱을 해서 두 번째 셀이 응답에서 통째로 사라졌다 —
+     * 화면에서 열 수도, 가격을 볼 수도, 등록할 수도 없었다.
+     */
+    @Test
+    void getMatrix_accountWithTwoCells_returnsBoth() {
+        Seller seller1 = seller(1L, "판매자1");
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
+        MarketplaceAccount acc1 = account(10L, seller1, Platform.COUPANG, "메인");
+
+        ProductListing first = ProductListing.builder()
+                .id(100L).seller(seller1).platform(Platform.COUPANG).platformProductId("X").name("페이지1").build();
+        ProductListing second = ProductListing.builder()
+                .id(101L).seller(seller1).platform(Platform.COUPANG).platformProductId("Y").name("페이지2").build();
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(marketplaceAccountRepository.findAll()).willReturn(List.of(acc1));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(first, second));
+        given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of());
+        given(sellerRepository.findAllById(any())).willReturn(List.of(seller1));
+
+        ListingMatrixResponse matrix = service.getMatrix(1L);
+
+        ListingMatrixResponse.MatrixRow row = matrix.getRows().get(0);
+        assertThat(row.isRegistered()).isTrue();
+        assertThat(row.getCells()).extracting(ListingMatrixResponse.MatrixCell::getProductListingId)
+                .containsExactly(100L, 101L);
+        assertThat(row.getCells()).extracting(ListingMatrixResponse.MatrixCell::getPlatformProductId)
+                .containsExactly("X", "Y");
+        // 기존 화면 계약: `cell` 은 여전히 첫 셀이다.
+        assertThat(row.getCell().getProductListingId()).isEqualTo(100L);
+    }
+
     @Test
     void getMatrix_mapsAccountsAgainstListings() {
         Seller seller1 = seller(1L, "판매자1");
@@ -201,8 +235,10 @@ class MasterProductServiceTest {
         assertThat(row1.getCell().getPlatformProductId()).isEqualTo("X");
         assertThat(row1.getCell().getSellingPrice()).isEqualByComparingTo("1000");
 
+        assertThat(row1.getCells()).hasSize(1);
         assertThat(matrix.getRows().get(1).isRegistered()).isFalse();     // acc2 seller1/NAVER
         assertThat(matrix.getRows().get(1).getCell()).isNull();
+        assertThat(matrix.getRows().get(1).getCells()).isEmpty();         // 없을 땐 빈 배열(null 아님)
         assertThat(matrix.getRows().get(2).isRegistered()).isFalse();     // acc3 seller2/COUPANG
         assertThat(matrix.getRows().get(2).getCell()).isNull();
 

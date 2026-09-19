@@ -248,10 +248,13 @@ public class MasterProductServiceImpl implements MasterProductService {
             }
         }
 
-        // Index listings by (sellerId|platform); first wins.
-        Map<String, ProductListing> listingByKey = new LinkedHashMap<>();
+        // 🔴 온보딩(2026-09-19): 한 계정에 셀이 <b>여럿</b>일 수 있다(같은 물건을 쿠팡 페이지 여러 개로 파는
+        // 정상 판매 방식 — 2609_22/D18 부분 번복). 예전처럼 first-wins 로 인덱싱하면 두 번째 셀부터는
+        // 응답에서 통째로 사라져 화면에서 열 수도, 가격을 볼 수도, 등록할 수도 없게 된다.
+        Map<String, List<ProductListing>> listingsByKey = new LinkedHashMap<>();
         for (ProductListing pl : listings) {
-            listingByKey.putIfAbsent(matchKey(pl.getSeller().getId(), pl.getPlatform()), pl);
+            listingsByKey.computeIfAbsent(matchKey(pl.getSeller().getId(), pl.getPlatform()),
+                    k -> new ArrayList<>()).add(pl);
         }
 
         // Left side: all accounts of the tenant + batched seller names (1 query).
@@ -268,9 +271,10 @@ public class MasterProductServiceImpl implements MasterProductService {
 
         List<MatrixRow> rows = accounts.stream().map(acc -> {
             Long sellerId = acc.getSeller().getId();
-            ProductListing pl = listingByKey.get(matchKey(sellerId, acc.getPlatform()));
-            MatrixCell cell = null;
-            if (pl != null) {
+            List<ProductListing> cellListings =
+                    listingsByKey.getOrDefault(matchKey(sellerId, acc.getPlatform()), List.of());
+            List<MatrixCell> cells = new ArrayList<>();
+            for (ProductListing pl : cellListings) {
                 // 67: registration name is always auto-generated per channel from this listing's active options.
                 List<ProductListingOption> activeOptions =
                         activeOptionsByListing.getOrDefault(pl.getId(), List.of());
@@ -292,7 +296,7 @@ public class MasterProductServiceImpl implements MasterProductService {
                                 return null;
                             }
                         });
-                cell = MatrixCell.builder()
+                cells.add(MatrixCell.builder()
                         .productListingId(pl.getId())
                         .name(pl.getName())
                         .platformProductId(pl.getPlatformProductId())
@@ -303,7 +307,7 @@ public class MasterProductServiceImpl implements MasterProductService {
                         .categoryName(category == null ? null : category.category().getName())
                         // ⚠️ never `platformCategoryCode != null` — see the field note (D10-1/D11).
                         .usesOwnCategory(category != null && category.own())
-                        .build();
+                        .build());
             }
             return MatrixRow.builder()
                     .sellerId(sellerId)
@@ -311,8 +315,10 @@ public class MasterProductServiceImpl implements MasterProductService {
                     .platform(acc.getPlatform().name())
                     .accountId(acc.getId())
                     .accountLabel(acc.getAccountAlias())
-                    .registered(pl != null)
-                    .cell(cell)
+                    .registered(!cells.isEmpty())
+                    // `cell` 은 기존 화면 계약이라 첫 셀을 그대로 둔다. 전부 보려면 `cells` 를 읽는다.
+                    .cell(cells.isEmpty() ? null : cells.get(0))
+                    .cells(cells)
                     .build();
         }).toList();
 

@@ -96,8 +96,13 @@ public interface ProductListingRepository extends JpaRepository<ProductListing, 
     Optional<ProductListing> findScopedById(@Param("id") Long id);
 
     /**
-     * Channel-add duplicate guard (FEATURE_2608_06 / 3b'): at most one cell per (master, seller, platform)
-     * — one market product page per account. Tenant-filtered by {@code @TenantId} automatically.
+     * 신규 채널 등록(FEATURE_2608_06 / 3b')의 중복 가드. 같은 마스터를 같은 계정에 <b>새로</b> 올리는 것은
+     * 마켓에 중복 상품을 만드는 일이라 계속 막는다.
+     *
+     * <p>🔴 이것은 더 이상 데이터 불변식이 아니다(온보딩 2026-09-19, 2609_22/D18 부분 번복). 쿠팡에 이미
+     * 있는 상품을 편입하는 경로({@code CoupangListingImportServiceImpl})는 이 가드를 쓰지 않는다 —
+     * 같은 물건을 페이지 여러 개로 파는 것이 정상 판매 방식이기 때문이다. DB 유니크 제약도 없다.
+     * 따라서 "(master, seller, platform) 셀은 하나" 를 전제로 코드를 쓰지 말 것.</p>
      *
      * @param masterProductId parent MasterProduct id
      * @param sellerId        seller id

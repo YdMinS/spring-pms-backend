@@ -13,8 +13,9 @@ import java.util.List;
 /**
  * Channel coverage matrix for one master product (FEATURE_2608_06 / 3a).
  *
- * <p>Rows = every marketplace account of the tenant (left side). {@code cell} is non-null when that
- * account's (seller, platform) has a listing under this master (right side), null otherwise.</p>
+ * <p>Rows = every marketplace account of the tenant (left side). {@code cells} holds every listing that
+ * account has under this master (right side) — <b>한 계정에 여러 개일 수 있다</b>(같은 물건을 쿠팡 페이지
+ * 여러 개로 파는 경우). {@code cell} 은 그중 첫 번째로, 기존 화면 계약을 깨지 않으려고 남겨둔 값이다.</p>
  */
 @Getter
 @NoArgsConstructor
@@ -61,11 +62,23 @@ public class ListingMatrixResponse {
         @Schema(description = "Marketplace account alias (nullable)", example = "메인계정")
         private String accountLabel;
 
-        @Schema(description = "True when this account has a listing under the master", example = "true")
+        @Schema(description = "True when this account has at least one listing under the master", example = "true")
         private boolean registered;
 
-        @Schema(description = "Coverage cell (null when not registered)")
+        /**
+         * ⚠️ 첫 셀만 담는다 — 이 계정에 셀이 둘 이상이면 나머지는 여기 없다. 전부 보려면 {@link #cells}.
+         * 남겨둔 이유는 하나뿐이다: 기존 클라이언트가 이 필드를 읽는다.
+         */
+        @Schema(description = "First coverage cell (null when not registered) — see `cells` for all of them")
         private MatrixCell cell;
+
+        /**
+         * 온보딩(2026-09-19): 이 계정이 이 마스터로 가진 <b>모든</b> 셀. 같은 물건을 쿠팡 페이지 여러 개로
+         * 파는 것은 정상 판매 방식이라(2609_22/D18 부분 번복) 한 계정에 셀이 여럿일 수 있다.
+         * 등록된 셀이 없으면 빈 배열이다(null 아님).
+         */
+        @Schema(description = "Every coverage cell this account has under the master (may hold more than one)")
+        private List<MatrixCell> cells;
     }
 
     @Getter
