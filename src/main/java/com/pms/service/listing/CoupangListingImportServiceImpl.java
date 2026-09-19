@@ -17,7 +17,6 @@ import com.pms.dto.request.ListingImportPreviewRequest;
 import com.pms.dto.request.ListingImportRequest;
 import com.pms.dto.response.ChannelAddResponse;
 import com.pms.dto.response.ListingImportPreviewResponse;
-import com.pms.exception.DuplicateChannelException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.MarketplaceAccountRepository;
@@ -358,12 +357,12 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
             throw new IllegalArgumentException("비활성 계정");
         }
 
-        // D18: one market product page per account …
-        if (productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(
-                masterProductId, sellerId, platform)) {
-            throw new DuplicateChannelException();          // 409 — 03 branches on this status code
-        }
-        // … and one cell per market product (stops the same Coupang product being attached to two masters).
+        // 🔴 2609_22/D18 부분 번복(온보딩, 2026-09-19): 편입 경로에서 "계정당 상품페이지 1개" 가드를 없앤다.
+        // 같은 물건을 쿠팡 페이지 여러 개로 파는 것은 정상 판매 방식이고(실측 139건), 편입은 "쿠팡에 이미
+        // 있는 것을 우리 쪽에 비추는" 일이라 현실이 여럿이면 여럿인 것이 맞다.
+        // ⚠️ 신규 등록(ChannelAddServiceImpl)의 같은 가드는 그대로 둔다 — 거기서 두 번 만드는 것은
+        // 쿠팡에 중복 상품을 만드는 일이라 의미가 정반대다.
+        // 대신 아래 "한 쿠팡 상품 = 한 셀" 가드는 유지한다(같은 상품을 두 번 편입하면 연결이 중복된다).
         if (productListingRepository.existsByPlatformProductId(platformProductId)) {
             throw new IllegalArgumentException("이미 다른 상품에 연결된 쿠팡 상품입니다");
         }
