@@ -127,6 +127,10 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
                 .categoryWarning(categoryWarning(matched, platform, fetched.categoryCode()))
                 .channelTags(channelTags(ctx.master(), fetched.tags()))
                 .components(previewComponents(ctx.components()))
+                // 온보딩(2026-09-19): 마켓 이미지 URL 을 그대로 내려준다 — 내려받거나 자산으로 등록하지 않는다.
+                // 썸네일(가공본)과 상세(원본에 가까움)를 절대 한 목록으로 합치지 말 것.
+                .thumbnailImages(fetched.thumbnailImages())
+                .detailImages(fetched.detailImages())
                 .options(fetched.options().stream()
                         .map(o -> ListingImportPreviewResponse.Option.builder()
                                 .itemName(o.itemName())

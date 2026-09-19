@@ -49,6 +49,21 @@ public class MasterFromChannelPreviewResponse {
     @Schema(description = "Options as they exist on the marketplace")
     private List<Option> options;
 
+    /**
+     * 온보딩(2026-09-19): 마켓에 올라가 있는 대표/썸네일 이미지 URL, 마켓 순서 그대로.
+     * 🔴 <b>마켓 가공본</b>(문구·테두리 포함)이라 제품 사진으로 그대로 쓸 수 없다 — 그래서 상세 이미지와
+     * 분리해 내려준다. 여기서 하는 일은 <b>URL 노출뿐</b>이다(내려받지도, 자산으로 등록하지도 않는다).
+     */
+    @Schema(description = "Marketplace thumbnail image URLs (PROCESSED by the market — text/borders baked in)")
+    private List<String> thumbnailImages;
+
+    /**
+     * 온보딩(2026-09-19): 상세 페이지 콘텐츠 이미지 URL, 설명 흐름 순서 그대로. 원본에 가까운 제품 사진은
+     * 여기 있다. 어떤 이미지가 제품 사진인지의 판정은 <b>소비자(온보딩 스크립트)의 몫</b>이다.
+     */
+    @Schema(description = "Detail-page image URLs in the original explanation order (near-original photos)")
+    private List<String> detailImages;
+
     /** D4-1: 전 옵션이 같은 키·값으로 갖는 속성 = 마스터로 갈 몫. */
     @Schema(description = "Attributes every option shares (same key AND value) — stored on the master")
     private Map<String, String> commonAttributes;

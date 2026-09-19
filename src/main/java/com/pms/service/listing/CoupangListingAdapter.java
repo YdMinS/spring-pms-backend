@@ -38,6 +38,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.HashSet;
@@ -84,6 +85,11 @@ public class CoupangListingAdapter implements ListingChannel {
     private static final Pattern NUMERIC_VALUE = Pattern.compile("^-?\\d+(\\.\\d+)?$");
     // 2609_45/D4: "number + trailing text" — group(1) the number, group(2) the suffix (see stripUnit).
     private static final Pattern NUMBER_WITH_SUFFIX = Pattern.compile("^(-?\\d+(?:\\.\\d+)?)(\\D.*)$");
+    // 온보딩(2026-09-19): <img src> of a detail-HTML block — group 2/3/4 = double-quoted / single-quoted /
+    // bare value. DOTALL so a tag broken across lines still matches (detail HTML is machine-written).
+    private static final Pattern IMG_SRC = Pattern.compile(
+            "<img\\b[^>]*?\\bsrc\\s*=\\s*(\"([^\"]*)\"|'([^']*)'|([^\\s\"'>]+))",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
     // 96 ④: Coupang's documented cap for attributeValueName (warn only — see withUnit).
     private static final int MAX_ATTRIBUTE_VALUE_LENGTH = 30;
 
@@ -190,7 +196,99 @@ public class CoupangListingAdapter implements ListingChannel {
                 tags,
                 // 2609_45/D4-2: 품목군 is a PRODUCT-level fact — every item repeats the same group.
                 asTextOrNull(data.path("items").path(0).path("notices").path(0), "noticeCategoryName"),
+                thumbnailImages(data),
+                detailImages(data),
                 options);
+    }
+
+    /**
+     * 온보딩(2026-09-19): 대표/썸네일 이미지 URL. {@code images[]} lives at the ITEM level on the way in, the
+     * same place {@code buildPayload} writes it — the product-level {@code data.images[]} is read first only
+     * because a response that carries it there should not come back empty.
+     *
+     * <p>🔴 These are the marketplace's PROCESSED images (text and borders burned in). They are returned as a
+     * separate list from {@link #detailImages} on purpose — merging the two would make it impossible for the
+     * consumer to tell a processed thumbnail from a near-original product photo.</p>
+     *
+     * <p>Order is the response's own order (it carries the representation image first). Duplicates are dropped
+     * because every item repeats the same image set, and {@code cdnPath} is returned VERBATIM — no host is
+     * prefixed and no path is rewritten (this step only exposes what Coupang sent).</p>
+     */
+    private static List<String> thumbnailImages(JsonNode data) {
+        Set<String> seen = new LinkedHashSet<>();
+        collectImages(data.path("images"), seen);
+        for (JsonNode item : data.path("items")) {
+            collectImages(item.path("images"), seen);
+        }
+        return List.copyOf(seen);
+    }
+
+    /** {@code images[]} → URL list. {@code cdnPath} is the marketplace copy; {@code vendorPath} is ours. */
+    private static void collectImages(JsonNode images, Set<String> into) {
+        for (JsonNode image : images) {
+            String url = asTextOrNull(image, "cdnPath");
+            if (url == null || url.isBlank()) {
+                url = asTextOrNull(image, "vendorPath");
+            }
+            if (url != null && !url.isBlank()) {
+                into.add(url.trim());
+            }
+        }
+    }
+
+    /**
+     * 온보딩(2026-09-19): 상세 콘텐츠 이미지 URL, 설명 흐름 순서 그대로.
+     *
+     * <p>{@code items[].contents[].contentDetails[]} carries either an image URL directly ({@code detailType}
+     * = {@code IMAGE}) or an HTML string ({@code TEXT} — what we ourselves push, see {@link #detailContents}).
+     * Both shapes are handled because the response is not ours to choose: an imported product was written by
+     * whoever created it on Coupang.</p>
+     *
+     * <p>🔴 URLs only — nothing is downloaded, copied into our storage or attached to anything here.</p>
+     */
+    private static List<String> detailImages(JsonNode data) {
+        Set<String> seen = new LinkedHashSet<>();
+        for (JsonNode item : data.path("items")) {
+            for (JsonNode contents : item.path("contents")) {
+                for (JsonNode detail : contents.path("contentDetails")) {
+                    String content = asTextOrNull(detail, "content");
+                    if (content == null || content.isBlank()) {
+                        continue;
+                    }
+                    String type = asTextOrNull(detail, "detailType");
+                    if ("IMAGE".equalsIgnoreCase(type) || isBareUrl(content)) {
+                        seen.add(content.trim());
+                    } else {
+                        seen.addAll(imageSources(content));
+                    }
+                }
+            }
+        }
+        return List.copyOf(seen);
+    }
+
+    /** A content value that is the URL itself rather than markup around it. */
+    private static boolean isBareUrl(String content) {
+        String trimmed = content.trim();
+        return !trimmed.contains("<") && (trimmed.startsWith("http://") || trimmed.startsWith("https://")
+                || trimmed.startsWith("//"));
+    }
+
+    /**
+     * Every {@code <img src>} of an HTML detail block, in document order (that order IS the explanation flow).
+     * {@code &amp;} is unescaped because an HTML attribute carries it escaped while the URL does not.
+     */
+    private static List<String> imageSources(String html) {
+        List<String> sources = new ArrayList<>();
+        var matcher = IMG_SRC.matcher(html);
+        while (matcher.find()) {
+            String src = matcher.group(2) != null ? matcher.group(2)
+                    : matcher.group(3) != null ? matcher.group(3) : matcher.group(4);
+            if (src != null && !src.isBlank()) {
+                sources.add(src.trim().replace("&amp;", "&"));
+            }
+        }
+        return sources;
     }
 
     /**

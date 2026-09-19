@@ -699,6 +699,72 @@ class CoupangListingAdapterTest {
         verify(metaAdapter, never()).getMeta(any(), anyString());
     }
 
+    // ---------------------------------------------------------------- 온보딩(2026-09-19): 이미지 파싱
+
+    /**
+     * 🔴 두 목록은 절대 합치지 않는다. 대표/썸네일({@code images[].cdnPath})은 마켓 가공본(문구·테두리)이고,
+     * 제품 사진에 가까운 것은 상세 콘텐츠 안에 있다. 같은 이미지가 옵션마다 반복돼도 한 번만 담고,
+     * 순서는 응답 순서(= 대표 순서·설명 흐름) 그대로다.
+     */
+    @Test
+    void fetchProduct_splitsThumbnailAndDetailImages() {
+        given(client.get(anyString(), eq(""), any())).willReturn(
+                "{\"code\":\"SUCCESS\",\"data\":{\"statusName\":\"승인완료\",\"items\":["
+                        + "{\"itemName\":\"6입\",\"vendorItemId\":8123,\"salePrice\":12900,"
+                        + "\"images\":[{\"imageOrder\":0,\"imageType\":\"REPRESENTATION\","
+                        + "\"cdnPath\":\"https://cdn/rep.jpg\",\"vendorPath\":\"https://ours/rep.jpg\"},"
+                        + "{\"imageOrder\":1,\"cdnPath\":\"https://cdn/sub.jpg\"}],"
+                        + "\"contents\":[{\"contentsType\":\"IMAGE\",\"contentDetails\":["
+                        + "{\"content\":\"https://cdn/detail-1.jpg\",\"detailType\":\"IMAGE\"}]}]},"
+                        + "{\"itemName\":\"12입\",\"vendorItemId\":8124,\"salePrice\":22900,"
+                        + "\"images\":[{\"imageOrder\":0,\"cdnPath\":\"https://cdn/rep.jpg\"}],"
+                        + "\"contents\":[{\"contentsType\":\"TEXT\",\"contentDetails\":["
+                        + "{\"content\":\"<p>설명</p><img src='https://cdn/detail-2.jpg'>\","
+                        + "\"detailType\":\"TEXT\"}]}]}]}}");
+
+        ImportedProduct product = adapter.fetchProduct("222333444", acct());
+
+        // 가공본. cdnPath 가 있으면 vendorPath 는 쓰지 않는다. 옵션 2개가 공유하는 대표는 한 번만.
+        assertThat(product.thumbnailImages())
+                .containsExactly("https://cdn/rep.jpg", "https://cdn/sub.jpg");
+        // detailType=IMAGE 는 content 자체가 URL, TEXT 는 HTML 안의 img src.
+        assertThat(product.detailImages())
+                .containsExactly("https://cdn/detail-1.jpg", "https://cdn/detail-2.jpg");
+    }
+
+    /** 상세 HTML 한 덩이에 사진이 여러 장이면 <b>문서 순서</b>가 곧 설명 흐름이다 — 그대로 보존한다. */
+    @Test
+    void fetchProduct_detailHtmlWithManyImages_keepsDocumentOrder() {
+        given(client.get(anyString(), eq(""), any())).willReturn(
+                "{\"code\":\"SUCCESS\",\"data\":{\"statusName\":\"승인완료\",\"items\":["
+                        + "{\"itemName\":\"6입\",\"salePrice\":12900,"
+                        + "\"contents\":[{\"contentsType\":\"TEXT\",\"contentDetails\":["
+                        + "{\"content\":\"<div><IMG SRC=\\\"https://cdn/a.jpg?w=1&amp;h=2\\\">"
+                        + "<img\\n  src='https://cdn/b.jpg' alt='x'/>"
+                        + "<img src=https://cdn/c.jpg></div>\",\"detailType\":\"TEXT\"}]}]}]}}");
+
+        ImportedProduct product = adapter.fetchProduct("222333444", acct());
+
+        assertThat(product.detailImages()).containsExactly(
+                "https://cdn/a.jpg?w=1&h=2",   // 속성 안의 &amp; 는 URL 에선 &
+                "https://cdn/b.jpg",
+                "https://cdn/c.jpg");
+        assertThat(product.thumbnailImages()).isEmpty();
+    }
+
+    /** 사진 키가 아예 없는 응답도 정상이다 — 빈 목록이지 null 이 아니다. */
+    @Test
+    void fetchProduct_withoutImageKeys_returnsEmptyLists() {
+        given(client.get(anyString(), eq(""), any())).willReturn(
+                "{\"code\":\"SUCCESS\",\"data\":{\"statusName\":\"승인완료\",\"items\":["
+                        + "{\"itemName\":\"6입\",\"vendorItemId\":8123,\"salePrice\":12900}]}}");
+
+        ImportedProduct product = adapter.fetchProduct("222333444", acct());
+
+        assertThat(product.thumbnailImages()).isEmpty();
+        assertThat(product.detailImages()).isEmpty();
+    }
+
     // 77: read-only mirror of requireShippingConfig — same rules, never throws.
     @Test
     void isShippingReady_completeConfig_returnsTrue() {

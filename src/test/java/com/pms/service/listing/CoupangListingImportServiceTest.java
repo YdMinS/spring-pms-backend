@@ -129,8 +129,10 @@ class CoupangListingImportServiceTest {
     }
 
     private ImportedProduct marketProduct(ImportedProduct.Option... options) {
+        // 온보딩(2026-09-19): 마켓 사진 2종(가공된 썸네일 / 상세 원본)은 미리보기가 그대로 내보낸다.
         return new ImportedProduct("노브랜드 생수 2L 6입", COUPANG_CATEGORY, ListingStatus.SELLING,
-                List.of("생수", "2L"), List.of(options));
+                List.of("생수", "2L"), null,
+                List.of("https://cdn/rep.jpg"), List.of("https://cdn/detail.jpg"), List.of(options));
     }
 
     private ListingImportPreviewRequest previewRequest() {
@@ -241,6 +243,9 @@ class CoupangListingImportServiceTest {
                 .containsExactly(PRODUCT_A, PRODUCT_B);
         // D17: the master already carries "생수" → only the remainder becomes a channel tag.
         assertThat(response.getChannelTags()).containsExactly("2L");
+        // 온보딩(2026-09-19): 사진 URL 은 두 종류를 구분해 그대로 노출한다(적재는 소비자 몫).
+        assertThat(response.getThumbnailImages()).containsExactly("https://cdn/rep.jpg");
+        assertThat(response.getDetailImages()).containsExactly("https://cdn/detail.jpg");
         // 🔴 A preview must never write: the user has not entered the composition yet.
         verifyNothingSaved();
     }
