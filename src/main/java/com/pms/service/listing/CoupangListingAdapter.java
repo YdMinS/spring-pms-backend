@@ -64,6 +64,19 @@ public class CoupangListingAdapter implements ListingChannel {
     private static final String SELLER_PRODUCTS =
             "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products";
 
+    /**
+     * 온보딩(2026-09-19): 이미지 경로가 상대일 때 붙이는 접두어.
+     *
+     * <p>운영 실측(표본 22개 상품 / URL 95개): {@code thumbnailImages} 는 <b>22건 전부(100%)</b> 상대 경로였고
+     * {@code detailImages} 는 75개 중 15개(20%)가 상대였다(상대형 2건은 각각 8장·7장이 전부 상대). 상대 경로 앞에
+     * 이 접두어를 붙여 내려받으면 <b>30/30 이 HTTP 200</b> 에 {@code image/jpeg}·{@code image/png}(매직바이트 확인),
+     * 절대 URL 은 그대로 15/15 가 200 이었다. 호스트는 {@code image1.coupangcdn.com} 단일이고 쿼리스트링은 없었다.</p>
+     */
+    private static final String IMAGE_HOST_PREFIX = "https://image1.coupangcdn.com/image/";
+
+    /** {@code http://}·{@code https://} 등 스킴이 이미 붙어 있는지 판별한다(RFC 3986 scheme 문법). */
+    private static final Pattern URL_SCHEME = Pattern.compile("^[a-zA-Z][a-zA-Z0-9+.\\-]*://");
+
     // Register defaults (73). saleStartedAt = now; saleEndedAt = far future (sale period not user-input).
     private static final DateTimeFormatter SALE_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
     private static final String SALE_ENDED_AT = "2099-12-31T23:59:59";
@@ -211,8 +224,8 @@ public class CoupangListingAdapter implements ListingChannel {
      * consumer to tell a processed thumbnail from a near-original product photo.</p>
      *
      * <p>Order is the response's own order (it carries the representation image first). Duplicates are dropped
-     * because every item repeats the same image set, and {@code cdnPath} is returned VERBATIM — no host is
-     * prefixed and no path is rewritten (this step only exposes what Coupang sent).</p>
+     * because every item repeats the same image set. The only rewriting is {@link #absoluteImageUrl} — Coupang
+     * returns these paths without a host (100% of the sample), so they are not usable addresses as sent.</p>
      */
     private static List<String> thumbnailImages(JsonNode data) {
         Set<String> seen = new LinkedHashSet<>();
@@ -231,9 +244,31 @@ public class CoupangListingAdapter implements ListingChannel {
                 url = asTextOrNull(image, "vendorPath");
             }
             if (url != null && !url.isBlank()) {
-                into.add(url.trim());
+                into.add(absoluteImageUrl(url.trim()));
             }
         }
+    }
+
+    /**
+     * 온보딩(2026-09-19): 이미지 값을 주소로 성립하는 형태로 정규화한다 — 이것 하나만 한다.
+     *
+     * <p>Coupang returns most image paths WITHOUT a scheme or host ({@code vendor_inventory/0e21/….jpg}), which is
+     * not a usable address on its own, so a value with no scheme gets {@link #IMAGE_HOST_PREFIX} prepended (a leading
+     * {@code /} is dropped first so the result never contains a double slash).</p>
+     *
+     * <p>A value that already carries a scheme is returned VERBATIM — {@code http://} is NOT promoted to
+     * {@code https://}, because these URLs are fetched server-side and rewriting them is a change nothing needs.
+     * A protocol-relative value ({@code //host/…}) is completed with {@code https:} — it did not occur in the sample,
+     * so it is handled in one line and nothing more.</p>
+     */
+    private static String absoluteImageUrl(String value) {
+        if (URL_SCHEME.matcher(value).find()) {
+            return value;
+        }
+        if (value.startsWith("//")) {
+            return "https:" + value;
+        }
+        return IMAGE_HOST_PREFIX + (value.startsWith("/") ? value.substring(1) : value);
     }
 
     /**
@@ -244,7 +279,8 @@ public class CoupangListingAdapter implements ListingChannel {
      * Both shapes are handled because the response is not ours to choose: an imported product was written by
      * whoever created it on Coupang.</p>
      *
-     * <p>🔴 URLs only — nothing is downloaded, copied into our storage or attached to anything here.</p>
+     * <p>🔴 URLs only — nothing is downloaded, copied into our storage or attached to anything here. Values that
+     * arrive without a host go through {@link #absoluteImageUrl} (20% of the sample); order is untouched.</p>
      */
     private static List<String> detailImages(JsonNode data) {
         Set<String> seen = new LinkedHashSet<>();
@@ -257,9 +293,11 @@ public class CoupangListingAdapter implements ListingChannel {
                     }
                     String type = asTextOrNull(detail, "detailType");
                     if ("IMAGE".equalsIgnoreCase(type) || isBareUrl(content)) {
-                        seen.add(content.trim());
+                        seen.add(absoluteImageUrl(content.trim()));
                     } else {
-                        seen.addAll(imageSources(content));
+                        for (String source : imageSources(content)) {
+                            seen.add(absoluteImageUrl(source));
+                        }
                     }
                 }
             }
