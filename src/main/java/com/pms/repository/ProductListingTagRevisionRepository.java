@@ -17,4 +17,11 @@ public interface ProductListingTagRevisionRepository extends JpaRepository<Produ
 
     /** The most recent snapshot for a cell (for the change-detection compare before an append). */
     Optional<ProductListingTagRevision> findTopByProductListing_IdOrderByIdDesc(Long listingId);
+
+    /**
+     * Delete every tag snapshot of a listing (FEATURE_2609_63 / 01 — DRAFT channel deletion).
+     *
+     * <p>⚠️ The FK is NOT NULL, so these rows must go before their cell.</p>
+     */
+    void deleteByProductListing_Id(Long listingId);
 }

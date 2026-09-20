@@ -124,6 +124,9 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
                 .categoryCode(fetched.categoryCode())
                 .categoryMatched(matched)
                 .categoryWarning(categoryWarning(matched, platform, fetched.categoryCode()))
+                // 2609_63/D11: 이 쿠팡 상품의 연결 끊긴 판매상품이 있어 그 행을 다시 쓴다는 표시.
+                // 🔴 셀 id·옵션 수 같은 내부 값은 싣지 않는다.
+                .reusesExistingListing(ctx.existing() != null)
                 .channelTags(channelTags(ctx.master(), fetched.tags()))
                 .components(previewComponents(ctx.components()))
                 // 온보딩(2026-09-19): 마켓 이미지 URL 을 그대로 내려준다 — 내려받거나 자산으로 등록하지 않는다.
@@ -208,7 +211,14 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
         // cell — with the master category in force they would be values of the wrong schema.
         boolean keepsOwnCategory = !matched && hasCommission(platform, fetched.categoryCode());
         List<String> channelTags = channelTags(ctx.master(), fetched.tags());
-        ProductListing cell = productListingRepository.save(ProductListing.builder()
+        // 2609_63/D2·D7: 연결이 끊긴 그 상품의 셀이 있으면 <b>그 행을 그대로 쓴다</b>(= UPDATE).
+        // 🔴 `.id(null)` 을 넣지 말 것 — toBuilder() 가 id 를 이어받는 것이 재사용의 핵심이다. 새 행이 생기면
+        // 주문·문의·정산 기록이 통째로 끊긴다. ⚠️ 여기 나열하지 않은 컬럼(배송 override·상세 템플릿 등)은
+        // toBuilder() 가 그대로 이어받는다 — 그게 의도다(D7). tenantId 도 자기 필드라 복사되고,
+        // created_date 는 updatable=false 라 UPDATE 로 지워지지 않는다.
+        ProductListing.ProductListingBuilder cellBuilder =
+                ctx.existing() != null ? ctx.existing().toBuilder() : ProductListing.builder();
+        ProductListing cell = productListingRepository.save(cellBuilder
                 .masterProduct(ctx.master())
                 .seller(ctx.seller())
                 .platform(platform)
@@ -230,9 +240,27 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
                 .build());
 
         // --- 3) cell options + 4) cell BOM
+        // 2609_63/D6: 재사용 셀이면 기존 옵션 행도 다시 쓴다. 매칭 축은 matchOptions 와 같다(vendorItemId → 이름).
+        List<ProductListingOption> existingOptions = ctx.existing() == null ? List.of()
+                : productListingOptionRepository.findByProductListingId(cell.getId());
+        Map<ListingImportRequest.OptionSpec, ProductListingOption> reuseBySpec =
+                matchExistingOptions(request.getOptions(), pairs, existingOptions);
+
+        // 🔴 재사용할 옵션의 BOM <b>만</b> 지운다(1쿼리, 즉시 실행). 셀 전체 BOM 을 지우면 아래에서 비활성으로
+        // 내릴 잔여 옵션의 구성까지 사라진다 — 그 행은 다시 켜질 수 있고(규칙 42), 구성이 빈 옵션은
+        // 「미연결 셀 → 마스터 생성」도 막는다(2609_63/D6-1).
+        if (!reuseBySpec.isEmpty()) {
+            productListingProductRepository.deleteByProductListingOptionIdIn(
+                    reuseBySpec.values().stream().map(ProductListingOption::getId).toList());
+            productListingProductRepository.flush();
+        }
+
         for (ListingImportRequest.OptionSpec spec : request.getOptions()) {
             ImportedProduct.Option market = pairs.get(spec);
-            ProductListingOption listingOption = productListingOptionRepository.save(ProductListingOption.builder()
+            ProductListingOption reusable = reuseBySpec.get(spec);
+            ProductListingOption.ProductListingOptionBuilder optionBuilder =
+                    reusable != null ? reusable.toBuilder() : ProductListingOption.builder();
+            ProductListingOption listingOption = productListingOptionRepository.save(optionBuilder
                     .productListing(cell)
                     .masterProductOption(masterOptionBySpec.get(spec))     // FK, 01/D1
                     // D12: the market already shows this name — a master rename must not silently overwrite it.
@@ -267,6 +295,17 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
                         .product(componentProducts.get(component.getProductId()))
                         .quantity(component.getQuantity())
                         .build());
+            }
+        }
+
+        // 마켓에 더 이상 없는 잔여 옵션은 <b>비활성</b>으로 내린다 — 🔴 지우지 않는다(규칙 42 + order_line ·
+        // settlement_line · price_change_log FK). 이 행들의 masterProductOption 은 연결 해제 때 이미 null 이라
+        // 채널 전용 비활성 옵션으로 남는다(2609_22/D2).
+        Set<Long> reusedOptionIds = reuseBySpec.values().stream().map(ProductListingOption::getId)
+                .collect(Collectors.toSet());
+        for (ProductListingOption leftover : existingOptions) {
+            if (!reusedOptionIds.contains(leftover.getId()) && Boolean.TRUE.equals(leftover.getActive())) {
+                productListingOptionRepository.save(leftover.toBuilder().active(false).build());
             }
         }
         // Flush so the reused seam reads the options/BOM we just wrote.
@@ -363,10 +402,23 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
         // ⚠️ 신규 등록(ChannelAddServiceImpl)의 같은 가드는 그대로 둔다 — 거기서 두 번 만드는 것은
         // 쿠팡에 중복 상품을 만드는 일이라 의미가 정반대다.
         // 대신 아래 "한 쿠팡 상품 = 한 셀" 가드는 유지한다(같은 상품을 두 번 편입하면 연결이 중복된다).
-        if (productListingRepository.existsByPlatformProductId(platformProductId)) {
-            throw new IllegalArgumentException("이미 다른 상품에 연결된 쿠팡 상품입니다");
+        // 2609_63/D5: 그 셀이 아직 <b>마스터에 붙어 있으면</b> 예전처럼 막고, 연결이 끊긴 셀이면 그 행을 재사용한다.
+        ProductListing existing = productListingRepository.findByPlatformProductId(platformProductId).orElse(null);
+        if (existing != null) {
+            // Still owned by a master → unchanged message; the user must detach it there first.
+            // 🔴 문구를 바꾸지 말 것 — 프론트가 substring 으로 판정해 안내를 덧붙인다.
+            if (existing.getMasterProduct() != null) {
+                throw new IllegalArgumentException("이미 다른 상품에 연결된 쿠팡 상품입니다");
+            }
+            // ⚠️ getSeller().getId()·getMasterProduct() 는 FK id 만 읽는 것이라 프록시를 깨우지 않는다.
+            if (existing.getPlatform() != platform) {
+                throw new IllegalArgumentException("다른 플랫폼의 판매상품입니다");
+            }
+            if (!existing.getSeller().getId().equals(sellerId)) {
+                throw new IllegalArgumentException("다른 판매자의 판매상품입니다");
+            }
         }
-        return new ImportContext(master, seller, account, components);
+        return new ImportContext(master, seller, account, components, existing);
     }
 
     /** 마켓 조회 1회 + 응답 자체에 대한 검증(Step 2 의 7~8). */
@@ -383,6 +435,47 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
             }
         }
         return fetched;
+    }
+
+    /**
+     * 재사용 셀의 기존 옵션 행을 spec 에 붙인다(2609_63/D6). 매칭 축은 {@link #matchOptions} 와 같다:
+     * {@code vendorItemId} → 옵션명.
+     *
+     * <p>⚠️ 같은 이름이 둘 이상이면 첫 행만 후보가 된다 — 나머지는 호출부의 잔여 처리로 비활성된다.</p>
+     *
+     * <p>⚠️ <b>이름 폴백은 빗나갈 수 있다</b> — 채널 옵션명은 사용자가 바꿀 수 있어(MANUAL_OVERRIDE) 마켓 이름과
+     * 다를 수 있다. {@code vendorItemId} 가 있는 옵션은 1순위 키로 잡히므로 영향은 <b>미승인 옵션</b>뿐이고,
+     * 그때는 새 행이 생긴다(옛 행은 비활성). 주문·정산은 마켓 옵션 ID 로 붙어 끊기지 않고 가격이력만 옛 행에
+     * 남는다 — 허용 범위다. 🔴 이걸 고치려고 이름 정규화·유사도 매칭을 새로 만들지 말 것.</p>
+     */
+    private Map<ListingImportRequest.OptionSpec, ProductListingOption> matchExistingOptions(
+            List<ListingImportRequest.OptionSpec> specs,
+            Map<ListingImportRequest.OptionSpec, ImportedProduct.Option> pairs,
+            List<ProductListingOption> existingOptions) {
+
+        Map<String, ProductListingOption> byPlatformOptionId = new HashMap<>();   // vendorItemId → row
+        Map<String, ProductListingOption> byName = new LinkedHashMap<>();         // optionName  → row
+        for (ProductListingOption existingOption : existingOptions) {
+            if (existingOption.getPlatformOptionId() != null) {
+                byPlatformOptionId.putIfAbsent(existingOption.getPlatformOptionId(), existingOption);
+            }
+            byName.putIfAbsent(existingOption.getOptionName(), existingOption);   // 첫 행 우선
+        }
+
+        // ⚠️ 한 기존 행이 두 spec 에 매칭될 일은 없다 — matchOptions 가 spec↔마켓 옵션을 이미 1:1 로 확정했다.
+        Map<ListingImportRequest.OptionSpec, ProductListingOption> reuseBySpec = new LinkedHashMap<>();
+        for (ListingImportRequest.OptionSpec spec : specs) {
+            ImportedProduct.Option market = pairs.get(spec);
+            ProductListingOption reusable = market.vendorItemId() == null ? null
+                    : byPlatformOptionId.get(market.vendorItemId());
+            if (reusable == null) {
+                reusable = byName.get(market.itemName());
+            }
+            if (reusable != null) {
+                reuseBySpec.put(spec, reusable);
+            }
+        }
+        return reuseBySpec;
     }
 
     /**
@@ -609,7 +702,9 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
 
     /** 미리보기·커밋이 공유하는 검증 결과. */
     private record ImportContext(MasterProduct master, Seller seller, MarketplaceAccount account,
-                                 List<MasterProductComponent> components) {
+                                 List<MasterProductComponent> components,
+                                 /* 2609_63/D5: 연결이 끊긴 채 남아 있는 같은 마켓 상품의 셀(재사용 대상). 없으면 null. */
+                                 ProductListing existing) {
     }
 
     /** 마스터 옵션 + 그 BOM 벡터(D10 비교 대상). 이번 요청에서 새로 만든 옵션도 여기에 쌓인다. */

@@ -39,6 +39,13 @@ public class ListingImportPreviewResponse {
     @Schema(description = "Channel tags to be stored = market tags minus master tags (D17)")
     private List<String> channelTags;
 
+    /**
+     * 2609_63/D11: true = 이 쿠팡 상품의 <b>연결 끊긴 판매상품</b>이 남아 있어 가져오기가 그 행을 다시 쓴다.
+     * 새 행을 만드는 것과 의미가 달라(주문·문의·정산 기록이 딸려 온다) 모달에 한 줄 띄운다.
+     */
+    @Schema(description = "Whether the import will reuse an existing, detached listing row of this product")
+    private boolean reusesExistingListing;
+
     @Schema(description = "The master's components — one quantity input row each (D9)")
     private List<Component> components;
 
