@@ -31,6 +31,9 @@ public class MasterProductQuery {
     /** {@code field,direction} e.g. {@code createdAt,desc}. Null/blank → {@code createdAt,desc} (service). */
     private String sort;
 
-    /** Master name partial match, case-insensitive. Null/blank → no search condition (service). */
+    /**
+     * One keyword: master name partial match (case-insensitive) OR 상품 ID·옵션 ID exact match
+     * (FEATURE_2609_60). Null/blank → no search condition (service).
+     */
     private String search;
 }
