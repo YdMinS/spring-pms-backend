@@ -23,6 +23,7 @@ import com.pms.dto.response.ChannelSyncPreviewResponse;
 import com.pms.dto.response.ListingMasterCreateResponse;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.MasterCategoryResponse;
+import com.pms.dto.response.MasterChannelOptionsResponse;
 import com.pms.dto.response.MasterFromChannelPreviewResponse;
 import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductByComponentsResponse;
@@ -107,6 +108,17 @@ public class MasterProductController {
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<ListingMatrixResponse>> getMatrix(@PathVariable Long id) {
         return ResponseEntity.ok(ResponseDTO.success(masterProductService.getMatrix(id)));
+    }
+
+    @GetMapping("/{id}/channel-options")
+    @Operation(summary = "Every channel cell's options for this master (ids included)",
+            description = "이 마스터에 연결된 채널 셀을 전부 내려준다 — 셀의 상품 ID/상태 + 셀마다 옵션 전체"
+                    + "(비활성·채널 전용 포함, 옵션 ID 포함). 셀마다 따로 조회하지 않기 위한 집계 조회다. "
+                    + "상품 ID·옵션 ID 는 승인 전에는 비어 있다(오류가 아니다). 정렬·필터는 하지 않는다. "
+                    + "채널 이름(판매자·플랫폼·계정)은 매트릭스 조회에 있다.")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<MasterChannelOptionsResponse>> getChannelOptions(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(masterProductService.getChannelOptions(id)));
     }
 
     @GetMapping("/{id}/channel-sync-preview")
