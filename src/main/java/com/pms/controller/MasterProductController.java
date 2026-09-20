@@ -72,7 +72,7 @@ public class MasterProductController {
     @Operation(summary = "List master products",
             description = "활성 마스터 목록(페이징). page(0-indexed, 기본 0) / size(기본 25, 최대 100으로 clamp) / "
                     + "sort(`필드,방향` — 허용 필드: createdAt, 기본 `createdAt,desc`, 허용 외 필드는 400) / "
-                    + "search(마스터 이름 부분일치·대소문자 무시). 응답 data 는 Page 객체 "
+                    + "search(마스터 이름 부분일치·대소문자 무시 / 상품 ID·옵션 ID 완전일치). 응답 data 는 Page 객체 "
                     + "(content/totalElements/totalPages/number/size).")
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<Page<MasterProductResponse>>> getMasterProducts(

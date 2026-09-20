@@ -354,19 +354,19 @@ class MasterProductServiceTest {
         service.getMasterProducts(query);
 
         verify(masterProductRepository).findByActiveTrue(any(Pageable.class));
-        verify(masterProductRepository, never()).searchActiveByNamePage(any(), any());
+        verify(masterProductRepository, never()).searchActivePage(any(), any());
     }
 
     @Test
     void list_searchTrimmedAndDelegated() {
-        given(masterProductRepository.searchActiveByNamePage(eq("커피"), any(Pageable.class)))
+        given(masterProductRepository.searchActivePage(eq("커피"), any(Pageable.class)))
                 .willReturn(new PageImpl<>(List.of(), PageRequest.of(0, 25), 0));
         MasterProductQuery query = new MasterProductQuery();
         query.setSearch(" 커피 ");
 
         service.getMasterProducts(query);
 
-        verify(masterProductRepository).searchActiveByNamePage(eq("커피"), any(Pageable.class));
+        verify(masterProductRepository).searchActivePage(eq("커피"), any(Pageable.class));
         verify(masterProductRepository, never()).findByActiveTrue(any(Pageable.class));
     }
 
@@ -392,7 +392,7 @@ class MasterProductServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("정렬 키가 올바르지 않습니다");
         verify(masterProductRepository, never()).findByActiveTrue(any(Pageable.class));
-        verify(masterProductRepository, never()).searchActiveByNamePage(any(), any());
+        verify(masterProductRepository, never()).searchActivePage(any(), any());
     }
 
     @Test

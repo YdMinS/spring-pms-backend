@@ -148,7 +148,7 @@ public class MasterProductServiceImpl implements MasterProductService {
         // Active only — soft-deleted (active=false) masters are hidden from the list (recover via PATCH active=true).
         Page<MasterProduct> masters = (keyword == null || keyword.isEmpty())
                 ? masterProductRepository.findByActiveTrue(pageable)
-                : masterProductRepository.searchActiveByNamePage(keyword, pageable);
+                : masterProductRepository.searchActivePage(keyword, pageable);
         // Overlay + lock judgement run on the PAGE CONTENT only — never load everything and sub-list.
         List<Long> ids = masters.getContent().stream().map(MasterProduct::getId).toList();
         // Resolve the list cover from the __source__ mapping (37) in one batch query. Priority mirrors

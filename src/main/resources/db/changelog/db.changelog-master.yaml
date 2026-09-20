@@ -175,3 +175,5 @@ databaseChangeLog:
       file: db/changelog/changes/091-box-kind-recipe.yaml
   - include:
       file: db/changelog/changes/092-listing-category-notice-group.yaml
+  - include:
+      file: db/changelog/changes/093-listing-platform-id-index.yaml
