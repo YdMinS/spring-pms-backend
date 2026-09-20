@@ -70,4 +70,20 @@ public interface ProductListingProductRepository extends JpaRepository<ProductLi
     @Modifying
     @Query("DELETE FROM ProductListingProduct p WHERE p.productListingOption.productListing.id = :productListingId")
     void deleteByProductListingId(@Param("productListingId") Long productListingId);
+
+    /**
+     * Delete the BOM lines of the given options only (FEATURE_2609_63 / 01).
+     *
+     * <p>🔴 The reuse path of an import must NOT wipe the whole cell's BOM: options the market no longer
+     * carries are kept as {@code active=false} rows (rule 42) and may be switched on again — an option with
+     * no composition also blocks "미연결 셀 → 마스터 생성".</p>
+     *
+     * <p>⚠️ Bulk {@code @Modifying} on purpose: the per-option derived delete is not executed immediately and
+     * would interleave with the new BOM inserts.</p>
+     *
+     * @param optionIds IDs of the ProductListingOptions whose lines are replaced
+     */
+    @Modifying
+    @Query("DELETE FROM ProductListingProduct p WHERE p.productListingOption.id IN :optionIds")
+    void deleteByProductListingOptionIdIn(@Param("optionIds") Collection<Long> optionIds);
 }
