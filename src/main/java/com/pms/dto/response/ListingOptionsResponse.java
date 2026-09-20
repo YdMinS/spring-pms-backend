@@ -85,8 +85,25 @@ public class ListingOptionsResponse {
                 + "propagation never touches it", example = "false")
         private boolean channelOnly;
 
-        /** {@code master} may be null (channel-only option, 2609_22/D2) → maxStock 9999. */
+        @Schema(description = "옵션 ID on the marketplace (Coupang vendorItemId, 2609_61). null until the "
+                + "market approves the option — fetchStatus fills it, so a blank here is not an error.",
+                nullable = true, example = "1234567890")
+        private String platformOptionId;
+
+        @Schema(description = "Master option this channel option is linked to (2609_22/D1 id axis); "
+                + "null = channel-only option", nullable = true, example = "50")
+        private Long masterOptionId;
+
+        /**
+         * {@code master} may be null (channel-only option, 2609_22/D2) → maxStock 9999.
+         *
+         * <p>⚠️ {@code masterOptionId} is read from the option's own FK, never from {@code master}: the
+         * caller resolves {@code master} through a map that can miss on a legacy cell even when the FK is
+         * set (see {@link #linkedMaster}). The FK is the axis.</p>
+         */
         public static OptionItem from(ProductListingOption option, MasterProductOption master) {
+            // FK id only — safe on a LAZY proxy (same reason as linkedMaster).
+            MasterProductOption fk = option.getMasterProductOption();
             return OptionItem.builder()
                     .optionId(option.getId())
                     .optionName(option.getOptionName())
@@ -99,6 +116,8 @@ public class ListingOptionsResponse {
                     .optionNameSource(option.getOptionNameSource() != null
                             ? option.getOptionNameSource().name() : null)
                     .channelOnly(option.isChannelOnly())
+                    .platformOptionId(option.getPlatformOptionId())
+                    .masterOptionId(fk != null ? fk.getId() : null)
                     .build();
         }
     }

@@ -1,5 +1,6 @@
 package com.pms.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.Category;
 import com.pms.domain.CategoryMapping;
@@ -9,6 +10,7 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MarginPolicy;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductComponent;
+import com.pms.domain.MasterProductOption;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -20,6 +22,7 @@ import com.pms.repository.MarginPolicyRepository;
 import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterProductComponentRepository;
+import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
@@ -34,6 +37,7 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Map;
 
@@ -58,6 +62,7 @@ class MasterProductControllerTest extends BaseIntegrationTest {
 
     @Autowired private MasterProductRepository masterProductRepository;
     @Autowired private MasterProductComponentRepository componentRepository;
+    @Autowired private MasterProductOptionRepository masterProductOptionRepository;
     @Autowired private ProductRepository productRepository;
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
@@ -187,6 +192,99 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    @Test
+    void channelOptions_noToken_returns401() throws Exception {
+        mockMvc.perform(get(PATH + "/" + masterId + "/channel-options"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void channelOptions_userToken_returns403() throws Exception {
+        mockMvc.perform(get(PATH + "/" + masterId + "/channel-options")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    /**
+     * 2609_61: the aggregate must return <b>every</b> cell — two cells here, because with one cell
+     * "returns all cells" and "returns the first cell" look identical.
+     */
+    @Test
+    void channelOptions_adminToken_returnsEveryCellAndOption() throws Exception {
+        MasterProduct master = masterProductRepository.findById(masterId).orElseThrow();
+        MasterProductOption masterOption = masterProductOptionRepository.save(MasterProductOption.builder()
+                .masterProduct(master).name("6개입").build());
+
+        // Cell A = the seeded cell (platformProductId "X"): its seeded option "기본" has no master option
+        // behind it (channel-only), plus one option linked to the master option and already approved.
+        ProductListing cellA = productListingRepository.findByMasterProductId(masterId).get(0);
+        productListingOptionRepository.save(ProductListingOption.builder()
+                .productListing(cellA).masterProductOption(masterOption).optionName("6개입")
+                .sellingPrice(new BigDecimal("2000")).platformOptionId("vendor-1").build());
+
+        // Cell B = a second cell of the same master with no 상품 ID yet (DRAFT) — must not be dropped.
+        ProductListing cellB = productListingRepository.save(ProductListing.builder()
+                .platform(Platform.COUPANG).name("리스팅2").seller(cellA.getSeller())
+                .masterProduct(master).build());
+        productListingOptionRepository.save(ProductListingOption.builder()
+                .productListing(cellB).masterProductOption(masterOption).optionName("6개입")
+                .sellingPrice(new BigDecimal("2000")).platformOptionId("vendor-2").build());
+
+        String body = mockMvc.perform(get(PATH + "/" + masterId + "/channel-options")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.masterId").value(masterId))
+                // UTF-8 explicitly: the default ISO-8859-1 decode would mangle the Korean option names.
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+
+        JsonNode cells = objectMapper.readTree(body).path("data").path("cells");
+        assertThat(cells.size()).isEqualTo(2);
+
+        JsonNode cellANode = cellById(cells, cellA.getId());
+        assertThat(cellANode.path("platformProductId").asText()).isEqualTo("X");
+        assertThat(cellANode.path("options").size()).isEqualTo(2);
+        JsonNode linked = optionByName(cellANode.path("options"), "6개입");
+        assertThat(linked.path("platformOptionId").asText()).isEqualTo("vendor-1");
+        assertThat(linked.path("masterOptionId").asLong()).isEqualTo(masterOption.getId());
+        assertThat(linked.path("channelOnly").asBoolean()).isFalse();
+        JsonNode channelOnly = optionByName(cellANode.path("options"), "기본");
+        assertThat(channelOnly.path("masterOptionId").isNull()).isTrue();
+        assertThat(channelOnly.path("channelOnly").asBoolean()).isTrue();
+
+        JsonNode cellBNode = cellById(cells, cellB.getId());
+        assertThat(cellBNode.path("platformProductId").isNull()).isTrue();   // 승인 전 = 빈 값, 오류 아님
+        assertThat(cellBNode.path("options").size()).isEqualTo(1);
+        assertThat(cellBNode.path("options").get(0).path("platformOptionId").asText()).isEqualTo("vendor-2");
+    }
+
+    @Test
+    void channelOptions_missingMaster_returns404() throws Exception {
+        mockMvc.perform(get(PATH + "/999999/channel-options")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    /** Cell lookup by id — the response order is the repository's, so tests must not assume an index. */
+    private static JsonNode cellById(JsonNode cells, Long productListingId) {
+        for (JsonNode cell : cells) {
+            if (cell.path("productListingId").asLong() == productListingId) {
+                return cell;
+            }
+        }
+        throw new AssertionError("cell " + productListingId + " missing from the response");
+    }
+
+    private static JsonNode optionByName(JsonNode options, String optionName) {
+        for (JsonNode option : options) {
+            if (optionName.equals(option.path("optionName").asText())) {
+                return option;
+            }
+        }
+        throw new AssertionError("option " + optionName + " missing from the response");
     }
 
     @Test
