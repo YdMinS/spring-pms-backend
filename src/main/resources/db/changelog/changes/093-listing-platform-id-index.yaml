@@ -1,0 +1,23 @@
+# 마스터 검색이 상품 ID·옵션 ID 로 들어올 때 타는 인덱스 (FEATURE_2609_60 / D6).
+# 🔴 유니크가 아니다 — platform_option_id 는 중복이 실재한다(079 주석이 MIN(plo.id) 로 우회 중).
+databaseChangeLog:
+
+  - changeSet:
+      id: 093-listing-platform-id-index
+      author: oclyx
+      comment: "FEATURE_2609_60/D6: 마스터 검색용 platform_product_id · platform_option_id 인덱스(유니크 아님)."
+      changes:
+        - createIndex:
+            tableName: product_listing
+            indexName: idx_productlisting_platformproduct
+            columns:
+              - column: { name: platform_product_id }
+
+        - createIndex:
+            tableName: product_listing_option
+            indexName: idx_productlistingoption_platformoption
+            columns:
+              - column: { name: platform_option_id }
+      rollback:
+        - dropIndex: { tableName: product_listing, indexName: idx_productlisting_platformproduct }
+        - dropIndex: { tableName: product_listing_option, indexName: idx_productlistingoption_platformoption }

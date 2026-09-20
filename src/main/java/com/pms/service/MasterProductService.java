@@ -37,8 +37,12 @@ public interface MasterProductService {
      *       optional (defaults to desc), case-insensitive. The field must be in the sort whitelist —
      *       anything else throws {@link IllegalArgumentException} → HTTP 400. {@code id} is always
      *       appended as a tie-breaker so page boundaries are deterministic.</li>
-     *   <li>{@code search} null/blank → no condition; otherwise a trimmed, case-insensitive partial
-     *       match on the master <b>name</b>.</li>
+     *   <li>{@code search} null/blank → no condition; otherwise one trimmed keyword matched against
+     *       three things at once (FEATURE_2609_60): a case-insensitive partial match on the master
+     *       <b>name</b>, an <b>exact</b> match on a listing's 상품 ID
+     *       ({@code ProductListing.platformProductId}), or an <b>exact</b> match on an option's 옵션 ID
+     *       ({@code ProductListingOption.platformOptionId}). The caller never says which kind of id it
+     *       typed, and the response never says which one matched.</li>
      * </ul>
      *
      * <p>{@code registrationName} stays null on this path (N+1 guard) — see {@link #getMasterProduct}.</p>
