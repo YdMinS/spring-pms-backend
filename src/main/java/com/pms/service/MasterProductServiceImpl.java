@@ -18,6 +18,7 @@ import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.request.MasterCategoryRequest;
+import com.pms.dto.request.MasterCompositionRequest;
 import com.pms.dto.request.MasterOptionRequest;
 import com.pms.dto.request.MasterProductQuery;
 import com.pms.dto.request.MasterProductRequest;
@@ -648,9 +649,14 @@ public class MasterProductServiceImpl implements MasterProductService {
      * <p>The screen checks this before unlocking the rest of the form, but the screen is bypassable — this
      * is the final line. The message names the existing master so the user can go add an option to it, and
      * calls out a soft-deleted one (invisible on the list screen, which is why they got here).</p>
+     *
+     * @param selfId the master being edited (2609_64/D7: keeping its own set is never a duplicate), or null
+     *               on create. 🔴 One judgement function for both paths — a second one would drift.
      */
-    private void assertComponentSetIsFree(Set<Long> componentIds) {
-        List<MasterProduct> duplicates = findMastersWithComponentSet(componentIds);
+    private void assertComponentSetIsFree(Set<Long> componentIds, Long selfId) {
+        List<MasterProduct> duplicates = findMastersWithComponentSet(componentIds).stream()
+                .filter(m -> !m.getId().equals(selfId))   // 자기 자신은 중복이 아니다
+                .toList();
         if (duplicates.isEmpty()) {
             return;
         }
@@ -673,7 +679,7 @@ public class MasterProductServiceImpl implements MasterProductService {
 
         // 2609_46: identity first — the component set defines the master, so a set that already has a
         // master is rejected before anything else is judged (and before any save).
-        assertComponentSetIsFree(componentIds);
+        assertComponentSetIsFree(componentIds, null);
 
         // Atomicity: pre-validate every option (coverage + quantity) BEFORE any save. A violation throws
         // here, so the master is never persisted — provable by mock (masterProductRepository.save is never
@@ -767,6 +773,157 @@ public class MasterProductServiceImpl implements MasterProductService {
         masterPropagationService.propagate(id);
 
         return mapToResponse(updated);
+    }
+
+    /**
+     * Replace the component set and the full option list in one transaction (2609_64). Contract:
+     * {@link MasterProductService#updateComposition}.
+     *
+     * <p>The order below is the contract: ① capture the current state → ② validate the whole request
+     * (zero writes) → ③ replace the components → ④ delete the options the request dropped → ⑤ update the
+     * kept ones → ⑥ create the new ones → ⑦ flag re-approval. A violation in ② throws before anything is
+     * written, so a rejected request never leaves half a master behind.</p>
+     */
+    @Override
+    @Transactional
+    public MasterProductResponse updateComposition(Long id, MasterCompositionRequest request) {
+        MasterProduct master = requireScopedMaster(id);
+
+        // ⚠️ Capture the pre-edit state FIRST — same reason as updateOption: after the deletes below every
+        // option would look "changed", so the lock guard and the "did the quantities move?" test must read
+        // the state while it is still the old one.
+        List<MasterProductOption> existing = optionRepository.findByMasterProductId(id);
+        Map<Long, MasterProductOption> existingById = existing.stream()
+                .collect(Collectors.toMap(MasterProductOption::getId, option -> option));
+        List<Long> existingIds = existing.stream().map(MasterProductOption::getId).toList();
+        Map<Long, Map<Long, Integer>> oldVectors = (existingIds.isEmpty()
+                ? List.<MasterProductOptionItem>of()
+                : optionItemRepository.findByOptionIdIn(existingIds)).stream()
+                .collect(Collectors.groupingBy(it -> it.getOption().getId(),
+                        Collectors.toMap(it -> it.getProduct().getId(), MasterProductOptionItem::getQuantity)));
+        Set<String> lockedNames = marketRegisteredOptionNames(List.of(id)).getOrDefault(id, Set.of());
+
+        // ---------------------------------------------------------------- validate (no writes)
+
+        List<Product> products = requireProducts(request.getComponentProductIds());
+        Set<Long> newComponentIds = products.stream().map(Product::getId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        // 2609_64/D7: the duplicate-component guard applies here too — keeping our own set is not a duplicate.
+        assertComponentSetIsFree(newComponentIds, id);
+
+        Set<String> requestedNames = new LinkedHashSet<>();
+        for (MasterCompositionRequest.OptionSpec spec : request.getOptions()) {
+            // 86: option names are unique within a master — same message, same trim rule as createMasterProduct.
+            if (!requestedNames.add(spec.getName() == null ? null : spec.getName().trim())) {
+                throw new ValidationException("같은 이름의 옵션이 이미 있습니다.");
+            }
+            assertCoversComponents(newComponentIds, vectorOf(spec), "옵션은 구성상품 전체를 포함해야 합니다");
+            if (spec.getOptionId() != null && !existingById.containsKey(spec.getOptionId())) {
+                throw new ResourceNotFoundException("MasterProductOption", spec.getOptionId());
+            }
+        }
+        // @NotEmpty already rejects an empty option list (400), so it is not re-counted here.
+
+        Set<Long> keptIds = request.getOptions().stream()
+                .map(MasterCompositionRequest.OptionSpec::getOptionId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        // 2609_64/D3: the market lock is NOT relaxed for this endpoint — deleting a locked option here would
+        // be exactly the "delete then re-add" way around deleteOption's guard.
+        for (MasterProductOption gone : existing) {
+            if (!keptIds.contains(gone.getId()) && lockedNames.contains(gone.getName())) {
+                throw new ValidationException("쿠팡에 등록된 옵션은 삭제할 수 없습니다. 판매 중지 후 마켓에서 정리하세요.");
+            }
+        }
+        for (MasterCompositionRequest.OptionSpec spec : request.getOptions()) {
+            if (spec.getOptionId() == null) {
+                continue;
+            }
+            String oldName = existingById.get(spec.getOptionId()).getName();
+            // ⚠️ A locked option's QUANTITIES stay editable (existing rule, updateOption) — only the name and
+            // the delete are Coupang's to keep.
+            if (!Objects.equals(oldName, spec.getName()) && lockedNames.contains(oldName)) {
+                throw new ValidationException("쿠팡에 등록된 옵션은 이름을 바꿀 수 없습니다.");
+            }
+        }
+        assertNoNameSwap(existing, request.getOptions());
+
+        // ---------------------------------------------------------------- replace the component set
+
+        // ⚠️ flush() after the delete: Hibernate's action queue runs INSERTs before entity DELETEs in one
+        // flush, so re-inserting an unchanged (master, product) pair would collide with the not-yet-deleted
+        // row on UQ_MPC (unique index). Forcing the delete first makes the re-insert safe.
+        componentRepository.deleteByMasterProductId(id);
+        componentRepository.flush();
+        for (Product product : products) {
+            componentRepository.save(MasterProductComponent.builder()
+                    .masterProduct(master).product(product).build());
+        }
+
+        // ---------------------------------------------------------------- delete what the request dropped
+
+        for (MasterProductOption gone : existing) {
+            if (keptIds.contains(gone.getId())) {
+                continue;
+            }
+            // 🔴 Switch the option off on every channel BEFORE the master row goes away — the FK is
+            // ON DELETE SET NULL, so afterwards nothing points at it any more.
+            masterOptionChannelSync.onOptionRemoved(id, gone.getId());
+            optionItemRepository.deleteByOptionId(gone.getId());
+            optionRepository.delete(gone);
+        }
+
+        // ---------------------------------------------------------------- update the kept options
+
+        for (MasterCompositionRequest.OptionSpec spec : request.getOptions()) {
+            if (spec.getOptionId() == null) {
+                continue;
+            }
+            MasterProductOption option = existingById.get(spec.getOptionId());
+            String oldName = option.getName();
+            boolean renamed = !Objects.equals(oldName, spec.getName());
+            Map<Long, Integer> newVector = vectorOf(spec);
+            boolean quantitiesChanged = !newVector.equals(oldVectors.getOrDefault(option.getId(), Map.of()));
+
+            optionItemRepository.deleteByOptionId(option.getId());
+            saveItems(option, newVector);
+            // 🔴 name ONLY — delivery/box/category meta/stock carry over untouched (2609_64/D5). stockQuantity
+            // in particular means "null = clear" on the per-option path, so re-sending it here would wipe it.
+            MasterProductOption updated = optionRepository.save(
+                    option.toBuilder().name(spec.getName()).build());
+
+            if (renamed) {
+                masterOptionChannelSync.onOptionRenamed(id, updated.getId(), updated.getName());
+            }
+            if (quantitiesChanged) {
+                // 🔴 NOT optionQuantitySync.syncLines — that component is quantities-only, so it can neither
+                // add a line for a new component product nor drop one for a removed one, and the cell BOM
+                // would keep biting the old products (wrong cost sum, wrong price).
+                masterOptionChannelSync.onOptionComponentsChanged(id, updated);
+                markNeedsMarketSync(id, updated);
+            }
+        }
+
+        // ---------------------------------------------------------------- create the new options
+
+        for (MasterCompositionRequest.OptionSpec spec : request.getOptions()) {
+            if (spec.getOptionId() != null) {
+                continue;
+            }
+            // D6: a brand-new option carries name + quantities only; the rest stays unset and is filled in
+            // afterwards from the existing option panel.
+            MasterOptionRequest asRequest = MasterOptionRequest.builder()
+                    .name(spec.getName()).items(spec.getItems()).build();
+            MasterProductOption created = persistOption(master, asRequest, newComponentIds);
+            masterOptionChannelSync.onOptionCreated(id, created);
+        }
+
+        // 🔴 masterPropagationService.propagate(id) is deliberately NOT called here (2609_64/D12): this method
+        // just wrote three kinds of cell row (BOM, option price, needsMarketSync) and propagateOne runs
+        // REQUIRES_NEW per cell — it would block on our uncommitted locks and read the pre-change composition.
+        // The controller calls it after this transaction has committed.
+        // clampChannelStocks is not called either — stock is untouched, so no ceiling moved.
+        return mapToResponse(master);
     }
 
     @Override
@@ -1196,6 +1353,31 @@ public class MasterProductServiceImpl implements MasterProductService {
     }
 
     /**
+     * 🔴 2609_64: refuse an A↔B name swap inside one request — an option's NEW name may not equal
+     * <b>another</b> existing option's CURRENT name, even when that other option gives the name up in the
+     * same request (and even when it is being deleted here).
+     *
+     * <p>The per-option path cannot produce this (it edits one option at a time, so
+     * {@link #assertNameUnique} covers it); this endpoint can, and the cell rename cascade would then hit
+     * {@code onOptionRenamed}'s {@code newNameTaken} branch, log a WARN and skip — leaving the channel option
+     * names out of step with the master. Saving it in two passes through a temporary name works.</p>
+     */
+    private void assertNoNameSwap(List<MasterProductOption> existing,
+                                  List<MasterCompositionRequest.OptionSpec> specs) {
+        Map<String, Long> ownerByCurrentName = new LinkedHashMap<>();
+        for (MasterProductOption option : existing) {
+            ownerByCurrentName.put(option.getName(), option.getId());
+        }
+        for (MasterCompositionRequest.OptionSpec spec : specs) {
+            Long owner = ownerByCurrentName.get(spec.getName());
+            if (owner != null && !owner.equals(spec.getOptionId())) {
+                throw new ValidationException(
+                        "옵션 이름을 서로 맞바꿀 수 없습니다. 임시 이름을 거쳐 두 번에 나눠 저장하세요.");
+            }
+        }
+    }
+
+    /**
      * 84 Step 4 — narrow channel re-sync after an option was edited: cascade a rename onto the cells, then
      * (only when the quantity vector actually moved) push the new quantities down the linked BOM lines,
      * recompute that cell's option prices and flag the market-registered cells for re-approval.
@@ -1244,6 +1426,28 @@ public class MasterProductServiceImpl implements MasterProductService {
             // push itself stays manual ([수정 요청]), per the no-auto-push rule.
             if (cell.getPlatformProductId() != null && matched.stream().anyMatch(MasterProductServiceImpl::isOnMarket)
                     && !cell.isNeedsMarketSync()) {
+                productListingRepository.save(cell.toBuilder().needsMarketSync(true).build());
+            }
+        }
+    }
+
+    /**
+     * 2609_64/D8: flag for re-approval only the cells that actually carry this option on the market. No push
+     * — the flag just surfaces the [수정 요청] button (no-auto-push rule). Same condition as
+     * {@link #resyncChannels}.
+     *
+     * <p>⚠️ Asset regeneration raises the same flag for its own cells ({@code propagateOne} step 4), but it
+     * skips cells without generated assets — those are exactly the ones this helper still has to cover.</p>
+     */
+    private void markNeedsMarketSync(Long masterId, MasterProductOption option) {
+        for (ProductListing cell : productListingRepository.findByMasterProductId(masterId)) {
+            if (cell.getPlatformProductId() == null || cell.isNeedsMarketSync()) {
+                continue;
+            }
+            boolean onMarket = productListingOptionRepository.findByProductListingId(cell.getId()).stream()
+                    .filter(cellOption -> linkedTo(cellOption, option.getId()))
+                    .anyMatch(MasterProductServiceImpl::isOnMarket);
+            if (onMarket) {
                 productListingRepository.save(cell.toBuilder().needsMarketSync(true).build());
             }
         }
@@ -1352,6 +1556,21 @@ public class MasterProductServiceImpl implements MasterProductService {
             return Map.of();
         }
         return request.getItems().stream()
+                .collect(Collectors.toMap(
+                        MasterOptionRequest.OptionItem::getProductId,
+                        MasterOptionRequest.OptionItem::getQuantity,
+                        (first, dup) -> dup, LinkedHashMap::new));
+    }
+
+    /**
+     * {@code OptionSpec} items → (productId → quantity), following exactly the same rule as
+     * {@link #toVector(MasterOptionRequest)} (a duplicate productId lets the LAST value win) — 2609_64.
+     *
+     * <p>🔴 One overload, never a copy of {@code toVector}'s body: the validation in {@code updateComposition}
+     * and the vector actually persisted there must be produced by the same function.</p>
+     */
+    private Map<Long, Integer> vectorOf(MasterCompositionRequest.OptionSpec spec) {
+        return spec.getItems().stream()
                 .collect(Collectors.toMap(
                         MasterOptionRequest.OptionItem::getProductId,
                         MasterOptionRequest.OptionItem::getQuantity,

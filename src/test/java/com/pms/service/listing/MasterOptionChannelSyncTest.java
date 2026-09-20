@@ -276,6 +276,49 @@ class MasterOptionChannelSyncTest {
         verify(listingAssetService, never()).recalculateOptionPrices(any());
     }
 
+    // ------------------------------------------------- onOptionComponentsChanged (2609_64)
+
+    @Test
+    void onOptionComponentsChanged_replacesCellBomLines() {
+        // The master option's component set changed ([1,2] → [1,3]); the cell BOM must be REPLACED, not
+        // merged — OptionQuantitySync would leave the line for product 2 behind (wrong cost, wrong price).
+        ProductListing cell = cell(1L, "COUPANG-99");
+        MasterProductOption option = option(5L, "2개입");
+        given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
+        given(productListingOptionRepository.findByProductListingIdIn(anyCollection()))
+                .willReturn(List.of(cellOption(50L, cell, "2개입", true, option)));
+        given(masterProductOptionItemRepository.findByOptionId(5L))
+                .willReturn(List.of(item(1L, 1), item(3L, 2)));
+
+        sync.onOptionComponentsChanged(MASTER_ID, option);
+
+        verify(productListingProductRepository).deleteByProductListingOptionId(50L);
+        ArgumentCaptor<ProductListingProduct> lines = ArgumentCaptor.forClass(ProductListingProduct.class);
+        verify(productListingProductRepository, times(2)).save(lines.capture());
+        assertThat(lines.getAllValues()).extracting(line -> line.getProduct().getId())
+                .containsExactly(1L, 3L);
+        verify(optionQuantitySync, never()).syncLines(any(), any());
+        // Prices follow the composition.
+        verify(listingAssetService).recalculateOptionPrices(cell);
+        // 🔴 "the composition changed" is not "an option appeared" — no new cell option row here.
+        verify(productListingOptionRepository, never()).save(any());
+    }
+
+    @Test
+    void onOptionComponentsChanged_cellWithoutThatOption_isLeftAlone() {
+        ProductListing cell = cell(1L, null);
+        given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
+        given(productListingOptionRepository.findByProductListingIdIn(anyCollection()))
+                .willReturn(List.of(cellOption(50L, cell, "채널전용", true)));
+        given(masterProductOptionItemRepository.findByOptionId(5L)).willReturn(List.of(item(1L, 1)));
+
+        sync.onOptionComponentsChanged(MASTER_ID, option(5L, "2개입"));
+
+        verify(productListingProductRepository, never()).deleteByProductListingOptionId(any());
+        verify(productListingProductRepository, never()).save(any());
+        verify(listingAssetService, never()).recalculateOptionPrices(any());
+    }
+
     // ---------------------------------------------------------------- syncStructure (propagation)
 
     @Test

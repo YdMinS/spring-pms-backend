@@ -134,6 +134,26 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
     }
 
     @Override
+    public void onOptionComponentsChanged(Long masterId, MasterProductOption option) {
+        List<ProductListing> cells = productListingRepository.findByMasterProductId(masterId);
+        if (cells.isEmpty()) {
+            return;
+        }
+        Map<Long, List<ProductListingOption>> optionsByCell = optionsByCell(cells);
+        // Master items are the BOM source for every cell — read once, copied N times.
+        List<MasterProductOptionItem> items = masterProductOptionItemRepository.findByOptionId(option.getId());
+
+        for (ProductListing cell : cells) {
+            ProductListingOption existing = match(optionsByCell.get(cell.getId()), option.getId());
+            if (existing == null) {
+                continue;   // this channel does not carry the option → creating it is not this hook's job
+            }
+            rebuildLines(existing, items);      // replace, never merge (see the interface note)
+            listingAssetService.recalculateOptionPrices(cell);
+        }
+    }
+
+    @Override
     public void syncStructure(ProductListing cell) {
         MasterProduct master = cell.getMasterProduct();
         if (master == null) {

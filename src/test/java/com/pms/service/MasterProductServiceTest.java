@@ -20,6 +20,7 @@ import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.request.MasterCategoryRequest;
+import com.pms.dto.request.MasterCompositionRequest;
 import com.pms.dto.request.MasterOptionRequest;
 import com.pms.dto.request.MasterProductQuery;
 import com.pms.dto.request.MasterProductRequest;
@@ -51,11 +52,13 @@ import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.service.listing.OptionCheckSuffix;
 import com.pms.service.listing.MasterOptionChannelSync;
+import com.pms.service.listing.MasterPropagationService;
 import com.pms.service.listing.OptionQuantitySync;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import com.pms.service.listing.shipping.ShippingOverrideKeys;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -76,8 +79,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.data.domain.Sort.Direction.ASC;
 import static org.springframework.data.domain.Sort.Direction.DESC;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -111,6 +116,9 @@ class MasterProductServiceTest {
     @Mock private ListingAssetService listingAssetService;
     @Mock private OptionQuantitySync optionQuantitySync;
     @Mock private MasterOptionChannelSync masterOptionChannelSync;
+    // 2609_64: injected into the service but never mocked here before — updateComposition must NOT
+    // call it (D12), and test (1) pins that with verify(never()).
+    @Mock private MasterPropagationService masterPropagationService;
     // 2609_45/D9: the matrix now asks the resolver which category each cell actually uses.
     @Mock private MasterChannelConfigService masterChannelConfigService;
     @InjectMocks private MasterProductServiceImpl service;
@@ -2168,5 +2176,217 @@ class MasterProductServiceTest {
         MasterProductResponse response = service.getMasterProduct(1L);
 
         assertThat(response.getOptions().get(0).getStockQuantity()).isEqualTo(50);
+    }
+
+    // ------------------------------------------------------------- composition replace (2609_64)
+
+    private MasterProductOption masterOption(MasterProduct master, Long id, String name) {
+        return MasterProductOption.builder().id(id).masterProduct(master).name(name).build();
+    }
+
+    private MasterProductOptionItem optionItem(MasterProductOption option, Long productId, int quantity) {
+        return MasterProductOptionItem.builder()
+                .option(option).product(product(productId, "상품" + productId)).quantity(quantity).build();
+    }
+
+    private MasterCompositionRequest.OptionSpec spec(Long optionId, String name,
+                                                     MasterOptionRequest.OptionItem... items) {
+        return MasterCompositionRequest.OptionSpec.builder()
+                .optionId(optionId).name(name).items(List.of(items)).build();
+    }
+
+    /** Make {@code optionName} market-registered for this master (the 84 judgement: on-market cell + active). */
+    private void givenOptionLockedOnMarket(MasterProduct master, String optionName) {
+        ProductListing cell = ProductListing.builder()
+                .id(100L).platform(Platform.COUPANG).platformProductId("X").name("셀")
+                .masterProduct(master).build();
+        given(productListingRepository.findByMasterProductIdIn(any())).willReturn(List.of(cell));
+        given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of(
+                ProductListingOption.builder().id(500L).productListing(cell)
+                        .optionName(optionName).sellingPrice(BigDecimal.TEN).active(true).build()));
+    }
+
+    // (1) The whole point of the endpoint: the component set AND every option vector move together, which
+    // neither the PATCH nor the per-option path can do (they validate each other).
+    @Test
+    void updateComposition_replacesComponentsAndVectors() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        MasterProductOption a = masterOption(master, 10L, "A");
+        MasterProductOption b = masterOption(master, 11L, "B");
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(a, b));
+        given(optionItemRepository.findByOptionIdIn(any())).willReturn(List.of(
+                optionItem(a, 1L, 1), optionItem(a, 2L, 1),
+                optionItem(b, 1L, 2), optionItem(b, 2L, 2)));
+        given(productRepository.findAllById(any()))
+                .willReturn(List.of(product(1L, "상품1"), product(3L, "상품3")));
+        given(componentRepository.findMasterIdsCoveringAll(any(), eq(2L))).willReturn(List.of());
+        given(optionRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+
+        service.updateComposition(1L, MasterCompositionRequest.builder()
+                .componentProductIds(List.of(1L, 3L))
+                .options(List.of(
+                        spec(10L, "A", item(1L, 1), item(3L, 1)),
+                        spec(11L, "B", item(1L, 2), item(3L, 2))))
+                .build());
+
+        // Components replaced with delete + flush + re-insert (the UQ_MPC ordering trap).
+        verify(componentRepository).deleteByMasterProductId(1L);
+        verify(componentRepository).flush();
+        ArgumentCaptor<MasterProductComponent> components =
+                ArgumentCaptor.forClass(MasterProductComponent.class);
+        verify(componentRepository, times(2)).save(components.capture());
+        assertThat(components.getAllValues()).extracting(c -> c.getProduct().getId())
+                .containsExactly(1L, 3L);
+        // Every kept option's vector is replaced wholesale.
+        verify(optionItemRepository).deleteByOptionId(10L);
+        verify(optionItemRepository).deleteByOptionId(11L);
+        // 🔴 2609_64/D12: regeneration is the controller's job, after this transaction commits — calling it
+        // here would block on the rows just written and rebuild assets from the OLD composition.
+        verify(masterPropagationService, never()).propagate(any());
+    }
+
+    // (2) The market lock is not relaxed for this endpoint — and the guard runs before any write.
+    @Test
+    void updateComposition_lockedOptionRenamed_throws() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        MasterProductOption a = masterOption(master, 10L, "A");
+        MasterProductOption b = masterOption(master, 11L, "B");
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(a, b));
+        given(productRepository.findAllById(any()))
+                .willReturn(List.of(product(1L, "상품1"), product(2L, "상품2")));
+        given(componentRepository.findMasterIdsCoveringAll(any(), eq(2L))).willReturn(List.of());
+        givenOptionLockedOnMarket(master, "A");
+
+        MasterCompositionRequest request = MasterCompositionRequest.builder()
+                .componentProductIds(List.of(1L, 2L))
+                .options(List.of(
+                        spec(10L, "A2", item(1L, 1), item(2L, 1)),
+                        spec(11L, "B", item(1L, 2), item(2L, 2))))
+                .build();
+
+        assertThatThrownBy(() -> service.updateComposition(1L, request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessage("쿠팡에 등록된 옵션은 이름을 바꿀 수 없습니다.");
+        verify(componentRepository, never()).deleteByMasterProductId(any());
+    }
+
+    // (3) Dropping a locked option from the request is the "delete then re-add" way around deleteOption.
+    @Test
+    void updateComposition_lockedOptionMissing_throws() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        MasterProductOption a = masterOption(master, 10L, "A");
+        MasterProductOption b = masterOption(master, 11L, "B");
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(a, b));
+        given(productRepository.findAllById(any()))
+                .willReturn(List.of(product(1L, "상품1"), product(2L, "상품2")));
+        given(componentRepository.findMasterIdsCoveringAll(any(), eq(2L))).willReturn(List.of());
+        givenOptionLockedOnMarket(master, "A");
+
+        MasterCompositionRequest request = MasterCompositionRequest.builder()
+                .componentProductIds(List.of(1L, 2L))
+                .options(List.of(spec(11L, "B", item(1L, 2), item(2L, 2))))
+                .build();
+
+        assertThatThrownBy(() -> service.updateComposition(1L, request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessage("쿠팡에 등록된 옵션은 삭제할 수 없습니다. 판매 중지 후 마켓에서 정리하세요.");
+        verify(componentRepository, never()).deleteByMasterProductId(any());
+        verify(masterOptionChannelSync, never()).onOptionRemoved(any(), any());
+    }
+
+    // (4) 2609_46's duplicate guard still applies here — but the master's OWN set is not a duplicate (D7).
+    @Test
+    void updateComposition_duplicateComponentSet_throwsButOwnSetPasses() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        MasterProduct other = MasterProduct.builder().id(99L).name("다른마스터").active(true).build();
+        MasterProductOption a = masterOption(master, 10L, "A");
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(a));
+        given(optionItemRepository.findByOptionIdIn(any()))
+                .willReturn(List.of(optionItem(a, 1L, 1), optionItem(a, 2L, 1)));
+        given(productRepository.findAllById(any()))
+                .willReturn(List.of(product(1L, "상품1"), product(2L, "상품2")));
+        given(componentRepository.findMasterIdsCoveringAll(any(), eq(2L))).willReturn(List.of(99L));
+        given(componentRepository.findMasterIdsWithComponentCount(any(), eq(2L))).willReturn(List.of(99L));
+        // 1st resolve: somebody else's master → 400. 2nd resolve: ourselves → allowed.
+        given(masterProductRepository.findScopedByIdIn(any()))
+                .willReturn(List.of(other), List.of(master));
+        given(optionRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+
+        MasterCompositionRequest request = MasterCompositionRequest.builder()
+                .componentProductIds(List.of(1L, 2L))
+                .options(List.of(spec(10L, "A", item(1L, 1), item(2L, 1))))
+                .build();
+
+        assertThatThrownBy(() -> service.updateComposition(1L, request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("(id=99)");
+        verify(componentRepository, never()).deleteByMasterProductId(any());
+
+        service.updateComposition(1L, request);
+        verify(componentRepository).deleteByMasterProductId(1L);
+    }
+
+    // (5) The FK is ON DELETE SET NULL, so the channel options must be switched off while the master option
+    // still exists — afterwards nothing points at it.
+    @Test
+    void updateComposition_removedOption_deactivatesChannelsBeforeDelete() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        MasterProductOption a = masterOption(master, 10L, "A");
+        MasterProductOption b = masterOption(master, 11L, "B");
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(a, b));
+        given(optionItemRepository.findByOptionIdIn(any())).willReturn(List.of(
+                optionItem(a, 1L, 1), optionItem(a, 2L, 1),
+                optionItem(b, 1L, 2), optionItem(b, 2L, 2)));
+        given(productRepository.findAllById(any()))
+                .willReturn(List.of(product(1L, "상품1"), product(2L, "상품2")));
+        given(componentRepository.findMasterIdsCoveringAll(any(), eq(2L))).willReturn(List.of());
+        given(optionRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+
+        service.updateComposition(1L, MasterCompositionRequest.builder()
+                .componentProductIds(List.of(1L, 2L))
+                .options(List.of(spec(10L, "A", item(1L, 1), item(2L, 1))))
+                .build());
+
+        InOrder inOrder = inOrder(masterOptionChannelSync, optionItemRepository, optionRepository);
+        inOrder.verify(masterOptionChannelSync).onOptionRemoved(1L, 11L);
+        inOrder.verify(optionItemRepository).deleteByOptionId(11L);
+        inOrder.verify(optionRepository).delete(b);
+    }
+
+    // (6) 🔴 The core assertion of this slice. Rebuilding the BOM of an untouched option would put EVERY cell
+    // up for re-approval, and routing it through syncLines would leave the cell BOM biting the old products.
+    @Test
+    void updateComposition_syncsOnlyOptionsWhoseQuantitiesMoved() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
+        MasterProductOption a = masterOption(master, 10L, "A");
+        MasterProductOption b = masterOption(master, 11L, "B");
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(a, b));
+        given(optionItemRepository.findByOptionIdIn(any())).willReturn(List.of(
+                optionItem(a, 1L, 1), optionItem(a, 2L, 1),
+                optionItem(b, 1L, 2), optionItem(b, 2L, 2)));
+        given(productRepository.findAllById(any()))
+                .willReturn(List.of(product(1L, "상품1"), product(2L, "상품2")));
+        given(componentRepository.findMasterIdsCoveringAll(any(), eq(2L))).willReturn(List.of());
+        given(optionRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+
+        service.updateComposition(1L, MasterCompositionRequest.builder()
+                .componentProductIds(List.of(1L, 2L))
+                .options(List.of(
+                        spec(10L, "A", item(1L, 9), item(2L, 1)),     // moved
+                        spec(11L, "B", item(1L, 2), item(2L, 2))))    // identical
+                .build());
+
+        ArgumentCaptor<MasterProductOption> synced = ArgumentCaptor.forClass(MasterProductOption.class);
+        verify(masterOptionChannelSync, times(1)).onOptionComponentsChanged(eq(1L), synced.capture());
+        assertThat(synced.getValue().getId()).isEqualTo(10L);
+        verify(masterOptionChannelSync, never())
+                .onOptionComponentsChanged(eq(1L), argThat(option -> option.getId().equals(11L)));
+        verify(optionQuantitySync, never()).syncLines(any(), any());
     }
 }

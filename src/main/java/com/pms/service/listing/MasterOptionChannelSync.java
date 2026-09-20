@@ -90,6 +90,24 @@ public interface MasterOptionChannelSync {
     void onOptionRemoved(Long masterId, Long masterOptionId);
 
     /**
+     * 마스터 옵션의 <b>구성(상품 집합)</b> 이 바뀌었다 → 이 옵션에 연결된 모든 셀 옵션의 BOM 을 통째로 교체한다
+     * (2609_64).
+     *
+     * <p>⚠️ {@link OptionQuantitySync} 로는 안 된다 — 그쪽은 <b>수량 전용</b>이라 productId 로 매칭되는 줄의
+     * 수량만 고치고, 새 구성상품 줄을 추가하지도 빠진 줄을 지우지도 않는다(그 컴포넌트의 계약).
+     * 구성이 바뀐 뒤 그걸 태우면 셀 BOM 이 옛 상품을 문 채 남아 원가 합과 판매가 역산이 틀어진다.</p>
+     *
+     * <p>가격은 BOM 교체 직후 다시 계산된다({@code recalculateOptionPrices}). 마켓 재승인 표시는 여기서
+     * 하지 않는다 — 호출부(2609_64 서비스)가 셀 단위로 판단한다.</p>
+     *
+     * <p>⚠️ 이 옵션을 갖지 않은 셀에는 행을 만들지 않는다. "구성이 바뀌었다"이지 "옵션이 생겼다"가 아니다 —
+     * 그 경우는 {@link #onOptionCreated}/{@link #syncStructure} 소관이다.</p>
+     *
+     * @param option BOM 원본이 될, 이미 새 items 로 저장된 마스터 옵션
+     */
+    void onOptionComponentsChanged(Long masterId, MasterProductOption option);
+
+    /**
      * Propagation entry point — reconcile ONE cell against its master's current option set: create what is
      * missing ({@code active=false}), switch off orphans that the master no longer has.
      *

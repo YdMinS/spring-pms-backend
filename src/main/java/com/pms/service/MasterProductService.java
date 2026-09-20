@@ -1,6 +1,7 @@
 package com.pms.service;
 
 import com.pms.dto.request.MasterCategoryRequest;
+import com.pms.dto.request.MasterCompositionRequest;
 import com.pms.dto.request.MasterOptionRequest;
 import com.pms.dto.request.MasterProductQuery;
 import com.pms.dto.request.MasterProductRequest;
@@ -121,6 +122,18 @@ public interface MasterProductService {
     MasterProductResponse createMasterProduct(MasterProductRequest request);
 
     MasterProductResponse updateMasterProduct(Long id, MasterProductUpdateRequest request);
+
+    /**
+     * 구성상품 + 옵션 전체를 한 트랜잭션에서 교체한다 (2609_64).
+     *
+     * <p>구성과 옵션 수량 벡터는 서로를 검증하므로(집합 동등, {@code assertCoversComponents}) 따로 저장하면
+     * 어느 쪽도 못 바꾼다. 이 메서드만이 둘을 동시에 받는다.</p>
+     *
+     * <p>⚠️ 자산 재생성({@code MasterPropagationService.propagate})은 여기서 부르지 않는다 — 이 메서드가 방금
+     * 쓴 셀 행을 셀별 {@code REQUIRES_NEW} 트랜잭션이 다시 쓰다 락을 기다리고, 커밋 전 구성을 못 봐서 옛
+     * 구성으로 상세·판매가를 되돌려 놓는다. 호출은 커밋 뒤 컨트롤러가 한다(2609_64/D12).</p>
+     */
+    MasterProductResponse updateComposition(Long id, MasterCompositionRequest request);
 
     /**
      * Replace the master's tag pool (33). The list is order-preserving deduped; an empty list clears it.
