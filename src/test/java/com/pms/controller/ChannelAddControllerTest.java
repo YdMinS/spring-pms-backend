@@ -14,6 +14,8 @@ import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.Package;
 import com.pms.domain.Product;
+import com.pms.domain.ProductListing;
+import com.pms.domain.ProductListingOption;
 import com.pms.domain.Role;
 import com.pms.domain.Seller;
 import com.pms.domain.User;
@@ -55,10 +57,13 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -263,5 +268,90 @@ class ChannelAddControllerTest {
                         .contentType("application/json").content(body()))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    // ---- 2609_63: 연결 해제 / 미전송 채널 삭제 ----
+
+    /** 채널을 하나 만들고 그 셀 id 를 돌려준다(DRAFT + 옵션 + 구성 + 자동생성물까지 실제로 생긴다). */
+    private Long createCell() throws Exception {
+        String response = mockMvc.perform(post(BASE + "/" + masterId + "/listings")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content(body()))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(response).get("data").get("productListingId").asLong();
+    }
+
+    /** 마켓에 등록된 셀로 만든다 — 연결 해제는 마켓 상품 ID 가 있는 셀만 대상이다(D4). */
+    private Long createRegisteredCell() throws Exception {
+        Long listingId = createCell();
+        TenantContext.set(1L);
+        ProductListing cell = productListingRepository.findScopedById(listingId).orElseThrow();
+        productListingRepository.save(cell.toBuilder().platformProductId("123456").build());
+        return listingId;
+    }
+
+    @Test
+    void unlinkChannel_noToken_returns401() throws Exception {
+        mockMvc.perform(delete(BASE + "/" + masterId + "/listings/1/link"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void unlinkChannel_userToken_returns403() throws Exception {
+        mockMvc.perform(delete(BASE + "/" + masterId + "/listings/1/link")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void unlinkChannel_adminToken_detachesCell() throws Exception {
+        Long listingId = createRegisteredCell();
+        List<ProductListingOption> before = productListingOptionRepository.findByProductListingId(listingId);
+        long bomBefore = productListingProductRepository.findByProductListingOptionIdIn(
+                before.stream().map(ProductListingOption::getId).toList()).size();
+
+        mockMvc.perform(delete(BASE + "/" + masterId + "/listings/" + listingId + "/link")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"));
+
+        TenantContext.set(1L);
+        ProductListing detached = productListingRepository.findScopedById(listingId).orElseThrow();
+        assertThat(detached.getMasterProduct()).isNull();
+        List<ProductListingOption> after = productListingOptionRepository.findByProductListingId(listingId);
+        assertThat(after).isNotEmpty()
+                .allSatisfy(option -> assertThat(option.getMasterProductOption()).isNull());
+        // 🔴 구성(BOM)은 그대로 — 지우면 「미연결 셀 → 마스터 생성」이 막힌다(D3).
+        assertThat(productListingProductRepository.findByProductListingOptionIdIn(
+                after.stream().map(ProductListingOption::getId).toList())).hasSize((int) bomBefore);
+    }
+
+    @Test
+    void deleteDraftChannel_noToken_returns401() throws Exception {
+        mockMvc.perform(delete(BASE + "/" + masterId + "/listings/1"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void deleteDraftChannel_userToken_returns403() throws Exception {
+        mockMvc.perform(delete(BASE + "/" + masterId + "/listings/1")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void deleteDraftChannel_adminToken_deletesCell() throws Exception {
+        Long listingId = createCell();
+
+        mockMvc.perform(delete(BASE + "/" + masterId + "/listings/" + listingId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"));
+
+        TenantContext.set(1L);
+        assertThat(productListingRepository.findScopedById(listingId)).isEmpty();
+        assertThat(productListingOptionRepository.findByProductListingId(listingId)).isEmpty();
+        assertThat(generatedProductDataRepository.findByProductListingId(listingId)).isEmpty();
     }
 }

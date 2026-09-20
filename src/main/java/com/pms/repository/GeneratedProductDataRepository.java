@@ -26,4 +26,12 @@ public interface GeneratedProductDataRepository extends JpaRepository<GeneratedP
      * cells with no generated assets; this returns the rows of the cells that <b>would</b> be propagated.</p>
      */
     List<GeneratedProductData> findByProductListingIdIn(Collection<Long> productListingIds);
+
+    /**
+     * Delete the assets row of a listing (FEATURE_2609_63 / 01 — DRAFT channel deletion).
+     *
+     * <p>⚠️ The FK is NOT NULL, so the row must go before its cell. 🔴 The S3 files themselves are left
+     * alone — orphan cleanup is a separate concern.</p>
+     */
+    void deleteByProductListingId(Long productListingId);
 }
