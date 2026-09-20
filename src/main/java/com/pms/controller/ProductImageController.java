@@ -1,12 +1,14 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.ProductImageCopyRequest;
 import com.pms.dto.request.ProductImageReorderRequest;
 import com.pms.dto.response.ProductImageResponse;
 import com.pms.service.ProductImageService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -20,7 +22,9 @@ import java.util.List;
  * See FEATURE_2608_06 / 39.
  *
  * <p>⚠️ {@code PUT /images/reorder} (literal) and {@code PUT /images/{imageId}} (replace) coexist —
- * Spring matches the literal path over the {@code {imageId}} variable, so reorder never leaks into replace.</p>
+ * Spring matches the literal path over the {@code {imageId}} variable, so reorder never leaks into replace.
+ * {@code POST /images/copy} (JSON) is a distinct path from {@code POST /images} (multipart), so they do not
+ * collide either.</p>
  */
 @RestController
 @RequestMapping("/api/admin/products/{productId}/images")
@@ -37,6 +41,16 @@ public class ProductImageController {
             @PathVariable Long productId,
             @RequestParam("files") List<MultipartFile> files) {
         return ResponseEntity.ok(ResponseDTO.success(productImageService.addImages(productId, files)));
+    }
+
+    @PostMapping("/copy")
+    @Operation(summary = "Copy gallery images from other products (reference, no re-upload)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<List<ProductImageResponse>>> copyImages(
+            @PathVariable Long productId,
+            @Valid @RequestBody ProductImageCopyRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                productImageService.copyImages(productId, request.getSourceImageIds())));
     }
 
     @GetMapping

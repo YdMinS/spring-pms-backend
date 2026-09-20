@@ -90,4 +90,36 @@ class ProductImageTenantIsolationTest {
         assertThatThrownBy(() -> productImageService.deleteImage(productId, imageId))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
+
+    @Test
+    @DisplayName("copyImages skips another tenant's source image and pastes only the caller's own")
+    void copyImages_skipsForeignTenantSource() {
+        Long foreignProductId = seedTenant1ProductWithImage();
+        Long foreignImageId = imageRepository.findByProductIdOrderBySortOrderAsc(foreignProductId).get(0).getId();
+
+        TenantContext.set(TENANT_2);
+        Product mine = productRepository.save(Product.builder().productName("B").active(true).build());
+        Long mineImageId = imageRepository.save(ProductImage.builder()
+                .product(mine).sortOrder(0).imageUrl("mine").build()).getId();
+
+        TenantContext.set(TENANT_2);
+        // Tenant 1's id is silently skipped (not a 404 — existence must not leak), the own one is copied.
+        List<?> gallery = productImageService.copyImages(mine.getId(), List.of(foreignImageId, mineImageId));
+
+        assertThat(gallery).hasSize(2); // original + the one valid copy
+        assertThat(imageRepository.findByProductIdOrderBySortOrderAsc(mine.getId()))
+                .extracting(ProductImage::getImageUrl)
+                .containsExactly("mine", "mine");
+    }
+
+    @Test
+    @DisplayName("copyImages into another tenant's product is 404")
+    void copyImages_rejectsForeignTenantTarget() {
+        Long productId = seedTenant1ProductWithImage();
+        Long imageId = imageRepository.findByProductIdOrderBySortOrderAsc(productId).get(0).getId();
+
+        TenantContext.set(TENANT_2);
+        assertThatThrownBy(() -> productImageService.copyImages(productId, List.of(imageId)))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
 }
