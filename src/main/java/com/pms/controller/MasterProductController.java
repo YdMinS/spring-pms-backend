@@ -5,6 +5,7 @@ import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.CategoryAttributesRequest;
 import com.pms.dto.request.ImportProductImagesRequest;
 import com.pms.dto.request.MasterCategoryRequest;
+import com.pms.dto.request.MasterCompositionRequest;
 import com.pms.dto.request.MasterFromChannelPreviewRequest;
 import com.pms.dto.request.MasterFromChannelRequest;
 import com.pms.dto.request.MasterOptionRequest;
@@ -34,6 +35,7 @@ import com.pms.service.CategoryMetaService;
 import com.pms.service.MasterProductImageService;
 import com.pms.service.MasterProductService;
 import com.pms.service.listing.MasterFromChannelService;
+import com.pms.service.listing.MasterPropagationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -64,6 +66,8 @@ public class MasterProductController {
     private final MasterProductImageService masterProductImageService;
     private final CategoryMetaService categoryMetaService;
     private final MasterFromChannelService masterFromChannelService;
+    /** 2609_64/D12: asset regeneration is triggered here, after the composition save has committed. */
+    private final MasterPropagationService masterPropagationService;
 
     /**
      * Paged master list (110). {@code @ParameterObject} makes springdoc expand {@link MasterProductQuery}
@@ -165,6 +169,25 @@ public class MasterProductController {
     public ResponseEntity<ResponseDTO<MasterProductResponse>> updateMasterProduct(
             @PathVariable Long id, @Valid @RequestBody MasterProductUpdateRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(masterProductService.updateMasterProduct(id, request)));
+    }
+
+    @PutMapping("/{id}/composition")
+    @Operation(summary = "Replace the master's component set and its full option list atomically (2609_64)",
+            description = "구성상품 집합과 옵션 전체를 한 트랜잭션에서 교체한다. 요청에 없는 기존 옵션은 삭제되고, "
+                    + "`optionId` 가 없는 항목은 새로 만들어진다. 마켓에 등록된 옵션의 이름 변경·삭제는 400 "
+                    + "(수량 변경은 허용). 저장이 끝난 뒤 자동생성 자산 재생성이 돌지만, 그 실패는 200 을 바꾸지 않는다.")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<MasterProductResponse>> updateComposition(
+            @PathVariable Long id, @Valid @RequestBody MasterCompositionRequest request) {
+        MasterProductResponse body = masterProductService.updateComposition(id, request);
+        // 🔴 2609_64/D12: asset regeneration runs AFTER the save has committed. propagateOne opens its own
+        // REQUIRES_NEW transaction per cell — called inside the save it would block on the rows that save
+        // still holds (BOM, option price, needsMarketSync) and would read the pre-change composition,
+        // rebuilding the detail HTML and prices from the OLD component set.
+        // Per-cell failures are swallowed and only counted, so a failed regeneration still returns 200.
+        masterPropagationService.propagate(id);
+        // The body is the one captured at save time — the screen navigates to the detail and re-reads there.
+        return ResponseEntity.ok(ResponseDTO.success(body));
     }
 
     @PatchMapping("/{id}/tags")
