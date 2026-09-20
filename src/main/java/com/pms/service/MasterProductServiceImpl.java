@@ -28,7 +28,9 @@ import com.pms.dto.response.ChannelSyncPreviewResponse;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.ListingMatrixResponse.MatrixCell;
 import com.pms.dto.response.ListingMatrixResponse.MatrixRow;
+import com.pms.dto.response.ListingOptionsResponse;
 import com.pms.dto.response.MasterCategoryResponse;
+import com.pms.dto.response.MasterChannelOptionsResponse;
 import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductByComponentsResponse;
 import com.pms.dto.response.MasterProductResponse;
@@ -330,6 +332,67 @@ public class MasterProductServiceImpl implements MasterProductService {
                 .masterCategoryName(master.getCategory() == null ? null : master.getCategory().getName())
                 .rows(rows)
                 .build();
+    }
+
+    /**
+     * 2609_61/D6: every cell of the master + its options in one response — the screen draws an option×channel
+     * table and must not fire one HTTP call (nor one query) per cell.
+     *
+     * <p>Query budget = 3 regardless of cell/option count: the master, the cells, their options batched
+     * ({@code findByProductListingIdIn}), plus the master options used to resolve each option's stock ceiling.
+     * ⚠️ {@code o.getProductListing().getId()} reads the FK id only — it does not wake the proxy. The cell's
+     * {@code seller} is never touched (LAZY, and this response carries no channel label).</p>
+     *
+     * <p>No manual {@code tenant_id} condition: {@code ProductListingOption} has no {@code @TenantId}, but the
+     * cell ids come from a tenant-scoped master's listings ({@code ProductListing} is {@code @TenantId}), so a
+     * foreign tenant's option cannot structurally reach this list.</p>
+     */
+    @Override
+    public MasterChannelOptionsResponse getChannelOptions(Long masterId) {
+        MasterProduct master = requireScopedMaster(masterId);
+
+        List<ProductListing> listings = productListingRepository.findByMasterProductId(masterId);
+        if (listings.isEmpty()) {
+            return MasterChannelOptionsResponse.builder()
+                    .masterId(master.getId())
+                    .cells(List.of())
+                    .build();
+        }
+
+        List<Long> listingIds = listings.stream().map(ProductListing::getId).toList();
+        Map<Long, List<ProductListingOption>> optionsByListing =
+                productListingOptionRepository.findByProductListingIdIn(listingIds).stream()
+                        .collect(Collectors.groupingBy(o -> o.getProductListing().getId(),
+                                LinkedHashMap::new, Collectors.toList()));
+        // 2609_22/D1: master options keyed by id — the single master↔channel matching axis.
+        Map<Long, MasterProductOption> masterOptionsById = optionRepository.findByMasterProductId(masterId).stream()
+                .collect(Collectors.toMap(MasterProductOption::getId, o -> o, (first, dup) -> first,
+                        LinkedHashMap::new));
+
+        List<MasterChannelOptionsResponse.CellOptions> cells = listings.stream()
+                .map(pl -> MasterChannelOptionsResponse.CellOptions.builder()
+                        .productListingId(pl.getId())
+                        .platformProductId(pl.getPlatformProductId())
+                        .status(pl.getStatus() != null ? pl.getStatus().name() : null)
+                        .options(optionsByListing.getOrDefault(pl.getId(), List.of()).stream()
+                                .map(o -> ListingOptionsResponse.OptionItem.from(o, linkedMasterOption(
+                                        o, masterOptionsById)))
+                                .toList())
+                        .build())
+                .toList();
+
+        return MasterChannelOptionsResponse.builder()
+                .masterId(master.getId())
+                .cells(cells)
+                .build();
+    }
+
+    /** The master option behind a cell option (FK id axis), or null for a channel-only option (2609_22/D2). */
+    private MasterProductOption linkedMasterOption(ProductListingOption option,
+                                                   Map<Long, MasterProductOption> byId) {
+        // FK id only — safe on a LAZY proxy.
+        MasterProductOption linked = option.getMasterProductOption();
+        return linked == null ? null : byId.get(linked.getId());
     }
 
     /**

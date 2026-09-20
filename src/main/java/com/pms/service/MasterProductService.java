@@ -10,6 +10,7 @@ import com.pms.dto.response.ApplyOptionNamesResponse;
 import com.pms.dto.response.ChannelSyncPreviewResponse;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.MasterCategoryResponse;
+import com.pms.dto.response.MasterChannelOptionsResponse;
 import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductResponse;
 import org.springframework.data.domain.Page;
@@ -67,6 +68,21 @@ public interface MasterProductService {
     boolean isBundle(Long masterId);
 
     ListingMatrixResponse getMatrix(Long id);
+
+    /**
+     * Every channel cell of the master with its full option set, in one call (FEATURE_2609_61 / D6).
+     *
+     * <p>The per-cell endpoint ({@code GET /api/admin/product-listings/{id}/options}) would cost one HTTP call
+     * per cell for the same screen; this one batches both sides (cells: 1 query, their options: 1 query) so the
+     * query count does not grow with the cell count.</p>
+     *
+     * <p>Options are returned untouched — every option of every cell, in repository order, inactive and
+     * channel-only ones included. Filtering/sorting is the caller's job.</p>
+     *
+     * @param masterId master product id (tenant-scoped; 404 if absent)
+     * @return the cells with their options; {@code cells} empty when the master has no listing
+     */
+    MasterChannelOptionsResponse getChannelOptions(Long masterId);
 
     /**
      * What [채널에 반영하기] would change, without changing anything (FEATURE_2608_06 / 89).
