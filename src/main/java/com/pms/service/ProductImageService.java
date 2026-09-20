@@ -18,6 +18,14 @@ public interface ProductImageService {
     /** Append the uploaded files to the product's gallery; returns the full gallery in order. */
     List<ProductImageResponse> addImages(Long productId, List<MultipartFile> files);
 
+    /**
+     * Copy other products' gallery images into this product by <b>reference</b> (FEATURE_2609_62): a new row
+     * per source id sharing the source {@code imageUrl} — no file is re-uploaded. Sources that no longer
+     * exist or belong to another tenant are skipped silently (a 404 would block the remaining good ones);
+     * an all-skipped/empty request is a 400. Returns the full gallery in order.
+     */
+    List<ProductImageResponse> copyImages(Long productId, List<Long> sourceImageIds);
+
     /** The product's gallery in order. */
     List<ProductImageResponse> list(Long productId);
 

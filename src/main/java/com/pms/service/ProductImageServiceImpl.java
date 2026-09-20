@@ -75,6 +75,50 @@ public class ProductImageServiceImpl implements ProductImageService {
     }
 
     @Override
+    @Transactional
+    public List<ProductImageResponse> copyImages(Long productId, List<Long> sourceImageIds) {
+        Product target = requireScopedProduct(productId);
+        if (sourceImageIds == null || sourceImageIds.isEmpty()) {
+            throw new IllegalArgumentException("복제할 이미지가 없습니다");
+        }
+        List<ProductImage> existing = imageRepository.findByProductIdOrderBySortOrderAsc(productId);
+        // Same rule as addImages: max(sortOrder)+1, never size() (a delete leaves a gap).
+        int nextOrder = existing.stream().mapToInt(ProductImage::getSortOrder).max().orElse(-1) + 1;
+
+        List<ProductImage> toSave = new ArrayList<>();
+        for (Long sourceImageId : sourceImageIds) {
+            // Skip, never throw: a stale clipboard entry (deleted meanwhile) or a cross-tenant id must not
+            // block the remaining good sources — and a 404 would also reveal that the id exists elsewhere.
+            ProductImage source = imageRepository.findById(sourceImageId).orElse(null);
+            if (source == null) {
+                continue;
+            }
+            // findScopedById (not requireScopedProduct): @TenantId only filters query-derived selects, so the
+            // inherited findById would happily hand over another tenant's product. Reading the LAZY proxy's id
+            // does not initialize it.
+            if (productRepository.findScopedById(source.getProduct().getId()).isEmpty()) {
+                continue;
+            }
+            toSave.add(ProductImage.builder()
+                    .product(target)
+                    .sortOrder(nextOrder++)
+                    // Reference copy: the storage object is shared as-is (no imageStorageService.uploadImage).
+                    .imageUrl(source.getImageUrl())
+                    .build());
+        }
+        if (toSave.isEmpty()) {
+            throw new IllegalArgumentException("붙여넣을 원본 이미지가 없습니다");
+        }
+        List<ProductImage> saved = imageRepository.saveAll(toSave); // single call
+
+        List<ProductImage> gallery = new ArrayList<>(existing);
+        gallery.addAll(saved);
+        gallery.sort(Comparator.comparingInt(ProductImage::getSortOrder));
+        syncRepresentative(target, gallery);
+        return gallery.stream().map(ProductImageResponse::from).toList();
+    }
+
+    @Override
     public List<ProductImageResponse> list(Long productId) {
         requireScopedProduct(productId);
         return imageRepository.findByProductIdOrderBySortOrderAsc(productId).stream()
@@ -92,8 +136,14 @@ public class ProductImageServiceImpl implements ProductImageService {
         String newUrl = imageStorageService.uploadImage(file, productId);
         // Update-in-place: keep the same ProductImage.id (a master 40-reference must not dangle).
         ProductImage updated = imageRepository.save(image.toBuilder().imageUrl(newUrl).build());
-        deleteFromStorage(oldUrl, imageId);
+        // Representative first (same reason as deleteImage): if this product's representative still held
+        // oldUrl, the guard below would count itself and never free the file.
         syncRepresentative(product, imageRepository.findByProductIdOrderBySortOrderAsc(productId));
+        // The row now points at newUrl. Keep the old object while any row or representative still uses it
+        // (clipboard reference copy shares urls across products).
+        if (imageRepository.countByImageUrl(oldUrl) == 0 && !productRepository.existsByImageUrl(oldUrl)) {
+            deleteFromStorage(oldUrl, imageId);
+        }
         return ProductImageResponse.from(updated);
     }
 
@@ -131,13 +181,20 @@ public class ProductImageServiceImpl implements ProductImageService {
         // Not placed → drop any unmapped reference entries live-linking this slot (palette cleanup), then delete.
         masterProductImageRepository.deleteByProductImageId(imageId);
         imageRepository.delete(image);
+        imageRepository.flush(); // so the counts below already see the row gone
         List<ProductImage> remaining = imageRepository.findByProductIdOrderBySortOrderAsc(productId);
-        // Physical delete is conditional: skip when this was the last image, because the representative
-        // still points at this URL (empty-gallery rule below keeps it) — deleting the object would dangle it.
-        if (!remaining.isEmpty()) {
-            deleteFromStorage(image.getImageUrl(), imageId);
-        }
+        // ⚠️ Representative sync must run BEFORE the guard: if the deleted image was this product's
+        // representative, existsByImageUrl would count this very product and the file would never be freed.
         syncRepresentative(product, remaining);
+        String url = image.getImageUrl();
+        // Physical delete is conditional on both the last-image rule (the representative still points here,
+        // empty-gallery rule keeps it) and the sharing guard — another row or another product's
+        // representative may use the same storage object (clipboard reference copy, FEATURE_2609_62).
+        if (!remaining.isEmpty()
+                && imageRepository.countByImageUrl(url) == 0
+                && !productRepository.existsByImageUrl(url)) {
+            deleteFromStorage(url, imageId);
+        }
     }
 
     // ---------------------------------------------------------------- helpers

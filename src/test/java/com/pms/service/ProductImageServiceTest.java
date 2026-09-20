@@ -12,6 +12,7 @@ import com.pms.repository.ProductRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -25,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
@@ -90,6 +92,84 @@ class ProductImageServiceTest {
 
         assertThatThrownBy(() -> service.addImages(PRODUCT_ID, List.of(mockFile())))
                 .isInstanceOf(ResourceNotFoundException.class);
+        verify(imageRepository, never()).saveAll(any());
+    }
+
+    // ------------------------------------------------------------------ copyImages (62)
+
+    @Test
+    void copyImages_sharesSourceUrlWithoutUpload() {
+        given(productRepository.findScopedById(PRODUCT_ID)).willReturn(Optional.of(product()));
+        given(imageRepository.findByProductIdOrderBySortOrderAsc(PRODUCT_ID))
+                .willReturn(List.of(image(1L, 0), image(2L, 1)));
+        Product source = Product.builder().id(77L).productName("src").active(true).build();
+        given(imageRepository.findById(30L)).willReturn(Optional.of(
+                ProductImage.builder().id(30L).product(source).sortOrder(0).imageUrl("s3/a.jpg").build()));
+        given(productRepository.findScopedById(77L)).willReturn(Optional.of(source));
+        given(imageRepository.saveAll(any())).willAnswer(inv -> inv.getArgument(0));
+
+        service.copyImages(PRODUCT_ID, List.of(30L));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ProductImage>> saved = ArgumentCaptor.forClass(List.class);
+        verify(imageRepository).saveAll(saved.capture());
+        assertThat(saved.getValue()).hasSize(1);
+        assertThat(saved.getValue().get(0).getImageUrl()).isEqualTo("s3/a.jpg"); // url shared as-is
+        assertThat(saved.getValue().get(0).getSortOrder()).isEqualTo(2);         // appended after 0, 1
+        verify(imageStorageService, never()).uploadImage(any(), any());          // reference copy: no upload
+    }
+
+    @Test
+    void copyImages_continuesAfterGap() {
+        given(productRepository.findScopedById(PRODUCT_ID)).willReturn(Optional.of(product()));
+        // Gallery with a hole (a delete left sortOrder 0, 5) — size() would produce a colliding 2.
+        given(imageRepository.findByProductIdOrderBySortOrderAsc(PRODUCT_ID))
+                .willReturn(List.of(image(1L, 0), image(2L, 5)));
+        given(imageRepository.findById(30L)).willReturn(Optional.of(image(30L, 0)));
+        given(imageRepository.saveAll(any())).willAnswer(inv -> inv.getArgument(0));
+
+        service.copyImages(PRODUCT_ID, List.of(30L));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ProductImage>> saved = ArgumentCaptor.forClass(List.class);
+        verify(imageRepository).saveAll(saved.capture());
+        assertThat(saved.getValue().get(0).getSortOrder()).isEqualTo(6); // max+1
+    }
+
+    @Test
+    void copyImages_skipsMissingSource() {
+        given(productRepository.findScopedById(PRODUCT_ID)).willReturn(Optional.of(product()));
+        given(imageRepository.findByProductIdOrderBySortOrderAsc(PRODUCT_ID)).willReturn(List.of());
+        given(imageRepository.findById(30L)).willReturn(Optional.empty());       // deleted meanwhile
+        given(imageRepository.findById(31L)).willReturn(Optional.of(image(31L, 0)));
+        given(imageRepository.saveAll(any())).willAnswer(inv -> inv.getArgument(0));
+
+        service.copyImages(PRODUCT_ID, List.of(30L, 31L)); // no exception
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ProductImage>> saved = ArgumentCaptor.forClass(List.class);
+        verify(imageRepository).saveAll(saved.capture());
+        assertThat(saved.getValue()).hasSize(1);
+        assertThat(saved.getValue().get(0).getImageUrl()).isEqualTo("u31");
+    }
+
+    @Test
+    void copyImages_allSourcesMissing_400() {
+        given(productRepository.findScopedById(PRODUCT_ID)).willReturn(Optional.of(product()));
+        given(imageRepository.findByProductIdOrderBySortOrderAsc(PRODUCT_ID)).willReturn(List.of());
+        given(imageRepository.findById(30L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.copyImages(PRODUCT_ID, List.of(30L)))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(imageRepository, never()).saveAll(any());
+    }
+
+    @Test
+    void copyImages_emptyList_400() {
+        given(productRepository.findScopedById(PRODUCT_ID)).willReturn(Optional.of(product()));
+
+        assertThatThrownBy(() -> service.copyImages(PRODUCT_ID, List.of()))
+                .isInstanceOf(IllegalArgumentException.class);
         verify(imageRepository, never()).saveAll(any());
     }
 
@@ -228,5 +308,80 @@ class ProductImageServiceTest {
         verify(masterProductImageRepository).deleteByProductImageId(5L); // unmapped reference entries removed
         verify(imageRepository).delete(target);
         verify(imageStorageService).deleteImage("u5");                  // best-effort storage delete
+    }
+
+    // ------------------------------------------------------------------ shared-url physical delete guard (62)
+
+    @Test
+    void deleteImage_keepsFileWhenUrlShared() {
+        given(productRepository.findScopedById(PRODUCT_ID)).willReturn(Optional.of(product()));
+        given(imageRepository.findById(5L)).willReturn(Optional.of(image(5L, 0)));
+        given(imageRepository.findByProductIdOrderBySortOrderAsc(PRODUCT_ID)).willReturn(List.of(image(6L, 1)));
+        given(imageRepository.countByImageUrl("u5")).willReturn(1L); // another product copied this url
+
+        service.deleteImage(PRODUCT_ID, 5L);
+
+        verify(imageStorageService, never()).deleteImage(any());
+    }
+
+    @Test
+    void deleteImage_keepsFileWhenRepresentativeShared() {
+        given(productRepository.findScopedById(PRODUCT_ID)).willReturn(Optional.of(product()));
+        given(imageRepository.findById(5L)).willReturn(Optional.of(image(5L, 0)));
+        given(imageRepository.findByProductIdOrderBySortOrderAsc(PRODUCT_ID)).willReturn(List.of(image(6L, 1)));
+        given(imageRepository.countByImageUrl("u5")).willReturn(0L);
+        // No row left, but another product still shows this url as its representative (empty-gallery rule).
+        given(productRepository.existsByImageUrl("u5")).willReturn(true);
+
+        service.deleteImage(PRODUCT_ID, 5L);
+
+        verify(imageStorageService, never()).deleteImage(any());
+    }
+
+    @Test
+    void deleteImage_removesFileWhenUrlUnique() {
+        given(productRepository.findScopedById(PRODUCT_ID)).willReturn(Optional.of(product()));
+        given(imageRepository.findById(5L)).willReturn(Optional.of(image(5L, 0)));
+        given(imageRepository.findByProductIdOrderBySortOrderAsc(PRODUCT_ID)).willReturn(List.of(image(6L, 1)));
+        given(imageRepository.countByImageUrl("u5")).willReturn(0L);
+        given(productRepository.existsByImageUrl("u5")).willReturn(false);
+
+        service.deleteImage(PRODUCT_ID, 5L);
+
+        verify(imageStorageService).deleteImage("u5");
+        // The representative must move to the next image BEFORE the guard counts, otherwise this product
+        // would count itself and the file would never be freed.
+        InOrder order = inOrder(productRepository);
+        order.verify(productRepository).save(any(Product.class));
+        order.verify(productRepository).existsByImageUrl("u5");
+    }
+
+    @Test
+    void replaceImage_keepsOldFileWhenUrlShared() {
+        given(productRepository.findScopedById(PRODUCT_ID)).willReturn(Optional.of(product()));
+        given(imageRepository.findById(5L)).willReturn(Optional.of(image(5L, 0)));
+        given(imageStorageService.uploadImage(any(), eq(PRODUCT_ID))).willReturn("new-url");
+        given(imageRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+        given(imageRepository.findByProductIdOrderBySortOrderAsc(PRODUCT_ID)).willReturn(List.of(image(6L, 1)));
+        given(imageRepository.countByImageUrl("u5")).willReturn(1L); // a copied row still uses the old file
+
+        service.replaceImage(PRODUCT_ID, 5L, mockFile());
+
+        verify(imageStorageService, never()).deleteImage(any());
+    }
+
+    @Test
+    void replaceImage_deletesOldFileWhenUnique() {
+        given(productRepository.findScopedById(PRODUCT_ID)).willReturn(Optional.of(product()));
+        given(imageRepository.findById(5L)).willReturn(Optional.of(image(5L, 0)));
+        given(imageStorageService.uploadImage(any(), eq(PRODUCT_ID))).willReturn("new-url");
+        given(imageRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+        given(imageRepository.findByProductIdOrderBySortOrderAsc(PRODUCT_ID)).willReturn(List.of(image(6L, 1)));
+        given(imageRepository.countByImageUrl("u5")).willReturn(0L);
+        given(productRepository.existsByImageUrl("u5")).willReturn(false);
+
+        service.replaceImage(PRODUCT_ID, 5L, mockFile());
+
+        verify(imageStorageService).deleteImage("u5");
     }
 }
