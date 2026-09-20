@@ -24,6 +24,7 @@ repositories {
 ext {
     jjwtVersion = '0.12.3'
     springdocVersion = '2.3.0'
+    zxingVersion = '3.5.3'
 }
 
 dependencies {
@@ -51,6 +52,10 @@ dependencies {
 
     // xlsx generation (shipping label spreadsheet)
     implementation 'org.apache.poi:poi-ooxml:5.2.5'
+
+    // 1D 바코드 디코딩 (FEATURE_2609_65) — core = 디코더, javase = BufferedImageLuminanceSource
+    implementation "com.google.zxing:core:${zxingVersion}"
+    implementation "com.google.zxing:javase:${zxingVersion}"
 
     // Test
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
