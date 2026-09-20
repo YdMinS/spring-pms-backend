@@ -943,6 +943,50 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
+    // ------------------------------------------------------------- composition replace (2609_64)
+
+    @Test
+    void composition_noToken_returns401() throws Exception {
+        mockMvc.perform(put(PATH + "/" + masterId + "/composition")
+                        .contentType(MediaType.APPLICATION_JSON).content(compositionBody()))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void composition_userToken_returns403() throws Exception {
+        mockMvc.perform(put(PATH + "/" + masterId + "/composition")
+                        .header("Authorization", "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(compositionBody()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void composition_adminToken_replacesComposition() throws Exception {
+        // Real DB: the seeded master owns {product1, product2} and has no master option yet, so this proves
+        // the component swap and the option creation land in one request.
+        mockMvc.perform(put(PATH + "/" + masterId + "/composition")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(compositionBody()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.components.length()").value(2))
+                .andExpect(jsonPath("$.data.components[?(@.productId==" + productId1 + ")]").exists())
+                .andExpect(jsonPath("$.data.components[?(@.productId==" + productId3 + ")]").exists())
+                .andExpect(jsonPath("$.data.options.length()").value(1))
+                .andExpect(jsonPath("$.data.options[0].name").value("1세트"))
+                .andExpect(jsonPath("$.data.options[0].items.length()").value(2))
+                .andExpect(jsonPath("$.data.options[0].items[?(@.productId==" + productId3
+                        + ")].quantity").value(2));
+    }
+
+    /** {product1, product3} — different from the seeded master's own set, so the 2609_46 guard stays out. */
+    private String compositionBody() {
+        return "{\"componentProductIds\":[" + productId1 + "," + productId3 + "],"
+                + "\"options\":[{\"name\":\"1세트\",\"items\":["
+                + "{\"productId\":" + productId1 + ",\"quantity\":1},"
+                + "{\"productId\":" + productId3 + ",\"quantity\":2}]}]}";
+    }
+
     private String attributesBody() {
         return "{\"attributes\":{\"원산지\":\"국내산\"},\"notices\":{},\"noticeGroup\":\"가공식품\"}";
     }
