@@ -88,6 +88,37 @@ class ProductImageControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.status").value("SUCCESS"));
     }
 
+    @Test
+    void copyImages_admin_returns200WithGallery() throws Exception {
+        // Existing 1 + copied 1 → the endpoint answers with the whole gallery.
+        given(productImageService.copyImages(anyLong(), any()))
+                .willReturn(List.of(resp(), ProductImageResponse.builder()
+                        .id(2L).productId(PID).sortOrder(1).imageUrl("u1").build()));
+        mockMvc.perform(post(BASE + "/copy")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"sourceImageIds\":[30]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2));
+    }
+
+    @Test
+    void copyImages_noToken_401_userToken_403() throws Exception {
+        mockMvc.perform(post(BASE + "/copy")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"sourceImageIds\":[30]}"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post(BASE + "/copy").header("Authorization", "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"sourceImageIds\":[30]}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void copyImages_emptyBody_400() throws Exception {
+        mockMvc.perform(post(BASE + "/copy")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"sourceImageIds\":[]}"))
+                .andExpect(status().isBadRequest());
+    }
+
     // ------------------------------------------------------------------ authority (401 / 403 per verb)
 
     @Test

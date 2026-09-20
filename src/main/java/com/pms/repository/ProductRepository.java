@@ -46,6 +46,17 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     Optional<Product> findScopedById(@Param("id") Long id);
 
     /**
+     * Is this URL still used as some product's representative image?
+     *
+     * <p>The empty-gallery rule keeps {@code product.imageUrl} alive after the last gallery row is gone, so a
+     * shared storage object can be referenced with no {@code product_image} row left. A derived query, so
+     * Hibernate's {@code @TenantId} filter applies automatically (see {@code findScopedById}).
+     * ⚠️ Representatives of soft-deleted ({@code active = false}) products count too — the file
+     * simply survives longer (orphan file; cleanup is out of scope). Used by the FEATURE_2609_62 delete guard.</p>
+     */
+    boolean existsByImageUrl(String imageUrl);
+
+    /**
      * Check if a product with given barcode exists
      */
     boolean existsByBarcodeId(String barcodeId);

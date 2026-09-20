@@ -16,4 +16,10 @@ public interface ProductImageRepository extends JpaRepository<ProductImage, Long
 
     /** All gallery images of a product in gallery order (list view + next-sortOrder computation). */
     List<ProductImage> findByProductIdOrderBySortOrderAsc(Long productId);
+
+    /** Number of gallery rows pointing at the same storage object — must be 0 before the file can be deleted
+     *  (clipboard reference copy shares {@code image_url} across products).
+     *  ⚠️ {@link ProductImage} has no {@code @TenantId}, so this count spans every tenant — that is
+     *  intentional (over-protecting a file is the safe side). Do NOT "fix" the missing tenant filter. */
+    long countByImageUrl(String imageUrl);
 }
