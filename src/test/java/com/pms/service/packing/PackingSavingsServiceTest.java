@@ -543,12 +543,12 @@ class PackingSavingsServiceTest {
 
     private Package purchasedBox() {
         return Package.builder().id(60L).type("소형").cost(new BigDecimal("500"))
-                .effectiveDate(LocalDate.of(2026, 1, 1)).isDefault(false).boxKind(BoxKind.PURCHASED).build();
+                .isDefault(false).boxKind(BoxKind.PURCHASED).build();
     }
 
     private Package recycledBox() {
         return Package.builder().id(61L).type("재활용-중형").cost(BigDecimal.ZERO)
-                .effectiveDate(LocalDate.of(2026, 1, 1)).isDefault(false).boxKind(BoxKind.RECYCLED).build();
+                .isDefault(false).boxKind(BoxKind.RECYCLED).build();
     }
 
     private CarrierRate rate(Long id, String cost, LocalDate effectiveDate, boolean isDefault) {

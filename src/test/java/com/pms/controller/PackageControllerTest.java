@@ -21,6 +21,32 @@ public class PackageControllerTest extends BaseIntegrationTest {
                 Map.of(
                         "type", "S",
                         "cost", new BigDecimal("2.50"),
+                        "isDefault", false,
+                        "widthCm", new BigDecimal("22.0"),
+                        "lengthCm", new BigDecimal("19.0"),
+                        "heightCm", new BigDecimal("9.0")
+                )
+        );
+
+        mockMvc.perform(post("/api/admin/package")
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestJson))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("SUCCESS"));
+    }
+
+    /**
+     * FEATURE_2609_56 / PLAN D10: the field is gone from PackageRequest, but an older mobile build still
+     * sends it. Jackson must ignore the unknown property instead of failing the request — otherwise a
+     * store-lagged app cannot create a box at all.
+     */
+    @Test
+    public void createPackageIgnoresUnknownEffectiveDate() throws Exception {
+        String requestJson = objectMapper.writeValueAsString(
+                Map.of(
+                        "type", "OLD-CLIENT",
+                        "cost", new BigDecimal("2.50"),
                         "effectiveDate", LocalDate.now().toString(),
                         "isDefault", false,
                         "widthCm", new BigDecimal("22.0"),
@@ -43,7 +69,6 @@ public class PackageControllerTest extends BaseIntegrationTest {
                 Map.of(
                         "type", "S",
                         "cost", new BigDecimal("2.50"),
-                        "effectiveDate", LocalDate.now().toString(),
                         "isDefault", false,
                         "widthCm", new BigDecimal("22.0"),
                         "lengthCm", new BigDecimal("19.0"),
@@ -63,7 +88,6 @@ public class PackageControllerTest extends BaseIntegrationTest {
         String requestJson = objectMapper.writeValueAsString(
                 Map.of(
                         "cost", new BigDecimal("2.50"),
-                        "effectiveDate", LocalDate.now().toString(),
                         "isDefault", false
                 )
         );
@@ -82,7 +106,6 @@ public class PackageControllerTest extends BaseIntegrationTest {
                 Map.of(
                         "type", "S",
                         "cost", new BigDecimal("2.50"),
-                        "effectiveDate", LocalDate.now().toString(),
                         "isDefault", false,
                         "widthCm", BigDecimal.ZERO,
                         "lengthCm", new BigDecimal("19.0"),
@@ -138,7 +161,6 @@ public class PackageControllerTest extends BaseIntegrationTest {
                 Map.of(
                         "type", "M",
                         "cost", new BigDecimal("3.50"),
-                        "effectiveDate", LocalDate.now().toString(),
                         "isDefault", false,
                         "widthCm", new BigDecimal("27.0"),
                         "lengthCm", new BigDecimal("18.0"),
@@ -160,7 +182,6 @@ public class PackageControllerTest extends BaseIntegrationTest {
                 Map.of(
                         "type", "S",
                         "cost", new BigDecimal("2.50"),
-                        "effectiveDate", LocalDate.now().toString(),
                         "isDefault", true,
                         "widthCm", new BigDecimal("22.0"),
                         "lengthCm", new BigDecimal("19.0"),
@@ -187,7 +208,6 @@ public class PackageControllerTest extends BaseIntegrationTest {
                 Map.of(
                         "type", "M",
                         "cost", new BigDecimal("3.50"),
-                        "effectiveDate", LocalDate.now().toString(),
                         "isDefault", false,
                         "widthCm", new BigDecimal("27.0"),
                         "lengthCm", new BigDecimal("18.0"),

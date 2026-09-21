@@ -8,7 +8,6 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
 
 /**
  * Response DTO for package information. Contains all fields of a Package entity.
@@ -27,9 +26,6 @@ public class PackageResponse {
 
     @Schema(description = "Shipping cost", example = "15.50", type = "number")
     private BigDecimal cost;
-
-    @Schema(description = "Date from which package is valid (ISO)", example = "2026-05-16", format = "date")
-    private LocalDate effectiveDate;
 
     @Schema(description = "Is default package type? (Only one can be true)", example = "false")
     private Boolean isDefault;

@@ -1,0 +1,28 @@
+# 상자비에서 유효일 제거 (FEATURE_2609_56 / PLAN D8).
+# package.effective_date 는 baseline 부터 있었지만 **한 번도 읽힌 적이 없다**: 상자를 고르는 경로는
+# id 지정(마스터/채널 override)이나 is_default 뿐이고, PackageRepository 에 날짜 쿼리가 없다.
+# 🔴 carrier_rate.effective_date 와 혼동 금지 — 그쪽은 실제로 동작한다(PackingSavingsServiceImpl:286 이
+#    effective_date <= packed_at 중 최신 1건을 고른다). 이 changeset 은 package 만 건드린다.
+# 🔴 비가역: rollback 은 컬럼을 되돌리지만 **값은 되살리지 못한다**. 지워지는 값은 계산에 쓰인 적이
+#    없어 잃을 정보가 없다(PLAN D8). 보험은 배포 게이트의 자동 백업뿐이다.
+# 🔴 상자 가격 이력을 만드는 작업이 아니다(PLAN D8 · D11) — 원래 없었다. 상자가 상품처럼 재고 관리에
+#    들어가면 가격 이력은 **입고 원장**(StockMovement + CostBasis)이 갖는다. 날짜 컬럼을 남겨 두면
+#    그때 진실이 두 개가 된다.
+# 🔴 BaseEntity 상속(등록일·수정일)은 이 번들에서 하지 않는다 — FEATURE_2609_59 가 toBuilder 함정을
+#    먼저 푼 뒤 붙인다. 상속을 여기서 붙이면 updatePackage 의 toBuilder() 가 부모 필드를 못 실어
+#    첫 수정에서 created_date 가 NULL 로 덮인다.
+databaseChangeLog:
+
+  - changeSet:
+      id: 094-package-drop-effective-date
+      author: oclyx
+      comment: "FEATURE_2609_56: drop package.effective_date (never read by any query or calculation)."
+      changes:
+        - dropColumn:
+            tableName: package
+            columnName: effective_date
+      rollback:
+        - addColumn:
+            tableName: package
+            columns:
+              - column: { name: effective_date, type: DATE }

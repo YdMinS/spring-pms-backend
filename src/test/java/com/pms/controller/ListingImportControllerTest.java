@@ -172,7 +172,7 @@ class ListingImportControllerTest {
                 .effectiveDate(LocalDate.now()).isDefault(false).build());
         Package box = packageRepository.save(Package.builder()
                 .type("M").cost(new BigDecimal("500"))
-                .effectiveDate(LocalDate.now()).isDefault(false).build());
+                .isDefault(false).build());
 
         MasterProduct master = masterProductRepository.save(MasterProduct.builder()
                 .name("운동화 마스터").active(true).category(category)

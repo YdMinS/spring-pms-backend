@@ -15,7 +15,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
@@ -40,7 +39,6 @@ public class PackageServiceTest {
         testRequest = PackageRequest.builder()
                 .type("S")
                 .cost(new BigDecimal("2.50"))
-                .effectiveDate(LocalDate.now())
                 .isDefault(false)
                 .widthCm(new BigDecimal("22.0"))
                 .lengthCm(new BigDecimal("19.0"))
@@ -55,7 +53,6 @@ public class PackageServiceTest {
                 .id(1L)
                 .type("S")
                 .cost(new BigDecimal("2.50"))
-                .effectiveDate(LocalDate.now())
                 .isDefault(false)
                 .build();
         given(packageRepository.save(any())).willReturn(newPackage);
@@ -74,7 +71,6 @@ public class PackageServiceTest {
         PackageRequest request = PackageRequest.builder()
                 .type("M")
                 .cost(new BigDecimal("3.50"))
-                .effectiveDate(LocalDate.now())
                 .isDefault(true)
                 .build();
 
@@ -82,7 +78,6 @@ public class PackageServiceTest {
                 .id(1L)
                 .type("S")
                 .cost(new BigDecimal("2.50"))
-                .effectiveDate(LocalDate.now())
                 .isDefault(true)
                 .build();
 
@@ -90,7 +85,6 @@ public class PackageServiceTest {
                 .id(2L)
                 .type("M")
                 .cost(new BigDecimal("3.50"))
-                .effectiveDate(LocalDate.now())
                 .isDefault(true)
                 .build();
 
@@ -115,7 +109,6 @@ public class PackageServiceTest {
                 .id(2L)
                 .type("M")
                 .cost(new BigDecimal("3.50"))
-                .effectiveDate(LocalDate.now())
                 .isDefault(false)
                 .build();
 
@@ -136,7 +129,6 @@ public class PackageServiceTest {
                 .id(3L)
                 .type("S")
                 .cost(new BigDecimal("2.50"))
-                .effectiveDate(LocalDate.now())
                 .isDefault(false)
                 .widthCm(new BigDecimal("22.0"))
                 .lengthCm(new BigDecimal("19.0"))
@@ -166,7 +158,6 @@ public class PackageServiceTest {
         PackageRequest request = PackageRequest.builder()
                 .type("M")
                 .cost(new BigDecimal("3.50"))
-                .effectiveDate(LocalDate.now())
                 .isDefault(true)
                 .widthCm(new BigDecimal("27.0"))
                 .lengthCm(new BigDecimal("18.0"))
@@ -177,7 +168,6 @@ public class PackageServiceTest {
                 .id(1L)
                 .type("L")
                 .cost(new BigDecimal("2.50"))
-                .effectiveDate(LocalDate.now())
                 .isDefault(true)
                 .widthCm(new BigDecimal("30.0"))
                 .lengthCm(new BigDecimal("20.0"))
@@ -205,7 +195,6 @@ public class PackageServiceTest {
                 .id(1L)
                 .type("S")
                 .cost(new BigDecimal("2.50"))
-                .effectiveDate(LocalDate.now())
                 .isDefault(false)
                 .build();
 
@@ -230,9 +219,9 @@ public class PackageServiceTest {
     @Test
     public void testGetPackagesWithData() {
         List<Package> packages = List.of(
-                Package.builder().id(1L).type("S").cost(new BigDecimal("2.50")).effectiveDate(LocalDate.now()).isDefault(true).build(),
-                Package.builder().id(2L).type("M").cost(new BigDecimal("3.50")).effectiveDate(LocalDate.now()).isDefault(false).build(),
-                Package.builder().id(3L).type("L").cost(new BigDecimal("4.50")).effectiveDate(LocalDate.now()).isDefault(false).build()
+                Package.builder().id(1L).type("S").cost(new BigDecimal("2.50")).isDefault(true).build(),
+                Package.builder().id(2L).type("M").cost(new BigDecimal("3.50")).isDefault(false).build(),
+                Package.builder().id(3L).type("L").cost(new BigDecimal("4.50")).isDefault(false).build()
         );
 
         given(packageRepository.findAll()).willReturn(packages);
@@ -260,14 +249,12 @@ public class PackageServiceTest {
                 .id(1L)
                 .type("S")
                 .cost(new BigDecimal("2.50"))
-                .effectiveDate(LocalDate.now())
                 .isDefault(false)
                 .build();
 
         PackageRequest updateRequest = PackageRequest.builder()
                 .type("M")
                 .cost(new BigDecimal("3.50"))
-                .effectiveDate(LocalDate.now())
                 .isDefault(false)
                 .build();
 
@@ -275,7 +262,6 @@ public class PackageServiceTest {
                 .id(1L)
                 .type("M")
                 .cost(new BigDecimal("3.50"))
-                .effectiveDate(LocalDate.now())
                 .isDefault(false)
                 .build();
 
@@ -295,7 +281,6 @@ public class PackageServiceTest {
                 .id(1L)
                 .type("S")
                 .cost(new BigDecimal("2.50"))
-                .effectiveDate(LocalDate.now())
                 .isDefault(false)
                 .build();
 
@@ -303,14 +288,12 @@ public class PackageServiceTest {
                 .id(2L)
                 .type("M")
                 .cost(new BigDecimal("3.50"))
-                .effectiveDate(LocalDate.now())
                 .isDefault(true)
                 .build();
 
         PackageRequest updateRequest = PackageRequest.builder()
                 .type("S")
                 .cost(new BigDecimal("2.50"))
-                .effectiveDate(LocalDate.now())
                 .isDefault(true)
                 .build();
 
@@ -318,7 +301,6 @@ public class PackageServiceTest {
                 .id(1L)
                 .type("S")
                 .cost(new BigDecimal("2.50"))
-                .effectiveDate(LocalDate.now())
                 .isDefault(true)
                 .build();
 
@@ -350,7 +332,6 @@ public class PackageServiceTest {
                 .id(1L)
                 .type("S")
                 .cost(new BigDecimal("2.50"))
-                .effectiveDate(LocalDate.now())
                 .isDefault(false)
                 .build();
 
