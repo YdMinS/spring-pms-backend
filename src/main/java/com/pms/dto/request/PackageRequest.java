@@ -13,7 +13,6 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
 
 /**
  * Request DTO for package creation/update. All fields required.
@@ -35,10 +34,6 @@ public class PackageRequest {
     @DecimalMin(value = "0.00")
     @Schema(description = "Shipping cost (0 allowed only for a RECYCLED box)", example = "15.50", type = "number")
     private BigDecimal cost;
-
-    @NotNull(message = "Effective date is required")
-    @Schema(description = "Date from which package is valid (ISO)", example = "2026-05-16", format = "date")
-    private LocalDate effectiveDate;
 
     @NotNull(message = "isDefault flag is required")
     @Schema(description = "Is default package type? (Only one can be true)", example = "false")

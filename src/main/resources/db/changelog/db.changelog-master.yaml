@@ -177,3 +177,5 @@ databaseChangeLog:
       file: db/changelog/changes/092-listing-category-notice-group.yaml
   - include:
       file: db/changelog/changes/093-listing-platform-id-index.yaml
+  - include:
+      file: db/changelog/changes/094-package-drop-effective-date.yaml

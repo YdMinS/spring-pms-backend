@@ -19,7 +19,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -51,7 +50,7 @@ class PackageBoxKindTest {
 
     private PackageRequest request(BoxKind kind, String cost, boolean isDefault) {
         return PackageRequest.builder()
-                .type("라면상자").cost(new BigDecimal(cost)).effectiveDate(LocalDate.now()).isDefault(isDefault)
+                .type("라면상자").cost(new BigDecimal(cost)).isDefault(isDefault)
                 .widthCm(new BigDecimal("22.0")).lengthCm(new BigDecimal("19.0")).heightCm(new BigDecimal("9.0"))
                 .boxKind(kind)
                 .build();
@@ -59,7 +58,7 @@ class PackageBoxKindTest {
 
     private Package box(long id, String type, BoxKind kind, String cost) {
         return Package.builder()
-                .id(id).type(type).cost(new BigDecimal(cost)).effectiveDate(LocalDate.now()).isDefault(false)
+                .id(id).type(type).cost(new BigDecimal(cost)).isDefault(false)
                 .widthCm(new BigDecimal("22.0")).lengthCm(new BigDecimal("19.0")).heightCm(new BigDecimal("9.0"))
                 .boxKind(kind)
                 .build();

@@ -106,7 +106,7 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                 .effectiveDate(LocalDate.now()).isDefault(false).build());
         Package box = packageRepository.saveAndFlush(Package.builder()
                 .type("M").cost(new BigDecimal("500"))
-                .effectiveDate(LocalDate.now()).isDefault(false).build());
+                .isDefault(false).build());
 
         // Channel config lives on the master (13/44): a single standard category + default delivery/box drive
         // the price engine; the platform code comes from a CategoryMapping. The cell's own delivery/package

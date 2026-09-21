@@ -83,7 +83,7 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
                 .carrier(carrier).type("STANDARD").cost(new BigDecimal("2500"))
                 .effectiveDate(LocalDate.now()).isDefault(false).build());
         Package box = packageRepository.saveAndFlush(Package.builder()
-                .type("M").cost(new BigDecimal("500")).effectiveDate(LocalDate.now()).isDefault(false).build());
+                .type("M").cost(new BigDecimal("500")).isDefault(false).build());
         // Standard category on the master (44) + a COUPANG mapping: the adapter payload resolves
         // displayCategoryCode from the mapping.
         MasterProduct master = masterProductRepository.save(MasterProduct.builder()

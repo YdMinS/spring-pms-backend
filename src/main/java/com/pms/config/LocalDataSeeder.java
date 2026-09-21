@@ -303,7 +303,6 @@ public class LocalDataSeeder implements CommandLineRunner {
         return Package.builder()
                 .type(type)
                 .cost(new BigDecimal(cost))
-                .effectiveDate(LocalDate.now())
                 .isDefault(isDefault)
                 .widthCm(new BigDecimal(widthCm))
                 .lengthCm(new BigDecimal(lengthCm))

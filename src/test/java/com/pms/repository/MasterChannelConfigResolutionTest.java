@@ -51,7 +51,7 @@ class MasterChannelConfigResolutionTest {
                 .carrier(carrier).type("STANDARD").cost(new BigDecimal("2500"))
                 .effectiveDate(LocalDate.now()).isDefault(false).build());
         Package box = em.persist(Package.builder()
-                .type("M").cost(new BigDecimal("500")).effectiveDate(LocalDate.now()).isDefault(false).build());
+                .type("M").cost(new BigDecimal("500")).isDefault(false).build());
         Category category = em.persist(Category.builder().name("신발").build());
         // 52: the platform code comes from the mapping's linked PlatformCategory FK (tenant-scoped node that
         // owns the mall code + commission), not the deprecated string column.

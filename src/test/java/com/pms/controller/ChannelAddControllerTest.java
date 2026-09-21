@@ -153,7 +153,7 @@ class ChannelAddControllerTest {
                 .effectiveDate(LocalDate.now()).isDefault(false).build());
         Package box = packageRepository.save(Package.builder()
                 .type("M").cost(new BigDecimal("500"))
-                .effectiveDate(LocalDate.now()).isDefault(false).build());
+                .isDefault(false).build());
 
         // Channel config lives on the master: default delivery/box + a single standard category (44); the
         // COUPANG code comes from a CategoryMapping (channel-add pre-validation needs the mapping to exist).
