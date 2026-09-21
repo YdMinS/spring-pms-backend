@@ -128,12 +128,53 @@ class ProductImageServiceTest {
         assertThat(saved.getValue().get(0).getImageUrl()).isEqualTo("s3/copied.jpg"); // 우리 저장소 값
     }
 
-    /** 🔴 SSRF 가드: 허용 호스트가 아니면 <b>내려받기 전에</b> 400 이다(외부 호출 0회). */
+    /**
+     * 🔴 SSRF 가드: 허용 호스트가 아니면 <b>내려받기 전에</b> 400 이다(외부 호출 0회).
+     * 저장소 호스트를 스텁하지 않았으므로(=local 저장소) 쿠팡 CDN 만 남는다.
+     */
     @Test
     void addImagesFromUrlsRejectsForeignHost() {
         given(productRepository.findScopedById(PRODUCT_ID)).willReturn(Optional.of(product()));
 
         assertThatThrownBy(() -> service.addImagesFromUrls(PRODUCT_ID, List.of("https://evil.com/a.jpg")))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(productImageLoader, never()).loadUrl(any());
+        verify(imageRepository, never()).saveAll(any());
+    }
+
+    /**
+     * 🔴 우리가 올려서 쿠팡에 보낸 사진도 가져올 수 있어야 한다 — 마켓 응답에는 우리 저장소 주소가 섞여 있다
+     * (대표 사진의 {@code vendorPath}, 우리가 만든 상세 HTML 의 {@code <img src>}).
+     */
+    @Test
+    void addImagesFromUrlsAcceptsOwnStorageHost() {
+        String url = "https://oclyx-product-images-dev.s3.ap-northeast-2.amazonaws.com/tenants/1/products/a.jpg";
+        given(productRepository.findScopedById(PRODUCT_ID)).willReturn(Optional.of(product()));
+        given(imageStorageProperties.resolvePublicImageHost())
+                .willReturn("oclyx-product-images-dev.s3.ap-northeast-2.amazonaws.com");
+        given(imageRepository.findByProductIdOrderBySortOrderAsc(PRODUCT_ID)).willReturn(List.of());
+        given(productImageLoader.loadUrl(url)).willReturn(jpegBytes());
+        given(imageStorageProperties.getMaxFileSize()).willReturn(20971520L);
+        given(imageStorageService.uploadBytes(any(), eq("products"), any(), eq("image/jpeg")))
+                .willReturn("s3/copied.jpg");
+        given(imageRepository.saveAll(any())).willAnswer(inv -> inv.getArgument(0));
+
+        service.addImagesFromUrls(PRODUCT_ID, List.of(url));
+
+        verify(imageRepository).saveAll(any());
+    }
+
+    /**
+     * 🔴 우리 저장소 호스트는 <b>완전일치</b>다 — 접미사로 비교하면 같은 도메인의 남의 버킷이 전부 통과한다.
+     */
+    @Test
+    void addImagesFromUrlsRejectsOtherBucketOnSameDomain() {
+        given(productRepository.findScopedById(PRODUCT_ID)).willReturn(Optional.of(product()));
+        given(imageStorageProperties.resolvePublicImageHost())
+                .willReturn("oclyx-product-images-dev.s3.ap-northeast-2.amazonaws.com");
+
+        assertThatThrownBy(() -> service.addImagesFromUrls(
+                PRODUCT_ID, List.of("https://evil-bucket.s3.ap-northeast-2.amazonaws.com/a.jpg")))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(productImageLoader, never()).loadUrl(any());
         verify(imageRepository, never()).saveAll(any());
