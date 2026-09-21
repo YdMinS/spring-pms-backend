@@ -103,7 +103,9 @@ public class PackageServiceImpl implements PackageService {
             });
         }
 
-        // toBuilder() carries every untouched column forward; only the request fields are overwritten.
+        // toBuilder() carries every untouched column of Package forward; only the request fields are overwritten.
+        // It does NOT carry BaseEntity's audit fields (Lombok leaves superclass fields out of the builder):
+        // created_date survives because it is mapped updatable=false, and modified_date is re-stamped on save.
         Package updated = pkg.toBuilder()
             .type(request.getType())
             .cost(request.getCost())
