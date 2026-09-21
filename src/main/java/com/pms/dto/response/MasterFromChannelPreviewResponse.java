@@ -46,6 +46,10 @@ public class MasterFromChannelPreviewResponse {
     @Schema(description = "Whether the market category resolved to one of our standard categories")
     private boolean categoryResolved;
 
+    /** 2609_66/D6: 편입 미리보기와 <b>같은 이름</b>. 저장 전에 "새로 만들지 않고 기존 셀을 다시 붙인다"를 알린다. */
+    @Schema(description = "2609_66: 이 마켓 상품에 연결이 끊긴 셀이 있어 그 행을 재사용한다")
+    private boolean reusesExistingListing;
+
     @Schema(description = "Options as they exist on the marketplace")
     private List<Option> options;
 

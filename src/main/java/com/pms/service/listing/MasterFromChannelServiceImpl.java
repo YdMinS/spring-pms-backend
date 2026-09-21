@@ -130,6 +130,7 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
                 .suggestedCategoryId(mapping.map(m -> m.getCategory().getId()).orElse(null))
                 .suggestedCategoryName(mapping.map(m -> m.getCategory().getName()).orElse(null))
                 .categoryResolved(mapping.isPresent())
+                .reusesExistingListing(ctx.existing() != null)
                 .options(fetched.options().stream()
                         .map(option -> MasterFromChannelPreviewResponse.Option.builder()
                                 .itemName(option.itemName())
@@ -247,7 +248,15 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
 
         // --- 4) 셀
         String marketName = fetched.productName();
-        ProductListing cell = productListingRepository.save(ProductListing.builder()
+        // 2609_66/D2: 떼어낸 셀이 있으면 그 행을 그대로 쓴다(= UPDATE). 🔴 `.id(null)` 금지 — id 보존이 재사용의
+        // 핵심이다(주문·문의·정산·가격이력 FK). 여기 나열하지 않은 컬럼(배송 override·상세 템플릿·박스·수수료
+        // 조회용 category FK)은 toBuilder() 가 이어받는다 — 그게 의도다. ⚠️ platformCategoryCode·
+        // categoryNoticeGroup 은 아래에서 매번 다시 쓴다(채널 카테고리는 이어받지 않는다).
+        // ⚠️ 이어받는 값은 새 마스터 기준으로 재계산되지 않는다(2609_63/D14 와 같은 대가). 되돌리는 창구는
+        //    이미 있다([기본값으로 변경] 2609_19 · [옵션명 일괄 적용] 2609_22/D4) — 새 버튼을 만들지 말 것.
+        ProductListing.ProductListingBuilder cellBuilder =
+                ctx.existing() != null ? ctx.existing().toBuilder() : ProductListing.builder();
+        ProductListing cell = productListingRepository.save(cellBuilder
                 .masterProduct(master)
                 .seller(ctx.seller())
                 .platform(platform)
@@ -274,6 +283,21 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
         for (MasterProductOption masterOption : masterProductOptionRepository.findByMasterProductId(masterId)) {
             masterOptionsByName.put(trimmed(masterOption.getName()), masterOption);
         }
+
+        // 2609_66/D3: 재사용 셀이면 기존 옵션 행도 다시 쓴다.
+        List<ProductListingOption> existingOptions = ctx.existing() == null ? List.of()
+                : productListingOptionRepository.findByProductListingId(cell.getId());
+        Map<MasterFromChannelRequest.OptionSpec, ProductListingOption> reuseBySpec =
+                matchExistingOptions(request.getOptions(), pairs, existingOptions);
+
+        // 🔴 재사용할 옵션의 BOM <b>만</b> 지운다. 셀 전체를 지우면 아래에서 비활성으로 내릴 잔여 옵션의 구성까지
+        // 사라지고, 구성이 빈 옵션은 「미연결 셀 → 마스터 생성」을 영구히 막는다(2609_63/D6-1).
+        if (!reuseBySpec.isEmpty()) {
+            productListingProductRepository.deleteByProductListingOptionIdIn(
+                    reuseBySpec.values().stream().map(ProductListingOption::getId).toList());
+            productListingProductRepository.flush();   // 아래 insert 보다 먼저 실행돼야 한다
+        }
+
         for (MasterFromChannelRequest.OptionSpec spec : request.getOptions()) {
             ImportedProduct.Option market = pairs.get(spec);
             MasterProductOption masterOption = masterOptionsByName.get(trimmed(market.itemName()));
@@ -282,8 +306,12 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
                 // 되어 전파가 영영 이 옵션을 건너뛰므로, 트랜잭션을 되돌린다.
                 throw new IllegalStateException("마스터 옵션 매칭 실패: " + market.itemName());
             }
-            ProductListingOption listingOption = productListingOptionRepository.save(ProductListingOption.builder()
+            ProductListingOption reusable = reuseBySpec.get(spec);
+            ProductListingOption.ProductListingOptionBuilder optionBuilder =
+                    reusable != null ? reusable.toBuilder() : ProductListingOption.builder();
+            ProductListingOption listingOption = productListingOptionRepository.save(optionBuilder
                     .productListing(cell)
+                    // 🔴 2609_66/D4: 해제 때 null 이 된 FK 를 이번에 만든 새 마스터 옵션으로 채운다.
                     .masterProductOption(masterOption)                     // FK
                     // 마켓에 이 이름으로 올라가 있다 — 마스터 rename 이 덮으면 안 된다.
                     .optionName(market.itemName())
@@ -316,6 +344,15 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
                         .product(componentProducts.get(component.getProductId()))
                         .quantity(component.getQuantity())
                         .build());
+            }
+        }
+
+        // 마켓에 더 이상 없는 잔여 옵션은 비활성으로 내린다 — 🔴 지우지 않는다(주문·정산·가격이력 FK).
+        Set<Long> reusedOptionIds = reuseBySpec.values().stream().map(ProductListingOption::getId)
+                .collect(Collectors.toSet());
+        for (ProductListingOption leftover : existingOptions) {
+            if (!reusedOptionIds.contains(leftover.getId()) && Boolean.TRUE.equals(leftover.getActive())) {
+                productListingOptionRepository.save(leftover.toBuilder().active(false).build());
             }
         }
 
@@ -377,11 +414,12 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
         if (Boolean.FALSE.equals(account.getIsActive())) {
             throw new IllegalArgumentException("비활성 계정");
         }
-        // 셀 하나당 마켓 상품 하나(같은 쿠팡 상품이 두 마스터에 붙는 것을 막는다).
-        if (productListingRepository.existsByPlatformProductId(platformProductId)) {
-            throw new IllegalArgumentException("이미 다른 상품에 연결된 쿠팡 상품입니다");
-        }
-        return new ChannelContext(seller, account, adapter);
+        // 2609_66/D1: 셀이 있어도 <b>떼어낸 셀</b>이면 그 행을 재사용한다(편입과 같은 판정).
+        // ✅ findByPlatformProductId 는 파생 쿼리라 Hibernate @TenantId 로 자동 테넌트 필터된다 —
+        //    남의 테넌트 셀이 재사용 대상으로 잡히지 않는다(수동 스코프 검사를 새로 만들지 말 것).
+        ProductListing existing = productListingRepository.findByPlatformProductId(platformProductId).orElse(null);
+        DetachedCellPolicy.requireReusable(existing, platform, sellerId);
+        return new ChannelContext(seller, account, adapter, existing);
     }
 
     /** 마켓 조회 1회 + 응답 자체에 대한 검증. */
@@ -403,6 +441,49 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
             }
         }
         return fetched;
+    }
+
+    /**
+     * 재사용 셀의 기존 옵션 행을 spec 에 붙인다(2609_66/D3). 매칭 축은 {@link #matchOptions} 와 같다:
+     * {@code vendorItemId} → 옵션명.
+     *
+     * <p>🔴 규칙은 {@link CoupangListingImportServiceImpl#matchExistingOptions} 와 같아야 한다
+     * (2609_66/D5 — 인자 타입이 달라 복제했다). 한쪽만 고치지 말 것.</p>
+     *
+     * <p>⚠️ 같은 이름이 둘 이상이면 첫 행만 후보가 된다 — 나머지는 호출부의 잔여 처리로 비활성된다.</p>
+     *
+     * <p>⚠️ <b>이름 폴백은 빗나갈 수 있다</b> — 채널 옵션명은 사용자가 바꿀 수 있어(MANUAL_OVERRIDE) 마켓 이름과
+     * 다를 수 있다. {@code vendorItemId} 가 있는 옵션은 1순위 키로 잡히므로 영향은 <b>미승인 옵션</b>뿐이고,
+     * 그때는 새 행이 생긴다(옛 행은 비활성). 🔴 이걸 고치려고 이름 정규화·유사도 매칭을 새로 만들지 말 것.</p>
+     */
+    private Map<MasterFromChannelRequest.OptionSpec, ProductListingOption> matchExistingOptions(
+            List<MasterFromChannelRequest.OptionSpec> specs,
+            Map<MasterFromChannelRequest.OptionSpec, ImportedProduct.Option> pairs,
+            List<ProductListingOption> existingOptions) {
+
+        Map<String, ProductListingOption> byPlatformOptionId = new HashMap<>();   // vendorItemId → row
+        Map<String, ProductListingOption> byName = new LinkedHashMap<>();         // optionName  → row
+        for (ProductListingOption existingOption : existingOptions) {
+            if (existingOption.getPlatformOptionId() != null) {
+                byPlatformOptionId.putIfAbsent(existingOption.getPlatformOptionId(), existingOption);
+            }
+            byName.putIfAbsent(existingOption.getOptionName(), existingOption);   // 첫 행 우선
+        }
+
+        // ⚠️ 한 기존 행이 두 spec 에 매칭될 일은 없다 — matchOptions 가 spec↔마켓 옵션을 이미 1:1 로 확정했다.
+        Map<MasterFromChannelRequest.OptionSpec, ProductListingOption> reuseBySpec = new LinkedHashMap<>();
+        for (MasterFromChannelRequest.OptionSpec spec : specs) {
+            ImportedProduct.Option market = pairs.get(spec);
+            ProductListingOption reusable = market.vendorItemId() == null ? null
+                    : byPlatformOptionId.get(market.vendorItemId());
+            if (reusable == null) {
+                reusable = byName.get(market.itemName());
+            }
+            if (reusable != null) {
+                reuseBySpec.put(spec, reusable);
+            }
+        }
+        return reuseBySpec;
     }
 
     /**
@@ -572,7 +653,12 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
         return value == null ? null : value.trim();
     }
 
-    /** 미리보기·커밋이 공유하는 검증 결과. */
-    private record ChannelContext(Seller seller, MarketplaceAccount account, ListingChannel adapter) {
+    /**
+     * 미리보기·커밋이 공유하는 검증 결과.
+     *
+     * @param existing 2609_66/D2: 연결이 끊긴 채 남아 있는 같은 마켓 상품의 셀(재사용 대상). 없으면 null.
+     */
+    private record ChannelContext(Seller seller, MarketplaceAccount account, ListingChannel adapter,
+                                  ProductListing existing) {
     }
 }
