@@ -51,8 +51,8 @@ public class ProductImageServiceImpl implements ProductImageService {
 
     /** 2609_67/D5: 한 번에 가져올 수 있는 장수. {@code loadUrl} 에 시간 제한이 없으므로 노출을 이 상한이 묶는다. */
     private static final int MAX_URLS_PER_REQUEST = 10;
-    /** 2609_67/D5: 허용 호스트(쿠팡 이미지 CDN). 자기 자신 또는 서브도메인만 통과한다. */
-    private static final String ALLOWED_IMAGE_HOST = "coupangcdn.com";
+    /** 2609_67/D5: 쿠팡 이미지 CDN. 자기 자신 또는 서브도메인만 통과한다. */
+    private static final String COUPANG_IMAGE_HOST = "coupangcdn.com";
 
     @Override
     @Transactional
@@ -90,8 +90,8 @@ public class ProductImageServiceImpl implements ProductImageService {
      * 다르다(MultipartFile 대신 http GET).
      *
      * <p>🔴 <b>URL 은 사용자가 보낸 값</b>이라 서버가 그대로 친다 → 가드를 <b>내려받기 전에 전부</b> 통과시킨다:
-     * {@code https} · 호스트가 {@code coupangcdn.com}(또는 그 서브도메인) · 10장 이하. 호스트는
-     * {@code URI.toURL().getHost()} 로 꺼내 비교한다 — {@code contains("coupangcdn.com")} 같은 부분일치는
+     * {@code https} · 호스트가 <b>허용 목록</b>에 있음 · 10장 이하. 호스트는 {@code URI.toURL().getHost()} 로
+     * 꺼내 비교한다 — {@code contains("coupangcdn.com")} 같은 부분일치는
      * {@code https://evil.com/?x=coupangcdn.com} 을 통과시킨다.</p>
      *
      * <p>🔴 형식은 <b>매직바이트</b>로 정한다(JPEG {@code FF D8 FF} / PNG {@code 89 50 4E 47}) — 마켓이 주는
@@ -110,7 +110,7 @@ public class ProductImageServiceImpl implements ProductImageService {
             throw new IllegalArgumentException("한 번에 10장까지 가져올 수 있습니다");
         }
         // 🔴 전부 검사한 뒤에 한 장도 내려받는다 — 하나라도 어긋나면 외부 호출 0회로 400 이다.
-        urls.forEach(ProductImageServiceImpl::requireAllowedImageUrl);
+        urls.forEach(this::requireAllowedImageUrl);
 
         List<ProductImage> existing = imageRepository.findByProductIdOrderBySortOrderAsc(productId);
         // Same rule as addImages: max(sortOrder)+1, never size() (a delete leaves a gap).
@@ -268,12 +268,24 @@ public class ProductImageServiceImpl implements ProductImageService {
     // ---------------------------------------------------------------- helpers
 
     /**
-     * 2609_67/D5 SSRF 가드: {@code https} + 마켓 이미지 호스트만 허용한다.
+     * 2609_67/D5 SSRF 가드(2609_68 에서 허용 호스트 확장): {@code https} + <b>허용된 두 호스트</b>만 통과한다.
      *
      * <p>🔴 호스트를 <b>꺼내서</b> 비교한다 — {@code contains} 부분일치는
      * {@code https://evil.com/?x=coupangcdn.com} 을 통과시킨다.</p>
+     *
+     * <p><b>허용 호스트는 둘이다</b>. 마켓이 돌려주는 사진 주소에는 쿠팡이 가진 사진과
+     * <b>우리가 올려서 쿠팡에 보낸 사진</b>이 섞여 있기 때문이다 — 대표 사진의 {@code vendorPath} 와
+     * 우리가 만든 상세 HTML 의 {@code <img src>} 가 우리 저장소를 가리킨다. 쿠팡 CDN 만 허용하면
+     * <b>화면에는 보이는데 가져올 수는 없는 사진</b>이 생긴다(2026-09-21 실제 발생).</p>
+     * <ul>
+     *   <li>{@code coupangcdn.com} — 자기 자신 또는 <b>서브도메인</b>({@code image1.}·{@code thumbnail6.} …)</li>
+     *   <li>우리 저장소 호스트({@link ImageStorageProperties#resolvePublicImageHost()}) — <b>완전일치만</b>.
+     *       ⚠️ 여기에 서브도메인 접미사 매칭을 쓰면 {@code *.amazonaws.com} 아무 버킷이나 통과한다.</li>
+     * </ul>
+     *
+     * <p>⚠️ 저장소가 {@code local} 이면 우리 호스트는 {@code null} 이라 쿠팡 CDN 만 남는다(공개 URL 이 없다).</p>
      */
-    private static void requireAllowedImageUrl(String url) {
+    private void requireAllowedImageUrl(String url) {
         if (url == null || url.isBlank() || !url.startsWith("https://")) {
             throw new IllegalArgumentException("허용되지 않은 이미지 주소입니다");
         }
@@ -283,11 +295,27 @@ public class ProductImageServiceImpl implements ProductImageService {
         } catch (Exception e) {
             throw new IllegalArgumentException("허용되지 않은 이미지 주소입니다");
         }
-        if (host == null
-                || !(host.equalsIgnoreCase(ALLOWED_IMAGE_HOST)
-                        || host.toLowerCase().endsWith("." + ALLOWED_IMAGE_HOST))) {
+        if (host == null) {
             throw new IllegalArgumentException("허용되지 않은 이미지 주소입니다");
         }
+        if (isCoupangCdn(host) || isOwnStorage(host)) {
+            return;
+        }
+        // 어느 호스트가 막혔는지 로그에 남긴다 — 화면 문구만으로는 원인을 좁힐 수 없다.
+        log.warn("가져오기가 막힌 이미지 주소 — host={}, url={}", host, url);
+        throw new IllegalArgumentException("허용되지 않은 이미지 주소입니다: " + host);
+    }
+
+    /** 쿠팡 이미지 CDN 자신 또는 그 서브도메인. */
+    private static boolean isCoupangCdn(String host) {
+        String lower = host.toLowerCase();
+        return lower.equals(COUPANG_IMAGE_HOST) || lower.endsWith("." + COUPANG_IMAGE_HOST);
+    }
+
+    /** 우리 저장소가 사진을 내주는 호스트. 🔴 완전일치만 — 접미사 매칭은 남의 버킷까지 연다. */
+    private boolean isOwnStorage(String host) {
+        String ownHost = imageStorageProperties.resolvePublicImageHost();
+        return ownHost != null && !ownHost.isBlank() && host.equalsIgnoreCase(ownHost);
     }
 
     /**

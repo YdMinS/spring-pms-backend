@@ -206,13 +206,12 @@ public class S3ImageStorageService implements ImageStorageService {
 
     /**
      * Public base URL: override if configured, else computed from bucket + region.
+     *
+     * <p>🔴 규칙 자체는 {@link ImageStorageProperties.S3#resolveBaseUrl()} 이 소유한다 — 마켓 URL 가져오기의
+     * 허용 호스트도 같은 값을 보기 때문에 여기에 복제하면 두 곳이 갈라진다(2609_68).</p>
      */
     private String publicBaseUrl() {
-        ImageStorageProperties.S3 s3 = properties.getS3();
-        if (s3.getPublicBaseUrl() != null && !s3.getPublicBaseUrl().isBlank()) {
-            return s3.getPublicBaseUrl();
-        }
-        return "https://" + s3.getBucket() + ".s3." + s3.getRegion() + ".amazonaws.com";
+        return properties.getS3().resolveBaseUrl();
     }
 
     /**
