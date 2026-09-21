@@ -1,0 +1,51 @@
+# BaseEntity 적용 (FEATURE_2609_59 / PLAN D1 · D3).
+# 사람이 직접 만들고 고치는 기록은 created_date / modified_date 를 갖는다. 연결·참조 테이블은 예외다.
+# 🔴 nullable 이고 백필하지 않는다: 기존 행이 언제 만들어졌는지는 소급해서 알 수 없다(D3).
+#    그래서 이 컬럼으로 정렬하는 화면을 만들면 옛 행이 한 덩어리로 뭉친다 — 이번엔 만들지 않는다.
+# ⚠️ 등록일은 INSERT 때만 채워진다(@CreatedDate + @Column(updatable=false)). 기존 행을 수정해도
+#    modified_date 만 생기고 created_date 는 NULL 로 남는다 — 정상이다.
+# ⚠️ 상속을 붙여도 toBuilder() 수정 경로는 등록일을 잃지 않는다: created_date 가 updatable=false 라
+#    Hibernate 가 UPDATE 문에서 그 컬럼을 아예 빼기 때문이다(FEATURE_2609_59 / 01 실측).
+databaseChangeLog:
+
+  - changeSet:
+      id: 095-baseentity-adoption
+      author: oclyx
+      comment: "FEATURE_2609_59: created_date/modified_date on package, carrier, carrier_rate, commission_rate, box_recipe."
+      changes:
+        - addColumn:
+            tableName: package
+            columns:
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addColumn:
+            tableName: carrier
+            columns:
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addColumn:
+            tableName: carrier_rate
+            columns:
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addColumn:
+            tableName: commission_rate
+            columns:
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addColumn:
+            tableName: box_recipe
+            columns:
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+      rollback:
+        - dropColumn: { tableName: package, columnName: created_date }
+        - dropColumn: { tableName: package, columnName: modified_date }
+        - dropColumn: { tableName: carrier, columnName: created_date }
+        - dropColumn: { tableName: carrier, columnName: modified_date }
+        - dropColumn: { tableName: carrier_rate, columnName: created_date }
+        - dropColumn: { tableName: carrier_rate, columnName: modified_date }
+        - dropColumn: { tableName: commission_rate, columnName: created_date }
+        - dropColumn: { tableName: commission_rate, columnName: modified_date }
+        - dropColumn: { tableName: box_recipe, columnName: created_date }
+        - dropColumn: { tableName: box_recipe, columnName: modified_date }
