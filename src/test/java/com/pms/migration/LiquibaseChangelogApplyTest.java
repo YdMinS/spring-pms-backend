@@ -894,4 +894,37 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID = '094-package-drop-effective-date'",
                 Integer.class)).isEqualTo(1);
     }
+
+    /**
+     * changeset 095: 등록일·수정일을 5개 테이블에 붙인다 (FEATURE_2609_59 / PLAN D1 · D3).
+     *
+     * <p>🔴 두 컬럼은 <b>nullable</b> 이어야 한다. 기존 행이 언제 만들어졌는지는 소급해서 알 수 없어
+     * 백필하지 않는다 — NOT NULL 로 만들면 그 순간 거짓 등록일을 지어내게 된다.</p>
+     */
+    @Test
+    void baseEntityAuditColumnsApplied() {
+        // 다섯 테이블 모두 두 컬럼이 실존한다(성공하는 count 가 곧 증거). 빈 DB 라 행은 없다.
+        for (String table : new String[]{"package", "carrier", "carrier_rate", "commission_rate", "box_recipe"}) {
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM " + table + " WHERE created_date IS NOT NULL OR modified_date IS NOT NULL",
+                    Integer.class))
+                    .as("created_date/modified_date present on %s", table)
+                    .isZero();
+        }
+
+        // NULL = 「언제 만들어졌는지 모른다」 → nullable 이 아니면 의미가 성립하지 않는다(D3).
+        for (String table : new String[]{"PACKAGE", "CARRIER", "CARRIER_RATE", "COMMISSION_RATE", "BOX_RECIPE"}) {
+            for (String column : new String[]{"CREATED_DATE", "MODIFIED_DATE"}) {
+                assertThat(jdbcTemplate.queryForObject(
+                        "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+                                + "WHERE TABLE_NAME = ? AND COLUMN_NAME = ?", String.class, table, column))
+                        .as("%s.%s nullable", table, column)
+                        .isEqualTo("YES");
+            }
+        }
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID = '095-baseentity-adoption'",
+                Integer.class)).isEqualTo(1);
+    }
 }

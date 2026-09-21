@@ -27,7 +27,7 @@ import org.hibernate.annotations.FetchMode;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder(toBuilder = true)
-public class CommissionRate {
+public class CommissionRate extends BaseEntity {
 
     /** Unique identifier (auto-generated) */
     @Id
