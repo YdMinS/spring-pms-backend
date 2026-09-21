@@ -2,6 +2,7 @@ package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.ProductImageCopyRequest;
+import com.pms.dto.request.ProductImageFromUrlRequest;
 import com.pms.dto.request.ProductImageReorderRequest;
 import com.pms.dto.response.ProductImageResponse;
 import com.pms.service.ProductImageService;
@@ -23,8 +24,8 @@ import java.util.List;
  *
  * <p>⚠️ {@code PUT /images/reorder} (literal) and {@code PUT /images/{imageId}} (replace) coexist —
  * Spring matches the literal path over the {@code {imageId}} variable, so reorder never leaks into replace.
- * {@code POST /images/copy} (JSON) is a distinct path from {@code POST /images} (multipart), so they do not
- * collide either.</p>
+ * {@code POST /images/copy} and {@code POST /images/from-url} (JSON, 2609_67) are distinct paths from
+ * {@code POST /images} (multipart), so they do not collide either.</p>
  */
 @RestController
 @RequestMapping("/api/admin/products/{productId}/images")
@@ -51,6 +52,20 @@ public class ProductImageController {
             @Valid @RequestBody ProductImageCopyRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(
                 productImageService.copyImages(productId, request.getSourceImageIds())));
+    }
+
+    /**
+     * 2609_67/D5: 참고 패널에서 고른 마켓 사진을 <b>서버가 내려받아</b> 이 물품 갤러리에 붙인다.
+     * URL 을 그대로 저장하지 않는다. 허용 호스트·장수 가드는 서비스가 갖고 있다(위반 400).
+     */
+    @PostMapping("/from-url")
+    @Operation(summary = "Download marketplace image URLs into the product's gallery (copy, not link)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<List<ProductImageResponse>>> addFromUrls(
+            @PathVariable Long productId,
+            @Valid @RequestBody ProductImageFromUrlRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                productImageService.addImagesFromUrls(productId, request.getUrls())));
     }
 
     @GetMapping

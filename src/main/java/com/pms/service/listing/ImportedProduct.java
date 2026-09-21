@@ -17,6 +17,8 @@ import java.util.Map;
  * is, a missing tag list is not).</p>
  *
  * @param productName  marketplace product name (Coupang {@code sellerProductName})
+ * @param brand        2609_67: marketplace brand (Coupang {@code brand}, 단건 응답 · 문서 확인
+ *                     2026-09-21) — 없으면 null. 물품 등록 화면의 [채우기] 가 이 값을 쓴다
  * @param categoryCode marketplace leaf category code (Coupang {@code displayCategoryCode}) — D16, display only
  * @param status       marketplace status mapped to our lifecycle status
  * @param tags         marketplace search tags (item level on Coupang); never null, empty when absent
@@ -31,9 +33,19 @@ import java.util.Map;
  *                     그대로. 원본에 가까운 제품 사진은 여기 있다. never null, empty when absent
  * @param options      marketplace options; never null, empty when absent
  */
-public record ImportedProduct(String productName, String categoryCode, ListingStatus status,
+public record ImportedProduct(String productName, String brand, String categoryCode, ListingStatus status,
                               List<String> tags, String noticeGroup, List<String> thumbnailImages,
                               List<String> detailImages, List<Option> options) {
+
+    /**
+     * 2609_67 이전의 8인자 형태를 쓰는 호출부(테스트·레거시)를 위한 편의 생성자 — {@code brand = null}.
+     * 브랜드를 읽는 곳은 물품 등록 참고 패널 하나뿐이라, 나머지 소비자를 건드리지 않는다.
+     */
+    public ImportedProduct(String productName, String categoryCode, ListingStatus status,
+                           List<String> tags, String noticeGroup, List<String> thumbnailImages,
+                           List<String> detailImages, List<Option> options) {
+        this(productName, null, categoryCode, status, tags, noticeGroup, thumbnailImages, detailImages, options);
+    }
 
     /** 이미지를 읽지 않는 호출부(테스트·레거시)를 위한 편의 생성자 — 이미지 목록 둘 다 빈 List. */
     public ImportedProduct(String productName, String categoryCode, ListingStatus status,

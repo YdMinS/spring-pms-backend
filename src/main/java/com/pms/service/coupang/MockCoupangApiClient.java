@@ -22,6 +22,8 @@ import java.nio.charset.StandardCharsets;
  * <ul>
  *   <li>{@code ordersheets} 포함 → {@code fixtures/coupang/ordersheets.json}</li>
  *   <li>{@code returnRequests} 포함 → {@code fixtures/coupang/returnRequests.json}</li>
+ *   <li>{@code seller-products} 포함(GET) + query 에 {@code sellerProductName=} → 상품명 검색 목록
+ *       fixture (2609_67). 🔴 path 로 가를 수 없다 — 검색과 단건 조회의 경로 접두어가 같다</li>
  *   <li>{@code seller-products} 포함(GET) → id 가 register fixture(123456789)면 승인완료 + 옵션 id
  *       인라인 fixture (3c fetchStatus), 그 외 id 는 가져오기 fixture (2609_22)</li>
  *   <li>{@code seller-products} 포함(POST) → sellerProductId 인라인 fixture (3c register)</li>
@@ -119,6 +121,21 @@ public class MockCoupangApiClient implements CoupangApiClient {
                     + "{\"noticeCategoryName\":\"가공식품\",\"noticeCategoryDetailName\":\"소비자상담관련 전화번호\","
                     + "\"content\":\"상품 상세페이지 참조\"}]}]}}";
 
+    /**
+     * 2609_67 상품명 검색 fixture: 목록 응답은 {@code data[]} + 최상위 {@code nextToken} 이고
+     * 🔴 <b>이미지 필드가 없다</b>(쿠팡 스펙) — 사진은 단건 조회로만 온다.
+     * {@code nextToken} 은 마지막 페이지를 뜻하는 빈 문자열이다(어댑터가 null 로 정규화한다).
+     */
+    private static final String SELLER_PRODUCTS_SEARCH =
+            "{\"code\":\"SUCCESS\",\"nextToken\":\"\",\"data\":["
+                    + "{\"sellerProductId\":222333444,\"sellerProductName\":\"노브랜드 생수 2L 6입\","
+                    + "\"brand\":\"노브랜드\",\"statusName\":\"승인완료\","
+                    + "\"createdAt\":\"2026-08-01T13:20:11\",\"displayCategoryCode\":\"72882\"},"
+                    + "{\"sellerProductId\":222333555,\"sellerProductName\":\"노브랜드 생수 2L 12입\","
+                    + "\"brand\":\"노브랜드\",\"statusName\":\"승인대기중\","
+                    + "\"createdAt\":\"2026-08-02T09:05:40\",\"displayCategoryCode\":\"72882\"}"
+                    + "]}";
+
     // 45 category lookup fixtures (inline). Tree = data.child[] (displayCategoryCode/name/child/last):
     // 1001 has a nested child + last=false → non-leaf, 1002 has empty child → leaf.
     private static final String DISPLAY_CATEGORIES_FIXTURE =
@@ -150,6 +167,11 @@ public class MockCoupangApiClient implements CoupangApiClient {
 
     @Override
     public String get(String path, String query, MarketplaceAccount account) {
+        // 🔴 2609_67: 검색과 단건 조회는 같은 seller-products 경로라 path 로는 가를 수 없다 → query 로 가른다.
+        if (query != null && query.contains("sellerProductName=")) {
+            log.info("[COUPANG-MOCK] GET {} q={} → 상품명 검색 fixture", path, query);
+            return SELLER_PRODUCTS_SEARCH;
+        }
         String body = resolve(path);
         log.info("[COUPANG-MOCK] GET {} q={} → {} bytes", path, query, body.length());
         return body;

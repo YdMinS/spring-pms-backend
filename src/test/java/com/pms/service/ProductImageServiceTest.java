@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.config.ImageStorageProperties;
 import com.pms.domain.Product;
 import com.pms.domain.ProductImage;
 import com.pms.dto.response.ProductImageResponse;
@@ -39,6 +40,9 @@ class ProductImageServiceTest {
     @Mock private MasterProductImageRepository masterProductImageRepository;
     @Mock private ImageStorageService imageStorageService;
     @Mock private ImageValidator imageValidator;
+    // 🔴 2609_67: Impl 이 새로 주입받는 두 협력자. 목을 안 달면 @InjectMocks 가 null 을 넣어 NPE 로 죽는다.
+    @Mock private ProductImageLoader productImageLoader;
+    @Mock private ImageStorageProperties imageStorageProperties;
 
     @InjectMocks private ProductImageServiceImpl service;
 
@@ -93,6 +97,61 @@ class ProductImageServiceTest {
         assertThatThrownBy(() -> service.addImages(PRODUCT_ID, List.of(mockFile())))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(imageRepository, never()).saveAll(any());
+    }
+
+    // ------------------------------------------------------------------ addImagesFromUrls (2609_67)
+
+    /** JPEG 매직바이트({@code FF D8 FF}) — 형식 판정은 응답 헤더가 아니라 이 바이트가 한다. */
+    private static byte[] jpegBytes() {
+        return new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, 0x00, 0x11, 0x22};
+    }
+
+    @Test
+    void addImagesFromUrlsAppendsAfterExisting() {
+        given(productRepository.findScopedById(PRODUCT_ID)).willReturn(Optional.of(product()));
+        // 삭제가 남긴 구멍(0, 3) — size() 로 잡으면 기존 sortOrder 와 충돌한다.
+        given(imageRepository.findByProductIdOrderBySortOrderAsc(PRODUCT_ID))
+                .willReturn(List.of(image(1L, 0), image(2L, 3)));
+        given(productImageLoader.loadUrl("https://image1.coupangcdn.com/a.jpg")).willReturn(jpegBytes());
+        given(imageStorageProperties.getMaxFileSize()).willReturn(20971520L);
+        given(imageStorageService.uploadBytes(any(), eq("products"), any(), eq("image/jpeg")))
+                .willReturn("s3/copied.jpg");
+        given(imageRepository.saveAll(any())).willAnswer(inv -> inv.getArgument(0));
+
+        service.addImagesFromUrls(PRODUCT_ID, List.of("https://image1.coupangcdn.com/a.jpg"));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ProductImage>> saved = ArgumentCaptor.forClass(List.class);
+        verify(imageRepository).saveAll(saved.capture());
+        assertThat(saved.getValue()).hasSize(1);
+        assertThat(saved.getValue().get(0).getSortOrder()).isEqualTo(4);          // max+1
+        assertThat(saved.getValue().get(0).getImageUrl()).isEqualTo("s3/copied.jpg"); // 우리 저장소 값
+    }
+
+    /** 🔴 SSRF 가드: 허용 호스트가 아니면 <b>내려받기 전에</b> 400 이다(외부 호출 0회). */
+    @Test
+    void addImagesFromUrlsRejectsForeignHost() {
+        given(productRepository.findScopedById(PRODUCT_ID)).willReturn(Optional.of(product()));
+
+        assertThatThrownBy(() -> service.addImagesFromUrls(PRODUCT_ID, List.of("https://evil.com/a.jpg")))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(productImageLoader, never()).loadUrl(any());
+        verify(imageRepository, never()).saveAll(any());
+    }
+
+    /** 🔴 형식은 매직바이트로 정한다 — 마켓이 무엇을 주든 이미지가 아니면 저장하지 않는다. */
+    @Test
+    void addImagesFromUrlsRejectsNonImageBytes() {
+        given(productRepository.findScopedById(PRODUCT_ID)).willReturn(Optional.of(product()));
+        given(imageRepository.findByProductIdOrderBySortOrderAsc(PRODUCT_ID)).willReturn(List.of());
+        given(productImageLoader.loadUrl("https://image1.coupangcdn.com/a.jpg"))
+                .willReturn("not an image".getBytes());
+
+        assertThatThrownBy(() ->
+                service.addImagesFromUrls(PRODUCT_ID, List.of("https://image1.coupangcdn.com/a.jpg")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("이미지 파일이 아닙니다");
+        verify(imageStorageService, never()).uploadBytes(any(), any(), any(), any());
     }
 
     // ------------------------------------------------------------------ copyImages (62)
