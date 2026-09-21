@@ -404,20 +404,7 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
         // 대신 아래 "한 쿠팡 상품 = 한 셀" 가드는 유지한다(같은 상품을 두 번 편입하면 연결이 중복된다).
         // 2609_63/D5: 그 셀이 아직 <b>마스터에 붙어 있으면</b> 예전처럼 막고, 연결이 끊긴 셀이면 그 행을 재사용한다.
         ProductListing existing = productListingRepository.findByPlatformProductId(platformProductId).orElse(null);
-        if (existing != null) {
-            // Still owned by a master → unchanged message; the user must detach it there first.
-            // 🔴 문구를 바꾸지 말 것 — 프론트가 substring 으로 판정해 안내를 덧붙인다.
-            if (existing.getMasterProduct() != null) {
-                throw new IllegalArgumentException("이미 다른 상품에 연결된 쿠팡 상품입니다");
-            }
-            // ⚠️ getSeller().getId()·getMasterProduct() 는 FK id 만 읽는 것이라 프록시를 깨우지 않는다.
-            if (existing.getPlatform() != platform) {
-                throw new IllegalArgumentException("다른 플랫폼의 판매상품입니다");
-            }
-            if (!existing.getSeller().getId().equals(sellerId)) {
-                throw new IllegalArgumentException("다른 판매자의 판매상품입니다");
-            }
-        }
+        DetachedCellPolicy.requireReusable(existing, platform, sellerId);
         return new ImportContext(master, seller, account, components, existing);
     }
 
@@ -440,6 +427,9 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
     /**
      * 재사용 셀의 기존 옵션 행을 spec 에 붙인다(2609_63/D6). 매칭 축은 {@link #matchOptions} 와 같다:
      * {@code vendorItemId} → 옵션명.
+     *
+     * <p>🔴 규칙은 {@link MasterFromChannelServiceImpl#matchExistingOptions} 와 같아야 한다
+     * (2609_66/D5 — 인자 타입이 달라 복제했다). 한쪽만 고치지 말 것.</p>
      *
      * <p>⚠️ 같은 이름이 둘 이상이면 첫 행만 후보가 된다 — 나머지는 호출부의 잔여 처리로 비활성된다.</p>
      *
