@@ -304,12 +304,18 @@ public class CoupangListingAdapter implements ListingChannel {
      * not a usable address on its own, so a value with no scheme gets {@link #IMAGE_HOST_PREFIX} prepended (a leading
      * {@code /} is dropped first so the result never contains a double slash).</p>
      *
-     * <p>A value that already carries a scheme is returned VERBATIM — {@code http://} is NOT promoted to
-     * {@code https://}, because these URLs are fetched server-side and rewriting them is a change nothing needs.
-     * A protocol-relative value ({@code //host/…}) is completed with {@code https:} — it did not occur in the sample,
-     * so it is handled in one line and nothing more.</p>
+     * <p>🔴 {@code http://} 는 {@code https://} 로 <b>올려서</b> 돌려준다(2026-09-21 정정). 원래는 "서버가
+     * 칠 주소라 고쳐 쓸 이유가 없다"고 그대로 뒀는데, 2609_67·2609_68 이후 이 주소는 <b>화면에 그려지고
+     * 사용자가 끌어다 물품에 넣는 값</b>이 됐다. 브라우저는 https 화면에서 http 이미지를 알아서 https 로
+     * 올려 보여주므로 사진은 멀쩡히 보이는데, 그 문자열을 그대로 가져오기로 보내면 스킴 검사에 막혀
+     * <b>보이는데 못 가져오는 사진</b>이 된다. 쿠팡 CDN 은 https 로 같은 파일을 준다.</p>
+     *
+     * <p>스킴이 있는 나머지 값과 프로토콜 상대 값({@code //host/…} → {@code https:})은 종전과 같다.</p>
      */
     private static String absoluteImageUrl(String value) {
+        if (value.regionMatches(true, 0, "http://", 0, "http://".length())) {
+            return "https://" + value.substring("http://".length());
+        }
         if (URL_SCHEME.matcher(value).find()) {
             return value;
         }

@@ -165,6 +165,38 @@ class ProductImageServiceTest {
     }
 
     /**
+     * 🔴 http 로 온 마켓 사진도 받되, <b>실제로 치는 주소는 https</b> 다.
+     * 브라우저가 https 화면에서 http 이미지를 자동으로 올려 보여주므로 사용자 눈엔 멀쩡한 사진인데,
+     * 스킴만 보고 막으면 "보이는데 못 가져오는" 사진이 된다. 클립보드에 저장된 옛 주소도 같은 경로를 탄다.
+     */
+    @Test
+    void addImagesFromUrlsUpgradesHttpToHttps() {
+        given(productRepository.findScopedById(PRODUCT_ID)).willReturn(Optional.of(product()));
+        given(imageRepository.findByProductIdOrderBySortOrderAsc(PRODUCT_ID)).willReturn(List.of());
+        given(productImageLoader.loadUrl("https://image1.coupangcdn.com/a.jpg")).willReturn(jpegBytes());
+        given(imageStorageProperties.getMaxFileSize()).willReturn(20971520L);
+        given(imageStorageService.uploadBytes(any(), eq("products"), any(), eq("image/jpeg")))
+                .willReturn("s3/copied.jpg");
+        given(imageRepository.saveAll(any())).willAnswer(inv -> inv.getArgument(0));
+
+        service.addImagesFromUrls(PRODUCT_ID, List.of("http://image1.coupangcdn.com/a.jpg"));
+
+        // 🔴 평문 요청을 대신 보내주는 것이 아니라 아예 보내지 않는다 — 가져오는 주소는 https 하나뿐이다.
+        verify(productImageLoader).loadUrl("https://image1.coupangcdn.com/a.jpg");
+        verify(productImageLoader, never()).loadUrl("http://image1.coupangcdn.com/a.jpg");
+    }
+
+    /** 스킴 승격은 <b>호스트를 넓히지 않는다</b> — http 라도 허용 밖 호스트는 그대로 400. */
+    @Test
+    void addImagesFromUrlsRejectsHttpOnForeignHost() {
+        given(productRepository.findScopedById(PRODUCT_ID)).willReturn(Optional.of(product()));
+
+        assertThatThrownBy(() -> service.addImagesFromUrls(PRODUCT_ID, List.of("http://evil.com/a.jpg")))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(productImageLoader, never()).loadUrl(any());
+    }
+
+    /**
      * 🔴 우리 저장소 호스트는 <b>완전일치</b>다 — 접미사로 비교하면 같은 도메인의 남의 버킷이 전부 통과한다.
      */
     @Test

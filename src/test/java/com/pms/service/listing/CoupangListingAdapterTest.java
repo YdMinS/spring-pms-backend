@@ -806,7 +806,8 @@ class CoupangListingAdapterTest {
     /**
      * 🔴 쿠팡이 주는 사진 경로는 대개 <b>호스트가 없다</b>(실측: 썸네일 22/22, 상세 15/75) — 그대로는 주소가 아니다.
      * 스킴이 없으면 {@code https://image1.coupangcdn.com/image/} 를 붙이고(앞의 {@code /} 는 이중 슬래시가 안 되게 제거),
-     * 이미 절대 URL 이면 <b>손대지 않는다</b>({@code http} → {@code https} 승격도 하지 않는다).
+     * 🔴 {@code http://} 는 {@code https://} 로 <b>올린다</b>(2026-09-21 정정) — 이 주소는 화면에 그려지고
+     * 사용자가 끌어다 물품에 넣는 값이라, http 로 두면 브라우저엔 보이는데 가져오기에선 막힌다.
      */
     @Test
     void fetchProduct_relativeImagePaths_getHostPrefix() {
@@ -825,11 +826,11 @@ class CoupangListingAdapterTest {
 
         ImportedProduct product = adapter.fetchProduct("222333444", acct());
 
-        // 썸네일: 상대 → 접두어, 앞의 / 는 이중 슬래시 없이, http 절대 URL 은 그대로.
+        // 썸네일: 상대 → 접두어, 앞의 / 는 이중 슬래시 없이, http 절대 URL 은 https 로 승격.
         assertThat(product.thumbnailImages()).containsExactly(
                 "https://image1.coupangcdn.com/image/vendor_inventory/0e21/rep.jpg",
                 "https://image1.coupangcdn.com/image/vendor_inventory/0e21/sub.jpg",
-                "http://image1.coupangcdn.com/image/keep.jpg");
+                "https://image1.coupangcdn.com/image/keep.jpg");
         // 상세도 같은 규칙 — content 자체가 URL 인 경우와 HTML 안의 img src 양쪽 모두.
         assertThat(product.detailImages()).containsExactly(
                 "https://image1.coupangcdn.com/image/vendor_inventory/b424/detail-1.jpg",
