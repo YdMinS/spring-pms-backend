@@ -16,7 +16,7 @@ public interface PackageService {
 
     /**
      * Create a new package. If isDefault=true, existing default is set to false.
-     * @param request PackageRequest (type, cost, effectiveDate, isDefault)
+     * @param request PackageRequest (type, cost, isDefault)
      * @return PackageResponse with created package
      * @throws IllegalArgumentException if validation fails
      */

@@ -128,7 +128,6 @@ public abstract class BaseIntegrationTest {
         Package pkg = Package.builder()
                 .type("S")
                 .cost(new BigDecimal("2.50"))
-                .effectiveDate(LocalDate.now())
                 .isDefault(true)
                 .widthCm(new BigDecimal("22.0"))
                 .lengthCm(new BigDecimal("19.0"))

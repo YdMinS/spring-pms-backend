@@ -5,7 +5,6 @@ import lombok.*;
 import org.hibernate.annotations.TenantId;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
 
 /**
  * Package entity representing a shipping/packaging option.
@@ -13,7 +12,6 @@ import java.time.LocalDate;
  * Business Logic:
  * - type: Package category (e.g., "STANDARD", "EXPRESS", "FRAGILE")
  * - cost: Shipping cost in BigDecimal (2 decimal places)
- * - effectiveDate: Date from which package is valid
  * - isDefault: Only ONE package can have isDefault=true globally.
  *   When creating/updating with isDefault=true, existing default is set to false.
  * - widthCm/lengthCm/heightCm: box dimensions in cm, 0 = unset
@@ -60,14 +58,6 @@ public class Package {
      */
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal cost;
-
-    /**
-     * Effective date for this package type.
-     * Allows versioning/historical tracking of package rates.
-     * Format: ISO date (YYYY-MM-DD)
-     */
-    @Column(name = "effective_date", nullable = false)
-    private LocalDate effectiveDate;
 
     /**
      * Flag indicating if this is the default package type.

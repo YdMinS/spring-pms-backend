@@ -157,7 +157,7 @@ class BatchChannelAddControllerTest {
                 .effectiveDate(LocalDate.now()).isDefault(false).build());
         Package box = packageRepository.save(Package.builder()
                 .type("M").cost(new BigDecimal("500"))
-                .effectiveDate(LocalDate.now()).isDefault(false).build());
+                .isDefault(false).build());
 
         // Master has a standard category (44) + a COUPANG mapping only — NAVER targets have no mapping and fail
         // channel-add pre-validation (400).

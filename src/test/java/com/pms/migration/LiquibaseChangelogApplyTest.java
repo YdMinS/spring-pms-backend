@@ -707,8 +707,8 @@ class LiquibaseChangelogApplyTest {
                 Integer.class)).isZero();
         // and NOT NULL is really on: an insert without the sizes must fail
         assertThatThrownBy(() -> jdbcTemplate.execute(
-                "INSERT INTO package (tenant_id, type, cost, effective_date, is_default) "
-                + "VALUES (1, 'X', 100, '2026-01-01', false)"))
+                "INSERT INTO package (tenant_id, type, cost, is_default) "
+                + "VALUES (1, 'X', 100, false)"))
                 .isInstanceOf(DataAccessException.class);
     }
 
@@ -869,6 +869,29 @@ class LiquibaseChangelogApplyTest {
         // update 까지 포함한 changeset 이 기록으로 남았는가(적용 중 SQL 오류가 없었다는 증거).
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID = '089-margin-threshold-market-price'",
+                Integer.class)).isEqualTo(1);
+    }
+
+    /**
+     * changeset 094: 상자비의 유효일 컬럼 제거 (FEATURE_2609_56 / PLAN D8).
+     *
+     * <p>🔴 택배비(carrier_rate)의 effective_date 는 실제 계산에 쓰이므로 그대로 남아 있어야 한다.
+     */
+    @Test
+    void packageEffectiveDateDropped() {
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE TABLE_NAME = 'PACKAGE' AND COLUMN_NAME = 'EFFECTIVE_DATE'",
+                Integer.class)).isZero();
+
+        // 택배비 쪽은 살아 있다.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE TABLE_NAME = 'CARRIER_RATE' AND COLUMN_NAME = 'EFFECTIVE_DATE'",
+                Integer.class)).isEqualTo(1);
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID = '094-package-drop-effective-date'",
                 Integer.class)).isEqualTo(1);
     }
 }
