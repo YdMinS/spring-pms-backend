@@ -105,6 +105,62 @@ public class CarrierRateServiceTest {
     }
 
     @Test
+    public void createCarrierRateWithoutEffectiveDateUsesToday() {
+        given(carrierRepository.findById(4L)).willReturn(Optional.of(carrier));
+        given(carrierRateRepository.save(any(CarrierRate.class)))
+                .willAnswer(inv -> inv.<CarrierRate>getArgument(0).toBuilder().id(1L).build());
+
+        CarrierRateResponse response =
+                carrierRateService.createCarrierRate(requestBuilder().effectiveDate(null).build());
+
+        ArgumentCaptor<CarrierRate> captor = ArgumentCaptor.forClass(CarrierRate.class);
+        verify(carrierRateRepository).save(captor.capture());
+        assertThat(captor.getValue().getEffectiveDate()).isEqualTo(LocalDate.now());
+        assertThat(response.getEffectiveDate()).isEqualTo(LocalDate.now());
+    }
+
+    @Test
+    public void createCarrierRateKeepsGivenEffectiveDate() {
+        LocalDate scheduled = LocalDate.now().plusMonths(1).withDayOfMonth(1);
+        given(carrierRepository.findById(4L)).willReturn(Optional.of(carrier));
+        given(carrierRateRepository.save(any(CarrierRate.class)))
+                .willAnswer(inv -> inv.<CarrierRate>getArgument(0).toBuilder().id(1L).build());
+
+        CarrierRateResponse response = carrierRateService.createCarrierRate(
+                requestBuilder().effectiveDate(scheduled).build());
+
+        ArgumentCaptor<CarrierRate> captor = ArgumentCaptor.forClass(CarrierRate.class);
+        verify(carrierRateRepository).save(captor.capture());
+        assertThat(captor.getValue().getEffectiveDate()).isEqualTo(scheduled);
+        assertThat(response.getEffectiveDate()).isEqualTo(scheduled);
+    }
+
+    @Test
+    public void updateCarrierRateWithoutEffectiveDateKeepsExisting() {
+        LocalDate existingDate = LocalDate.of(2026, 6, 1);
+        CarrierRate existing = CarrierRate.builder()
+                .id(1L)
+                .carrier(carrier)
+                .type("EXPRESS")
+                .cost(new BigDecimal("15.50"))
+                .effectiveDate(existingDate)
+                .isDefault(false)
+                .build();
+        given(carrierRateRepository.findById(1L)).willReturn(Optional.of(existing));
+        given(carrierRepository.findById(4L)).willReturn(Optional.of(carrier));
+        given(carrierRateRepository.save(any(CarrierRate.class)))
+                .willAnswer(inv -> inv.getArgument(0));
+
+        CarrierRateResponse response = carrierRateService.updateCarrierRate(
+                1L, requestBuilder().cost(new BigDecimal("20.00")).effectiveDate(null).build());
+
+        ArgumentCaptor<CarrierRate> captor = ArgumentCaptor.forClass(CarrierRate.class);
+        verify(carrierRateRepository).save(captor.capture());
+        assertThat(captor.getValue().getEffectiveDate()).isEqualTo(existingDate);
+        assertThat(response.getEffectiveDate()).isEqualTo(existingDate);
+    }
+
+    @Test
     public void getCarrierRate_notFound_throws() {
         given(carrierRateRepository.findById(99L)).willReturn(Optional.empty());
 
