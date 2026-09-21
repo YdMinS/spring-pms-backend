@@ -12,6 +12,7 @@ import com.pms.domain.PlatformCategory;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterFromChannelPreviewRequest;
@@ -56,6 +57,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /**
@@ -166,7 +168,7 @@ class MasterFromChannelServiceTest {
     }
 
     private void givenMarket(ImportedProduct product) {
-        given(productListingRepository.existsByPlatformProductId(PRODUCT_ID)).willReturn(false);
+        given(productListingRepository.findByPlatformProductId(PRODUCT_ID)).willReturn(Optional.empty());
         given(channel.fetchProduct(eq(PRODUCT_ID), any())).willReturn(product);
     }
 
@@ -300,7 +302,8 @@ class MasterFromChannelServiceTest {
     @Test
     void preview_alreadyLinkedProductId_throws400() {
         givenAccount();
-        given(productListingRepository.existsByPlatformProductId(PRODUCT_ID)).willReturn(true);
+        given(productListingRepository.findByPlatformProductId(PRODUCT_ID))
+                .willReturn(Optional.of(existingCell(41L, MasterProduct.builder().id(99L).build(), SELLER_ID)));
 
         assertThatThrownBy(() -> service.preview(previewRequest()))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -551,5 +554,111 @@ class MasterFromChannelServiceTest {
         ArgumentCaptor<ProductListing> cellCaptor = ArgumentCaptor.forClass(ProductListing.class);
         verify(productListingRepository).save(cellCaptor.capture());
         assertThat(cellCaptor.getValue().getCategoryNoticeGroup()).isEqualTo("가공식품");
+    }
+
+    // ---- 2609_66: 떼어낸 셀 재사용 ----
+
+    private ProductListing existingCell(Long id, MasterProduct linkedMaster, Long sellerId) {
+        return ProductListing.builder()
+                .id(id).platform(PLATFORM).platformProductId(PRODUCT_ID)
+                .name("예전 이름").status(ListingStatus.SELLING)
+                .seller(Seller.builder().id(sellerId).build())
+                .masterProduct(linkedMaster)
+                .build();
+    }
+
+    private ProductListingOption existingOption(Long id, ProductListing cell, String name, String vendorItemId) {
+        return ProductListingOption.builder()
+                .id(id).productListing(cell).optionName(name).platformOptionId(vendorItemId)
+                .sellingPrice(new BigDecimal("9900")).active(true)
+                .build();
+    }
+
+    /**
+     * 재사용 전용 셋업. 🔴 {@code givenCreationSucceeds} 를 쓰면 안 된다 — 그건 save 가 <b>새 id 50L·60L 을
+     * 붙여</b> 돌려주므로 id 보존을 단언할 수 없다.
+     */
+    private void givenReuseReady(ProductListing detached, List<ProductListingOption> detachedOptions) {
+        givenAccount();
+        given(productListingRepository.findByPlatformProductId(PRODUCT_ID)).willReturn(Optional.of(detached));
+        given(channel.fetchProduct(eq(PRODUCT_ID), any())).willReturn(marketProduct(
+                marketOption("6입", "8123", "12900", Map.of())));
+        given(masterProductService.createMasterProduct(any()))
+                .willReturn(MasterProductResponse.builder().id(MASTER_ID).build());
+        given(masterProductRepository.findScopedById(MASTER_ID))
+                .willReturn(Optional.of(MasterProduct.builder().id(MASTER_ID).name("새 마스터").build()));
+        given(masterProductOptionRepository.findByMasterProductId(MASTER_ID))
+                .willReturn(List.of(MasterProductOption.builder().id(300L).name("6입").build()));
+        // 🔴 재사용 경로는 id 가 곧 단언 대상이라 save 가 인자를 그대로 돌려준다.
+        given(productListingRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+        given(productListingOptionRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+        given(productListingOptionRepository.findByProductListingId(41L)).willReturn(detachedOptions);
+    }
+
+    /** 2609_66/D6: 떼어낸 셀이 있으면 미리보기가 저장 <b>전에</b> 재사용을 알린다. */
+    @Test
+    void preview_detachedListing_flagsReuse() {
+        givenAccount();
+        given(productListingRepository.findByPlatformProductId(PRODUCT_ID))
+                .willReturn(Optional.of(existingCell(41L, null, SELLER_ID)));
+        given(channel.fetchProduct(eq(PRODUCT_ID), any())).willReturn(twoOptionProduct());
+
+        MasterFromChannelPreviewResponse response = service.preview(previewRequest());
+
+        assertThat(response.isReusesExistingListing()).isTrue();
+        verifyNothingSaved();
+    }
+
+    /**
+     * 🔴 2609_66/D2·D3·D4: 떼어낸 셀·옵션 행을 <b>그대로</b> 다시 쓰고(id 보존), 마켓에서 사라진 옵션은 지우지
+     * 않고 비활성으로 내리며, 재사용 옵션의 BOM 만 지운 자리에 <b>새 구성</b>을 쓴다(= 이 기능의 존재 이유).
+     */
+    @Test
+    void create_detachedListing_reusesCellAndOptionRows() {
+        ProductListing detached = existingCell(41L, null, SELLER_ID);
+        ProductListingOption kept = existingOption(71L, detached, "6입", "8123");
+        ProductListingOption gone = existingOption(72L, detached, "12입", "8124");   // 마켓에서 사라진 옵션
+        givenReuseReady(detached, List.of(kept, gone));
+        givenComponents(PRODUCT_A);
+
+        service.create(createRequest(List.of(PRODUCT_A), spec("6입", "8123", 6, null)));
+
+        ArgumentCaptor<ProductListing> cellCaptor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(cellCaptor.capture());
+        assertThat(cellCaptor.getValue().getId()).isEqualTo(41L);                       // 재사용 = UPDATE
+        assertThat(cellCaptor.getValue().getMasterProduct().getId()).isEqualTo(MASTER_ID);
+
+        ArgumentCaptor<ProductListingOption> optionCaptor = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository, times(2)).save(optionCaptor.capture());
+        ProductListingOption reused = optionCaptor.getAllValues().get(0);
+        assertThat(reused.getId()).isEqualTo(71L);                                     // 옵션 행도 그대로
+        assertThat(reused.getMasterProductOption().getId()).isEqualTo(300L);           // D4: 해제 때 비었던 FK
+        assertThat(reused.getActive()).isTrue();
+        // 🔴 마켓에서 사라진 옵션은 지우지 않고 비활성으로 내린다(주문·정산·가격이력 FK).
+        ProductListingOption leftover = optionCaptor.getAllValues().get(1);
+        assertThat(leftover.getId()).isEqualTo(72L);
+        assertThat(leftover.getActive()).isFalse();
+        // 🔴 BOM 삭제는 재사용 옵션 것만 — 잔여 옵션(72)의 구성은 남아야 한다(D3).
+        verify(productListingProductRepository).deleteByProductListingOptionIdIn(List.of(71L));
+        // 🔴 지운 자리에 새 구성이 써진다 = 이 기능의 존재 이유(잘못 매핑된 셀을 바로잡는 경로).
+        ArgumentCaptor<ProductListingProduct> bomCaptor = ArgumentCaptor.forClass(ProductListingProduct.class);
+        verify(productListingProductRepository).save(bomCaptor.capture());
+        assertThat(bomCaptor.getValue().getProductListingOption().getId()).isEqualTo(71L);
+        assertThat(bomCaptor.getValue().getProduct().getId()).isEqualTo(PRODUCT_A);
+    }
+
+    /** 남의 판매자 셀은 재사용 대상이 아니다 — 마켓 조회 <b>전에</b> 막힌다. */
+    @Test
+    void create_listingOfAnotherSeller_throws400() {
+        givenAccount();
+        given(productListingRepository.findByPlatformProductId(PRODUCT_ID))
+                .willReturn(Optional.of(existingCell(41L, null, 999L)));
+
+        assertThatThrownBy(() -> service.create(createRequest(
+                List.of(PRODUCT_A), spec("6입", "8123", 6, null))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("다른 판매자의 판매상품입니다");
+        verifyNothingSaved();
+        verify(channel, never()).fetchProduct(any(), any());
     }
 }

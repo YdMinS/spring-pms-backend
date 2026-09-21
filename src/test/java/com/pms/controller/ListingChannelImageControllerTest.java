@@ -31,7 +31,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * + 이미지 없음(빈 목록) + 400 두 경우 + 다른 테넌트 404.
  *
  * <p>{@link CoupangApiClient} 는 목이라 라이브 호출이 없다. 셀은 <b>마스터에 연결된</b> 상태로 심는다 —
- * 가져오기 미리보기가 {@code existsByPlatformProductId} 로 막는 바로 그 상태가 여기서는 통과해야 한다.</p>
+ * 가져오기 미리보기가 {@link com.pms.service.listing.DetachedCellPolicy} 로 막는 바로 그 상태(마스터에
+ * 연결된 셀)가 여기서는 통과해야 한다.</p>
  */
 class ListingChannelImageControllerTest extends BaseIntegrationTest {
 
