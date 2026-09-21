@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.util.List;
 
 @Service
@@ -47,7 +48,11 @@ public class CarrierRateServiceImpl implements CarrierRateService {
                 .carrier(carrier)
                 .type(request.getType())
                 .cost(request.getCost())
-                .effectiveDate(request.getEffectiveDate())
+                // Server owns the default: an omitted date means "from today".
+                // Keeping it here (not in each client) stops web/mobile/old apps from drifting apart.
+                .effectiveDate(request.getEffectiveDate() != null
+                        ? request.getEffectiveDate()
+                        : LocalDate.now())
                 .isDefault(request.getIsDefault())
                 .build();
 
@@ -102,7 +107,12 @@ public class CarrierRateServiceImpl implements CarrierRateService {
                 .carrier(carrier)
                 .type(request.getType())
                 .cost(request.getCost())
-                .effectiveDate(request.getEffectiveDate())
+                // Update keeps the existing date when omitted (unlike create, which uses today).
+                // Defaulting to today here would push a past rate's start date forward and
+                // silently change how already-packed boxes are priced.
+                .effectiveDate(request.getEffectiveDate() != null
+                        ? request.getEffectiveDate()
+                        : carrierRate.getEffectiveDate())
                 .isDefault(request.getIsDefault())
                 .build();
 
