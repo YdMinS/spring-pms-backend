@@ -110,7 +110,7 @@ public class ProductImageServiceImpl implements ProductImageService {
             throw new IllegalArgumentException("한 번에 10장까지 가져올 수 있습니다");
         }
         // 🔴 전부 검사한 뒤에 한 장도 내려받는다 — 하나라도 어긋나면 외부 호출 0회로 400 이다.
-        urls.forEach(this::requireAllowedImageUrl);
+        List<String> targets = urls.stream().map(this::requireAllowedImageUrl).toList();
 
         List<ProductImage> existing = imageRepository.findByProductIdOrderBySortOrderAsc(productId);
         // Same rule as addImages: max(sortOrder)+1, never size() (a delete leaves a gap).
@@ -118,8 +118,8 @@ public class ProductImageServiceImpl implements ProductImageService {
 
         List<ProductImage> toSave = new ArrayList<>();
         long timestamp = System.currentTimeMillis();
-        for (int i = 0; i < urls.size(); i++) {
-            byte[] bytes = productImageLoader.loadUrl(urls.get(i));
+        for (int i = 0; i < targets.size(); i++) {
+            byte[] bytes = productImageLoader.loadUrl(targets.get(i));
             ImageFormat format = detectImageFormat(bytes);
             if (bytes.length > imageStorageProperties.getMaxFileSize()) {
                 throw new IllegalArgumentException("이미지 크기가 허용치를 넘습니다");
@@ -284,14 +284,25 @@ public class ProductImageServiceImpl implements ProductImageService {
      * </ul>
      *
      * <p>⚠️ 저장소가 {@code local} 이면 우리 호스트는 {@code null} 이라 쿠팡 CDN 만 남는다(공개 URL 이 없다).</p>
+     *
+     * @return 실제로 내려받을 주소(= 검사를 통과한 {@code https} URL). 호출부는 <b>이 값</b>으로 가져온다.
      */
-    private void requireAllowedImageUrl(String url) {
-        if (url == null || url.isBlank() || !url.startsWith("https://")) {
+    private String requireAllowedImageUrl(String url) {
+        if (url == null || url.isBlank()) {
+            throw new IllegalArgumentException("허용되지 않은 이미지 주소입니다");
+        }
+        // 🔴 쿠팡이 주는 사진 주소에는 http 가 섞여 있다(어댑터가 절대 URL 을 그대로 넘긴다). 브라우저는
+        //    https 화면에서 그런 이미지를 알아서 https 로 올려 보여주므로 사용자 눈에는 멀쩡한 사진인데,
+        //    우리가 받는 문자열은 http 라 스킴만 보고 막으면 "보이는데 못 가져오는" 사진이 된다.
+        //    ⚠️ 승격은 허용 호스트 판정 **앞**에 오지만 호스트를 넓히지는 않는다 — 우리가 실제로 치는 주소는
+        //    언제나 https 다(평문 요청을 대신 보내주는 것이 아니라, 보내지 않는다).
+        String target = url.startsWith("http://") ? "https://" + url.substring("http://".length()) : url;
+        if (!target.startsWith("https://")) {
             throw new IllegalArgumentException("허용되지 않은 이미지 주소입니다");
         }
         String host;
         try {
-            host = URI.create(url).toURL().getHost();
+            host = URI.create(target).toURL().getHost();
         } catch (Exception e) {
             throw new IllegalArgumentException("허용되지 않은 이미지 주소입니다");
         }
@@ -299,7 +310,7 @@ public class ProductImageServiceImpl implements ProductImageService {
             throw new IllegalArgumentException("허용되지 않은 이미지 주소입니다");
         }
         if (isCoupangCdn(host) || isOwnStorage(host)) {
-            return;
+            return target;
         }
         // 어느 호스트가 막혔는지 로그에 남긴다 — 화면 문구만으로는 원인을 좁힐 수 없다.
         log.warn("가져오기가 막힌 이미지 주소 — host={}, url={}", host, url);
