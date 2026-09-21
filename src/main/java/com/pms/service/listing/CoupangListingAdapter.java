@@ -34,6 +34,8 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -94,6 +96,11 @@ public class CoupangListingAdapter implements ListingChannel {
             List.of(Map.of("certificationType", "NOT_REQUIRED", "certificationCode", ""));
     // 93: Coupang caps sellerProductName at 100 chars.
     private static final int MAX_SELLER_PRODUCT_NAME_LENGTH = 100;
+    // 2609_67: Coupang caps the sellerProductName SEARCH term at 20 chars (list API). 🔴 조용히 자르지 않는다 —
+    // 잘린 줄 모르면 엉뚱한 결과를 보게 된다(PLAN/D3) → 400 으로 돌려준다.
+    private static final int SEARCH_NAME_MAX_LENGTH = 20;
+    // 2609_67: documented max is 100; 50 keeps one page useful without inflating the response.
+    private static final int SEARCH_PAGE_SIZE = 50;
     // 96 ④: a value made of digits only (optionally signed / decimal) is the one that still needs its unit.
     private static final Pattern NUMERIC_VALUE = Pattern.compile("^-?\\d+(\\.\\d+)?$");
     // 2609_45/D4: "number + trailing text" — group(1) the number, group(2) the suffix (see stripUnit).
@@ -204,6 +211,8 @@ public class CoupangListingAdapter implements ListingChannel {
         }
         return new ImportedProduct(
                 asTextOrNull(data, "sellerProductName"),
+                // 2609_67: 단건 응답에는 brand 가 있다(문서 확인 2026-09-21). 없으면 null — 판정하지 않는다.
+                asTextOrNull(data, "brand"),
                 categoryCode,
                 mapStatus(data.path("statusName").asText("")),
                 tags,
@@ -212,6 +221,45 @@ public class CoupangListingAdapter implements ListingChannel {
                 thumbnailImages(data),
                 detailImages(data),
                 options);
+    }
+
+    /**
+     * 2609_67: 상품명으로 이 계정의 마켓 상품을 검색한다(목록 API). <b>읽기 전용</b> — 저장 0회, 쿠팡 GET 1회.
+     *
+     * <p>🔴 목록 응답에는 <b>사진이 없다</b>(쿠팡 스펙, 문서 확인 2026-09-21) — 사진·옵션·속성은
+     * {@link #fetchProduct} 로 한 건씩 읽는다. 상태 매핑은 {@link #mapStatus} 를 그대로 쓴다(단건 조회와 같은
+     * 뜻이어야 한다).</p>
+     *
+     * <p>{@code nextToken} 은 응답 최상위 값이고, 마지막 페이지에서는 <b>빈 문자열</b>로 오므로 {@code null} 로
+     * 정규화해 내린다 — 소비자는 "null 이면 마지막 페이지" 하나만 보면 된다.</p>
+     */
+    @Override
+    public ChannelProductPage searchProducts(String name, String nextToken, MarketplaceAccount acct) {
+        String term = name == null ? "" : name.trim();
+        if (term.length() > SEARCH_NAME_MAX_LENGTH) {
+            throw new IllegalArgumentException("상품명 검색어는 20자까지입니다");
+        }
+        // 🔴 vendorId 는 이 목록 API 의 필수 파라미터다(fetchProduct/fetchStatus 는 query 가 "" 라 쓰지 않는다).
+        StringBuilder query = new StringBuilder()
+                .append("vendorId=").append(CoupangCredentials.of(acct).getVendorId())
+                .append("&sellerProductName=").append(URLEncoder.encode(term, StandardCharsets.UTF_8))
+                .append("&maxPerPage=").append(SEARCH_PAGE_SIZE);
+        if (nextToken != null && !nextToken.isBlank()) {
+            query.append("&nextToken=").append(URLEncoder.encode(nextToken, StandardCharsets.UTF_8));
+        }
+        JsonNode body = readJson(client.get(SELLER_PRODUCTS, query.toString(), acct));
+
+        List<ChannelProductSummary> items = new ArrayList<>();
+        for (JsonNode node : body.path("data")) {
+            items.add(new ChannelProductSummary(
+                    asTextOrNull(node, "sellerProductId"),
+                    asTextOrNull(node, "sellerProductName"),
+                    asTextOrNull(node, "brand"),
+                    mapStatus(node.path("statusName").asText("")),
+                    asTextOrNull(node, "createdAt")));
+        }
+        String next = asTextOrNull(body, "nextToken");
+        return new ChannelProductPage(items, next == null || next.isBlank() ? null : next);
     }
 
     /**
