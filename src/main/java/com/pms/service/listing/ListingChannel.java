@@ -106,6 +106,22 @@ public interface ListingChannel {
     }
 
     /**
+     * 상품명으로 마켓 상품을 검색한다(2609_67). 읽기 전용 · 저장 0회.
+     *
+     * <p>목록 응답에는 <b>사진이 없다</b> — 사진·옵션·속성은 {@link #fetchProduct} 로 한 건씩 읽는다.
+     * 기본 구현은 던진다. ⚠️ 호출부는 이 예외에 의존하지 말고 <b>지원 플랫폼 화이트리스트</b>로 먼저 막을 것
+     * ({@code GlobalExceptionHandler} 에 {@code UnsupportedOperationException} 핸들러가 없어 500 이 된다).</p>
+     *
+     * @param name      검색어(호출부가 이미 비어 있지 않음을 보장). 플랫폼 제한은 구현체가 지킨다
+     * @param nextToken 이어보기 키 — 첫 페이지는 null
+     * @param account   the marketplace account (credentials)
+     * @return 후보 목록 + 다음 키(없으면 null). 결과 없음은 빈 목록이지 예외가 아니다
+     */
+    default ChannelProductPage searchProducts(String name, String nextToken, MarketplaceAccount account) {
+        throw new UnsupportedOperationException(platform() + " 상품 검색 미지원");
+    }
+
+    /**
      * Change the selling price of ONE option that is already on the market (FEATURE_2609_19 / D4). Unlike
      * {@link #update} (whole object re-submitted for re-approval) this is a partial update that takes effect
      * immediately. A platform that has no such API (NAVER) keeps this default and throws — callers only invoke

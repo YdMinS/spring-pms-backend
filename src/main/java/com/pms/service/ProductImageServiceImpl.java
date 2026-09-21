@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.config.ImageStorageProperties;
 import com.pms.domain.Product;
 import com.pms.domain.ProductImage;
 import com.pms.dto.response.ProductImageResponse;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -42,6 +44,15 @@ public class ProductImageServiceImpl implements ProductImageService {
     private final MasterProductImageRepository masterProductImageRepository;
     private final ImageStorageService imageStorageService;
     private final ImageValidator imageValidator;
+    // 2609_67: 마켓 URL 에서 바이트를 가져오는 공용 로더. 새 다운로더를 만들지 말 것.
+    private final ProductImageLoader productImageLoader;
+    // 2609_67: URL 가져오기의 크기 상한 — 폼 업로드(ImageValidator)와 같은 기준을 쓴다.
+    private final ImageStorageProperties imageStorageProperties;
+
+    /** 2609_67/D5: 한 번에 가져올 수 있는 장수. {@code loadUrl} 에 시간 제한이 없으므로 노출을 이 상한이 묶는다. */
+    private static final int MAX_URLS_PER_REQUEST = 10;
+    /** 2609_67/D5: 허용 호스트(쿠팡 이미지 CDN). 자기 자신 또는 서브도메인만 통과한다. */
+    private static final String ALLOWED_IMAGE_HOST = "coupangcdn.com";
 
     @Override
     @Transactional
@@ -59,6 +70,63 @@ public class ProductImageServiceImpl implements ProductImageService {
         for (MultipartFile file : files) {
             imageValidator.validate(file);
             String url = imageStorageService.uploadImage(file, productId);
+            toSave.add(ProductImage.builder()
+                    .product(product)
+                    .sortOrder(nextOrder++)
+                    .imageUrl(url)
+                    .build());
+        }
+        List<ProductImage> saved = imageRepository.saveAll(toSave); // single call
+
+        List<ProductImage> gallery = new ArrayList<>(existing);
+        gallery.addAll(saved);
+        gallery.sort(Comparator.comparingInt(ProductImage::getSortOrder));
+        syncRepresentative(product, gallery);
+        return gallery.stream().map(ProductImageResponse::from).toList();
+    }
+
+    /**
+     * 2609_67/D5: 마켓 이미지 URL → 우리 저장소 복제. {@link #addImages} 와 <b>같은 흐름</b>이고 파일 출처만
+     * 다르다(MultipartFile 대신 http GET).
+     *
+     * <p>🔴 <b>URL 은 사용자가 보낸 값</b>이라 서버가 그대로 친다 → 가드를 <b>내려받기 전에 전부</b> 통과시킨다:
+     * {@code https} · 호스트가 {@code coupangcdn.com}(또는 그 서브도메인) · 10장 이하. 호스트는
+     * {@code URI.toURL().getHost()} 로 꺼내 비교한다 — {@code contains("coupangcdn.com")} 같은 부분일치는
+     * {@code https://evil.com/?x=coupangcdn.com} 을 통과시킨다.</p>
+     *
+     * <p>🔴 형식은 <b>매직바이트</b>로 정한다(JPEG {@code FF D8 FF} / PNG {@code 89 50 4E 47}) — 마켓이 주는
+     * {@code Content-Type} 은 믿지 않는다(로더는 바이트만 준다).
+     * ⚠️ {@code ProductImageLoader.loadUrl} 에는 시간 제한이 없다({@code URL.openStream()}) — 여기서 고치지
+     * 않는다(공용 로더의 별건). 10장 상한이 그 노출을 묶는다.</p>
+     */
+    @Override
+    @Transactional
+    public List<ProductImageResponse> addImagesFromUrls(Long productId, List<String> urls) {
+        Product product = requireScopedProduct(productId);
+        if (urls == null || urls.isEmpty()) {
+            throw new IllegalArgumentException("가져올 이미지가 없습니다");
+        }
+        if (urls.size() > MAX_URLS_PER_REQUEST) {
+            throw new IllegalArgumentException("한 번에 10장까지 가져올 수 있습니다");
+        }
+        // 🔴 전부 검사한 뒤에 한 장도 내려받는다 — 하나라도 어긋나면 외부 호출 0회로 400 이다.
+        urls.forEach(ProductImageServiceImpl::requireAllowedImageUrl);
+
+        List<ProductImage> existing = imageRepository.findByProductIdOrderBySortOrderAsc(productId);
+        // Same rule as addImages: max(sortOrder)+1, never size() (a delete leaves a gap).
+        int nextOrder = existing.stream().mapToInt(ProductImage::getSortOrder).max().orElse(-1) + 1;
+
+        List<ProductImage> toSave = new ArrayList<>();
+        long timestamp = System.currentTimeMillis();
+        for (int i = 0; i < urls.size(); i++) {
+            byte[] bytes = productImageLoader.loadUrl(urls.get(i));
+            ImageFormat format = detectImageFormat(bytes);
+            if (bytes.length > imageStorageProperties.getMaxFileSize()) {
+                throw new IllegalArgumentException("이미지 크기가 허용치를 넘습니다");
+            }
+            String url = imageStorageService.uploadBytes(bytes, "products",
+                    "product_" + productId + "_" + timestamp + "_" + i + "." + format.extension(),
+                    format.contentType());
             toSave.add(ProductImage.builder()
                     .product(product)
                     .sortOrder(nextOrder++)
@@ -198,6 +266,48 @@ public class ProductImageServiceImpl implements ProductImageService {
     }
 
     // ---------------------------------------------------------------- helpers
+
+    /**
+     * 2609_67/D5 SSRF 가드: {@code https} + 마켓 이미지 호스트만 허용한다.
+     *
+     * <p>🔴 호스트를 <b>꺼내서</b> 비교한다 — {@code contains} 부분일치는
+     * {@code https://evil.com/?x=coupangcdn.com} 을 통과시킨다.</p>
+     */
+    private static void requireAllowedImageUrl(String url) {
+        if (url == null || url.isBlank() || !url.startsWith("https://")) {
+            throw new IllegalArgumentException("허용되지 않은 이미지 주소입니다");
+        }
+        String host;
+        try {
+            host = URI.create(url).toURL().getHost();
+        } catch (Exception e) {
+            throw new IllegalArgumentException("허용되지 않은 이미지 주소입니다");
+        }
+        if (host == null
+                || !(host.equalsIgnoreCase(ALLOWED_IMAGE_HOST)
+                        || host.toLowerCase().endsWith("." + ALLOWED_IMAGE_HOST))) {
+            throw new IllegalArgumentException("허용되지 않은 이미지 주소입니다");
+        }
+    }
+
+    /**
+     * 2609_67/D5: 바이트 앞부분(매직바이트)으로 형식을 정한다 — 마켓 응답 헤더를 믿지 않는다.
+     * JPEG {@code FF D8 FF} · PNG {@code 89 50 4E 47} 외에는 400.
+     */
+    private static ImageFormat detectImageFormat(byte[] bytes) {
+        if (bytes != null && bytes.length >= 3
+                && bytes[0] == (byte) 0xFF && bytes[1] == (byte) 0xD8 && bytes[2] == (byte) 0xFF) {
+            return new ImageFormat("image/jpeg", "jpg");
+        }
+        if (bytes != null && bytes.length >= 4
+                && bytes[0] == (byte) 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) {
+            return new ImageFormat("image/png", "png");
+        }
+        throw new IllegalArgumentException("이미지 파일이 아닙니다");
+    }
+
+    /** 매직바이트로 판정한 형식(저장 시 contentType + 파일 확장자). */
+    private record ImageFormat(String contentType, String extension) {}
 
     /** Tenant-scoped fetch; a cross-tenant/absent id yields 404 (findScopedById is @TenantId-filtered). */
     private Product requireScopedProduct(Long productId) {

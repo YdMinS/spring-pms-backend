@@ -610,6 +610,44 @@ class CoupangListingAdapterTest {
     }
 
 
+    // ---------------------------------------------------------------- 2609_67: 상품명 검색
+
+    /** 목록 응답에는 이미지가 없다(쿠팡 스펙) — 상태는 단건 조회와 같은 {@code mapStatus} 를 쓴다. */
+    @Test
+    void searchProductsParsesListResponse() {
+        ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
+        given(client.get(anyString(), query.capture(), any())).willReturn(
+                "{\"code\":\"SUCCESS\",\"nextToken\":\"tok-2\",\"data\":["
+                        + "{\"sellerProductId\":222333444,\"sellerProductName\":\"노브랜드 생수 2L 6입\","
+                        + "\"brand\":\"노브랜드\",\"statusName\":\"승인완료\","
+                        + "\"createdAt\":\"2026-08-01T13:20:11\"},"
+                        + "{\"sellerProductId\":222333555,\"sellerProductName\":\"노브랜드 생수 2L 12입\","
+                        + "\"statusName\":\"심사중\",\"createdAt\":\"2026-08-02T09:05:40\"}]}");
+
+        ChannelProductPage page = adapter.searchProducts("생수", null, acct());
+
+        assertThat(page.items()).hasSize(2);
+        assertThat(page.items().get(0).platformProductId()).isEqualTo("222333444");
+        assertThat(page.items().get(0).brand()).isEqualTo("노브랜드");
+        assertThat(page.items().get(0).status()).isEqualTo(ListingStatus.SELLING);
+        assertThat(page.items().get(0).createdAt()).isEqualTo("2026-08-01T13:20:11");
+        assertThat(page.items().get(1).brand()).isNull();
+        assertThat(page.items().get(1).status()).isEqualTo(ListingStatus.SUBMITTED);
+        assertThat(page.nextToken()).isEqualTo("tok-2");
+        // 필수 파라미터가 전부 실렸는지 — vendorId 는 이 목록 API 에서만 필요하다.
+        assertThat(query.getValue()).contains("vendorId=V1").contains("sellerProductName=")
+                .contains("maxPerPage=50");
+    }
+
+    /** 🔴 20자 초과는 조용히 자르지 않는다 — 잘린 줄 모르면 엉뚱한 결과를 보게 된다(마켓 호출 0회). */
+    @Test
+    void searchProductsRejectsTooLongName() {
+        assertThatThrownBy(() -> adapter.searchProducts("가".repeat(21), null, acct()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("20자");
+        verify(client, never()).get(anyString(), anyString(), any());
+    }
+
     // ---------------------------------------------------------------- 2609_45: import-time attributes/notices
 
     /** 2609_45/D4 실측 응답: 속성은 items[] 마다 오고 attributeValueName 에 단위가 붙어 있다. */

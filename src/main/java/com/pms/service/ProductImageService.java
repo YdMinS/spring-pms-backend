@@ -26,6 +26,19 @@ public interface ProductImageService {
      */
     List<ProductImageResponse> copyImages(Long productId, List<Long> sourceImageIds);
 
+    /**
+     * 마켓 이미지 URL 을 서버가 내려받아 우리 저장소에 넣고 갤러리에 덧붙인다(2609_67/D5).
+     * 🔴 URL 을 그대로 저장하지 않는다 — 마켓에서 사진이 바뀌거나 내려가면 우리 물품 사진이 깨지고,
+     * 썸네일 생성기가 그 바이트를 매번 마켓에서 읽게 된다.
+     *
+     * <p>🔴 사용자가 보낸 URL 을 서버가 그대로 친다(SSRF) → {@code https} + <b>마켓 이미지 호스트</b>
+     * ({@code *.coupangcdn.com})만 허용하고, 한 번에 <b>10장까지</b>다. 하나라도 어긋나면 아무것도 내려받지
+     * 않고 400 이다. 형식은 응답 헤더가 아니라 <b>매직바이트</b>로 정한다(JPEG/PNG 만).</p>
+     *
+     * @return 덧붙인 뒤의 전체 갤러리(순서대로)
+     */
+    List<ProductImageResponse> addImagesFromUrls(Long productId, List<String> urls);
+
     /** The product's gallery in order. */
     List<ProductImageResponse> list(Long productId);
 

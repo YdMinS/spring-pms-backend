@@ -112,6 +112,28 @@ class ProductImageControllerTest extends BaseIntegrationTest {
     }
 
     @Test
+    void addFromUrls_admin_returns200WithGallery() throws Exception {
+        given(productImageService.addImagesFromUrls(anyLong(), any())).willReturn(List.of(resp()));
+        mockMvc.perform(post(BASE + "/from-url")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"urls\":[\"https://image1.coupangcdn.com/a.jpg\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1));
+    }
+
+    @Test
+    void addFromUrls_noToken_401_userToken_403() throws Exception {
+        String body = "{\"urls\":[\"https://image1.coupangcdn.com/a.jpg\"]}";
+        mockMvc.perform(post(BASE + "/from-url")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post(BASE + "/from-url").header("Authorization", "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void copyImages_emptyBody_400() throws Exception {
         mockMvc.perform(post(BASE + "/copy")
                         .header("Authorization", "Bearer " + adminToken)
