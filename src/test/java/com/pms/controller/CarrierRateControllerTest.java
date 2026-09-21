@@ -99,6 +99,27 @@ public class CarrierRateControllerTest extends BaseIntegrationTest {
     }
 
     @Test
+    public void testCreateCarrierRateWithoutEffectiveDateReturnsToday() throws Exception {
+        Long carrierId = createCarrierId("CJ대한통운");
+        String requestJson = objectMapper.writeValueAsString(
+                Map.of(
+                        "carrierId", carrierId,
+                        "type", "EXPRESS",
+                        "cost", new BigDecimal("15.50"),
+                        "isDefault", false
+                )
+        );
+
+        mockMvc.perform(post("/api/admin/carrier-rate")
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType("application/json")
+                .content(requestJson))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.effectiveDate").value(LocalDate.now().toString()));
+    }
+
+    @Test
     public void testCreateCarrierRateSetIsDefaultTrue() throws Exception {
         Long carrierId = createCarrierId("FedEx");
         String requestJson = objectMapper.writeValueAsString(

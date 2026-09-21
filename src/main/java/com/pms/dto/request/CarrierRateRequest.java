@@ -32,8 +32,8 @@ public class CarrierRateRequest {
     @Schema(description = "Delivery cost in currency", example = "15.50")
     private BigDecimal cost;
 
-    @NotNull(message = "effectiveDate is required")
-    @Schema(description = "Date when rate becomes effective", example = "2026-05-13")
+    // Optional: on create the server fills today when omitted; on update the existing value is kept.
+    @Schema(description = "가격이 적용되기 시작하는 날. 비우면 생성 시 오늘로 채워진다", example = "2026-05-13")
     private LocalDate effectiveDate;
 
     @NotNull(message = "isDefault is required")
