@@ -117,6 +117,26 @@ public class OrderClaim extends BaseEntity {
     @Column(name = "collect_carrier_code", length = 50)
     private String collectCarrierCode;
 
+    /**
+     * 회수 송장 값의 출처 (FEATURE_2609_70 / D12). null = 기존 행(출처 불명 → 플랫폼 값으로 취급).
+     *
+     * <p>{@code LOCAL} 은 쿠팡이 등록을 거절해 우리 장부에만 남은 값이며 재전송 대상이다(D7).
+     * 🔴 동기화는 <b>플랫폼 값이 있을 때만</b> 이 값을 {@code PLATFORM} 으로 덮는다(D13) —
+     * 그러지 않으면 다음 회차가 우리 기록을 지운다.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "collect_invoice_source", length = 20)
+    private CollectInvoiceSource collectInvoiceSource;
+
+    /**
+     * 쿠팡 {@code returnDeliveryType} 원문 — 전담택배 / 연동택배 / 수기관리 / 빈 값(D12).
+     *
+     * <p>우리 enum 으로 정규화하지 않는다({@code platformStatus} 와 같은 자세). 회수송장 액션의
+     * 판정 축이며 <b>블랙리스트</b>다(D2) — null·미지의 값은 <b>연다</b>.
+     */
+    @Column(name = "return_delivery_type", length = 30)
+    private String returnDeliveryType;
+
     @Column(name = "reship_invoice_no", length = 100)
     private String reshipInvoiceNo;                 // 교환 전용 (06 이 채운다)
 

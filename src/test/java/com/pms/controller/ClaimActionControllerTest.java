@@ -75,7 +75,7 @@ class ClaimActionControllerTest extends BaseIntegrationTest {
     @Test
     void executeAction_valid_returns200WithResult() throws Exception {
         given(claimActionService.execute(eq(1L), any())).willReturn(
-                new ClaimActionResponse(1L, ClaimAction.RETURN_COLLECT_INVOICE, true, "200", "OK"));
+                new ClaimActionResponse(1L, ClaimAction.RETURN_COLLECT_INVOICE, true, "200", "OK", false));
 
         mockMvc.perform(post("/api/admin/claims/1/actions")
                         .header("Authorization", "Bearer " + adminToken)
@@ -91,11 +91,45 @@ class ClaimActionControllerTest extends BaseIntegrationTest {
     }
 
     @Test
+    void executeAction_collectInvoiceRejectedButRecordedLocally_returns200() throws Exception {
+        // 🔴 회수 송장은 쿠팡이 거절해도 200 이다 — 우리 장부에는 남았기 때문이다(2609_70 / D6).
+        given(claimActionService.execute(eq(1L), any())).willReturn(new ClaimActionResponse(
+                1L, ClaimAction.RETURN_COLLECT_INVOICE, false, "400", "등록할 수 없는 상태입니다", true));
+
+        mockMvc.perform(post("/api/admin/claims/1/actions")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"RETURN_COLLECT_INVOICE\","
+                                + "\"deliveryCompanyCode\":\"CJGLS\",\"invoiceNumber\":\"123456789012\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.succeeded").value(false))
+                .andExpect(jsonPath("$.data.localRecordOnly").value(true))
+                .andExpect(jsonPath("$.data.resultMessage").value("등록할 수 없는 상태입니다"));
+    }
+
+    @Test
+    void executeAction_resendWithoutInvoiceFields_isNotRejectedByValidation() throws Exception {
+        // D9 의 근거 — requires=NONE 이라 액션만 실린 바디가 통과해야 한다(400 이면 재전송이 막힌다).
+        given(claimActionService.execute(eq(1L), any())).willReturn(new ClaimActionResponse(
+                1L, ClaimAction.RETURN_COLLECT_INVOICE_RESEND, true, "200", "OK", false));
+
+        mockMvc.perform(post("/api/admin/claims/1/actions")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"RETURN_COLLECT_INVOICE_RESEND\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.action").value("RETURN_COLLECT_INVOICE_RESEND"))
+                .andExpect(jsonPath("$.data.localRecordOnly").value(false));
+
+        verify(claimActionService).execute(eq(1L), any());
+    }
+
+    @Test
     void executeAction_coupangRejected_returns502WithRawCodeAndMessage() throws Exception {
         // 실패도 data 를 채운다 — 원문(D15)이 없으면 실계정 디버깅에서 검색이 안 된다.
         given(claimActionService.execute(eq(1L), any())).willThrow(
                 new com.pms.service.claim.ClaimActionFailedException(new ClaimActionResponse(
-                        1L, ClaimAction.RETURN_APPROVE, false, "400", "이미 처리된 반품입니다")));
+                        1L, ClaimAction.RETURN_APPROVE, false, "400", "이미 처리된 반품입니다", false)));
 
         mockMvc.perform(post("/api/admin/claims/1/actions")
                         .header("Authorization", "Bearer " + adminToken)

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.ClaimAction;
 import com.pms.domain.ClaimType;
+import com.pms.domain.CollectInvoiceSource;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
 import com.pms.domain.Platform;
@@ -23,6 +24,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -67,10 +69,22 @@ public class CoupangClaimActionAdapter implements ClaimActionAdapter {
      * 남긴 값이라 언제 저장됐는지 알 수 없다 — 낡았을 수 있는 상태에 되돌릴 수 없는 쓰기를 열지 않는다.
      */
     private static final Map<String, List<ClaimAction>> RETURN_ACTIONS_BY_STATUS = Map.of(
-            "RETURNS_UNCHECKED", List.of(
-                    ClaimAction.RETURN_RECEIVE_CONFIRM, ClaimAction.RETURN_COLLECT_INVOICE),
-            "VENDOR_WAREHOUSE_CONFIRM", List.of(
-                    ClaimAction.RETURN_APPROVE));
+            "RETURNS_UNCHECKED", List.of(ClaimAction.RETURN_RECEIVE_CONFIRM),
+            "VENDOR_WAREHOUSE_CONFIRM", List.of(ClaimAction.RETURN_APPROVE));
+
+    /**
+     * 회수종류(쿠팡 {@code returnDeliveryType}) <b>블랙리스트</b> — 이 값들만 회수 송장 액션을 닫는다
+     * (FEATURE_2609_70 / D2).
+     *
+     * <p>전담택배·연동택배는 쿠팡·굿스플로가 송장을 붙여 주므로 우리가 넣을 일이 없고,
+     * 빈 값은 <i>고객이 직접 발송했거나 회수할 상품이 없다</i>는 뜻이라 넣을 송장 자체가 없다.
+     *
+     * <p>🔴 화이트리스트가 아니라 블랙리스트인 이유: 「수기관리」가 실제로 어떤 문자열로 오는지
+     * <b>미검증</b>이다. 모르는 값에서 버튼이 안 보이는 쪽이 더 비싸다 — 여기는 값 기록이고 잘못
+     * 눌러도 쿠팡이 거절할 뿐이다(2609_21 D3 의 화이트리스트 원칙과 반대로 가는 유일한 자리).
+     */
+    private static final Set<String> COLLECT_INVOICE_CLOSED_DELIVERY_TYPES =
+            Set.of("전담택배", "연동택배", "");
 
     /**
      * 교환의 {@code platform_status} 원문 → 회수상태와 무관하게 열리는 액션.
@@ -106,18 +120,60 @@ public class CoupangClaimActionAdapter implements ClaimActionAdapter {
 
     @Override
     public List<ClaimActionOption> availableActions(OrderClaim claim, Set<ClaimAction> alreadySucceeded) {
-        String status = normalize(claim.getPlatformStatus());
-        if (status == null) {
-            return List.of();                       // D3 — 모르면 열지 않는다
+        List<ClaimAction> candidates = new ArrayList<>();
+
+        // 🔴 회수 송장 판정은 아래 조기 반환보다 **위**에 둔다(FEATURE_2609_70 / D1).
+        //    진행 상태가 비었거나 모르는 값인 건이야말로 D2 가 열어주려는 대상이다 —
+        //    조기 반환 아래에 두면 후보를 만들기도 전에 끝난다.
+        if (claim.getClaimType() != ClaimType.EXCHANGE) {
+            collectInvoiceAction(claim).ifPresent(candidates::add);
         }
-        List<ClaimAction> candidates = (claim.getClaimType() == ClaimType.EXCHANGE)
-                ? exchangeCandidates(status, normalize(claim.getCollectStatus()))
-                : RETURN_ACTIONS_BY_STATUS.getOrDefault(status, List.of());
+
+        String status = normalize(claim.getPlatformStatus());
+        if (status != null) {                       // D3 — 모르면 (나머지 액션은) 열지 않는다
+            candidates.addAll((claim.getClaimType() == ClaimType.EXCHANGE)
+                    ? exchangeCandidates(status, normalize(claim.getCollectStatus()))
+                    : RETURN_ACTIONS_BY_STATUS.getOrDefault(status, List.of()));
+        }
 
         return candidates.stream()
                 .filter(action -> !alreadySucceeded.contains(action))
                 .map(this::toOption)
                 .toList();
+    }
+
+    /**
+     * 반품 회수 송장 액션 판정 — <b>{@code platform_status} 를 보지 않는다</b>(D1).
+     *
+     * <p>🔴 2609_21 D3(모르면 열지 않는다)의 <b>유일한 예외</b>다. 회수는 반품 진행 상태와 별개
+     * 트랙이고(쿠팡이 회수 송장을 기다리지 않고 바로 완료 처리하는 접수가 실재한다), 등록 창구
+     * 이름부터 {@code return-exchange-invoices/manual} 이다. 게다가 이 액션은 <b>값 기록</b>이라
+     * 되돌릴 수 없는 입고확인·승인과 위험 등급이 다르다 — 그래서 상태 화이트리스트를 쓰지 않는다.
+     *
+     * <ul>
+     *   <li>송장 없음 + 회수종류가 블랙리스트 밖 → {@code RETURN_COLLECT_INVOICE}</li>
+     *   <li>송장 있음 + 출처가 {@code LOCAL} → {@code RETURN_COLLECT_INVOICE_RESEND}(D7)</li>
+     *   <li>그 밖(이미 쿠팡에 붙어 있다) → 액션 없음(D5 — 덮어쓰기 금지)</li>
+     * </ul>
+     */
+    private Optional<ClaimAction> collectInvoiceAction(OrderClaim claim) {
+        String invoiceNo = claim.getCollectInvoiceNo();
+        if (invoiceNo == null || invoiceNo.isBlank()) {
+            return collectInvoiceExpected(claim.getReturnDeliveryType())
+                    ? Optional.of(ClaimAction.RETURN_COLLECT_INVOICE)
+                    : Optional.empty();
+        }
+        return (claim.getCollectInvoiceSource() == CollectInvoiceSource.LOCAL)
+                ? Optional.of(ClaimAction.RETURN_COLLECT_INVOICE_RESEND)
+                : Optional.empty();
+    }
+
+    /** 블랙리스트 비교(D2) — {@code null}·미지의 값은 <b>연다</b>. 공백은 제거하고 비교한다. */
+    private boolean collectInvoiceExpected(String returnDeliveryType) {
+        if (returnDeliveryType == null) {
+            return true;
+        }
+        return !COLLECT_INVOICE_CLOSED_DELIVERY_TYPES.contains(returnDeliveryType.replaceAll("\\s", ""));
     }
 
     /**
@@ -163,6 +219,7 @@ public class CoupangClaimActionAdapter implements ClaimActionAdapter {
             case RETURN_COLLECT_INVOICE -> post(
                     path(coupangProperties.getReturnExchangeInvoicePath(), account, receiptId),
                     collectInvoiceBody(account, receiptId, command, DELIVERY_TYPE_RETURN), account);
+            case RETURN_COLLECT_INVOICE_RESEND -> resendCollectInvoice(account, anchor, receiptId);
 
             case EXCHANGE_RECEIVE_CONFIRM -> patch(
                     path(coupangProperties.getExchangeReceiveConfirmPath(), account, receiptId),
@@ -253,6 +310,61 @@ public class CoupangClaimActionAdapter implements ClaimActionAdapter {
             body.put("regNumber", command.regNumber().trim());
         }
         return body;
+    }
+
+    /**
+     * 회수 송장 재전송 (FEATURE_2609_70 / D7~D9).
+     *
+     * <p>엔드포인트·바디는 등록(R3)과 <b>완전히 같다</b> — 다른 것은 값의 출처뿐이다.
+     * 🔴 요청에 실려 온 송장·택배사는 <b>쓰지 않는다</b>({@code requires=NONE} 이라 비어 오지만,
+     * 실려 와도 무시한다). 다른 번호가 들어오면 그건 D5 가 막은 <b>수정</b>이다.
+     *
+     * <p>보내기 직전에 그 접수를 단건 조회해(D8) 이미 쿠팡에 회수 송장이 붙어 있으면
+     * <b>전송하지 않고</b> 성공으로 돌려준다 — 서비스가 출처를 {@code PLATFORM} 으로 맞춰
+     * 재전송 버튼이 닫힌다. 클릭당 쿠팡 호출 2회는 <b>명시적 버튼에서만</b> 늘어난다.
+     */
+    private ClaimActionOutcome resendCollectInvoice(MarketplaceAccount account, OrderClaim anchor,
+                                                    long receiptId) {
+        String invoiceNumber = anchor.getCollectInvoiceNo();
+        if (invoiceNumber == null || invoiceNumber.isBlank()) {
+            // 있을 수 없지만(액션 자체가 송장이 있을 때만 열린다) 빈 송장을 보내지 않는다.
+            throw new IllegalArgumentException("저장된 회수 송장이 없어 다시 보낼 수 없습니다");
+        }
+
+        // 단건 조회 1회 + 송장 1회 = 이 액션만 클릭당 쿠팡 호출이 2번이다(429 조사 때 보이게 남긴다).
+        log.info("Collect invoice resend: re-querying the return receipt (2 Coupang calls): receiptId={}",
+                receiptId);
+        if (hasCollectInvoice(fetchReturnReceipt(account, receiptId))) {
+            return new ClaimActionOutcome(true, "ALREADY_REGISTERED",
+                    "쿠팡에 이미 회수 송장이 등록돼 있습니다");
+        }
+
+        ClaimActionCommand stored = new ClaimActionCommand(ClaimAction.RETURN_COLLECT_INVOICE_RESEND,
+                anchor.getCollectCarrierCode(), invoiceNumber, null, null);
+        return post(path(coupangProperties.getReturnExchangeInvoicePath(), account, receiptId),
+                collectInvoiceBody(account, receiptId, stored, DELIVERY_TYPE_RETURN), account);
+    }
+
+    /** 반품 접수 단건 조회. 파싱 실패는 "붙어 있는지 모른다" = 빈 노드(→ 전송 시도). */
+    private JsonNode fetchReturnReceipt(MarketplaceAccount account, long receiptId) {
+        String response = coupangApiClient.get(
+                path(coupangProperties.getReturnRequestSinglePath(), account, receiptId), "", account);
+        try {
+            return objectMapper.readTree(response).path("data");
+        } catch (Exception e) {
+            log.warn("반품 접수 단건 조회 응답 파싱 실패: receiptId={}", receiptId);
+            return objectMapper.createObjectNode();
+        }
+    }
+
+    /** 응답의 회수 배송 목록에 운송장 번호가 하나라도 있는가(필드명 alias 는 파서와 같은 규칙). */
+    private boolean hasCollectInvoice(JsonNode receipt) {
+        for (JsonNode delivery : receipt.path("returnDeliveryDtos")) {
+            if (firstText(delivery, "deliveryInvoiceNo", "invoiceNumber") != null) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Map<String, Object> exchangeBody(MarketplaceAccount account, long exchangeId) {

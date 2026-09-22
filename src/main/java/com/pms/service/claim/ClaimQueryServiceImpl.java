@@ -120,6 +120,8 @@ public class ClaimQueryServiceImpl implements ClaimQueryService {
                 claim.getReturnShippingCharge(),
                 claim.getCollectInvoiceNo(),
                 claim.getCollectCarrierCode(),
+                (claim.getCollectInvoiceSource() != null) ? claim.getCollectInvoiceSource().name() : null,
+                claim.getReturnDeliveryType(),
                 claim.getReshipInvoiceNo(),
                 claim.getReshipCarrierCode(),
                 claim.getRequesterName(),

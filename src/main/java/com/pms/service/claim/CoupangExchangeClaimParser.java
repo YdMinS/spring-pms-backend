@@ -80,6 +80,7 @@ public class CoupangExchangeClaimParser {
                     firstText(reshipDelivery, "deliveryInvoiceNo"),
                     firstText(reshipDelivery, "deliveryCompanyCode"),
                     firstText(receipt, "requesterName"),        // D19 — 이름만
+                    null,                                       // returnDeliveryType — 반품 전용
                     receivedAt,
                     CoupangTimestamps.parse(firstText(receipt, "modifiedAt"))));
         }
