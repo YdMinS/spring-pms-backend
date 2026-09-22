@@ -33,9 +33,9 @@ import java.util.stream.Collectors;
  *       → MasterProductOptionItem[]              (product × quantity)
  * </pre>
  *
- * <p>🔴 <b>정본은 마스터 BOM 이다</b>(D13). 채널 셀 BOM({@code ProductListingProduct})은 사본이고
- * 셀 전용 라인이 허용돼 채널마다 소진량이 갈릴 수 있다 — {@code OptionQuantitySync} javadoc 이 말하는
- * "마스터가 authoritative" 가 그 근거다. 이 클래스는 셀 BOM 리포지토리를 <b>주입받지 않는다</b>.
+ * <p>🔴 <b>정본은 마스터 BOM 이다</b>(D13). 2609_71 이 셀 BOM 사본({@code product_listing_product})을
+ * 없애면서 이 클래스가 원래 보고 있던 경로가 <b>유일한 경로</b>가 됐다 — 이제 구성품을 읽는 곳은 전부
+ * {@code masterProductOption → MasterProductOptionItem[]} 를 탄다.
  *
  * <p>🔴 <b>전개 실패를 조용히 넘기지 않는다.</b> {@code continue} 로 삼키면 재고가 조용히 틀리지만,
  * 실패를 목록으로 돌려주면 <b>목록 누락</b>으로 드러나 사람이 보고 고칠 수 있다(D13). 실패 사유는

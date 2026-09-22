@@ -134,19 +134,23 @@ class OrderLineExpanderTest {
     }
 
     /**
-     * 🔴 채널 셀 BOM 은 전개에 쓰지 않는다(D13). 셀 BOM 이 5 를 말해도 결과는 마스터 값(2×3=6)이다 —
-     * 이 클래스에는 {@code ProductListingProductRepository} 가 아예 주입되지 않으므로 셀 값을 볼 방법이 없다.
+     * 🔴 구성품의 정본은 마스터 BOM 하나다(D13). 2609_71 이 채널 셀 사본을 없앤 뒤로 이 클래스가 보던 경로가
+     * 유일한 경로가 됐다 — 소진량은 언제나 마스터 옵션 item × 주문 수량(2×3=6)이다.
      */
     @Test
-    void testDoesNotUseChannelCellBom() {
+    void testExpandsFromTheMasterBomOnly() {
         given(masterProductOptionItemRepository.findWithProductByOptionIdIn(anyCollection()))
-                .willReturn(List.of(bomItem(2)));   // 셀 BOM 은 같은 물품에 5 를 들고 있다고 가정
+                .willReturn(List.of(bomItem(2)));
 
         OrderLineExpander.LineExpansion result = expand(line(listingOption(masterOption()), 3)).get(LINE_ID);
 
         assertThat(result.products()).singleElement()
                 .satisfies(p -> assertThat(p.quantity()).isEqualTo(6));
+        // 구성품을 읽는 리포지토리는 마스터 쪽 하나뿐 — 두 번째 출처가 다시 생기면 여기서 걸린다.
         assertThat(OrderLineExpander.class.getDeclaredFields())
-                .noneMatch(f -> f.getType().getSimpleName().contains("ProductListingProduct"));
+                .filteredOn(f -> f.getType().getSimpleName().endsWith("ItemRepository"))
+                .singleElement()
+                .satisfies(f -> assertThat(f.getType().getSimpleName())
+                        .isEqualTo("MasterProductOptionItemRepository"));
     }
 }

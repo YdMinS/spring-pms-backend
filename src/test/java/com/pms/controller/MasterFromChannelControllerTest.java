@@ -24,7 +24,6 @@ import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.RefreshTokenRepository;
@@ -95,7 +94,6 @@ class MasterFromChannelControllerTest {
     @Autowired private MasterProductOptionItemRepository masterProductOptionItemRepository;
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
-    @Autowired private ProductListingProductRepository productListingProductRepository;
     @Autowired private GeneratedProductDataRepository generatedProductDataRepository;
     @Autowired private PriceChangeLogRepository priceChangeLogRepository;
     @Autowired private ImageStorageService imageStorageService;
@@ -186,7 +184,6 @@ class MasterFromChannelControllerTest {
         // 2609_47: 생성 직후 자동생성이 산출물·가격이력을 남길 수 있다 — 셀보다 먼저 지운다(FK).
         priceChangeLogRepository.deleteAll();
         generatedProductDataRepository.deleteAll();
-        productListingProductRepository.deleteAll();
         productListingOptionRepository.deleteAll();
         productListingRepository.deleteAll();
         credentialRepository.deleteAll();          // FK child first

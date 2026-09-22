@@ -20,11 +20,13 @@ import java.util.Map;
  *
  * Relationships:
  * - N ProductListingOptions : 1 ProductListing
- * - 1 ProductListingOption : N ProductListingProducts (via ProductListingProduct.productListingOption)
+ * - N ProductListingOptions : 1 MasterProductOption (masterProductOption FK; null = 채널 전용 옵션)
  *
  * Business Rules:
  * - This is the actual business unit for order/shipment processing
- * - Each option can be composed of multiple products (bundle support)
+ * - 🔴 구성품(물품 × 수량)은 이 옵션이 갖지 않는다 (FEATURE_2609_71). masterProductOption 을 타고
+ *   master_product_option_item 에서 읽으며, 읽는 창구는 CellBomResolver 하나다. 채널 전용 옵션은
+ *   마스터가 없어 구성품을 알 수 없다 — 「0개」가 아니라 「미매핑」이다.
  * - sellingPrice is used as the base for margin calculation:
  *   Margin = sellingPrice - (product costs × qty) - commission - delivery - package
  *
@@ -32,7 +34,7 @@ import java.util.Map;
  * dates the approval data ({@code approval_status}/{@code platform_option_id}) written by {@code fetchStatus}.</p>
  *
  * @see com.pms.domain.ProductListing for the parent listing
- * @see com.pms.domain.ProductListingProduct for product composition
+ * @see com.pms.domain.MasterProductOptionItem 구성품의 정본 (masterProductOption 을 타고 읽는다)
  */
 @Entity
 @Table(name = "product_listing_option")

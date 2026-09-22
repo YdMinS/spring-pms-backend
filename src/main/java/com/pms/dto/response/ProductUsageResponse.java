@@ -5,15 +5,14 @@ import java.util.List;
 /**
  * Where a single product is currently used (FEATURE_2609_69 / A).
  *
- * <p>Two kinds of links block deletion and are <b>never migrated automatically</b> (PLAN D6-a) — the
- * operator has to unlink them by hand, the same rule that makes a master require its options to be
- * removed first:</p>
+ * <p>Links block deletion and are <b>never migrated automatically</b> (PLAN D6-a) — the operator has to
+ * unlink them by hand, the same rule that makes a master require its options to be removed first:</p>
  * <ul>
  *   <li>{@code masterProducts} — {@code master_product_component}, the real master ↔ product mapping.
  *       Unlinked on the master product screen.</li>
- *   <li>{@code listingOptions} — {@code product_listing_product}, the legacy channel-cell composition.
- *       Unlinked on the listing (cell) screen; clearing the master link does <b>not</b> release it
- *       (PLAN D11).</li>
+ *   <li>{@code listingOptions} — 그 마스터를 쓰는 채널 옵션들. 🔴 2609_71 이후 <b>끊는 곳은 마스터 한
+ *       군데</b>다: 셀 구성품 사본이 사라져 이 목록은 마스터 옵션 items 를 FK 로 따라 내려온 파급 범위이며,
+ *       비어 있지 않으면 {@code masterProducts} 도 반드시 비어 있지 않다.</li>
  * </ul>
  *
  * <p>{@code master_product_option_item} is not an independent mapping — it is the quantity vector over
@@ -25,7 +24,7 @@ import java.util.List;
  *
  * @param productId       the inspected product
  * @param masterProducts  masters composed of this product
- * @param listingOptions  channel listing options composed of this product
+ * @param listingOptions  channel listing options composed of this product (resolved through the master)
  * @param history         per-table row counts of past records
  * @param deletable       true only when both link lists are empty
  * @param blockers        Korean noun phrases naming what blocks deletion and where to unlink it; the
@@ -46,7 +45,11 @@ public record ProductUsageResponse(
     /** One entry of a master option's quantity vector for this product. */
     public record OptionQty(Long optionId, String optionName, Integer quantity) {}
 
-    /** A channel listing option that contains this product. */
+    /**
+     * A channel listing option that contains this product.
+     *
+     * @param quantity 마스터 옵션이 정한 수량(2609_71) — 채널마다 다른 수량은 더 이상 존재하지 않는다
+     */
     public record ListingOptionRef(Long id, String name, Long marketplaceAccountId, String accountAlias,
                                    String platform, Integer quantity, String status) {}
 

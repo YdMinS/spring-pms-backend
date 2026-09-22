@@ -1,0 +1,34 @@
+# 셀 BOM 제거 — 마스터 BOM 이 정본 (FEATURE_2609_71 / PLAN D5 · 04).
+#
+# product_listing_product(셀 옵션 ↔ 물품 ↔ 수량)는 마스터 상품이 생기기 전에 기획된 구조이고,
+# master_product_option_item 이 같은 정보를 이미 갖고 있었다 — 두 벌이 공존했다. 01 이 읽기를 전부
+# CellBomResolver(마스터 경유)로 옮겼고, 04 가 쓰기를 전부 없앴다. 이 changeset 은 남은 테이블을 지운다.
+#
+# 🔴 비가역이다. rollback 은 빈 테이블을 되돌릴 뿐 값은 되살리지 못한다. 보험은 배포 게이트의 자동 백업뿐.
+#
+# ✅ 삭제 전 전량 조사 (prod, 2026-09-22, 조회만 — 표본이 아니라 전량 2,176 셀):
+#     ① 채널 전용 옵션 (master_product_option_id IS NULL)          0
+#     ② 셀 전용 BOM 라인 (마스터 옵션 items 에 없는 물품)           0
+#     ③ 마스터 ↔ 셀 수량 어긋남                                     0
+#     ④ 삭제 전 셀 BOM 라인 수                                  2,420   (옵션 2,419 · 셀 2,176)
+#    → 이 테이블은 마스터 BOM 의 정확한 사본이다. 지워도 잃는 정보가 없다.
+#
+# 🔴 FK 를 이름으로 drop 하지 않는다. dev 는 001-baseline 이 changelogSync 로 들어가 제약 이름이
+#    Hibernate 자동 이름이라 prod 와 다를 수 있다(2026-09-12 실제 사고). dropTable 이 FK 까지 함께 지운다.
+databaseChangeLog:
+
+  - changeSet:
+      id: 097-drop-product-listing-product
+      author: oclyx
+      comment: "FEATURE_2609_71: drop product_listing_product — the master BOM is the single source (full-population survey: 0/0/0, 2420 rows dropped)."
+      changes:
+        - dropTable:
+            tableName: product_listing_product
+      rollback:
+        - createTable:
+            tableName: product_listing_product
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: product_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: product_listing_option_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: quantity, type: INT, constraints: { nullable: false } }

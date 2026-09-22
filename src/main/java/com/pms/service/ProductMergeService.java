@@ -40,9 +40,9 @@ import java.util.Set;
  * move to the target; the source is then soft-deleted through the ordinary guarded delete. Everything runs
  * in one transaction — a failure leaves both products exactly as they were (PLAN D6).</p>
  *
- * <p>🔴 <b>Links are never migrated</b> (PLAN D6-a): {@code master_product_component} and
- * {@code product_listing_product} stay put. A source that still carries one is refused with 409 <b>before</b>
- * any row moves — migrating history first and then failing the delete would make the operator come back.</p>
+ * <p>🔴 <b>Links are never migrated</b> (PLAN D6-a): {@code master_product_component} rows stay put. A source
+ * that still carries one is refused with 409 <b>before</b> any row moves — migrating history first and then
+ * failing the delete would make the operator come back.</p>
  *
  * <p>🔴 <b>No cost recalculation is triggered</b> (PLAN D10). A line's cost is baked in when it ships, so
  * moving purchase history cannot change what already left; future lines using the surviving product's

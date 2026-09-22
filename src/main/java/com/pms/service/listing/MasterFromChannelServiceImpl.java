@@ -10,7 +10,6 @@ import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterFromChannelPreviewRequest;
@@ -26,7 +25,6 @@ import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
@@ -58,9 +56,12 @@ import java.util.stream.Collectors;
 /**
  * 마켓 상품으로 마스터 만들기(FEATURE_2609_45 / 01). See {@link MasterFromChannelService}.
  *
- * <p>구조는 {@link CoupangListingImportServiceImpl}(검증 → 마켓 1회 읽기 → 옵션 확정 → 셀 → 셀 옵션·BOM)과
- * {@link ListingMasterCreateServiceImpl}(마스터는 {@code masterProductService} 경로로만 만든다)의 합이다.
- * 커밋도 같은 검증을 처음부터 다시 돈다(미리보기를 건너뛴 직접 호출 방어).</p>
+ * <p>구조는 {@link CoupangListingImportServiceImpl}(검증 → 마켓 1회 읽기 → 옵션 확정 → 셀 → 셀 옵션)을 따르되
+ * 마스터를 먼저 만든다({@code masterProductService} 경로로만 만든다). 커밋도 같은 검증을 처음부터 다시 돈다
+ * (미리보기를 건너뛴 직접 호출 방어).</p>
+ *
+ * <p>🔴 2609_71/D9: 「미연결 셀 → 마스터」 승격 경로는 사라졌다. 떼어낸 셀을 새 마스터로 올리는 시나리오는
+ * <b>이 서비스</b>가 담당한다 — 재료를 마켓에서 다시 받아오므로 셀 구성품 사본이 필요 없다.</p>
  *
  * <p>🔴 <b>2609_45/D5("얕은 생성") 번복(2609_47/D1)</b>: 이 서비스는 {@link com.pms.service.ListingAssetService}
  * 에 <b>의존한다</b>. 자동생성은 <b>로컬 산출물(썸네일·상세·판매가)만</b> 만들고 마켓 전송은
@@ -84,7 +85,6 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
-    private final ProductListingProductRepository productListingProductRepository;
     private final ProductRepository productRepository;
     private final MasterProductRepository masterProductRepository;
     private final MasterProductOptionRepository masterProductOptionRepository;
@@ -274,7 +274,7 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
                 .tags(fetched.tags().isEmpty() ? null : new ArrayList<>(fetched.tags()))
                 .build());
 
-        // --- 5) 셀 옵션 + 6) 셀 BOM
+        // --- 5) 셀 옵션 (구성품은 4)에서 만든 마스터 옵션이 갖는다 — 2609_71)
         // 마스터 옵션은 엔티티가 필요하므로(FK) 다시 읽는다 — createMasterProduct 는 MasterProductResponse 를
         // 돌려주어 FK 를 걸 엔티티가 없다. 매칭 축은 이름이고, 1)이 마켓 itemName 그대로 만들었으며 옵션명
         // 중복은 fetchProduct 가 앞에서 막았다(D7). ⚠️ 2609_22/D1 의 "매칭 축은 옵션 id, 이름이 아니다" 에
@@ -290,14 +290,6 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
         Map<MasterFromChannelRequest.OptionSpec, ProductListingOption> reuseBySpec =
                 matchExistingOptions(request.getOptions(), pairs, existingOptions);
 
-        // 🔴 재사용할 옵션의 BOM <b>만</b> 지운다. 셀 전체를 지우면 아래에서 비활성으로 내릴 잔여 옵션의 구성까지
-        // 사라지고, 구성이 빈 옵션은 「미연결 셀 → 마스터 생성」을 영구히 막는다(2609_63/D6-1).
-        if (!reuseBySpec.isEmpty()) {
-            productListingProductRepository.deleteByProductListingOptionIdIn(
-                    reuseBySpec.values().stream().map(ProductListingOption::getId).toList());
-            productListingProductRepository.flush();   // 아래 insert 보다 먼저 실행돼야 한다
-        }
-
         for (MasterFromChannelRequest.OptionSpec spec : request.getOptions()) {
             ImportedProduct.Option market = pairs.get(spec);
             MasterProductOption masterOption = masterOptionsByName.get(trimmed(market.itemName()));
@@ -309,7 +301,7 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
             ProductListingOption reusable = reuseBySpec.get(spec);
             ProductListingOption.ProductListingOptionBuilder optionBuilder =
                     reusable != null ? reusable.toBuilder() : ProductListingOption.builder();
-            ProductListingOption listingOption = productListingOptionRepository.save(optionBuilder
+            productListingOptionRepository.save(optionBuilder
                     .productListing(cell)
                     // 🔴 2609_66/D4: 해제 때 null 이 된 FK 를 이번에 만든 새 마스터 옵션으로 채운다.
                     .masterProductOption(masterOption)                     // FK
@@ -338,13 +330,6 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
                     .categoryAttributes(keepsOwnCategory ? emptyToNull(market.attributes()) : null)
                     .categoryNotices(keepsOwnCategory ? emptyToNull(market.notices()) : null)
                     .build());
-            for (MasterFromChannelRequest.Component component : spec.getComponents()) {
-                productListingProductRepository.save(ProductListingProduct.builder()
-                        .productListingOption(listingOption)
-                        .product(componentProducts.get(component.getProductId()))
-                        .quantity(component.getQuantity())
-                        .build());
-            }
         }
 
         // 마켓에 더 이상 없는 잔여 옵션은 비활성으로 내린다 — 🔴 지우지 않는다(주문·정산·가격이력 FK).

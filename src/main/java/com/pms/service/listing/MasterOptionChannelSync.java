@@ -25,10 +25,9 @@ import com.pms.domain.ProductListing;
  *       the push payload ({@code CoupangListingAdapter} items[] = ACTIVE only), channel options may have been
  *       hand-made through the legacy path (indistinguishable from leftovers), and the row must survive for
  *       re-activation, order mapping and {@code fetchStatus} name matching.</li>
- *   <li><b>The BOM lines under an option ARE rebuilt</b> — they are derived from the master. A re-added option
- *       reuses its existing channel row but has its lines replaced from the master items, never merged: reusing
- *       {@link OptionQuantitySync} here would only touch products present on both sides and leave a deleted
- *       option's stale composition (and therefore a wrong cost and price) in place.</li>
+ *   <li><b>구성품은 복사하지 않는다</b>(2609_71) — 셀 옵션의 구성품은 {@code master_product_option_id} FK 를
+ *       타고 마스터 옵션의 items 에서 곧바로 읽는다({@code CellBomResolver}). 「재추가된 옵션에 옛 구성이
+ *       남는다」는 문제 자체가 없고, 이 컴포넌트는 옵션 행이 마스터 옵션을 제대로 가리키는지만 책임진다.</li>
  * </ul>
  *
  * <p>⚠️ No {@code @Transactional} anywhere in this component — every method joins the caller's transaction
@@ -46,17 +45,17 @@ import com.pms.domain.ProductListing;
  * <p>❌ Do not call the master-scoped hooks from a per-cell loop — see {@link #syncStructure(ProductListing)}.</p>
  *
  * @see MasterOptionChannelSyncImpl
- * @see OptionQuantitySync quantities only; this component owns structure
  */
 public interface MasterOptionChannelSync {
 
     /**
      * A master option was created → give every cell of that master the option: a new row
-     * ({@code active=false}) where it is missing, or a BOM rebuild where a same-named row already exists
-     * (a re-added option reuses the old row, {@code active} untouched).
+     * ({@code active=false}) where it is missing. A cell that already has a row linked to this master option
+     * keeps it untouched (a re-added option reuses the old row, {@code active} untouched) — its 구성품은
+     * FK 를 타고 자동으로 새 items 를 따른다(2609_71).
      *
      * @param masterId the master whose cells receive the option
-     * @param option   the freshly persisted master option (its items are the BOM source)
+     * @param option   the freshly persisted master option
      */
     void onOptionCreated(Long masterId, MasterProductOption option);
 
@@ -78,8 +77,8 @@ public interface MasterOptionChannelSync {
 
     /**
      * A master option is about to be deleted → switch every cell option <b>linked to it</b> off
-     * ({@code active=false}). Rows and BOM lines are kept (see the class note); prices of the remaining
-     * options do not move, so no price recalculation is triggered.
+     * ({@code active=false}). Rows are kept (see the class note); prices of the remaining options do not
+     * move, so no price recalculation is triggered.
      *
      * <p>⚠️ Call this <b>before</b> deleting the master option row: the FK is {@code ON DELETE SET NULL}
      * (changeset 060), so afterwards nothing points at it any more. After the delete those rows are
@@ -90,20 +89,17 @@ public interface MasterOptionChannelSync {
     void onOptionRemoved(Long masterId, Long masterOptionId);
 
     /**
-     * 마스터 옵션의 <b>구성(상품 집합)</b> 이 바뀌었다 → 이 옵션에 연결된 모든 셀 옵션의 BOM 을 통째로 교체한다
-     * (2609_64).
+     * 마스터 옵션의 <b>구성(상품 집합)</b> 이 바뀌었다 → 이 옵션에 연결된 셀들의 <b>판매가를 다시 계산</b>한다
+     * (2609_64 + 2609_71).
      *
-     * <p>⚠️ {@link OptionQuantitySync} 로는 안 된다 — 그쪽은 <b>수량 전용</b>이라 productId 로 매칭되는 줄의
-     * 수량만 고치고, 새 구성상품 줄을 추가하지도 빠진 줄을 지우지도 않는다(그 컴포넌트의 계약).
-     * 구성이 바뀐 뒤 그걸 태우면 셀 BOM 이 옛 상품을 문 채 남아 원가 합과 판매가 역산이 틀어진다.</p>
-     *
-     * <p>가격은 BOM 교체 직후 다시 계산된다({@code recalculateOptionPrices}). 마켓 재승인 표시는 여기서
-     * 하지 않는다 — 호출부(2609_64 서비스)가 셀 단위로 판단한다.</p>
+     * <p>2609_71: 셀에 구성품 사본이 없으므로 교체할 줄이 없다 — 구성품은 FK 를 타고 마스터 옵션의 items 를
+     * 그대로 따른다. 남는 일은 바뀐 원가 합을 판매가에 반영하는 것뿐이다({@code recalculateOptionPrices}).
+     * 마켓 재승인 표시는 여기서 하지 않는다 — 호출부(2609_64 서비스)가 셀 단위로 판단한다.</p>
      *
      * <p>⚠️ 이 옵션을 갖지 않은 셀에는 행을 만들지 않는다. "구성이 바뀌었다"이지 "옵션이 생겼다"가 아니다 —
      * 그 경우는 {@link #onOptionCreated}/{@link #syncStructure} 소관이다.</p>
      *
-     * @param option BOM 원본이 될, 이미 새 items 로 저장된 마스터 옵션
+     * @param option 이미 새 items 로 저장된 마스터 옵션
      */
     void onOptionComponentsChanged(Long masterId, MasterProductOption option);
 

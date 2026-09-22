@@ -12,7 +12,6 @@ import com.pms.domain.PlatformCategory;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterFromChannelPreviewRequest;
@@ -28,7 +27,6 @@ import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
@@ -75,7 +73,6 @@ class MasterFromChannelServiceTest {
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock private ProductListingRepository productListingRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
-    @Mock private ProductListingProductRepository productListingProductRepository;
     @Mock private ProductRepository productRepository;
     @Mock private MasterProductRepository masterProductRepository;
     @Mock private MasterProductOptionRepository masterProductOptionRepository;
@@ -211,7 +208,6 @@ class MasterFromChannelServiceTest {
     private void verifyNothingSaved() {
         verify(productListingRepository, never()).save(any());
         verify(productListingOptionRepository, never()).save(any());
-        verify(productListingProductRepository, never()).save(any());
         verify(masterProductService, never()).createMasterProduct(any());
     }
 
@@ -638,13 +634,8 @@ class MasterFromChannelServiceTest {
         ProductListingOption leftover = optionCaptor.getAllValues().get(1);
         assertThat(leftover.getId()).isEqualTo(72L);
         assertThat(leftover.getActive()).isFalse();
-        // 🔴 BOM 삭제는 재사용 옵션 것만 — 잔여 옵션(72)의 구성은 남아야 한다(D3).
-        verify(productListingProductRepository).deleteByProductListingOptionIdIn(List.of(71L));
-        // 🔴 지운 자리에 새 구성이 써진다 = 이 기능의 존재 이유(잘못 매핑된 셀을 바로잡는 경로).
-        ArgumentCaptor<ProductListingProduct> bomCaptor = ArgumentCaptor.forClass(ProductListingProduct.class);
-        verify(productListingProductRepository).save(bomCaptor.capture());
-        assertThat(bomCaptor.getValue().getProductListingOption().getId()).isEqualTo(71L);
-        assertThat(bomCaptor.getValue().getProduct().getId()).isEqualTo(PRODUCT_A);
+        // 🔴 2609_71: 구성품 사본은 없다 — 재사용 옵션이 새 마스터 옵션(300)을 가리키게 된 위 FK 가
+        //    곧 「잘못 매핑된 셀을 바로잡는다」의 전부다.
     }
 
     /** 남의 판매자 셀은 재사용 대상이 아니다 — 마켓 조회 <b>전에</b> 막힌다. */

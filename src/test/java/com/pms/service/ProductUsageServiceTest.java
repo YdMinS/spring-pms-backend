@@ -10,7 +10,6 @@ import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.response.ProductUsageResponse;
 import com.pms.exception.ResourceNotFoundException;
@@ -19,7 +18,7 @@ import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.PriceChangeLogRepository;
 import com.pms.repository.ProductImageRepository;
-import com.pms.repository.ProductListingProductRepository;
+import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.ShipmentParcelItemRepository;
@@ -38,6 +37,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -61,7 +61,7 @@ class ProductUsageServiceTest {
     @Mock
     private MasterProductOptionItemRepository masterProductOptionItemRepository;
     @Mock
-    private ProductListingProductRepository productListingProductRepository;
+    private ProductListingOptionRepository productListingOptionRepository;
     @Mock
     private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock
@@ -105,15 +105,18 @@ class ProductUsageServiceTest {
         return MasterProductOptionItem.builder().option(option).product(product).quantity(qty).build();
     }
 
-    private ProductListingProduct listingLine(Long optionId, String optionName, int quantity) {
+    /**
+     * 2609_71: 셀 옵션은 마스터 옵션을 FK 로 물고, 수량은 <b>마스터 옵션이 정한다</b> — 셀마다 다른 수량이라는
+     * 개념이 없어졌다. 그래서 역방향 조회도 (마스터 옵션 item → 연결된 셀 옵션) 순서로 흐른다.
+     */
+    private ProductListingOption cellOption(Long optionId, String optionName, MasterProductOption master) {
         Seller seller = Seller.builder().id(3L).sellerName("판매자").businessRegistration("123").build();
         ProductListing listing = ProductListing.builder()
                 .id(11L).name("셀").platform(Platform.COUPANG).seller(seller)
                 .status(ListingStatus.SELLING).build();
-        ProductListingOption option = ProductListingOption.builder()
-                .id(optionId).optionName(optionName).productListing(listing).build();
-        return ProductListingProduct.builder()
-                .productListingOption(option).product(product).quantity(quantity).build();
+        return ProductListingOption.builder()
+                .id(optionId).optionName(optionName).productListing(listing)
+                .masterProductOption(master).build();
     }
 
     @Test
@@ -123,7 +126,6 @@ class ProductUsageServiceTest {
         given(masterProductComponentRepository.findByProductId(PRODUCT_ID)).willReturn(List.of());
         given(masterProductOptionItemRepository.findWithMasterByProductIdIn(List.of(PRODUCT_ID)))
                 .willReturn(List.of());
-        given(productListingProductRepository.findByProductId(PRODUCT_ID)).willReturn(List.of());
 
         ProductUsageResponse res = service.getUsage(PRODUCT_ID);
 
@@ -143,7 +145,6 @@ class ProductUsageServiceTest {
                 .willReturn(List.of(component(master(1L, "마스터 A")), component(master(2L, "마스터 B"))));
         given(masterProductOptionItemRepository.findWithMasterByProductIdIn(List.of(PRODUCT_ID)))
                 .willReturn(List.of());
-        given(productListingProductRepository.findByProductId(PRODUCT_ID)).willReturn(List.of());
 
         ProductUsageResponse res = service.getUsage(PRODUCT_ID);
 
@@ -166,7 +167,6 @@ class ProductUsageServiceTest {
                         optionItem(master, 30L, "3세트", 3),
                         optionItem(master, 10L, "1세트", 1),
                         optionItem(master, 20L, "2세트", 2)));
-        given(productListingProductRepository.findByProductId(PRODUCT_ID)).willReturn(List.of());
 
         ProductUsageResponse res = service.getUsage(PRODUCT_ID);
 
@@ -179,16 +179,25 @@ class ProductUsageServiceTest {
     }
 
     @Test
-    @DisplayName("Three listing lines - three option refs with quantity and channel alias")
+    @DisplayName("Three cell options behind the master options - option refs with quantity and channel alias")
     void testGetUsageWithListingOptionLink() {
         givenProductExists();
+        // 옵션 item 만 있고 구성상품 행이 없는 상태 = 불변 위반 → 마스터는 목록에 들어가지 않는다(경고만).
         given(masterProductComponentRepository.findByProductId(PRODUCT_ID)).willReturn(List.of());
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터").build();
+        MasterProductOption mo1 = MasterProductOption.builder().id(61L).name("옵션 1").masterProduct(master).build();
+        MasterProductOption mo2 = MasterProductOption.builder().id(62L).name("옵션 2").masterProduct(master).build();
+        MasterProductOption mo3 = MasterProductOption.builder().id(63L).name("옵션 3").masterProduct(master).build();
         given(masterProductOptionItemRepository.findWithMasterByProductIdIn(List.of(PRODUCT_ID)))
-                .willReturn(List.of());
-        given(productListingProductRepository.findByProductId(PRODUCT_ID)).willReturn(List.of(
-                listingLine(51L, "옵션 1", 1),
-                listingLine(52L, "옵션 2", 2),
-                listingLine(53L, "옵션 3", 3)));
+                .willReturn(List.of(
+                        MasterProductOptionItem.builder().option(mo1).product(product).quantity(1).build(),
+                        MasterProductOptionItem.builder().option(mo2).product(product).quantity(2).build(),
+                        MasterProductOptionItem.builder().option(mo3).product(product).quantity(3).build()));
+        given(productListingOptionRepository.findByMasterProductOption_IdIn(any()))
+                .willReturn(List.of(
+                        cellOption(51L, "옵션 1", mo1),
+                        cellOption(52L, "옵션 2", mo2),
+                        cellOption(53L, "옵션 3", mo3)));
         given(marketplaceAccountRepository.findBySeller_IdAndPlatform(3L, Platform.COUPANG))
                 .willReturn(Optional.of(MarketplaceAccount.builder()
                         .id(99L).accountAlias("쿠팡 본계정").platform(Platform.COUPANG).build()));
@@ -217,7 +226,6 @@ class ProductUsageServiceTest {
         given(masterProductComponentRepository.findByProductId(PRODUCT_ID)).willReturn(List.of());
         given(masterProductOptionItemRepository.findWithMasterByProductIdIn(List.of(PRODUCT_ID)))
                 .willReturn(List.of());
-        given(productListingProductRepository.findByProductId(PRODUCT_ID)).willReturn(List.of());
         given(stockMovementRepository.countByProductId(PRODUCT_ID)).willReturn(12L);
         given(purchaseRecordRepository.countByProductId(PRODUCT_ID)).willReturn(3L);
         given(shipmentParcelItemRepository.countByProductId(PRODUCT_ID)).willReturn(8L);

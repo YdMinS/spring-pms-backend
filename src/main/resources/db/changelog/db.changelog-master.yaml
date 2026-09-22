@@ -183,3 +183,5 @@ databaseChangeLog:
       file: db/changelog/changes/095-baseentity-adoption.yaml
   - include:
       file: db/changelog/changes/096-claim-collect-invoice-source.yaml
+  - include:
+      file: db/changelog/changes/097-drop-product-listing-product.yaml
