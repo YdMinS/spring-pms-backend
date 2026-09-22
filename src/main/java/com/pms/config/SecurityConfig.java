@@ -45,10 +45,17 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.PATCH, "/api/users/**").hasAnyRole("USER", "ADMIN")
                         .requestMatchers(HttpMethod.DELETE, "/api/users/**").hasAnyRole("USER", "ADMIN")
                         .requestMatchers(HttpMethod.POST, "/api/products").hasRole("ADMIN")
+                        // Product merge (FEATURE_2609_69): the POST matcher above is an exact match, so
+                        // without this line /api/products/merge falls through to anyRequest().authenticated()
+                        // and a plain user could merge products.
+                        .requestMatchers(HttpMethod.POST, "/api/products/merge").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PATCH, "/api/products/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.DELETE, "/api/products/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PUT, "/api/products/*/image").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.GET, "/api/products/*/image").authenticated()
+                        // Product usage (FEATURE_2609_69): `/api/products/{id}` above matches ONE segment only,
+                        // so without this line the endpoint falls through to anyRequest().authenticated().
+                        .requestMatchers(HttpMethod.GET, "/api/products/*/usage").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.DELETE, "/api/products/*/image").hasRole("ADMIN")
                         // Carrier master: GET readable by any authenticated user (dropdown source),
                         // writes ADMIN only. More specific rules must precede the /api/admin/** globals.

@@ -5,6 +5,8 @@ import com.pms.domain.Product;
 import com.pms.dto.request.CreateProductRequest;
 import com.pms.dto.request.UpdateProductRequest;
 import com.pms.dto.response.ProductResponse;
+import com.pms.dto.response.ProductUsageResponse;
+import com.pms.exception.ProductInUseException;
 import com.pms.fixture.ProductTestFixture;
 import com.pms.repository.ProductRepository;
 import com.pms.service.price.PriceHistoryRecorder;
@@ -41,8 +43,26 @@ public class ProductServiceTest {
     @Mock
     private PriceHistoryRecorder priceHistoryRecorder;
 
+    @Mock
+    private ProductUsageService productUsageService;
+
     @InjectMocks
     private ProductServiceImpl productService;
+
+    /** No master / no listing option links → the delete guard lets the soft delete through. */
+    private void givenDeletable(Long productId) {
+        when(productUsageService.getUsage(productId)).thenReturn(usage(productId, true, java.util.List.of()));
+    }
+
+    private ProductUsageResponse usage(Long productId, boolean deletable, java.util.List<String> blockers) {
+        return new ProductUsageResponse(
+                productId,
+                java.util.List.of(),
+                java.util.List.of(),
+                new ProductUsageResponse.HistoryCounts(0, 0, 0, 0, 0, 0),
+                deletable,
+                blockers);
+    }
 
     // ==================== Phase 2-1 Iteration 1: testCreateProduct_Success ====================
 
@@ -814,6 +834,7 @@ public class ProductServiceTest {
         when(productRepository.save(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         // When
+        givenDeletable(productId);
         productService.deleteProduct(productId);
 
         // Then
@@ -878,6 +899,7 @@ public class ProductServiceTest {
         });
 
         // When
+        givenDeletable(productId);
         productService.deleteProduct(productId);
 
         // Then - verify product still exists in database
@@ -903,6 +925,7 @@ public class ProductServiceTest {
         when(productRepository.save(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         // When - delete the product
+        givenDeletable(productId);
         productService.deleteProduct(productId);
 
         // Then - verify getProduct throws exception
@@ -930,6 +953,7 @@ public class ProductServiceTest {
         when(productRepository.save(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         // When - delete the product
+        givenDeletable(productId);
         productService.deleteProduct(productId);
 
         // Then - verify updateProduct throws exception
@@ -938,5 +962,48 @@ public class ProductServiceTest {
 
         assertThatThrownBy(() -> productService.updateProduct(productId, updateRequest))
                 .isInstanceOf(com.pms.exception.ResourceNotFoundException.class);
+    }
+
+    // ==================== FEATURE_2609_69: delete guard ====================
+
+    @Test
+    @DisplayName("Should refuse to delete a product still linked to a master or listing option - 409")
+    public void testDeleteProductBlockedWhenLinked() {
+        // Given
+        Long productId = 1L;
+        Product existingProduct = ProductTestFixture.createProduct(productId);
+
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(existingProduct));
+        when(productUsageService.getUsage(productId)).thenReturn(usage(productId, false,
+                java.util.List.of("마스터 상품 2개(마스터 상품 화면에서 해제)")));
+
+        // When & Then
+        assertThatThrownBy(() -> productService.deleteProduct(productId))
+                .isInstanceOf(ProductInUseException.class)
+                .hasMessageContaining("마스터 상품 2개")
+                .hasMessageContaining("삭제할 수 없습니다");
+
+        verify(productRepository, never()).save(any(Product.class));
+    }
+
+    @Test
+    @DisplayName("Should soft delete when the product has no links - active=false is persisted")
+    public void testDeleteProductSucceedsWhenUnlinked() {
+        // Given
+        Long productId = 1L;
+        Product existingProduct = ProductTestFixture.createProduct(productId);
+
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(existingProduct));
+        when(productRepository.save(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        givenDeletable(productId);
+
+        // When
+        productService.deleteProduct(productId);
+
+        // Then
+        org.mockito.ArgumentCaptor<Product> captor = org.mockito.ArgumentCaptor.forClass(Product.class);
+        verify(productRepository, times(1)).save(captor.capture());
+        assertThat(captor.getValue().getActive()).isFalse();
+        assertThat(captor.getValue().getId()).isEqualTo(productId);
     }
 }

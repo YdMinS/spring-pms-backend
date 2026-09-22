@@ -202,3 +202,12 @@ detail:
     # Emit @font-face in generated detail HTML. Turn off to stop font downloads (CSS fallback stack only)
     # without a redeploy, e.g. if a marketplace rejects the <style> block.
     enabled: true
+
+app:
+  merge:
+    # Pre-merge snapshot directory (FEATURE_2609_69 / PLAN D7). There is no rollback feature — this file is
+    # the only evidence that makes an undo possible by hand, so a failed write fails the merge.
+    # 🔴 `~` is NOT expanded by Java (it would create a literal "~" folder) — use ${user.home}.
+    # 🔴 dev/prod run in a container: this default lives inside it and vanishes on redeploy, so those
+    #    profiles override it with a HOST-MOUNTED path (see application-dev.yml / application-prod.yml).
+    snapshot-dir: ${MERGE_SNAPSHOT_DIR:${user.home}/.oclyx/merge_snapshots}

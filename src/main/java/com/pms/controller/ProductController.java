@@ -2,14 +2,19 @@ package com.pms.controller;
 
 import com.pms.domain.Product;
 import com.pms.dto.request.CreateProductRequest;
+import com.pms.dto.request.MergeProductsRequest;
 import com.pms.dto.request.UpdateProductRequest;
+import com.pms.dto.response.MergeProductsResponse;
 import com.pms.dto.response.ProductResponse;
+import com.pms.dto.response.ProductUsageResponse;
 import com.pms.dto.common.ResponseDTO;
 import com.pms.exception.ImageNotFoundException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.ProductRepository;
 import com.pms.service.ImageStorageService;
+import com.pms.service.ProductMergeService;
 import com.pms.service.ProductService;
+import com.pms.service.ProductUsageService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -46,6 +51,8 @@ public class ProductController {
     private final ProductService productService;
     private final ImageStorageService imageStorageService;
     private final ProductRepository productRepository;
+    private final ProductUsageService productUsageService;
+    private final ProductMergeService productMergeService;
 
     /**
      * Create a new product (ADMIN only)
@@ -108,6 +115,64 @@ public class ProductController {
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     public ResponseEntity<ResponseDTO<ProductResponse>> getProduct(@PathVariable(name = "id") Long id) {
         ProductResponse response = productService.getProduct(id);
+        return ResponseEntity.ok(ResponseDTO.success(response));
+    }
+
+    /**
+     * Get where a product is currently used (ADMIN only)
+     *
+     * <p>⚠️ The ADMIN restriction lives in {@code config/SecurityConfig} (this controller has no
+     * {@code @PreAuthorize} at all), and {@code /api/products/{id}} matches a single segment only — without
+     * an explicit {@code GET /api/products/*&#47;usage} matcher this would fall through to
+     * {@code anyRequest().authenticated()}.</p>
+     *
+     * @param id Product ID
+     * @return HTTP 200 OK with ProductUsageResponse
+     */
+    @GetMapping("/{id}/usage")
+    @Operation(summary = "Get product usage", description = "Where this product is used (ADMIN role required)")
+    @SecurityRequirement(name = "bearerAuth")
+    @ApiResponse(responseCode = "200", description = "Usage retrieved successfully",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "401", description = "Authentication required",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "403", description = "Permission denied (ADMIN role required)",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "404", description = "Product not found",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    public ResponseEntity<ResponseDTO<ProductUsageResponse>> getUsage(@PathVariable(name = "id") Long id) {
+        ProductUsageResponse response = productUsageService.getUsage(id);
+        return ResponseEntity.ok(ResponseDTO.success(response));
+    }
+
+    /**
+     * Merge two duplicate products into one (ADMIN only)
+     *
+     * <p>⚠️ Same authority note as {@code /usage}: {@code POST /api/products} is an exact match, so without
+     * an explicit {@code POST /api/products/merge} matcher in {@code config/SecurityConfig} this would fall
+     * through to {@code anyRequest().authenticated()} and any signed-in user could merge.</p>
+     *
+     * @param request the surviving product, the discarded one, the chosen values and the ticked history
+     * @return HTTP 200 OK with MergeProductsResponse
+     */
+    @PostMapping("/merge")
+    @Operation(summary = "Merge duplicate products", description = "ADMIN role required")
+    @SecurityRequirement(name = "bearerAuth")
+    @ApiResponse(responseCode = "200", description = "Products merged successfully",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "400", description = "Validation error",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "401", description = "Authentication required",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "403", description = "Permission denied (ADMIN role required)",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "404", description = "Product not found",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "409", description = "Barcode already used, or the discarded product is still linked",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    public ResponseEntity<ResponseDTO<MergeProductsResponse>> merge(
+            @Valid @RequestBody MergeProductsRequest request) {
+        MergeProductsResponse response = productMergeService.merge(request);
         return ResponseEntity.ok(ResponseDTO.success(response));
     }
 

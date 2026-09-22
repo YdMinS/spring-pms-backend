@@ -55,3 +55,11 @@ server:
   tomcat:
     max-http-post-size: 20971520
     max-swallow-size: 20971520
+
+app:
+  merge:
+    # 🔴 Must be a HOST-MOUNTED directory (same idea as image uploads): the container filesystem is wiped on
+    # every redeploy and a lost snapshot means a merge can no longer be undone (PLAN D7).
+    # ⚠️ If /app/data is not mounted from the host, the merge still writes — into the container — so the
+    # mount has to be created on the server before this feature is used in prod.
+    snapshot-dir: ${MERGE_SNAPSHOT_DIR:/app/data/merge_snapshots}
