@@ -78,4 +78,10 @@ public interface PurchaseRecordRepository extends JpaRepository<PurchaseRecord, 
             order by r.purchasedOn desc, r.id desc
             """)
     List<PurchaseRecord> findPurchasedOnOrAfter(@Param("since") LocalDate since);
+
+    /**
+     * Row count for one product, shown as informational history in the product usage screen
+     * (FEATURE_2609_69 / A). History never blocks deletion — it is displayed only.
+     */
+    long countByProductId(Long productId);
 }

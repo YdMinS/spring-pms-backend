@@ -72,4 +72,10 @@ public interface PriceChangeLogRepository extends JpaRepository<PriceChangeLog, 
                                  @Param("start") LocalDateTime start,
                                  @Param("end") LocalDateTime end,
                                  Pageable pageable);
+
+    /**
+     * Row count for one product, shown as informational history in the product usage screen
+     * (FEATURE_2609_69 / A). History never blocks deletion — it is displayed only.
+     */
+    long countByProductId(Long productId);
 }

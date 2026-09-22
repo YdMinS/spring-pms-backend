@@ -28,4 +28,10 @@ public interface ShoppingListItemRepository extends JpaRepository<ShoppingListIt
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE ShoppingListItem s SET s.autoQty = 0 WHERE s.orderLine IS NOT NULL")
     void resetAllAutoQty();
+
+    /**
+     * Row count for one product, shown as informational history in the product usage screen
+     * (FEATURE_2609_69 / A). History never blocks deletion — it is displayed only.
+     */
+    long countByProductId(Long productId);
 }

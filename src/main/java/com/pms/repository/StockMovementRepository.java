@@ -142,4 +142,10 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
             order by c.receivedAt desc, c.id desc
             """)
     List<ReturnCandidateView> findReturnCandidates();
+
+    /**
+     * Row count for one product, shown as informational history in the product usage screen
+     * (FEATURE_2609_69 / A). History never blocks deletion — it is displayed only.
+     */
+    long countByProductId(Long productId);
 }

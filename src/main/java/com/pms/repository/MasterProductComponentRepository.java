@@ -8,6 +8,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.util.Collection;
 import java.util.List;
+import org.springframework.data.jpa.repository.EntityGraph;
 
 /**
  * Repository for {@link MasterProductComponent} (FEATURE_2608_06 / 3b-1).
@@ -19,6 +20,18 @@ import java.util.List;
 public interface MasterProductComponentRepository extends JpaRepository<MasterProductComponent, Long> {
 
     List<MasterProductComponent> findByMasterProductId(Long masterProductId);
+
+    /**
+     * Masters this product is a component of (FEATURE_2609_69 / A).
+     *
+     * <p>{@code @EntityGraph} pulls the master in with the row: the usage response prints the master name
+     * and {@code masterProduct} is LAZY, so waking it per row would be an N+1.</p>
+     *
+     * <p>⚠️ Not tenant-scoped (this entity has no {@code @TenantId}); the caller resolves the product
+     * through the tenant-filtered {@code ProductRepository} first.</p>
+     */
+    @EntityGraph(attributePaths = "masterProduct")
+    List<MasterProductComponent> findByProductId(Long productId);
 
     void deleteByMasterProductId(Long masterProductId);
 

@@ -1,0 +1,242 @@
+package com.pms.service;
+
+import com.pms.domain.ListingStatus;
+import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.MasterProduct;
+import com.pms.domain.MasterProductComponent;
+import com.pms.domain.MasterProductOption;
+import com.pms.domain.MasterProductOptionItem;
+import com.pms.domain.Platform;
+import com.pms.domain.Product;
+import com.pms.domain.ProductListing;
+import com.pms.domain.ProductListingOption;
+import com.pms.domain.ProductListingProduct;
+import com.pms.domain.Seller;
+import com.pms.dto.response.ProductUsageResponse;
+import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.MasterProductComponentRepository;
+import com.pms.repository.MasterProductOptionItemRepository;
+import com.pms.repository.PriceChangeLogRepository;
+import com.pms.repository.ProductImageRepository;
+import com.pms.repository.ProductListingProductRepository;
+import com.pms.repository.ProductRepository;
+import com.pms.repository.PurchaseRecordRepository;
+import com.pms.repository.ShipmentParcelItemRepository;
+import com.pms.repository.ShoppingListItemRepository;
+import com.pms.repository.StockMovementRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.List;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+
+/**
+ * Unit tests for {@link ProductUsageService} (FEATURE_2609_69 / A).
+ *
+ * <p>Mockito only — the usage read is pure composition over repositories, so a Spring context would
+ * prove nothing extra (backend rule: services are mocked, controllers are integration).</p>
+ */
+@ExtendWith(MockitoExtension.class)
+@DisplayName("ProductUsageService - Unit Tests")
+class ProductUsageServiceTest {
+
+    private static final Long PRODUCT_ID = 7L;
+
+    @Mock
+    private ProductRepository productRepository;
+    @Mock
+    private MasterProductComponentRepository masterProductComponentRepository;
+    @Mock
+    private MasterProductOptionItemRepository masterProductOptionItemRepository;
+    @Mock
+    private ProductListingProductRepository productListingProductRepository;
+    @Mock
+    private MarketplaceAccountRepository marketplaceAccountRepository;
+    @Mock
+    private StockMovementRepository stockMovementRepository;
+    @Mock
+    private PurchaseRecordRepository purchaseRecordRepository;
+    @Mock
+    private ShipmentParcelItemRepository shipmentParcelItemRepository;
+    @Mock
+    private ProductImageRepository productImageRepository;
+    @Mock
+    private ShoppingListItemRepository shoppingListItemRepository;
+    @Mock
+    private PriceChangeLogRepository priceChangeLogRepository;
+
+    @InjectMocks
+    private ProductUsageService service;
+
+    private Product product;
+
+    @BeforeEach
+    void setUp() {
+        product = Product.builder().id(PRODUCT_ID).productName("생수 2L").active(true).build();
+    }
+
+    private void givenProductExists() {
+        given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(product));
+    }
+
+    private MasterProduct master(Long id, String name) {
+        return MasterProduct.builder().id(id).name(name).active(true).build();
+    }
+
+    private MasterProductComponent component(MasterProduct master) {
+        return MasterProductComponent.builder().masterProduct(master).product(product).build();
+    }
+
+    private MasterProductOptionItem optionItem(MasterProduct master, Long optionId, String optionName, int qty) {
+        MasterProductOption option = MasterProductOption.builder()
+                .id(optionId).name(optionName).masterProduct(master).build();
+        return MasterProductOptionItem.builder().option(option).product(product).quantity(qty).build();
+    }
+
+    private ProductListingProduct listingLine(Long optionId, String optionName, int quantity) {
+        Seller seller = Seller.builder().id(3L).sellerName("판매자").businessRegistration("123").build();
+        ProductListing listing = ProductListing.builder()
+                .id(11L).name("셀").platform(Platform.COUPANG).seller(seller)
+                .status(ListingStatus.SELLING).build();
+        ProductListingOption option = ProductListingOption.builder()
+                .id(optionId).optionName(optionName).productListing(listing).build();
+        return ProductListingProduct.builder()
+                .productListingOption(option).product(product).quantity(quantity).build();
+    }
+
+    @Test
+    @DisplayName("No links and no history - deletable with empty blockers")
+    void testGetUsageWithNoLinks() {
+        givenProductExists();
+        given(masterProductComponentRepository.findByProductId(PRODUCT_ID)).willReturn(List.of());
+        given(masterProductOptionItemRepository.findWithMasterByProductIdIn(List.of(PRODUCT_ID)))
+                .willReturn(List.of());
+        given(productListingProductRepository.findByProductId(PRODUCT_ID)).willReturn(List.of());
+
+        ProductUsageResponse res = service.getUsage(PRODUCT_ID);
+
+        assertThat(res.productId()).isEqualTo(PRODUCT_ID);
+        assertThat(res.masterProducts()).isEmpty();
+        assertThat(res.listingOptions()).isEmpty();
+        assertThat(res.deletable()).isTrue();
+        assertThat(res.blockers()).isEmpty();
+        assertThat(res.history().stockMovements()).isZero();
+    }
+
+    @Test
+    @DisplayName("Two master components - two master refs, not deletable, blocker names the count")
+    void testGetUsageWithMasterProductLink() {
+        givenProductExists();
+        given(masterProductComponentRepository.findByProductId(PRODUCT_ID))
+                .willReturn(List.of(component(master(1L, "마스터 A")), component(master(2L, "마스터 B"))));
+        given(masterProductOptionItemRepository.findWithMasterByProductIdIn(List.of(PRODUCT_ID)))
+                .willReturn(List.of());
+        given(productListingProductRepository.findByProductId(PRODUCT_ID)).willReturn(List.of());
+
+        ProductUsageResponse res = service.getUsage(PRODUCT_ID);
+
+        assertThat(res.masterProducts()).hasSize(2);
+        assertThat(res.masterProducts().get(0).name()).isEqualTo("마스터 A");
+        assertThat(res.deletable()).isFalse();
+        assertThat(res.blockers()).anyMatch(b -> b.contains("마스터 상품 2개"));
+        verify(masterProductComponentRepository, times(1)).findByProductId(PRODUCT_ID);
+    }
+
+    @Test
+    @DisplayName("Option quantities ride under their master and never change deletable")
+    void testGetUsageOptionQuantitiesUnderMaster() {
+        givenProductExists();
+        MasterProduct master = master(1L, "마스터 A");
+        given(masterProductComponentRepository.findByProductId(PRODUCT_ID))
+                .willReturn(List.of(component(master)));
+        given(masterProductOptionItemRepository.findWithMasterByProductIdIn(List.of(PRODUCT_ID)))
+                .willReturn(List.of(
+                        optionItem(master, 30L, "3세트", 3),
+                        optionItem(master, 10L, "1세트", 1),
+                        optionItem(master, 20L, "2세트", 2)));
+        given(productListingProductRepository.findByProductId(PRODUCT_ID)).willReturn(List.of());
+
+        ProductUsageResponse res = service.getUsage(PRODUCT_ID);
+
+        assertThat(res.masterProducts()).hasSize(1);
+        assertThat(res.masterProducts().get(0).optionQuantities()).hasSize(3);
+        assertThat(res.masterProducts().get(0).optionQuantities().get(0).optionId()).isEqualTo(10L);
+        assertThat(res.masterProducts().get(0).optionQuantities().get(0).quantity()).isEqualTo(1);
+        // Only one blocker: the option vector is not an independent mapping (PLAN D2).
+        assertThat(res.blockers()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("Three listing lines - three option refs with quantity and channel alias")
+    void testGetUsageWithListingOptionLink() {
+        givenProductExists();
+        given(masterProductComponentRepository.findByProductId(PRODUCT_ID)).willReturn(List.of());
+        given(masterProductOptionItemRepository.findWithMasterByProductIdIn(List.of(PRODUCT_ID)))
+                .willReturn(List.of());
+        given(productListingProductRepository.findByProductId(PRODUCT_ID)).willReturn(List.of(
+                listingLine(51L, "옵션 1", 1),
+                listingLine(52L, "옵션 2", 2),
+                listingLine(53L, "옵션 3", 3)));
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(3L, Platform.COUPANG))
+                .willReturn(Optional.of(MarketplaceAccount.builder()
+                        .id(99L).accountAlias("쿠팡 본계정").platform(Platform.COUPANG).build()));
+
+        ProductUsageResponse res = service.getUsage(PRODUCT_ID);
+
+        assertThat(res.listingOptions()).hasSize(3);
+        assertThat(res.listingOptions().get(0).name()).isEqualTo("옵션 1");
+        assertThat(res.listingOptions().get(2).quantity()).isEqualTo(3);
+        assertThat(res.listingOptions()).allSatisfy(o -> {
+            assertThat(o.marketplaceAccountId()).isEqualTo(99L);
+            assertThat(o.accountAlias()).isEqualTo("쿠팡 본계정");
+            assertThat(o.platform()).isEqualTo("COUPANG");
+            assertThat(o.status()).isEqualTo("SELLING");
+        });
+        assertThat(res.deletable()).isFalse();
+        assertThat(res.blockers()).anyMatch(b -> b.contains("판매 옵션 3개"));
+        // The channel of three options of the same cell is resolved once, not per line.
+        verify(marketplaceAccountRepository, times(1)).findBySeller_IdAndPlatform(3L, Platform.COUPANG);
+    }
+
+    @Test
+    @DisplayName("History counts are reported but never block deletion")
+    void testGetUsageCountsHistory() {
+        givenProductExists();
+        given(masterProductComponentRepository.findByProductId(PRODUCT_ID)).willReturn(List.of());
+        given(masterProductOptionItemRepository.findWithMasterByProductIdIn(List.of(PRODUCT_ID)))
+                .willReturn(List.of());
+        given(productListingProductRepository.findByProductId(PRODUCT_ID)).willReturn(List.of());
+        given(stockMovementRepository.countByProductId(PRODUCT_ID)).willReturn(12L);
+        given(purchaseRecordRepository.countByProductId(PRODUCT_ID)).willReturn(3L);
+        given(shipmentParcelItemRepository.countByProductId(PRODUCT_ID)).willReturn(8L);
+
+        ProductUsageResponse res = service.getUsage(PRODUCT_ID);
+
+        assertThat(res.history().stockMovements()).isEqualTo(12L);
+        assertThat(res.history().purchaseRecords()).isEqualTo(3L);
+        assertThat(res.history().shipmentItems()).isEqualTo(8L);
+        assertThat(res.deletable()).isTrue();
+        assertThat(res.blockers()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Unknown product id throws ResourceNotFoundException")
+    void testGetUsageProductNotFound() {
+        given(productRepository.findById(999L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.getUsage(999L))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+}
