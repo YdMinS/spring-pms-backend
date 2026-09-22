@@ -24,7 +24,8 @@ import java.util.List;
  *
  * @param productId       the inspected product
  * @param masterProducts  masters composed of this product
- * @param listingOptions  channel listing options composed of this product (resolved through the master)
+ * @param listingOptions  channel listing options composed of this product (resolved through the master),
+ *                        each carrying its owning cell id so the screen can link straight to that cell
  * @param history         per-table row counts of past records
  * @param deletable       true only when both link lists are empty
  * @param blockers        Korean noun phrases naming what blocks deletion and where to unlink it; the
@@ -48,9 +49,13 @@ public record ProductUsageResponse(
     /**
      * A channel listing option that contains this product.
      *
-     * @param quantity 마스터 옵션이 정한 수량(2609_71) — 채널마다 다른 수량은 더 이상 존재하지 않는다
+     * @param id        the listing <b>option</b> id — not addressable by any screen on its own
+     * @param listingId the cell (판매 상품) that owns the option. 🔴 이 값이 있어야 화면이 판매 상품 상세로
+     *                  바로 보낼 수 있다 — 없던 시절에는 목록으로만 보낼 수 있었다(2026-09-23)
+     * @param quantity  마스터 옵션이 정한 수량(2609_71) — 채널마다 다른 수량은 더 이상 존재하지 않는다
      */
-    public record ListingOptionRef(Long id, String name, Long marketplaceAccountId, String accountAlias,
+    public record ListingOptionRef(Long id, String name, Long listingId, String listingName,
+                                   Long marketplaceAccountId, String accountAlias,
                                    String platform, Integer quantity, String status) {}
 
     /** Row counts of the six history tables that reference a product. */

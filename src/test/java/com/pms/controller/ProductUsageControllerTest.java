@@ -106,6 +106,9 @@ class ProductUsageControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.listingOptions[0].name").value("6개입"))
                 .andExpect(jsonPath("$.data.listingOptions[0].quantity").value(6))
                 .andExpect(jsonPath("$.data.listingOptions[0].accountAlias").value("쿠팡 본계정"))
+                // 화면이 판매 상품 상세로 바로 가려면 옵션이 속한 셀 id 가 있어야 한다(2026-09-23).
+                .andExpect(jsonPath("$.data.listingOptions[0].listingId").isNumber())
+                .andExpect(jsonPath("$.data.listingOptions[0].listingName").value("셀"))
                 .andExpect(jsonPath("$.data.history.stockMovements").value(0))
                 .andExpect(jsonPath("$.data.deletable").value(false))
                 .andExpect(jsonPath("$.data.blockers.length()").value(2));
