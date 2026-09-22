@@ -26,8 +26,8 @@ import static org.mockito.BDDMockito.given;
 /**
  * OrderLineExpander — 마스터 BOM 전개(D13)와 중립 링크/거울 행 폴백(D15).
  *
- * <p>여기서 지키는 계약은 둘이다: <b>전개는 마스터 BOM 만 탄다</b>(채널 셀 BOM 리포지토리는 주입조차
- * 되지 않는다), 그리고 <b>실패는 목록에 실려 나온다</b>(조용히 빠지지 않는다).
+ * <p>여기서 지키는 계약은 둘이다: <b>전개는 마스터 BOM 만 탄다</b>(2609_71 이후에는 그것이 유일한
+ * 경로다 — 셀 BOM 사본은 표째 사라졌다), 그리고 <b>실패는 목록에 실려 나온다</b>(조용히 빠지지 않는다).
  */
 @ExtendWith(MockitoExtension.class)
 class OrderLineExpanderTest {
