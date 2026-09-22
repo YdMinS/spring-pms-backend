@@ -3,9 +3,11 @@ package com.pms.controller;
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.ClaimStatus;
 import com.pms.domain.ClaimType;
+import com.pms.dto.response.ClaimSyncResponse;
 import com.pms.dto.response.OrderClaimResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.service.claim.ClaimQueryService;
+import com.pms.service.claim.ClaimSyncService;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.mock.mockito.MockBean;
 
@@ -15,6 +17,7 @@ import java.util.List;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -25,10 +28,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <b>핸들러 매핑</b>만 고정한다(검증 자체는 ClaimQueryServiceImplTest 담당).
  * 403 테스트는 없다 — 역할 제한 없는 조회 API 이고(OrderController 와 동일),
  * 일반 사용자 토큰으로 200 이 나오는 것이 그 사실을 고정한다.
+ * 클레임만 다시 가져오기(POST /sync)도 같은 자리다(2609_70 / D14).
  */
 class OrderClaimControllerTest extends BaseIntegrationTest {
 
     @MockBean private ClaimQueryService claimQueryService;
+    @MockBean private ClaimSyncService claimSyncService;
 
     @Test
     void getClaims_returnsList_withUserToken() throws Exception {
@@ -76,6 +81,27 @@ class OrderClaimControllerTest extends BaseIntegrationTest {
     @Test
     void getClaim_requiresAuth() throws Exception {
         mockMvc.perform(get("/api/claims/1"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void sync_returns200_withUserToken() throws Exception {
+        // ADMIN 전용이 아니다 — 마켓에 쓰지 않고 읽어와 저장하는 조회 계열이다(D14).
+        given(claimSyncService.sync(7L))
+                .willReturn(new ClaimSyncResponse(7L, false, LocalDateTime.of(2026, 9, 22, 9, 0)));
+
+        mockMvc.perform(post("/api/claims/sync")
+                        .param("accountId", "7")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.accountId").value(7))
+                .andExpect(jsonPath("$.data.skipped").value(false))
+                .andExpect(jsonPath("$.data.syncedAt").exists());
+    }
+
+    @Test
+    void sync_requiresAuth() throws Exception {
+        mockMvc.perform(post("/api/claims/sync").param("accountId", "7"))
                 .andExpect(status().isUnauthorized());
     }
 
