@@ -49,12 +49,15 @@ public record ProductUsageResponse(
     /**
      * A channel listing option that contains this product.
      *
-     * @param id        the listing <b>option</b> id — not addressable by any screen on its own
-     * @param listingId the cell (판매 상품) that owns the option. 🔴 이 값이 있어야 화면이 판매 상품 상세로
-     *                  바로 보낼 수 있다 — 없던 시절에는 목록으로만 보낼 수 있었다(2026-09-23)
-     * @param quantity  마스터 옵션이 정한 수량(2609_71) — 채널마다 다른 수량은 더 이상 존재하지 않는다
+     * @param id              the listing <b>option</b> id — not addressable by any screen on its own
+     * @param listingId       the cell (판매 상품) that owns the option. 🔴 이 값이 있어야 화면이 판매 상품
+     *                        상세로 바로 보낼 수 있다 — 없던 시절에는 목록으로만 보낼 수 있었다(2026-09-23)
+     * @param masterProductId the master this option hangs under — always one of {@code masterProducts}.
+     *                        🔴 화면이 판매 채널을 마스터 아래로 접어 넣는 근거다(2026-09-23)
+     * @param quantity        마스터 옵션이 정한 수량(2609_71) — 채널마다 다른 수량은 더 이상 존재하지 않는다
      */
     public record ListingOptionRef(Long id, String name, Long listingId, String listingName,
+                                   Long masterProductId,
                                    Long marketplaceAccountId, String accountAlias,
                                    String platform, Integer quantity, String status) {}
 
