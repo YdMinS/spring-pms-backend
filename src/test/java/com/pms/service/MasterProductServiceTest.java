@@ -30,7 +30,6 @@ import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductResponse;
-import com.pms.exception.MasterProductInUseException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.exception.ValidationException;
 import com.pms.repository.CarrierRateRepository;
@@ -304,12 +303,11 @@ class MasterProductServiceTest {
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
-    // ------------------------------------------------------------- list / soft delete
+    // ------------------------------------------------------------- list
 
     @Test
-    void getMasterProducts_returnsOnlyActive_excludesSoftDeleted() {
-        // Repository filters active=true, so a soft-deleted master never reaches the response.
-        givenActivePage(MasterProduct.builder().id(1L).name("활성").active(true).build());
+    void getMasterProducts_returnsPagedMasters() {
+        givenPage(MasterProduct.builder().id(1L).name("활성").active(true).build());
 
         Page<MasterProductResponse> result = service.getMasterProducts(new MasterProductQuery());
 
@@ -324,7 +322,7 @@ class MasterProductServiceTest {
     @Test
     void getMasterProducts_overlaysSourceMappingCover() {
         // The __source__ pool mapping (37) wins over the legacy sourceImageUrl in the list thumbnail.
-        givenActivePage(MasterProduct.builder()
+        givenPage(MasterProduct.builder()
                 .id(7L).name("커버").active(true).sourceImageUrl("legacy.jpg").build());
         given(masterImageZoneAssignmentRepository.findZoneImageUrlsByMasterIds(
                 MasterImageZoneAssignment.SOURCE_ZONE, List.of(7L)))
@@ -341,50 +339,50 @@ class MasterProductServiceTest {
     void list_defaultQuery_usesPage0Size25CreatedAtDesc() {
         // The front omits default-valued keys → page=0, size=0, sort=null, search=null arrive. All
         // normalisation is the service's job.
-        givenActivePage(MasterProduct.builder().id(1L).name("A").active(true).build());
+        givenPage(MasterProduct.builder().id(1L).name("A").active(true).build());
 
         service.getMasterProducts(new MasterProductQuery());
 
-        Pageable pageable = captureActivePageable();
+        Pageable pageable = captureListPageable();
         assertThat(pageable.getPageNumber()).isZero();
         assertThat(pageable.getPageSize()).isEqualTo(25);
         assertThat(pageable.getSort()).isEqualTo(Sort.by(DESC, "createdAt").and(Sort.by(DESC, "id")));
     }
 
     @Test
-    void list_blankSearch_usesActiveQuery() {
-        givenActivePage(MasterProduct.builder().id(1L).name("A").active(true).build());
+    void list_blankSearch_usesUnfilteredQuery() {
+        givenPage(MasterProduct.builder().id(1L).name("A").active(true).build());
         MasterProductQuery query = new MasterProductQuery();
         query.setSearch(" ");
 
         service.getMasterProducts(query);
 
-        verify(masterProductRepository).findByActiveTrue(any(Pageable.class));
-        verify(masterProductRepository, never()).searchActivePage(any(), any());
+        verify(masterProductRepository).findAllScoped(any(Pageable.class));
+        verify(masterProductRepository, never()).searchPage(any(), any());
     }
 
     @Test
     void list_searchTrimmedAndDelegated() {
-        given(masterProductRepository.searchActivePage(eq("커피"), any(Pageable.class)))
+        given(masterProductRepository.searchPage(eq("커피"), any(Pageable.class)))
                 .willReturn(new PageImpl<>(List.of(), PageRequest.of(0, 25), 0));
         MasterProductQuery query = new MasterProductQuery();
         query.setSearch(" 커피 ");
 
         service.getMasterProducts(query);
 
-        verify(masterProductRepository).searchActivePage(eq("커피"), any(Pageable.class));
-        verify(masterProductRepository, never()).findByActiveTrue(any(Pageable.class));
+        verify(masterProductRepository).searchPage(eq("커피"), any(Pageable.class));
+        verify(masterProductRepository, never()).findAllScoped(any(Pageable.class));
     }
 
     @Test
     void list_ascSort_appliesAscTiebreaker() {
-        givenActivePage(MasterProduct.builder().id(1L).name("A").active(true).build());
+        givenPage(MasterProduct.builder().id(1L).name("A").active(true).build());
         MasterProductQuery query = new MasterProductQuery();
         query.setSort("createdAt,asc");
 
         service.getMasterProducts(query);
 
-        assertThat(captureActivePageable().getSort())
+        assertThat(captureListPageable().getSort())
                 .isEqualTo(Sort.by(ASC, "createdAt").and(Sort.by(ASC, "id")));
     }
 
@@ -397,13 +395,13 @@ class MasterProductServiceTest {
         assertThatThrownBy(() -> service.getMasterProducts(query))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("정렬 키가 올바르지 않습니다");
-        verify(masterProductRepository, never()).findByActiveTrue(any(Pageable.class));
-        verify(masterProductRepository, never()).searchActivePage(any(), any());
+        verify(masterProductRepository, never()).findAllScoped(any(Pageable.class));
+        verify(masterProductRepository, never()).searchPage(any(), any());
     }
 
     @Test
     void list_sizeClampedToBounds() {
-        givenActivePage(MasterProduct.builder().id(1L).name("A").active(true).build());
+        givenPage(MasterProduct.builder().id(1L).name("A").active(true).build());
         MasterProductQuery omitted = new MasterProductQuery();
         omitted.setSize(0);
         MasterProductQuery oversized = new MasterProductQuery();
@@ -413,7 +411,7 @@ class MasterProductServiceTest {
         service.getMasterProducts(oversized);
 
         ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
-        verify(masterProductRepository, times(2)).findByActiveTrue(captor.capture());
+        verify(masterProductRepository, times(2)).findAllScoped(captor.capture());
         assertThat(captor.getAllValues()).extracting(Pageable::getPageSize).containsExactly(25, 100);
     }
 
@@ -554,34 +552,6 @@ class MasterProductServiceTest {
         assertThat(captor.getValue().getOptionCheckSuffix()).isNull();
     }
 
-    @Test
-    void deleteMasterProduct_noOnMarketCells_softDeletesSetsActiveFalse() {
-        given(masterProductRepository.findScopedById(1L))
-                .willReturn(Optional.of(MasterProduct.builder().id(1L).name("마스터A").active(true).build()));
-        // Only a DRAFT (off-market, platformProductId == null) cell → delete allowed.
-        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(
-                ProductListing.builder().id(100L).platform(Platform.COUPANG).platformProductId(null).build()));
-
-        service.deleteMasterProduct(1L);
-
-        ArgumentCaptor<MasterProduct> captor = ArgumentCaptor.forClass(MasterProduct.class);
-        verify(masterProductRepository).save(captor.capture());
-        assertThat(captor.getValue().getActive()).isFalse();
-    }
-
-    @Test
-    void deleteMasterProduct_onMarketCell_throws409AndDoesNotSave() {
-        given(masterProductRepository.findScopedById(1L))
-                .willReturn(Optional.of(MasterProduct.builder().id(1L).name("마스터A").active(true).build()));
-        // An on-market cell (platformProductId != null) blocks deletion.
-        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(
-                ProductListing.builder().id(100L).platform(Platform.COUPANG).platformProductId("CP-1").build()));
-
-        assertThatThrownBy(() -> service.deleteMasterProduct(1L))
-                .isInstanceOf(MasterProductInUseException.class);
-        verify(masterProductRepository, never()).save(any());
-    }
-
     // ------------------------------------------------------------- master create
 
     @Test
@@ -604,7 +574,6 @@ class MasterProductServiceTest {
         MasterProductResponse response = service.createMasterProduct(request);
 
         assertThat(response.getId()).isEqualTo(5L);
-        assertThat(response.getActive()).isTrue();
         // one component row saved per requested product
         verify(componentRepository, times(2)).save(any());
     }
@@ -818,7 +787,6 @@ class MasterProductServiceTest {
         assertThat(found).hasSize(1);
         assertThat(found.get(0).getId()).isEqualTo(9L);
         assertThat(found.get(0).getName()).isEqualTo("기존마스터");
-        assertThat(found.get(0).getActive()).isTrue();
         assertThat(found.get(0).getOptionCount()).isEqualTo(2);
     }
 
@@ -1319,7 +1287,7 @@ class MasterProductServiceTest {
     @Test
     void lockJudgement_listPath_queriesLockRepositoriesOnce() {
         // N+1 guard: three masters, still exactly one query per lock repository.
-        givenActivePage(
+        givenPage(
                 MasterProduct.builder().id(1L).name("A").active(true).build(),
                 MasterProduct.builder().id(2L).name("B").active(true).build(),
                 MasterProduct.builder().id(3L).name("C").active(true).build());
@@ -1341,16 +1309,16 @@ class MasterProductServiceTest {
         verify(productListingOptionRepository, times(1)).findByProductListingIdIn(any());
     }
 
-    /** Stubs the paged active-master query with a real {@link PageImpl} so {@code Page.map} works. */
-    private void givenActivePage(MasterProduct... masters) {
-        given(masterProductRepository.findByActiveTrue(any(Pageable.class))).willReturn(
+    /** Stubs the paged master query with a real {@link PageImpl} so {@code Page.map} works. */
+    private void givenPage(MasterProduct... masters) {
+        given(masterProductRepository.findAllScoped(any(Pageable.class))).willReturn(
                 new PageImpl<>(List.of(masters), PageRequest.of(0, 25), masters.length));
     }
 
     /** The {@link Pageable} the service built from the (normalised) query. */
-    private Pageable captureActivePageable() {
+    private Pageable captureListPageable() {
         ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
-        verify(masterProductRepository).findByActiveTrue(captor.capture());
+        verify(masterProductRepository).findAllScoped(captor.capture());
         return captor.getValue();
     }
 
