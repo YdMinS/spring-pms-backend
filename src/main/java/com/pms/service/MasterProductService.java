@@ -29,7 +29,9 @@ import java.util.List;
 public interface MasterProductService {
 
     /**
-     * Paged list of active masters (110). Soft-deleted (active=false) masters are never returned.
+     * Paged list of masters (110). 🔁 2609_72: the {@code active} filter is gone — <b>every</b> master is
+     * returned, including rows that older code had hidden with {@code active=false}. Removing a master is a
+     * real delete now ({@code MasterDeleteService}), so there is nothing left to hide.
      *
      * <p>The raw {@link MasterProductQuery} is normalised here — the front omits default-valued keys,
      * so missing values arrive as {@code 0}/{@code null}:</p>
@@ -104,8 +106,8 @@ public interface MasterProductService {
      * same master, never a second master. Matching is set equality, order-independent and duplicate-tolerant:
      * a subset or a superset is a <i>different</i> master and is not returned.</p>
      *
-     * <p>Soft-deleted masters are included, flagged by {@code active = false} — a duplicate hidden from the
-     * list screen is exactly the one a user would otherwise re-create.</p>
+     * <p>🔁 2609_72: the response no longer carries {@code active} — masters are never hidden, so every
+     * match is a master the caller can actually see on the list screen.</p>
      *
      * @param productIds component product ids (null/empty → empty result; deduped before matching)
      * @return matching masters ordered by id, empty when the combination is free
