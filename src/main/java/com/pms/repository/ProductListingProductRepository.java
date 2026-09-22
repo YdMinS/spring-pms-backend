@@ -27,6 +27,22 @@ public interface ProductListingProductRepository extends JpaRepository<ProductLi
     List<ProductListingProduct> findByProductListingOptionId(Long productListingOptionId);
 
     /**
+     * Listing options this product is a composition line of (FEATURE_2609_69 / A).
+     *
+     * <p>The usage response prints the option name plus its listing's channel (platform/status/seller), all
+     * behind LAZY associations — {@code join fetch} loads the whole path in one query instead of N+1.</p>
+     *
+     * <p>⚠️ Not tenant-scoped (this entity has no {@code @TenantId}); isolation flows through the product,
+     * which the caller resolves through the tenant-filtered {@code ProductRepository} first.</p>
+     */
+    @Query("SELECT p FROM ProductListingProduct p "
+            + "JOIN FETCH p.productListingOption o "
+            + "JOIN FETCH o.productListing l "
+            + "JOIN FETCH l.seller "
+            + "WHERE p.product.id = :productId")
+    List<ProductListingProduct> findByProductId(@Param("productId") Long productId);
+
+    /**
      * Batch-fetch BOM lines for several listing options at once (N+1 guard).
      *
      * <p>Used by the read-only channel-sync preview (89), which compares every cell option's quantities

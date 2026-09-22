@@ -5,6 +5,8 @@ import com.pms.domain.Product;
 import com.pms.dto.request.CreateProductRequest;
 import com.pms.dto.request.UpdateProductRequest;
 import com.pms.dto.response.ProductResponse;
+import com.pms.dto.response.ProductUsageResponse;
+import com.pms.exception.ProductInUseException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.ProductRepository;
 import com.pms.service.price.PriceHistoryRecorder;
@@ -36,6 +38,7 @@ import java.math.BigDecimal;
 public class ProductServiceImpl implements ProductService {
     private final ProductRepository productRepository;
     private final PriceHistoryRecorder priceHistoryRecorder;
+    private final ProductUsageService productUsageService;
     private static final String[] VALID_NET_CONTENT_UNITS = {"KG", "G", "L", "ML"};
     private static final int DEFAULT_PAGE_SIZE = 20;
 
@@ -231,6 +234,15 @@ public class ProductServiceImpl implements ProductService {
         // Check if product is active (already soft-deleted products cannot be deleted again)
         if (!product.getActive()) {
             throw new ResourceNotFoundException("Product", id);
+        }
+
+        // Deletion guard (FEATURE_2609_69 / A): a product still composing a master or a channel listing
+        // option may not be deleted. Since this is a soft delete no FK would fire — those rows would just
+        // keep pointing at a hidden product. The links are never migrated automatically (PLAN D6-a), so the
+        // operator unlinks them first. 🔴 The merge flow (03) uses this same path: no guard-free variant.
+        ProductUsageResponse usage = productUsageService.getUsage(id);
+        if (!usage.deletable()) {
+            throw new ProductInUseException(usage.blockers());
         }
 
         // Soft delete using immutable pattern with Builder - use toBuilder to preserve audit fields

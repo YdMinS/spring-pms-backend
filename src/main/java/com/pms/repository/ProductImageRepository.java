@@ -22,4 +22,10 @@ public interface ProductImageRepository extends JpaRepository<ProductImage, Long
      *  ⚠️ {@link ProductImage} has no {@code @TenantId}, so this count spans every tenant — that is
      *  intentional (over-protecting a file is the safe side). Do NOT "fix" the missing tenant filter. */
     long countByImageUrl(String imageUrl);
+
+    /**
+     * Row count for one product, shown as informational history in the product usage screen
+     * (FEATURE_2609_69 / A). History never blocks deletion — it is displayed only.
+     */
+    long countByProductId(Long productId);
 }

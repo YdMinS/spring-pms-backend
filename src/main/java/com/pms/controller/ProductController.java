@@ -4,12 +4,14 @@ import com.pms.domain.Product;
 import com.pms.dto.request.CreateProductRequest;
 import com.pms.dto.request.UpdateProductRequest;
 import com.pms.dto.response.ProductResponse;
+import com.pms.dto.response.ProductUsageResponse;
 import com.pms.dto.common.ResponseDTO;
 import com.pms.exception.ImageNotFoundException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.ProductRepository;
 import com.pms.service.ImageStorageService;
 import com.pms.service.ProductService;
+import com.pms.service.ProductUsageService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -46,6 +48,7 @@ public class ProductController {
     private final ProductService productService;
     private final ImageStorageService imageStorageService;
     private final ProductRepository productRepository;
+    private final ProductUsageService productUsageService;
 
     /**
      * Create a new product (ADMIN only)
@@ -108,6 +111,33 @@ public class ProductController {
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     public ResponseEntity<ResponseDTO<ProductResponse>> getProduct(@PathVariable(name = "id") Long id) {
         ProductResponse response = productService.getProduct(id);
+        return ResponseEntity.ok(ResponseDTO.success(response));
+    }
+
+    /**
+     * Get where a product is currently used (ADMIN only)
+     *
+     * <p>⚠️ The ADMIN restriction lives in {@code config/SecurityConfig} (this controller has no
+     * {@code @PreAuthorize} at all), and {@code /api/products/{id}} matches a single segment only — without
+     * an explicit {@code GET /api/products/*&#47;usage} matcher this would fall through to
+     * {@code anyRequest().authenticated()}.</p>
+     *
+     * @param id Product ID
+     * @return HTTP 200 OK with ProductUsageResponse
+     */
+    @GetMapping("/{id}/usage")
+    @Operation(summary = "Get product usage", description = "Where this product is used (ADMIN role required)")
+    @SecurityRequirement(name = "bearerAuth")
+    @ApiResponse(responseCode = "200", description = "Usage retrieved successfully",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "401", description = "Authentication required",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "403", description = "Permission denied (ADMIN role required)",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "404", description = "Product not found",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    public ResponseEntity<ResponseDTO<ProductUsageResponse>> getUsage(@PathVariable(name = "id") Long id) {
+        ProductUsageResponse response = productUsageService.getUsage(id);
         return ResponseEntity.ok(ResponseDTO.success(response));
     }
 

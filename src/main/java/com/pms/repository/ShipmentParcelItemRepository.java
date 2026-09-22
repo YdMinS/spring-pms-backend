@@ -39,4 +39,10 @@ public interface ShipmentParcelItemRepository extends JpaRepository<ShipmentParc
              order by i.id asc
             """)
     List<ShipmentParcelItem> findWithLineByParcelIdIn(@Param("parcelIds") Collection<Long> parcelIds);
+
+    /**
+     * Row count for one product, shown as informational history in the product usage screen
+     * (FEATURE_2609_69 / A). History never blocks deletion — it is displayed only.
+     */
+    long countByProductId(Long productId);
 }
