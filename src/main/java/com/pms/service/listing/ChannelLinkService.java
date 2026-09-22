@@ -20,7 +20,10 @@ public interface ChannelLinkService {
     void unlink(Long masterProductId, Long productListingId);
 
     /**
-     * 미전송(DRAFT) 채널 셀을 물리 삭제한다 — 마켓 상품 ID 가 있는 셀은 400 으로 막는다.
+     * <b>마켓 미등록</b> 채널 셀을 물리 삭제한다 — 마켓 상품 ID 가 있는 셀은 400 으로 막는다.
+     *
+     * <p>⚠️ 판정은 마켓 상품 ID 유무 하나다. 상태({@code status})는 보지 않는다(2609_72/D12) — 메서드·경로
+     * 이름의 'Draft' 는 하위호환으로 남긴 것이다.</p>
      *
      * @param masterProductId 셀이 붙어 있는 마스터 id
      * @param productListingId 지울 셀 id

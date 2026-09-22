@@ -92,7 +92,7 @@ public class ChannelAddController {
      * 달라 한 엔드포인트로 합치지 않는다(2609_63/D13).
      */
     @DeleteMapping("/{masterProductId}/listings/{listingId}")
-    @Operation(summary = "Delete a DRAFT channel cell (never registered on the marketplace)")
+    @Operation(summary = "Delete a channel cell that was never registered on the marketplace")
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<Void>> deleteDraftChannel(
             @PathVariable Long masterProductId, @PathVariable Long listingId) {

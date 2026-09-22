@@ -8,9 +8,13 @@ import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MarginPolicy;
+import com.pms.domain.ListingStatus;
+import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductComponent;
+import com.pms.domain.MasterProductImage;
 import com.pms.domain.MasterProductOption;
+import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -21,7 +25,10 @@ import com.pms.repository.CategoryRepository;
 import com.pms.repository.MarginPolicyRepository;
 import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.MasterProductComponentRepository;
+import com.pms.repository.MasterProductImageRepository;
+import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -63,6 +70,9 @@ class MasterProductControllerTest extends BaseIntegrationTest {
     @Autowired private MasterProductRepository masterProductRepository;
     @Autowired private MasterProductComponentRepository componentRepository;
     @Autowired private MasterProductOptionRepository masterProductOptionRepository;
+    @Autowired private MasterProductOptionItemRepository masterProductOptionItemRepository;
+    @Autowired private MasterProductImageRepository masterProductImageRepository;
+    @Autowired private MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     @Autowired private ProductRepository productRepository;
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
@@ -359,7 +369,6 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON).content(createMasterBody()))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.active").value(true))
                 .andExpect(jsonPath("$.data.components.length()").value(2));
     }
 
@@ -389,8 +398,7 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.status").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.length()").value(1))
                 .andExpect(jsonPath("$.data[0].id").value(masterId))
-                .andExpect(jsonPath("$.data[0].name").value("마스터A"))
-                .andExpect(jsonPath("$.data[0].active").value(true));
+                .andExpect(jsonPath("$.data[0].name").value("마스터A"));
     }
 
     @Test
@@ -420,19 +428,6 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(0));
-    }
-
-    @Test
-    void byComponents_softDeletedMaster_isStillReportedAsInactive() throws Exception {
-        MasterProduct master = masterProductRepository.findById(masterId).orElseThrow();
-        masterProductRepository.save(master.toBuilder().active(false).build());
-
-        mockMvc.perform(get(PATH + "/by-components").param("productIds", productId1 + "," + productId2)
-                        .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(1))
-                .andExpect(jsonPath("$.data[0].id").value(masterId))
-                .andExpect(jsonPath("$.data[0].active").value(false));
     }
 
     @Test
@@ -1002,5 +997,72 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 + "\"options\":[{\"name\":\"1세트\",\"items\":["
                 + "{\"productId\":" + productId1 + ",\"quantity\":1},"
                 + "{\"productId\":" + productId3 + ",\"quantity\":1}]}]}";
+    }
+
+    // ------------------------------------------------------------- hard delete (2609_72)
+
+    /**
+     * 🔴 이 조각의 유일한 실DB 안전망 — 자식 전종류를 만들어 넣고 FK 를 실제로 밟는다.
+     * 목 테스트는 순서만 보고, H2 에는 {@code ON DELETE SET NULL} 이 없다.
+     */
+    @Test
+    void deleteMaster_unregisteredOnly_hardDeletesMasterAndChildren() throws Exception {
+        Seller seller = sellerRepository.findAll().get(0);
+        Product product1 = productRepository.findById(productId1).orElseThrow();
+
+        MasterProduct target = masterProductRepository.save(MasterProduct.builder()
+                .name("삭제대상").active(true).build());
+        Long newId = target.getId();
+        componentRepository.save(MasterProductComponent.builder()
+                .masterProduct(target).product(product1).build());
+        MasterProductOption option = masterProductOptionRepository.save(MasterProductOption.builder()
+                .masterProduct(target).name("1세트").build());
+        masterProductOptionItemRepository.save(
+                MasterProductOptionItem.builder().option(option).product(product1).quantity(1).build());
+        MasterProductImage image = masterProductImageRepository.save(MasterProductImage.builder()
+                .masterProduct(target).sortOrder(0).imageUrl("http://x/y.jpg").build());
+        masterImageZoneAssignmentRepository.save(MasterImageZoneAssignment.builder()
+                .image(image).zoneId(MasterImageZoneAssignment.SOURCE_ZONE).sortOrder(0).build());
+        ProductListing cell = productListingRepository.save(ProductListing.builder()
+                .platform(Platform.COUPANG).platformProductId(null).status(ListingStatus.DRAFT)
+                .name("미전송셀").seller(seller).masterProduct(target).build());
+        productListingOptionRepository.save(ProductListingOption.builder()
+                .productListing(cell).optionName("1세트").masterProductOption(option)
+                .sellingPrice(new BigDecimal("1000")).build());
+
+        mockMvc.perform(delete(PATH + "/" + newId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"));
+
+        // ⚠️ 이 클래스는 @Transactional 이라 벌크 삭제(@Modifying) 행은 1차 캐시에 남는다 — findById 로는
+        //    지워진 것이 보이지 않는다. 그래서 전부 DB 를 다시 읽는 조회 쿼리로 단언한다.
+        assertThat(masterProductRepository.findScopedById(newId)).isEmpty();
+        assertThat(componentRepository.findByMasterProductId(newId)).isEmpty();
+        assertThat(masterProductOptionRepository.findByMasterProductId(newId)).isEmpty();
+        assertThat(masterProductOptionItemRepository.findByOptionId(option.getId())).isEmpty();
+        assertThat(masterProductImageRepository.findByMasterProductIdOrderBySortOrderAsc(newId)).isEmpty();
+        assertThat(masterImageZoneAssignmentRepository
+                .findByImage_MasterProductIdOrderByZoneIdAscSortOrderAsc(newId)).isEmpty();
+        assertThat(productListingRepository.findByMasterProductId(newId)).isEmpty();
+        assertThat(productListingOptionRepository.findByProductListingId(cell.getId())).isEmpty();
+    }
+
+    @Test
+    void deleteMaster_marketRegisteredCell_returns409() throws Exception {
+        // 시드 셀은 platformProductId = "X" 라 가드에 걸린다.
+        mockMvc.perform(delete(PATH + "/" + masterId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message", org.hamcrest.Matchers.containsString("연결 해제")));
+
+        assertThat(masterProductRepository.findById(masterId)).isPresent();
+    }
+
+    @Test
+    void deleteMaster_userToken_returns403() throws Exception {
+        mockMvc.perform(delete(PATH + "/" + masterId)
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
     }
 }

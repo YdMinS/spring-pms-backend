@@ -20,12 +20,12 @@ import java.math.BigDecimal;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * {@link MasterProductRepository#searchActivePage} against a real DB (FEATURE_2608_06 / 110,
+ * {@link MasterProductRepository#searchPage} against a real DB (FEATURE_2608_06 / 110,
  * FEATURE_2609_60).
  *
  * <p>The search is one JPQL that ORs three things: the master name
  * ({@code lower(...) like lower(concat('%', :keyword, '%'))}) and two exact id matches reached through
- * correlated {@code exists} subqueries. Case folding, the active filter, the correlation and the
+ * correlated {@code exists} subqueries. Case folding, the correlation and the
  * "one row per master" guarantee only prove themselves in real SQL, so a mocked service test cannot
  * cover them.</p>
  */
@@ -38,73 +38,75 @@ class MasterProductRepositoryTest {
     @Autowired private TestEntityManager em;
 
     @Test
-    void searchActivePage_matchesPartialCaseInsensitive() {
+    void searchPage_matchesPartialCaseInsensitive() {
         // Do NOT set tenantId: @TenantId stamps it (NO_TENANT in this slice) and filters reads with the same value.
         em.persist(MasterProduct.builder().name("커피A").active(true).build());
         em.persist(MasterProduct.builder().name("디카페인 커피").active(true).build());
         em.persist(MasterProduct.builder().name("KOFFEE Blend").active(true).build());
         em.flush();
 
-        Page<MasterProduct> hits = repository.searchActivePage("커피", PageRequest.of(0, 25));
+        Page<MasterProduct> hits = repository.searchPage("커피", PageRequest.of(0, 25));
         assertThat(hits.getTotalElements()).isEqualTo(2);
         assertThat(hits.getContent()).extracting(MasterProduct::getName)
                 .containsExactlyInAnyOrder("커피A", "디카페인 커피");
 
         // Case-insensitive both ways: a lowercase keyword matches an uppercase name.
-        assertThat(repository.searchActivePage("koffee", PageRequest.of(0, 25)).getContent())
+        assertThat(repository.searchPage("koffee", PageRequest.of(0, 25)).getContent())
                 .extracting(MasterProduct::getName).containsExactly("KOFFEE Blend");
     }
 
+    /** 2609_72/D1-a: 비활성 개념이 없어졌다 — 옛 {@code active=false} 행도 검색에 그대로 나온다. */
     @Test
-    void searchActivePage_excludesInactive() {
+    void searchPage_includesInactive() {
         em.persist(MasterProduct.builder().name("커피 활성").active(true).build());
-        em.persist(MasterProduct.builder().name("커피 삭제됨").active(false).build());
+        em.persist(MasterProduct.builder().name("커피 옛비활성").active(false).build());
         em.flush();
 
-        Page<MasterProduct> hits = repository.searchActivePage("커피", PageRequest.of(0, 25));
+        Page<MasterProduct> hits = repository.searchPage("커피", PageRequest.of(0, 25));
 
-        assertThat(hits.getContent()).extracting(MasterProduct::getName).containsExactly("커피 활성");
+        assertThat(hits.getContent()).extracting(MasterProduct::getName)
+                .containsExactlyInAnyOrder("커피 활성", "커피 옛비활성");
     }
 
     @Test
-    void searchActivePage_matchesPlatformProductId() {
+    void searchPage_matchesPlatformProductId() {
         givenMasterWithListing(true);
 
-        Page<MasterProduct> hits = repository.searchActivePage("1234567", PageRequest.of(0, 25));
+        Page<MasterProduct> hits = repository.searchPage("1234567", PageRequest.of(0, 25));
 
         assertThat(hits.getContent()).extracting(MasterProduct::getName).containsExactly("생수 2L");
     }
 
     @Test
-    void searchActivePage_matchesPlatformOptionId() {
+    void searchPage_matchesPlatformOptionId() {
         givenMasterWithListing(true);
 
-        Page<MasterProduct> hits = repository.searchActivePage("8123456789", PageRequest.of(0, 25));
+        Page<MasterProduct> hits = repository.searchPage("8123456789", PageRequest.of(0, 25));
 
         assertThat(hits.getContent()).extracting(MasterProduct::getName).containsExactly("생수 2L");
     }
 
     @Test
-    void searchActivePage_exactMatchOnly() {
+    void searchPage_exactMatchOnly() {
         givenMasterWithListing(true);
 
         // A numeric id under `like %..%` would drag in every longer id that merely contains it (D2).
-        assertThat(repository.searchActivePage("812", PageRequest.of(0, 25)).getContent()).isEmpty();
-        assertThat(repository.searchActivePage("123", PageRequest.of(0, 25)).getContent()).isEmpty();
+        assertThat(repository.searchPage("812", PageRequest.of(0, 25)).getContent()).isEmpty();
+        assertThat(repository.searchPage("123", PageRequest.of(0, 25)).getContent()).isEmpty();
     }
 
     @Test
-    void searchActivePage_matchesInactiveOption() {
+    void searchPage_matchesInactiveOption() {
         // "Which master owns this id" is not "is it selling" (D4) — an inactive option still matches.
         givenMasterWithListing(false);
 
-        Page<MasterProduct> hits = repository.searchActivePage("8123456789", PageRequest.of(0, 25));
+        Page<MasterProduct> hits = repository.searchPage("8123456789", PageRequest.of(0, 25));
 
         assertThat(hits.getContent()).extracting(MasterProduct::getName).containsExactly("생수 2L");
     }
 
     @Test
-    void searchActivePage_returnsMasterOnceWhenTwoOptionsShareTheId() {
+    void searchPage_returnsMasterOnceWhenTwoOptionsShareTheId() {
         // platform_option_id carries no unique constraint and duplicates really exist
         // (079-order-line-listing-option.yaml works around them with MIN(plo.id)). `exists` must not
         // multiply the master — a `join` would return it twice and break the page count.
@@ -114,7 +116,7 @@ class MasterProductRepositoryTest {
                 .sellingPrice(new BigDecimal("18000")).platformOptionId("8123456789").build());
         em.flush();
 
-        Page<MasterProduct> hits = repository.searchActivePage("8123456789", PageRequest.of(0, 25));
+        Page<MasterProduct> hits = repository.searchPage("8123456789", PageRequest.of(0, 25));
 
         assertThat(hits.getTotalElements()).isEqualTo(1);
     }

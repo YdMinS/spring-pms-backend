@@ -175,9 +175,6 @@ public interface MasterProductService {
      */
     int applyShippingOverrideToChannels(Long id, java.util.List<Long> listingIds);
 
-    /** Soft delete: sets {@code active=false} (restore via PATCH {@code active=true}). */
-    void deleteMasterProduct(Long id);
-
     MasterOptionResponse createOption(Long masterId, MasterOptionRequest request);
 
     MasterOptionResponse updateOption(Long masterId, Long optionId, MasterOptionRequest request);

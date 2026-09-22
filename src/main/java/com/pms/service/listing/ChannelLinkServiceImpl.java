@@ -1,6 +1,5 @@
 package com.pms.service.listing;
 
-import com.pms.domain.ListingStatus;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.exception.BusinessException;
@@ -73,14 +72,17 @@ public class ChannelLinkServiceImpl implements ChannelLinkService {
     }
 
     /**
-     * 미전송(DRAFT) 채널 셀을 물리 삭제한다 — 구성 → 옵션 → 자동생성물 → 태그이력 → 셀 순서다(자식 먼저).
+     * <b>마켓 미등록</b> 채널 셀을 물리 삭제한다 — 구성 → 옵션 → 자동생성물 → 태그이력 → 셀 순서다(자식 먼저).
      *
-     * <p>DRAFT 셀에는 PLAN/D2 가 지목한 기록이 <b>구조적으로 붙을 수 없다</b>:</p>
+     * <p>⚠️ 메서드·엔드포인트 이름의 'Draft' 는 하위호환으로 남긴 것이다 — 판정은 <b>마켓 상품 ID 유무</b>
+     * 하나이고 상태({@code status})는 보지 않는다(2609_72/D12).</p>
+     *
+     * <p>마켓 미등록 셀에는 PLAN/D2 가 지목한 기록이 <b>구조적으로 붙을 수 없다</b>:</p>
      * <ul>
      *   <li>주문({@code order_line}) · 정산({@code settlement_line}) · 고객문의({@code customer_inquiry}) 는
-     *       전부 <b>마켓 옵션/상품 ID</b> 로 연결된다. DRAFT 는 그 ID 가 없다.</li>
+     *       전부 <b>마켓 옵션/상품 ID</b> 로 연결된다. 마켓 미등록 셀은 그 ID 가 없다.</li>
      *   <li>가격이력({@code price_change_log}) 은 {@code PriceHistoryRecorder} 가 DRAFT 셀을 명시적으로
-     *       제외한다.</li>
+     *       제외한다 — 상태만 DRAFT 가 아닌 미등록 셀에 기록이 남아 있으면 아래 flush 가 409 로 잡는다.</li>
      * </ul>
      *
      * <p>🔴 그래도 안전망으로 삭제 직후 {@code flush()} 한다 — {@code delete()} 는 지연 실행이라 flush 가
@@ -93,10 +95,12 @@ public class ChannelLinkServiceImpl implements ChannelLinkService {
     public void deleteDraftChannel(Long masterProductId, Long productListingId) {
         ProductListing listing = requireCellOfMaster(masterProductId, productListingId);
 
-        // 🔴 두 조건을 모두 본다 — 하나만 보면 "상태만 DRAFT 인데 상품 ID 가 남은" 행이 통과한다.
+        // 🔴 마켓 상품 ID 만 본다(2609_72/D12). 상태가 DRAFT 가 아니어도 마켓에 없는 셀은 어디서도 팔리지
+        //    않는다 — 상태까지 보면 "DRAFT 가 아닌데 마켓 ID 도 없는" 셀이 해제(마켓 ID 필수)도 삭제도 안 되는
+        //    막다른 길에 갇힌다.
         boolean registered = listing.getPlatformProductId() != null
                 && !listing.getPlatformProductId().isBlank();
-        if (registered || listing.getStatus() != ListingStatus.DRAFT) {
+        if (registered) {
             throw new ValidationException("마켓에 등록된 채널은 삭제할 수 없습니다. 연결 해제 후 정리하세요");
         }
 

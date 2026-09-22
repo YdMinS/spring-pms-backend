@@ -26,9 +26,6 @@ public class MasterProductResponse {
             nullable = true, example = "노브랜드 생수 x 6")
     private String registrationName;
 
-    @Schema(description = "Activation flag (false = soft deleted)", example = "true")
-    private Boolean active;
-
     @Schema(description = "Base image override URL", nullable = true)
     private String sourceImageUrl;
 
