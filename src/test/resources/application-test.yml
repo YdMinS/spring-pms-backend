@@ -38,3 +38,8 @@ server:
   tomcat:
     max-http-post-size: 20971520
     max-swallow-size: 20971520
+
+# Merge snapshots go to a writable build-local dir for tests (the prod default is not writable here).
+app:
+  merge:
+    snapshot-dir: build/test-merge-snapshots

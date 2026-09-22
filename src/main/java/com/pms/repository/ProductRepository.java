@@ -1,6 +1,7 @@
 package com.pms.repository;
 
 import com.pms.domain.Product;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -75,4 +76,15 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
      */
     @Query(value = "SELECT DISTINCT tenant_id FROM products", nativeQuery = true)
     List<Long> findDistinctTenantIds();
+
+    /**
+     * Active products carrying this barcode (FEATURE_2609_69 / B, merge guard).
+     *
+     * <p>The whole point of a merge is to remove a duplicate barcode, so the merge refuses to create a new
+     * one: if a THIRD active product already owns the chosen barcode, the request is a 409. Derived query →
+     * Hibernate's {@code @TenantId} filter applies. Soft-deleted products are excluded on purpose — they
+     * are exactly what a merge leaves behind, and a later unique index on {@code barcode_id} will have to
+     * be partial on {@code active} for the same reason.</p>
+     */
+    List<Product> findByBarcodeIdAndActiveTrue(String barcodeId);
 }

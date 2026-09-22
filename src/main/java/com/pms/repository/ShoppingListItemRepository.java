@@ -1,12 +1,16 @@
 package com.pms.repository;
 
 import com.pms.domain.ShoppingListItem;
+
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 @Repository
 public interface ShoppingListItemRepository extends JpaRepository<ShoppingListItem, Long> {
@@ -34,4 +38,25 @@ public interface ShoppingListItemRepository extends JpaRepository<ShoppingListIt
      * (FEATURE_2609_69 / A). History never blocks deletion — it is displayed only.
      */
     long countByProductId(Long productId);
+
+    /**
+     * Order lines this product already sits on (FEATURE_2609_69 / B, merge).
+     *
+     * <p>The merge checks this set before moving a source row: {@code uq_shopping_list_item
+     * (order_line_id, product_id)} is the ONE unique constraint a merge can hit. A hit means the same
+     * order line lists both duplicates, which is the duplicate registration itself — the source row is
+     * deleted, quantities are never summed (PLAN D8), or the purchase quantity would double.</p>
+     *
+     * <p>⚠️ Manual rows ({@code order_line_id} NULL) are absent from this set by construction — they are
+     * handled separately by the merge, which keeps the target's manual row and drops the source's.</p>
+     */
+    @Query("SELECT s.orderLine.id FROM ShoppingListItem s WHERE s.product.id = :productId AND s.orderLine IS NOT NULL")
+    Set<Long> findOrderLineIdsByProductId(@Param("productId") Long productId);
+
+    /** Every shopping list row of a product — the merge walks them one by one (row-wise, not bulk). */
+    List<ShoppingListItem> findByProductId(Long productId);
+
+    /** Does this product already have a manual row (order line NULL)? Guards the "one manual row per
+     *  product" rule the service owns while a merge moves rows across products. */
+    boolean existsByOrderLineIsNullAndProduct_Id(Long productId);
 }
