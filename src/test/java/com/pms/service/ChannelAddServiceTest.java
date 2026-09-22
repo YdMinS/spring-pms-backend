@@ -4,21 +4,16 @@ import com.pms.domain.Category;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
-import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.Platform;
-import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.request.ChannelAddRequest;
 import com.pms.exception.DuplicateChannelException;
 import com.pms.repository.CategoryMappingRepository;
-import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.SellerRepository;
 import org.junit.jupiter.api.Test;
@@ -50,10 +45,8 @@ class ChannelAddServiceTest {
 
     @Mock private MasterProductRepository masterProductRepository;
     @Mock private MasterProductOptionRepository masterProductOptionRepository;
-    @Mock private MasterProductOptionItemRepository masterProductOptionItemRepository;
     @Mock private ProductListingRepository productListingRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
-    @Mock private ProductListingProductRepository productListingProductRepository;
     @Mock private SellerRepository sellerRepository;
     @Mock private CategoryMappingRepository categoryMappingRepository;
     @Mock private ListingAssetService listingAssetService;
@@ -73,14 +66,6 @@ class ChannelAddServiceTest {
         return MasterProductOption.builder().id(id).name(name).masterProduct(master()).build();
     }
 
-    private Product product(Long id) {
-        return Product.builder().id(id).productName("상품" + id).build();
-    }
-
-    private MasterProductOptionItem item(MasterProductOption option, Product product, int qty) {
-        return MasterProductOptionItem.builder().option(option).product(product).quantity(qty).build();
-    }
-
     private ChannelAddRequest request() {
         return ChannelAddRequest.builder().sellerId(SELLER_ID).platform("COUPANG").build();
     }
@@ -89,9 +74,6 @@ class ChannelAddServiceTest {
     void addChannel_happy_copiesAllMasterOptionsToDraftListing_andRegeneratesOnce() {
         MasterProductOption opt1 = masterOption(10L, "1세트");
         MasterProductOption opt2 = masterOption(20L, "2세트");
-        Product prodA = product(100L);
-        Product prodB = product(200L);
-
         given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master()));
         given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(MASTER_ID, SELLER_ID, Platform.COUPANG))
                 .willReturn(false);
@@ -100,9 +82,6 @@ class ChannelAddServiceTest {
         given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(Seller.builder().id(SELLER_ID).build()));
         // Standard category set + a COUPANG mapping present → channel-add passes pre-validation (44).
         given(categoryMappingRepository.existsByCategoryIdAndPlatform(CATEGORY_ID, Platform.COUPANG)).willReturn(true);
-        given(masterProductOptionItemRepository.findByOptionIdIn(List.of(10L, 20L)))
-                .willReturn(List.of(item(opt1, prodA, 2), item(opt2, prodB, 1)));
-
         // save returns the entity with an id so the cell/option are addressable downstream.
         given(productListingRepository.save(any())).willAnswer(inv ->
                 ((ProductListing) inv.getArgument(0)).toBuilder().id(50L).build());
@@ -136,11 +115,10 @@ class ChannelAddServiceTest {
                 .extracting(o -> o.getMasterProductOption().getId())
                 .containsExactly(10L, 20L);
 
-        // BOM: one row per master item, quantities preserved.
-        ArgumentCaptor<ProductListingProduct> bomCaptor = ArgumentCaptor.forClass(ProductListingProduct.class);
-        verify(productListingProductRepository, times(2)).save(bomCaptor.capture());
-        assertThat(bomCaptor.getAllValues()).extracting(ProductListingProduct::getQuantity)
-                .containsExactly(2, 1);
+        // 🔴 2609_71: 구성품은 복사하지 않는다 — 마스터 옵션이 갖고, 셀은 위 FK 로 그것을 읽는다.
+        //    두 번째 사본이 다시 생기면 이 구조 가드에서 걸린다.
+        assertThat(ChannelAddServiceImpl.class.getDeclaredFields())
+                .noneMatch(f -> f.getType().getSimpleName().startsWith("ProductListingProduct"));
 
         // Reused seam ran exactly once on the new cell.
         verify(listingAssetService, times(1)).regenerateAssets(any(ProductListing.class));

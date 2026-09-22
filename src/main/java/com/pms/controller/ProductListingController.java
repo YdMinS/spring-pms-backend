@@ -14,7 +14,6 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -31,11 +30,13 @@ import org.springframework.web.bind.annotation.*;
  * Base path: /api/product-listings
  *
  * Endpoints:
- * - POST / : Create new listing (ADMIN)
  * - GET /{id} : Get listing by ID
  * - GET ?platform=... : Get listings by platform (paginated)
  * - PATCH /{id} : Update listing (ADMIN)
  * - DELETE /{id} : Delete listing (ADMIN)
+ *
+ * 🔴 2609_71/D7: 셀 직접 등록(POST)은 없다 — 판매상품은 마스터를 통해서만 생긴다
+ * (마스터 상세의 [채널 추가] · 쿠팡 상품 ID 편입 · 쿠팡 ID 로 마스터 생성).
  *
  * @see ProductListingService for business logic
  * @see ProductListingResponse for response structure
@@ -47,46 +48,6 @@ import org.springframework.web.bind.annotation.*;
 public class ProductListingController {
 
     private final ProductListingService productListingService;
-
-    /**
-     * Create a new product listing on a platform.
-     *
-     * Creates a ProductListing with platform, platformProductId, and name.
-     * Optional fields (category, delivery, package) are used for margin calculation.
-     * platformProductId must be unique.
-     *
-     * @param request CreateProductListingRequest (platform, platformProductId, name required)
-     * @return HTTP 201 Created with ProductListingResponse
-     * @throws IllegalArgumentException if platformProductId already exists
-     * @throws ResourceNotFoundException if category/delivery/package not found
-     */
-    @PostMapping
-    @Operation(
-            summary = "Create product listing",
-            description = "Create a new product listing on a platform. platformProductId must be unique."
-    )
-    @SecurityRequirement(name = "bearerAuth")
-    @ApiResponse(
-            responseCode = "201",
-            description = "Product listing created successfully",
-            content = @Content(schema = @Schema(implementation = ResponseDTO.class))
-    )
-    @ApiResponse(
-            responseCode = "400",
-            description = "Validation error, duplicate platformProductId, or invalid references",
-            content = @Content(schema = @Schema(implementation = ResponseDTO.class))
-    )
-    @ApiResponse(
-            responseCode = "401",
-            description = "Authentication required",
-            content = @Content(schema = @Schema(implementation = ResponseDTO.class))
-    )
-    public ResponseEntity<ResponseDTO<ProductListingResponse>> create(
-            @Valid @RequestBody CreateProductListingRequest request) {
-        ProductListingResponse response = productListingService.create(request);
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ResponseDTO.success(response));
-    }
 
     /**
      * Retrieve a product listing by ID.

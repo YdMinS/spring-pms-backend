@@ -14,7 +14,6 @@ import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.PriceChangeLogRepository;
 import com.pms.repository.ProductImageRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.ShipmentParcelItemRepository;
@@ -78,7 +77,6 @@ class ProductMergeServiceTest {
     // Not injected on purpose — see the class javadoc.
     @Mock private MasterProductComponentRepository masterProductComponentRepository;
     @Mock private MasterProductOptionItemRepository masterProductOptionItemRepository;
-    @Mock private ProductListingProductRepository productListingProductRepository;
 
     @InjectMocks private ProductMergeService service;
 
@@ -156,7 +154,6 @@ class ProductMergeServiceTest {
         verify(masterProductComponentRepository, never()).save(any());
         verify(masterProductComponentRepository, never()).delete(any());
         verify(masterProductOptionItemRepository, never()).save(any());
-        verify(productListingProductRepository, never()).save(any());
     }
 
     // ---- transfer selection ---------------------------------------------------------------------
@@ -244,7 +241,6 @@ class ProductMergeServiceTest {
 
         assertLinksUntouched();
         verify(masterProductOptionItemRepository, never()).delete(any());
-        verify(productListingProductRepository, never()).delete(any());
     }
 
     // ---- shopping list conflicts ----------------------------------------------------------------

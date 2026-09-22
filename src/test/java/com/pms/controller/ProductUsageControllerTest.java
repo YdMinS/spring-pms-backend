@@ -9,13 +9,15 @@ import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
+import com.pms.domain.MasterProductOption;
+import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.Seller;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
+import com.pms.repository.MasterProductOptionItemRepository;
+import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
@@ -44,7 +46,8 @@ class ProductUsageControllerTest extends BaseIntegrationTest {
     @Autowired private MarketplaceAccountRepository marketplaceAccountRepository;
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
-    @Autowired private ProductListingProductRepository productListingProductRepository;
+    @Autowired private MasterProductOptionRepository masterProductOptionRepository;
+    @Autowired private MasterProductOptionItemRepository masterProductOptionItemRepository;
 
     private Long linkedProductId;
 
@@ -67,10 +70,14 @@ class ProductUsageControllerTest extends BaseIntegrationTest {
         ProductListing cell = productListingRepository.save(ProductListing.builder()
                 .platform(Platform.COUPANG).name("셀").status(ListingStatus.SELLING)
                 .seller(seller).masterProduct(master).build());
-        ProductListingOption option = productListingOptionRepository.save(ProductListingOption.builder()
-                .productListing(cell).optionName("6개입").sellingPrice(new BigDecimal("6000")).build());
-        productListingProductRepository.save(ProductListingProduct.builder()
-                .productListingOption(option).product(product).quantity(6).build());
+        // 2609_71: 셀 옵션의 구성품은 마스터 옵션이 갖는다 — 역방향 조회도 이 FK 를 타고 내려온다.
+        MasterProductOption masterOption = masterProductOptionRepository.save(
+                MasterProductOption.builder().masterProduct(master).name("6개입").build());
+        masterProductOptionItemRepository.save(MasterProductOptionItem.builder()
+                .option(masterOption).product(product).quantity(6).build());
+        productListingOptionRepository.save(ProductListingOption.builder()
+                .productListing(cell).optionName("6개입").masterProductOption(masterOption)
+                .sellingPrice(new BigDecimal("6000")).build());
     }
 
     private String usagePath() {

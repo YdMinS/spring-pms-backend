@@ -20,10 +20,9 @@ import java.util.Set;
 /**
  * See {@link ListingChannelImageService}.
  *
- * <p>새 조회 로직을 만들지 않았다 — {@code ListingMasterCreateServiceImpl.validate} 의 마지막 네 걸음
+ * <p>새 조회 로직을 만들지 않았다 — 마켓 상품을 읽는 다른 경로와 같은 네 걸음
  * (셀 테넌트 스코프 조회 → 플랫폼 화이트리스트 → 계정 해석 → {@link ListingChannel#fetchProduct})을 그대로
- * 따른다. 다른 점은 <b>대상과 범위</b>뿐이다: 저쪽은 <b>미연결</b> 셀을 마스터로 만들기 전에 옵션·BOM 까지
- * 전부 검증하지만, 이쪽은 <b>이미 연결된</b> 셀에서 이미지 URL 만 읽으므로 그 검증이 하나도 필요 없다.</p>
+ * 따른다. 다른 점은 <b>범위</b>뿐이다: 이쪽은 이미지 URL 만 읽으므로 옵션·구성품 검증이 하나도 필요 없다.</p>
  *
  * <p>🔴 {@code masterProduct} 연결 여부를 검사하지 않는다. 이 경로가 필요로 하는 것은
  * {@code platformProductId} 하나뿐이고, 연결 여부는 "마켓에 이 상품이 있는가" 와 아무 상관이 없다 —

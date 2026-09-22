@@ -35,7 +35,6 @@ class BatchChannelAddServiceTest {
     @Mock private com.pms.repository.MasterProductOptionItemRepository masterProductOptionItemRepository;
     @Mock private com.pms.repository.ProductListingRepository productListingRepository;
     @Mock private com.pms.repository.ProductListingOptionRepository productListingOptionRepository;
-    @Mock private com.pms.repository.ProductListingProductRepository productListingProductRepository;
     @Mock private com.pms.repository.SellerRepository sellerRepository;
     @Mock private MasterChannelConfigService masterChannelConfigService;
     @Mock private ListingAssetService listingAssetService;

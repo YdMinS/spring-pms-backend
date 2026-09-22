@@ -76,7 +76,7 @@ public interface MasterImageZoneAssignmentRepository extends JpaRepository<Maste
      *
      * <p>🔴 The {@code MasterProduct} subquery IS the tenant isolation (see {@link #countByZoneIdGrouped()}).
      * A derived {@code deleteByZoneId(String)} would wipe OTHER tenants' mappings — do not replace it.
-     * The two-hop association path mirrors {@code ProductListingProductRepository.deleteByProductListingId}.</p>
+     * The two-hop association path mirrors {@code MasterProductOptionItemRepository.deleteByOptionId}.</p>
      */
     @Modifying
     @Transactional

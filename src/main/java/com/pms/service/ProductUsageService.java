@@ -8,7 +8,6 @@ import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.dto.response.ProductUsageResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
@@ -16,7 +15,7 @@ import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.PriceChangeLogRepository;
 import com.pms.repository.ProductImageRepository;
-import com.pms.repository.ProductListingProductRepository;
+import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.ShipmentParcelItemRepository;
@@ -57,7 +56,7 @@ public class ProductUsageService {
     private final ProductRepository productRepository;
     private final MasterProductComponentRepository masterProductComponentRepository;
     private final MasterProductOptionItemRepository masterProductOptionItemRepository;
-    private final ProductListingProductRepository productListingProductRepository;
+    private final ProductListingOptionRepository productListingOptionRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final StockMovementRepository stockMovementRepository;
     private final PurchaseRecordRepository purchaseRecordRepository;
@@ -140,17 +139,35 @@ public class ProductUsageService {
     }
 
     /**
-     * Channel listing options composed of this product (the legacy cell BOM, PLAN D11).
+     * Channel listing options composed of this product — resolved <b>through the master</b> (FEATURE_2609_71).
+     *
+     * <p>🔴 셀 구성품 사본({@code product_listing_product})은 사라졌다. 「이 물품을 쓰는 판매 옵션」은 이제
+     * 마스터 옵션의 items 에서 출발해 {@code master_product_option_id} FK 를 타고 내려온 결과이며, 수량도
+     * 마스터 옵션의 수량이다 — 셀마다 다른 수량이라는 개념 자체가 없어졌다.</p>
+     *
+     * <p>그래서 이 목록은 <b>독립적인 차단 사유가 아니다</b>: 여기 무언가 있으면 그 마스터도 반드시
+     * {@code masterProducts} 에 있다(옵션 item 은 마스터의 구성상품 집합 위의 수량 벡터다, PLAN D2).
+     * 끊는 곳은 마스터 한 군데이고, 이 목록은 그 파급 범위를 보여주는 정보다.</p>
      *
      * <p>A listing points at (seller, platform), not at the account row, so the account is resolved per
      * distinct pair and cached — the same channel usually repeats across a product's options.</p>
      */
     private List<ProductUsageResponse.ListingOptionRef> collectListingOptions(Long productId) {
+        // masterOptionId → 이 물품의 수량. 같은 옵션에 같은 물품이 두 줄이면 첫 줄이 이긴다(다른 읽기 경로와 동일).
+        Map<Long, Integer> quantityByMasterOption = new LinkedHashMap<>();
+        for (MasterProductOptionItem item
+                : masterProductOptionItemRepository.findWithMasterByProductIdIn(List.of(productId))) {
+            quantityByMasterOption.putIfAbsent(item.getOption().getId(), item.getQuantity());
+        }
+        if (quantityByMasterOption.isEmpty()) {
+            return List.of();
+        }
+
         Map<String, Optional<MarketplaceAccount>> accountCache = new HashMap<>();
         List<ProductUsageResponse.ListingOptionRef> refs = new ArrayList<>();
 
-        for (ProductListingProduct line : productListingProductRepository.findByProductId(productId)) {
-            ProductListingOption option = line.getProductListingOption();
+        for (ProductListingOption option
+                : productListingOptionRepository.findByMasterProductOption_IdIn(quantityByMasterOption.keySet())) {
             ProductListing listing = option.getProductListing();
             Platform platform = listing.getPlatform();
             Long sellerId = listing.getSeller().getId();
@@ -165,7 +182,7 @@ public class ProductUsageService {
                     account.map(MarketplaceAccount::getId).orElse(null),
                     account.map(MarketplaceAccount::getAccountAlias).orElse(null),
                     platform.name(),
-                    line.getQuantity(),
+                    quantityByMasterOption.get(option.getMasterProductOption().getId()),
                     listing.getStatus() == null ? null : listing.getStatus().name()));
         }
 
@@ -187,7 +204,7 @@ public class ProductUsageService {
             blockers.add("마스터 상품 " + masterProducts.size() + "개(마스터 상품 화면에서 해제)");
         }
         if (!listingOptions.isEmpty()) {
-            blockers.add("판매 옵션 " + listingOptions.size() + "개(셀 화면에서 해제)");
+            blockers.add("판매 옵션 " + listingOptions.size() + "개(마스터 상품 화면에서 해제)");
         }
         return blockers;
     }

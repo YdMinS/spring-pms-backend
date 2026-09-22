@@ -2,21 +2,13 @@ package com.pms.service.listing;
 
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.MasterProduct;
-import com.pms.domain.MasterProductOption;
-import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.Platform;
-import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
-import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.dto.response.PropagateResponse;
 import com.pms.repository.GeneratedProductDataRepository;
-import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
-import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.service.ListingAssetService;
-import com.pms.service.listing.OptionQuantitySync;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -52,11 +44,8 @@ class MasterPropagationServiceTest {
 
     @Mock private MasterProductRepository masterProductRepository;
     @Mock private ProductListingRepository productListingRepository;
-    @Mock private ProductListingOptionRepository productListingOptionRepository;
-    @Mock private MasterProductOptionRepository masterProductOptionRepository;
     @Mock private GeneratedProductDataRepository generatedProductDataRepository;
     @Mock private ListingAssetService listingAssetService;
-    @Mock private OptionQuantitySync optionQuantitySync;
     @Mock private MasterOptionChannelSync masterOptionChannelSync;
     @InjectMocks private MasterPropagationServiceImpl service;
 
@@ -74,7 +63,7 @@ class MasterPropagationServiceTest {
 
     private ProductListing cell(Long id, String platformProductId) {
         return ProductListing.builder().id(id).platform(Platform.COUPANG).name("셀-" + id)
-                .platformProductId(platformProductId).build();   // masterProduct null → quantity sync no-op
+                .platformProductId(platformProductId).build();   // masterProduct null → structure sync no-op
     }
 
     private void hasGenerated(Long cellId) {
@@ -148,33 +137,6 @@ class MasterPropagationServiceTest {
         assertThat(captor.getValue().isNeedsMarketSync()).isTrue();
     }
 
-    // matched-option quantity sync: still delegated to the shared OptionQuantitySync (84) with the matched
-    // (cell option, master option) pair. The line rule itself is covered by OptionQuantitySyncTest.
-    @Test
-    void propagate_delegatesMatchedOptionToQuantitySync() {
-        MasterProduct master = MasterProduct.builder().id(MASTER_ID).name("마스터").build();
-        ProductListing cell = ProductListing.builder().id(1L).platform(Platform.COUPANG).name("셀")
-                .platformProductId("SP-1").masterProduct(master).build();
-        given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
-        hasGenerated(1L);
-
-        MasterProductOption masterOption = MasterProductOption.builder().id(7L).name("2세트")
-                .masterProduct(master).build();
-        // 2609_22/D1: linked by the FK — the channel may call it whatever it likes.
-        ProductListingOption cellOption = ProductListingOption.builder().id(5L).optionName("채널이 붙인 이름")
-                .masterProductOption(masterOption).build();
-        // 2609_22/D2: no link = channel-only → the master owns nothing here, so propagation must skip it.
-        ProductListingOption channelOnly = ProductListingOption.builder().id(6L).optionName("채널전용").build();
-        given(productListingOptionRepository.findByProductListingId(1L))
-                .willReturn(List.of(cellOption, channelOnly));
-        given(masterProductOptionRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(masterOption));
-
-        service.propagate(MASTER_ID);
-
-        verify(optionQuantitySync).syncLines(cellOption, masterOption);
-        verify(optionQuantitySync, never()).syncLines(eq(channelOnly), any());   // channel-only → skip (D2)
-    }
-
     // 404: cross-tenant/absent master → ResourceNotFoundException (findScopedById empty).
     @Test
     void propagate_absentMaster_throwsNotFound() {
@@ -183,29 +145,22 @@ class MasterPropagationServiceTest {
                 .isInstanceOf(com.pms.exception.ResourceNotFoundException.class);
     }
 
-    // 86: structure reconciliation runs per cell, BEFORE the quantity sync (so newly created options are
-    // already there) — and only the cell-scoped hook is used (a master-scoped call here would walk all N
+    // 86: structure reconciliation runs per cell, BEFORE asset regeneration (so newly created options are
+    // already priced) — and only the cell-scoped hook is used (a master-scoped call here would walk all N
     // cells once per cell, inside this cell's own REQUIRES_NEW transaction).
+    // 🔴 2609_71: 그 사이에 있던 「수량 동기화」 단계는 사라졌다 — 셀에 구성품 사본이 없어 맞출 대상이 없다.
     @Test
-    void propagateOne_syncsStructureBeforeQuantities() {
+    void propagateOne_syncsStructureBeforeRegeneratingAssets() {
         MasterProduct master = MasterProduct.builder().id(MASTER_ID).name("마스터").build();
         ProductListing cell = ProductListing.builder().id(1L).platform(Platform.COUPANG).name("셀")
                 .platformProductId("SP-1").masterProduct(master).build();
         given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
         hasGenerated(1L);
 
-        MasterProductOption masterOption = MasterProductOption.builder().id(7L).name("2세트")
-                .masterProduct(master).build();
-        ProductListingOption cellOption = ProductListingOption.builder().id(5L).optionName("2세트")
-                .masterProductOption(masterOption).build();
-        given(productListingOptionRepository.findByProductListingId(1L)).willReturn(List.of(cellOption));
-        given(masterProductOptionRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(masterOption));
-
         service.propagate(MASTER_ID);
 
-        InOrder order = inOrder(masterOptionChannelSync, optionQuantitySync, listingAssetService);
+        InOrder order = inOrder(masterOptionChannelSync, listingAssetService);
         order.verify(masterOptionChannelSync).syncStructure(cell);
-        order.verify(optionQuantitySync).syncLines(cellOption, masterOption);
         order.verify(listingAssetService).regenerateAssets(cell);
         verify(masterOptionChannelSync, never()).onOptionCreated(any(), any());
         verify(masterOptionChannelSync, never()).onOptionRemoved(any(), any());

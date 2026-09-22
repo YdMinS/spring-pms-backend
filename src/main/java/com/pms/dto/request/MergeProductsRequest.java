@@ -11,9 +11,9 @@ import java.math.BigDecimal;
  * the history a person ticked ({@link TransferOptions}) move to {@code targetProductId}; the source is then
  * soft-deleted. Everything runs in one transaction — a failure changes nothing (PLAN D6).</p>
  *
- * <p>🔴 <b>Links are never migrated</b> (PLAN D6-a): {@code master_product_component} and
- * {@code product_listing_product} stay where they are. If the source still carries one, the merge is
- * refused with 409 and the operator unlinks it on the master / cell screen first.</p>
+ * <p>🔴 <b>Links are never migrated</b> (PLAN D6-a): {@code master_product_component} rows stay where they
+ * are. If the source still carries one, the merge is refused with 409 and the operator unlinks it on the
+ * master product screen first — 2609_71 이후 끊는 곳은 마스터 한 군데다.</p>
  *
  * @param targetProductId the product that survives
  * @param sourceProductId the product that gets soft-deleted

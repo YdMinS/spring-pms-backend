@@ -57,7 +57,6 @@ import com.pms.service.listing.ListingStockPolicy;
 import com.pms.service.listing.MasterOptionChannelSync;
 import com.pms.service.listing.MasterPropagationService;
 import com.pms.service.listing.OptionCheckSuffix;
-import com.pms.service.listing.OptionQuantitySync;
 import com.pms.service.listing.TagMergeService;
 import com.pms.service.listing.shipping.ShippingOverrideKeys;
 import lombok.RequiredArgsConstructor;
@@ -120,7 +119,6 @@ public class MasterProductServiceImpl implements MasterProductService {
     private final MasterPropagationService masterPropagationService;
     private final MasterOptionChannelSync masterOptionChannelSync;
     private final ListingAssetService listingAssetService;
-    private final OptionQuantitySync optionQuantitySync;
     private final TagMergeService tagMergeService;
     private final RegistrationNameGenerator registrationNameGenerator;
     private final OptionCheckSuffixResolver optionCheckSuffixResolver;
@@ -407,8 +405,8 @@ public class MasterProductServiceImpl implements MasterProductService {
      *       matched by {@code master_product_option_id} (2609_22/D1); a channel-only option counts only while
      *       {@code active=true} (rows are never deleted, decision 42) and the cell is off-market — an on-market
      *       one is left alone by propagation (WARN only), so it is reported separately and never counted.</li>
-     *   <li>Quantities mirror {@code OptionQuantitySync.syncLines}: matched by {@code productId}, shared
-     *       products only, and <b>{@code active}-agnostic</b> (the quantity sync does not read {@code active}).</li>
+     *   <li>2609_71: 셀의 구성품은 마스터 옵션을 타고 읽으므로({@code CellBomResolver}) 연결된 옵션의
+     *       수량 차이는 구조적으로 생기지 않는다. 채널 전용 옵션만 구성품을 알 수 없어 빈 칸이 된다.</li>
      * </ul>
      *
      * <p>Query budget = one call per repository regardless of cell/option count (batched finders).</p>
@@ -418,7 +416,7 @@ public class MasterProductServiceImpl implements MasterProductService {
         requireScopedMaster(masterId);
 
         // Master side: option name → (productId → quantity). Duplicate names / duplicate products: first wins
-        // (same rule as syncLines' toMap merge), so the preview can never disagree with the propagation.
+        // Duplicate names / duplicate products: first wins, so the preview can never disagree with propagation.
         List<MasterProductOption> masterOptions = optionRepository.findByMasterProductId(masterId);
         List<Long> masterOptionIds = masterOptions.stream().map(MasterProductOption::getId).toList();
         Map<Long, Map<Long, Integer>> masterItemsByOption = new LinkedHashMap<>();
@@ -453,7 +451,7 @@ public class MasterProductServiceImpl implements MasterProductService {
 
         List<Long> cellIds = cells.stream().map(ProductListing::getId).toList();
         List<ProductListingOption> cellOptions = productListingOptionRepository.findByProductListingIdIn(cellIds);
-        // optionId → (productId → quantity); duplicate product lines: first wins (syncLines' merge rule).
+        // optionId → (productId → quantity); duplicate product lines: first wins.
         // 2609_71: 셀의 구성품도 마스터를 타고 읽는다 — 채널 전용 옵션은 구성품을 알 수 없어 빈 칸이 된다.
         Map<Long, Map<Long, Integer>> cellQuantitiesByOption = new LinkedHashMap<>();
         for (Map.Entry<Long, CellBomResolver.Bom> entry : cellBomResolver.forOptions(cellOptions).entrySet()) {
@@ -895,9 +893,7 @@ public class MasterProductServiceImpl implements MasterProductService {
                 masterOptionChannelSync.onOptionRenamed(id, updated.getId(), updated.getName());
             }
             if (quantitiesChanged) {
-                // 🔴 NOT optionQuantitySync.syncLines — that component is quantities-only, so it can neither
-                // add a line for a new component product nor drop one for a removed one, and the cell BOM
-                // would keep biting the old products (wrong cost sum, wrong price).
+                // 2609_71: 셀에는 구성품 사본이 없다 — 이 훅은 바뀐 원가 합을 셀 판매가에 반영한다.
                 masterOptionChannelSync.onOptionComponentsChanged(id, updated);
                 markNeedsMarketSync(id, updated);
             }
@@ -1417,8 +1413,8 @@ public class MasterProductServiceImpl implements MasterProductService {
             if (matched.isEmpty()) {
                 continue;   // this channel does not carry the option → nothing to re-sync
             }
-            matched.forEach(cellOption -> optionQuantitySync.syncLines(cellOption, updated));
-            // Same transaction: the lines saved just above are visible to the cost sum via JPA auto-flush.
+            // 2609_71: 수량을 셀로 복사하는 단계는 사라졌다 — 셀 옵션은 FK 를 타고 마스터 옵션의 items 를
+            // 그대로 읽는다. 바뀐 수량은 여기서 원가 합을 통해 판매가에만 반영하면 된다.
             listingAssetService.recalculateOptionPrices(cell);
             // A quantity change moves the 수량 속성 / 계량 고시 text, so a cell that already carries this
             // option on the market now disagrees with what Coupang shows. Mark it pending re-approval; the

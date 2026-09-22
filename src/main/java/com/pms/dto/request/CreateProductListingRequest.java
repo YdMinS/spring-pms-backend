@@ -16,7 +16,7 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-@Schema(description = "Create product listing request with options")
+@Schema(description = "Update product listing request with options (2609_71/D7: 생성 경로 없음)")
 public class CreateProductListingRequest {
 
     @NotNull(message = "Seller ID cannot be null")
@@ -73,26 +73,8 @@ public class CreateProductListingRequest {
         @Schema(description = "Platform option ID (optional)", example = "opt_12345")
         private String platformOptionId;
 
-        @Valid
-        @NotEmpty(message = "Products cannot be empty")
-        @Schema(description = "Products included in this option")
-        private List<ProductRequest> products;
-
-        @Getter
-        @NoArgsConstructor
-        @AllArgsConstructor
-        @Builder
-        @Schema(description = "Product in option")
-        public static class ProductRequest {
-
-            @NotNull(message = "Product ID cannot be null")
-            @Schema(description = "Product ID", example = "1")
-            private Long productId;
-
-            @NotNull(message = "Quantity cannot be null")
-            @Min(value = 1, message = "Quantity must be at least 1")
-            @Schema(description = "Quantity", example = "2")
-            private Integer quantity;
-        }
+        // 🔴 2609_71/D8: 구성품(products) 필드는 없다. 셀 옵션의 구성품은 마스터 옵션
+        //    (master_product_option_item)이 소유하며, 이 legacy 경로가 만드는 옵션은 전부 채널 전용이라
+        //    애초에 마스터가 없다. 필드를 되살리면 화면 입력이 저장되는 것처럼 보이고 실제로는 버려진다.
     }
 }

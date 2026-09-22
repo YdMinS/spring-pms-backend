@@ -28,7 +28,6 @@ import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
@@ -72,7 +71,6 @@ class CoupangListingImportServiceTest {
     @Mock private MasterProductOptionItemRepository masterProductOptionItemRepository;
     @Mock private ProductListingRepository productListingRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
-    @Mock private ProductListingProductRepository productListingProductRepository;
     @Mock private ProductRepository productRepository;
     @Mock private SellerRepository sellerRepository;
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
@@ -208,7 +206,6 @@ class CoupangListingImportServiceTest {
     private void verifyNothingSaved() {
         verify(productListingRepository, never()).save(any());
         verify(productListingOptionRepository, never()).save(any());
-        verify(productListingProductRepository, never()).save(any());
         verify(masterProductOptionRepository, never()).save(any());
     }
 
@@ -474,7 +471,6 @@ class CoupangListingImportServiceTest {
         assertThat(response.getProductListingId()).isEqualTo(50L);
         verify(productListingRepository).save(any());
         verify(productListingOptionRepository).save(any());
-        verify(productListingProductRepository, times(2)).save(any());
     }
 
     /**
@@ -528,7 +524,6 @@ class CoupangListingImportServiceTest {
         assertThat(leftover.getId()).isEqualTo(72L);
         assertThat(leftover.getActive()).isFalse();
         // 🔴 BOM 은 재사용 옵션 것만 지운다 — 잔여 옵션(72)의 구성은 그대로 남아야 한다(D6-1).
-        verify(productListingProductRepository).deleteByProductListingOptionIdIn(List.of(71L));
     }
 
     @Test

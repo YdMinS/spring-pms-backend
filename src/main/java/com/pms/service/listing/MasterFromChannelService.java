@@ -8,9 +8,9 @@ import com.pms.dto.response.MasterFromChannelPreviewResponse;
 /**
  * 마켓 상품 id 하나로 <b>마스터 + 옵션 + 채널 셀</b>을 한 번에 만든다(FEATURE_2609_45 / D1).
  *
- * <p>기존 두 경로의 거울쌍이다: {@link CoupangListingImportService} 는 <b>기존 마스터</b>에 마켓 상품을 셀로
- * 붙이고, {@link ListingMasterCreateService} 는 <b>기존 미연결 셀</b>에서 마스터를 만든다. 이 서비스는 마켓
- * 상품에서 곧바로 마스터를 만드는 입구다.</p>
+ * <p>{@link CoupangListingImportService} 는 <b>기존 마스터</b>에 마켓 상품을 셀로 붙이고, 이 서비스는 마켓
+ * 상품에서 곧바로 마스터를 만드는 입구다. 2609_71/D9 이후 <b>마스터 없는 셀에서 마스터를 만드는 경로는 이것
+ * 하나뿐</b>이다 — 셀 구성품 사본을 재료로 쓰던 옛 승격 경로는 사라졌다.</p>
  *
  * <p><b>필수 규칙</b></p>
  * <ul>
