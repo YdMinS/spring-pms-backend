@@ -9,11 +9,10 @@ import com.pms.domain.ProcessingPreset;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.ProcessingPresetRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
+import com.pms.service.listing.CellBomResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -54,7 +53,8 @@ public class TemplateDetailContentGenerator implements DetailContentGenerator {
     private final ProductImageUrlResolver productImageUrlResolver;
     private final MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
-    private final ProductListingProductRepository productListingProductRepository;
+    /** 셀 옵션의 구성품은 마스터를 타고 얻는다(2609_71). */
+    private final CellBomResolver cellBomResolver;
     private final DetailHtmlRenderer detailHtmlRenderer;
     private final DetailFontResolver detailFontResolver;
     private final ImageProcessor imageProcessor;
@@ -194,14 +194,16 @@ public class TemplateDetailContentGenerator implements DetailContentGenerator {
         return zones;
     }
 
-    /** The cell's first option's first BOM product (reserved-key derivation source), or null if none. */
+    /**
+     * The cell's first option's first BOM product (reserved-key derivation source), or null if none.
+     * 2609_71: 구성품은 마스터를 타고 읽는다 — 채널 전용 옵션은 알 수 없으므로 null(기존 빈 BOM 과 같다).
+     */
     private Product firstBomProduct(ProductListing cell) {
         List<ProductListingOption> options = productListingOptionRepository.findByProductListingId(cell.getId());
         if (options.isEmpty()) {
             return null;
         }
-        List<ProductListingProduct> bom = productListingProductRepository
-                .findByProductListingOptionId(options.get(0).getId());
-        return bom.isEmpty() ? null : bom.get(0).getProduct();
+        CellBomResolver.Line first = cellBomResolver.forOption(options.get(0)).first();
+        return first == null ? null : first.product();
     }
 }

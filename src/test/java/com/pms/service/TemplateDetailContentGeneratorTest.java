@@ -10,11 +10,10 @@ import com.pms.domain.ProcessingPreset;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.ProcessingPresetRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
+import com.pms.service.listing.CellBomResolver;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -48,7 +47,7 @@ class TemplateDetailContentGeneratorTest {
     @Mock private ProductImageUrlResolver productImageUrlResolver;
     @Mock private MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
-    @Mock private ProductListingProductRepository productListingProductRepository;
+    @Mock private CellBomResolver cellBomResolver;
     @Mock private DetailHtmlRenderer detailHtmlRenderer;
     @Mock private DetailFontResolver detailFontResolver;
     @Mock private ImageProcessor imageProcessor;
@@ -126,9 +125,8 @@ class TemplateDetailContentGeneratorTest {
                 .willReturn(List.of());
         given(productListingOptionRepository.findByProductListingId(CELL_ID))
                 .willReturn(List.of(ProductListingOption.builder().id(OPTION_ID).optionName("기본").build()));
-        given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
-                .willReturn(List.of(ProductListingProduct.builder()
-                        .product(Product.builder().productName("Q").brand("B").build()).quantity(1).build()));
+        given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.of(List.of(
+                new CellBomResolver.Line(1L, Product.builder().productName("Q").brand("B").build(), 1))));
         given(detailHtmlRenderer.render(any(), any(), any(), any())).willReturn("<html/>");
 
         generator.generate(cell);

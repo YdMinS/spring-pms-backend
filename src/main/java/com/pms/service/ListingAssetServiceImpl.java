@@ -9,7 +9,6 @@ import com.pms.domain.PriceChangeReason;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.domain.TemplateField;
 import com.pms.domain.ThumbnailTemplate;
 import com.pms.dto.response.DetailPreviewResponse;
@@ -22,8 +21,8 @@ import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
+import com.pms.service.listing.CellBomResolver;
 import com.pms.service.listing.ListingChannelResolver;
 import com.pms.service.price.PriceHistoryRecorder;
 import com.pms.service.listing.ListingStockPolicy;
@@ -72,7 +71,8 @@ public class ListingAssetServiceImpl implements ListingAssetService {
 
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
-    private final ProductListingProductRepository productListingProductRepository;
+    /** 셀 옵션의 구성품은 마스터를 타고 얻는다(2609_71). */
+    private final CellBomResolver cellBomResolver;
     private final MasterProductOptionRepository masterProductOptionRepository;
     private final MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     private final GeneratedProductDataRepository generatedProductDataRepository;
@@ -495,14 +495,16 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         return productImageLoader.load(firstProduct);
     }
 
-    /** First option's first BOM product (base photo + product-info source), or null if none. */
+    /**
+     * First option's first BOM product (base photo + product-info source), or null if none.
+     * 2609_71: 구성품은 마스터를 타고 읽는다 — 채널 전용 옵션은 알 수 없으므로 null(기존 빈 BOM 과 같다).
+     */
     private Product firstBomProduct(List<ProductListingOption> options) {
         if (options.isEmpty()) {
             return null;
         }
-        List<ProductListingProduct> bom = productListingProductRepository
-                .findByProductListingOptionId(options.get(0).getId());
-        return bom.isEmpty() ? null : bom.get(0).getProduct();
+        CellBomResolver.Line first = cellBomResolver.forOption(options.get(0)).first();
+        return first == null ? null : first.product();
     }
 
     /**
@@ -540,13 +542,16 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         return ListingTextBindings.resolve(cell, cell.getMasterProduct(), firstBomProduct(options));
     }
 
-    /** Σ(product.price × quantity) over an option's BOM (null price treated as 0). */
+    /**
+     * Σ(product.price × quantity) over an option's BOM (null price treated as 0).
+     * 2609_71: 마스터 BOM 이 정본이다. 채널 전용 옵션은 구성품을 알 수 없어 0 이 된다(기존 빈 BOM 과 같다).
+     */
     private BigDecimal optionCostSum(ProductListingOption option) {
         BigDecimal sum = BigDecimal.ZERO;
-        for (ProductListingProduct bp : productListingProductRepository.findByProductListingOptionId(option.getId())) {
-            BigDecimal price = bp.getProduct().getPrice();
+        for (CellBomResolver.Line line : cellBomResolver.forOption(option).lines()) {
+            BigDecimal price = line.product().getPrice();
             if (price != null) {
-                sum = sum.add(price.multiply(BigDecimal.valueOf(bp.getQuantity())));
+                sum = sum.add(price.multiply(BigDecimal.valueOf(line.quantity())));
             }
         }
         return sum;

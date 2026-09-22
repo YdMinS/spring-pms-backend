@@ -15,7 +15,7 @@ import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.PriceChangeLogRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
+import com.pms.service.listing.CellBomResolver;
 import com.pms.repository.ProductListingRepository;
 import com.pms.service.ListingAssetService;
 import com.pms.service.PriceCalculator;
@@ -65,7 +65,7 @@ class RepricingOverrideTest {
 
     @Mock private ProductListingRepository productListingRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
-    @Mock private ProductListingProductRepository productListingProductRepository;
+    @Mock private CellBomResolver cellBomResolver;
     @Mock private PriceCalculator priceCalculator;
     @Mock private ListingAssetService listingAssetService;
     @Mock private ListingChannelResolver channelResolver;
@@ -78,7 +78,7 @@ class RepricingOverrideTest {
     @BeforeEach
     void setUp() {
         service = new RepricingServiceImpl(productListingRepository, productListingOptionRepository,
-                productListingProductRepository, priceCalculator, listingAssetService, channelResolver,
+                cellBomResolver, priceCalculator, listingAssetService, channelResolver,
                 marketplaceAccountRepository, new PriceHistoryRecorder(priceChangeLogRepository));
         ReflectionTestUtils.setField(service, "self", service);
     }

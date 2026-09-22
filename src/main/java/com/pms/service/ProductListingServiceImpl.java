@@ -20,6 +20,7 @@ import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
+import com.pms.service.listing.CellBomResolver;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +32,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * ProductListingServiceImpl - Product listing service implementation
@@ -59,6 +61,8 @@ public class ProductListingServiceImpl implements ProductListingService {
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
     private final ProductListingProductRepository productListingProductRepository;
+    /** 셀 옵션의 구성품을 <b>읽는</b> 유일한 창구(2609_71). 위 리포지토리는 쓰기 전용으로만 남아 있다. */
+    private final CellBomResolver cellBomResolver;
     private final ProductRepository productRepository;
     private final CategoryRepository categoryRepository;
     private final CarrierRateRepository carrierRateRepository;
@@ -357,11 +361,21 @@ public class ProductListingServiceImpl implements ProductListingService {
     private ProductListingResponse loadProductListingWithOptions(ProductListing listing) {
         List<ProductListingOption> options = productListingOptionRepository.findByProductListingId(listing.getId());
 
+        // 2609_71: 구성품은 마스터를 타고 읽는다(응답 DTO 모양은 그대로).
+        // 🔴 이 legacy 경로가 만드는 옵션은 전부 채널 전용(2609_22/D1 — masterProductOption 이 null)이므로
+        //    구성품 칸은 비어 나간다. 필드가 사라진 게 아니라 값을 알 수 없다는 뜻이다(PLAN D10).
+        Map<Long, CellBomResolver.Bom> boms = cellBomResolver.forOptions(options);
         java.util.List<ProductListingOptionResponse> optionResponses = options.stream()
                 .map(option -> {
-                    List<ProductListingProduct> products = productListingProductRepository.findByProductListingOptionId(option.getId());
-                    java.util.List<ProductListingProductResponse> productResponses = products.stream()
-                            .map(ProductListingProductResponse::of)
+                    CellBomResolver.Bom bom = boms.getOrDefault(option.getId(), CellBomResolver.Bom.UNMAPPED);
+                    java.util.List<ProductListingProductResponse> productResponses = bom.lines().stream()
+                            .map(line -> ProductListingProductResponse.builder()
+                                    .id(line.id())
+                                    .productListingOptionId(option.getId())
+                                    .productId(line.productId())
+                                    .productName(line.productName())
+                                    .quantity(line.quantity())
+                                    .build())
                             .toList();
                     return ProductListingOptionResponse.of(option, productResponses);
                 })

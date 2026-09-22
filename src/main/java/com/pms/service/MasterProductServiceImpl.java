@@ -15,7 +15,6 @@ import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterCompositionRequest;
@@ -50,10 +49,10 @@ import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
+import com.pms.service.listing.CellBomResolver;
 import com.pms.service.listing.ListingStockPolicy;
 import com.pms.service.listing.MasterOptionChannelSync;
 import com.pms.service.listing.MasterPropagationService;
@@ -111,7 +110,8 @@ public class MasterProductServiceImpl implements MasterProductService {
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
-    private final ProductListingProductRepository productListingProductRepository;
+    /** 셀 옵션의 구성품은 마스터를 타고 얻는다(2609_71). */
+    private final CellBomResolver cellBomResolver;
     private final GeneratedProductDataRepository generatedProductDataRepository;
     private final MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     private final SellerRepository sellerRepository;
@@ -453,16 +453,15 @@ public class MasterProductServiceImpl implements MasterProductService {
 
         List<Long> cellIds = cells.stream().map(ProductListing::getId).toList();
         List<ProductListingOption> cellOptions = productListingOptionRepository.findByProductListingIdIn(cellIds);
-        List<Long> cellOptionIds = cellOptions.stream().map(ProductListingOption::getId).toList();
         // optionId → (productId → quantity); duplicate product lines: first wins (syncLines' merge rule).
+        // 2609_71: 셀의 구성품도 마스터를 타고 읽는다 — 채널 전용 옵션은 구성품을 알 수 없어 빈 칸이 된다.
         Map<Long, Map<Long, Integer>> cellQuantitiesByOption = new LinkedHashMap<>();
-        if (!cellOptionIds.isEmpty()) {
-            for (ProductListingProduct line
-                    : productListingProductRepository.findByProductListingOptionIdIn(cellOptionIds)) {
-                cellQuantitiesByOption
-                        .computeIfAbsent(line.getProductListingOption().getId(), k -> new LinkedHashMap<>())
-                        .putIfAbsent(line.getProduct().getId(), line.getQuantity());
+        for (Map.Entry<Long, CellBomResolver.Bom> entry : cellBomResolver.forOptions(cellOptions).entrySet()) {
+            Map<Long, Integer> quantities = new LinkedHashMap<>();
+            for (CellBomResolver.Line line : entry.getValue().lines()) {
+                quantities.putIfAbsent(line.productId(), line.quantity());
             }
+            cellQuantitiesByOption.put(entry.getKey(), quantities);
         }
         // Linked options per cell, keyed by the master option they point at (D1); duplicates: first wins.
         Map<Long, Map<Long, ProductListingOption>> linkedByCell = new LinkedHashMap<>();
