@@ -16,6 +16,7 @@ import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.PriceChangeLogRepository;
 import com.pms.repository.ProductImageRepository;
 import com.pms.repository.ProductListingOptionRepository;
+import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.ShipmentParcelItemRepository;
@@ -27,6 +28,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -57,6 +59,7 @@ public class ProductUsageService {
     private final MasterProductComponentRepository masterProductComponentRepository;
     private final MasterProductOptionItemRepository masterProductOptionItemRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
+    private final ProductListingRepository productListingRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final StockMovementRepository stockMovementRepository;
     private final PurchaseRecordRepository purchaseRecordRepository;
@@ -127,15 +130,63 @@ public class ProductUsageService {
                             item.getOption().getId(), item.getOption().getName(), item.getQuantity()));
         }
 
+        Map<Long, List<ProductUsageResponse.ChannelRef>> channelsByMaster = collectChannels(masters.keySet());
+
         List<ProductUsageResponse.MasterProductRef> refs = new ArrayList<>();
         for (MasterProduct master : masters.values()) {
             List<ProductUsageResponse.OptionQty> quantities =
                     new ArrayList<>(quantitiesByMaster.getOrDefault(master.getId(), List.of()));
             quantities.sort(Comparator.comparing(ProductUsageResponse.OptionQty::optionId));
-            refs.add(new ProductUsageResponse.MasterProductRef(master.getId(), master.getName(), quantities));
+            refs.add(new ProductUsageResponse.MasterProductRef(master.getId(), master.getName(), quantities,
+                    channelsByMaster.getOrDefault(master.getId(), List.of())));
         }
         refs.sort(Comparator.comparing(ProductUsageResponse.MasterProductRef::id));
         return refs;
+    }
+
+    /**
+     * Channels each master is sold on — <b>every cell linked to the master</b>, one query for all masters.
+     *
+     * <p>🔴 {@link #collectListingOptions} 와 출발점이 다르다. 그쪽은 마스터 <b>옵션</b> FK 를 타고 내려오므로
+     * 그 FK 가 비어 있는 셀(쿠팡 ID 로 편입했거나 FK 승격 전에 만들어진 셀)은 아예 나오지 않는다. 화면이 묻는 것은
+     * "이 물품이 어디서 팔리고 있나"이고, 마스터에 붙은 셀은 그 마스터의 구성품을 그대로 판다 — 그래서 여기서는
+     * {@code master_product_id} 로 셀을 통째로 모은다.</p>
+     *
+     * <p>⚠️ 삭제 판정에는 쓰지 않는다 — {@code deletable}·{@code blockers} 는 그대로 옵션 FK 기준이다.</p>
+     */
+    private Map<Long, List<ProductUsageResponse.ChannelRef>> collectChannels(Collection<Long> masterIds) {
+        if (masterIds.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<String, Optional<MarketplaceAccount>> accountCache = new HashMap<>();
+        Map<Long, List<ProductUsageResponse.ChannelRef>> byMaster = new HashMap<>();
+
+        for (ProductListing listing : productListingRepository.findByMasterProductIdIn(masterIds)) {
+            Platform platform = listing.getPlatform();
+            Optional<MarketplaceAccount> account =
+                    resolveAccount(accountCache, listing.getSeller().getId(), platform);
+
+            byMaster.computeIfAbsent(listing.getMasterProduct().getId(), k -> new ArrayList<>())
+                    .add(new ProductUsageResponse.ChannelRef(
+                            listing.getId(),
+                            listing.getName(),
+                            account.map(MarketplaceAccount::getId).orElse(null),
+                            account.map(MarketplaceAccount::getAccountAlias).orElse(null),
+                            platform.name(),
+                            listing.getStatus() == null ? null : listing.getStatus().name()));
+        }
+
+        byMaster.values().forEach(list ->
+                list.sort(Comparator.comparing(ProductUsageResponse.ChannelRef::listingId)));
+        return byMaster;
+    }
+
+    /** 같은 채널이 옵션마다 반복되므로 (판매자, 플랫폼) 쌍마다 한 번만 조회한다. */
+    private Optional<MarketplaceAccount> resolveAccount(
+            Map<String, Optional<MarketplaceAccount>> cache, Long sellerId, Platform platform) {
+        return cache.computeIfAbsent(sellerId + "|" + platform.name(),
+                key -> marketplaceAccountRepository.findBySeller_IdAndPlatform(sellerId, platform));
     }
 
     /**
@@ -177,9 +228,7 @@ public class ProductUsageService {
             Platform platform = listing.getPlatform();
             Long sellerId = listing.getSeller().getId();
 
-            Optional<MarketplaceAccount> account = accountCache.computeIfAbsent(
-                    sellerId + "|" + platform.name(),
-                    key -> marketplaceAccountRepository.findBySeller_IdAndPlatform(sellerId, platform));
+            Optional<MarketplaceAccount> account = resolveAccount(accountCache, sellerId, platform);
 
             refs.add(new ProductUsageResponse.ListingOptionRef(
                     option.getId(),
