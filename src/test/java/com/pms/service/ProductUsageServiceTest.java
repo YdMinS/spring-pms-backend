@@ -19,6 +19,7 @@ import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.PriceChangeLogRepository;
 import com.pms.repository.ProductImageRepository;
 import com.pms.repository.ProductListingOptionRepository;
+import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.ShipmentParcelItemRepository;
@@ -62,6 +63,8 @@ class ProductUsageServiceTest {
     private MasterProductOptionItemRepository masterProductOptionItemRepository;
     @Mock
     private ProductListingOptionRepository productListingOptionRepository;
+    @Mock
+    private ProductListingRepository productListingRepository;
     @Mock
     private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock
@@ -179,6 +182,51 @@ class ProductUsageServiceTest {
     }
 
     @Test
+    @DisplayName("Channels come from the master link, not from the option FK")
+    void testGetUsageListsEveryChannelOfTheMaster() {
+        givenProductExists();
+        MasterProduct master = master(1L, "마스터 A");
+        given(masterProductComponentRepository.findByProductId(PRODUCT_ID))
+                .willReturn(List.of(component(master)));
+        given(masterProductOptionItemRepository.findWithMasterByProductIdIn(List.of(PRODUCT_ID)))
+                .willReturn(List.of(optionItem(master, 61L, "6개입", 6)));
+        // 옵션 FK 로 내려오는 셀은 하나뿐 — 나머지 채널은 이 경로로 영영 안 나온다.
+        given(productListingOptionRepository.findByMasterProductOption_IdIn(any()))
+                .willReturn(List.of());
+        Seller seller = Seller.builder().id(3L).sellerName("판매자").businessRegistration("123").build();
+        given(productListingRepository.findByMasterProductIdIn(any()))
+                .willReturn(List.of(
+                        listing(11L, "쿠팡 셀", master, seller),
+                        listing(12L, "두 번째 셀", master, seller)));
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(3L, Platform.COUPANG))
+                .willReturn(Optional.of(MarketplaceAccount.builder()
+                        .id(99L).accountAlias("쿠팡 본계정").platform(Platform.COUPANG).build()));
+
+        ProductUsageResponse res = service.getUsage(PRODUCT_ID);
+
+        assertThat(res.masterProducts()).hasSize(1);
+        assertThat(res.masterProducts().get(0).channels()).hasSize(2);
+        assertThat(res.masterProducts().get(0).channels().get(0).listingName()).isEqualTo("쿠팡 셀");
+        assertThat(res.masterProducts().get(0).channels().get(1).listingId()).isEqualTo(12L);
+        assertThat(res.masterProducts().get(0).channels()).allSatisfy(c -> {
+            assertThat(c.accountAlias()).isEqualTo("쿠팡 본계정");
+            assertThat(c.platform()).isEqualTo("COUPANG");
+            assertThat(c.status()).isEqualTo("SELLING");
+        });
+        // 채널이 있어도 삭제 판정은 옵션 FK 기준 그대로다 — 여기서는 마스터 구성품 때문에 막힌다.
+        assertThat(res.listingOptions()).isEmpty();
+        assertThat(res.deletable()).isFalse();
+        // 같은 (판매자, 플랫폼) 채널 둘이라 계정 조회는 한 번만.
+        verify(marketplaceAccountRepository, times(1)).findBySeller_IdAndPlatform(3L, Platform.COUPANG);
+    }
+
+    private ProductListing listing(Long id, String name, MasterProduct master, Seller seller) {
+        return ProductListing.builder()
+                .id(id).name(name).platform(Platform.COUPANG).seller(seller)
+                .masterProduct(master).status(ListingStatus.SELLING).build();
+    }
+
+    @Test
     @DisplayName("Three cell options behind the master options - option refs with quantity and channel alias")
     void testGetUsageWithListingOptionLink() {
         givenProductExists();
@@ -204,6 +252,8 @@ class ProductUsageServiceTest {
 
         ProductUsageResponse res = service.getUsage(PRODUCT_ID);
 
+        // 🔴 마스터에 붙은 셀은 옵션 FK 와 무관하게 전부 채널로 나온다(2026-09-23).
+        assertThat(res.masterProducts()).isEmpty();
         assertThat(res.listingOptions()).hasSize(3);
         assertThat(res.listingOptions().get(0).name()).isEqualTo("옵션 1");
         assertThat(res.listingOptions().get(2).quantity()).isEqualTo(3);
