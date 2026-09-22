@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.ClaimAction;
 import com.pms.domain.ClaimType;
+import com.pms.domain.CollectInvoiceSource;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
 import com.pms.domain.Platform;
@@ -54,6 +55,8 @@ class CoupangClaimActionAdapterTest {
             "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/exchangeRequests/{exchangeId}/receiveConfirmation";
     private static final String EXCHANGE_REJECTION_PATH =
             "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/exchangeRequests/{exchangeId}/rejection";
+    private static final String RETURN_REQUEST_SINGLE_PATH =
+            "/v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests/{receiptId}";
     private static final String EXCHANGE_INVOICE_PATH =
             "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/exchangeRequests/{exchangeId}/invoices";
 
@@ -80,6 +83,7 @@ class CoupangClaimActionAdapterTest {
 
     @Test
     void availableActions_returnsUnchecked_offersReceiveConfirmAndCollectInvoice() {
+        // 입고확인은 상태 화이트리스트, 회수 송장은 회수종류 판정에서 온다(2609_70 / D1·D4).
         List<ClaimActionOption> options =
                 adapter.availableActions(claim(1L, "RETURNS_UNCHECKED", 1), Set.of());
 
@@ -92,26 +96,34 @@ class CoupangClaimActionAdapterTest {
 
     @Test
     void availableActions_vendorWarehouseConfirm_offersApproveAsIrreversible() {
+        // 회수 송장은 별개 축이라 함께 열릴 수 있다(2609_70 / D4) — 여기서는 승인만 본다.
         List<ClaimActionOption> options =
                 adapter.availableActions(claim(1L, "VENDOR_WAREHOUSE_CONFIRM", 1), Set.of());
 
-        assertThat(options).hasSize(1);
-        assertThat(options.get(0).action()).isEqualTo(ClaimAction.RETURN_APPROVE);
-        assertThat(options.get(0).irreversible()).isTrue();      // UI 2단 확인의 근거(D10)
-        assertThat(options.get(0).requires()).isEqualTo(ClaimAction.Requires.NONE);
+        assertThat(options).extracting(ClaimActionOption::action).contains(ClaimAction.RETURN_APPROVE);
+        ClaimActionOption approve = options.stream()
+                .filter(option -> option.action() == ClaimAction.RETURN_APPROVE).findFirst().orElseThrow();
+        assertThat(approve.irreversible()).isTrue();             // UI 2단 확인의 근거(D10)
+        assertThat(approve.requires()).isEqualTo(ClaimAction.Requires.NONE);
     }
 
     @Test
-    void availableActions_completedStatus_offersNothing() {
-        assertThat(adapter.availableActions(claim(1L, "RETURNS_COMPLETED", 1), Set.of())).isEmpty();
+    void availableActions_completedStatus_offersNothingWhenCoupangCollects() {
+        // 반품완료에는 입고확인·승인이 열리지 않는다(D4 무변경). 회수 송장은 별개 축이라
+        // 회수종류가 닫힌 값일 때에만 "아무것도 없음"이 된다.
+        OrderClaim claim = claim(1L, "RETURNS_COMPLETED", 1).toBuilder()
+                .returnDeliveryType("전담택배").build();
+        assertThat(adapter.availableActions(claim, Set.of())).isEmpty();
     }
 
     @Test
-    void availableActions_unknownOrShortCodeStatus_offersNothing() {
+    void availableActions_unknownOrShortCodeStatus_offersNoIrreversibleAction() {
         // D3 — 단축 코드(01 이 하위호환으로 읽기만 남긴 값)와 미지의 값에는 되돌릴 수 없는 쓰기를 열지 않는다.
-        assertThat(adapter.availableActions(claim(1L, "UC", 1), Set.of())).isEmpty();
-        assertThat(adapter.availableActions(claim(1L, "SOMETHING_NEW", 1), Set.of())).isEmpty();
-        assertThat(adapter.availableActions(claim(1L, null, 1), Set.of())).isEmpty();
+        // (회수종류를 닫아 회수 송장 축을 분리한 상태에서 본다 — 그쪽은 2609_70 D1 의 예외다.)
+        for (String status : new String[]{"UC", "SOMETHING_NEW", null}) {
+            OrderClaim claim = claim(1L, status, 1).toBuilder().returnDeliveryType("전담택배").build();
+            assertThat(adapter.availableActions(claim, Set.of())).isEmpty();
+        }
     }
 
     @Test
@@ -201,6 +213,141 @@ class CoupangClaimActionAdapterTest {
         assertThat(outcome.succeeded()).isFalse();
         assertThat(outcome.resultCode()).isEqualTo("400");
         assertThat(outcome.resultMessage()).isEqualTo("이미 등록된 운송장입니다");
+    }
+
+    // ── 회수 송장 판정·재전송 (2609_70) ─────────────────────────────────────────
+
+    @Test
+    void availableActions_completedReturnNeedingManualCollect_offersCollectInvoice() {
+        // 🔴 이 기능의 존재 이유 — 쿠팡이 바로 완료시킨 건에도 회수 송장을 넣을 수 있어야 한다(D1).
+        OrderClaim claim = claim(1L, "RETURNS_COMPLETED", 1).toBuilder()
+                .returnDeliveryType("수기관리").build();
+
+        List<ClaimActionOption> options = adapter.availableActions(claim, Set.of());
+
+        assertThat(options).extracting(ClaimActionOption::action)
+                .containsExactly(ClaimAction.RETURN_COLLECT_INVOICE);   // 승인은 열리지 않는다(D4)
+        assertThat(options.get(0).requires()).isEqualTo(ClaimAction.Requires.INVOICE);
+    }
+
+    @Test
+    void availableActions_carrierManagedByCoupang_offersNoCollectInvoice() {
+        // 전담택배·연동택배는 쿠팡/굿스플로가 붙여 주고, 빈 값은 고객이 직접 보낸 건이다(D2·D3).
+        for (String deliveryType : new String[]{"전담택배", "연동택배", ""}) {
+            OrderClaim claim = claim(1L, "RETURNS_COMPLETED", 1).toBuilder()
+                    .returnDeliveryType(deliveryType).build();
+            assertThat(adapter.availableActions(claim, Set.of()))
+                    .as("returnDeliveryType=%s", deliveryType).isEmpty();
+        }
+    }
+
+    @Test
+    void availableActions_unknownDeliveryType_opensCollectInvoice() {
+        // D2 — 블랙리스트다. 「수기관리」가 실제로 어떤 문자열인지 미검증이라 모르는 값은 연다.
+        for (String deliveryType : new String[]{null, "MANUAL", "알 수 없는 값"}) {
+            OrderClaim claim = claim(1L, "RETURNS_COMPLETED", 1).toBuilder()
+                    .returnDeliveryType(deliveryType).build();
+            assertThat(adapter.availableActions(claim, Set.of()))
+                    .as("returnDeliveryType=%s", deliveryType)
+                    .extracting(ClaimActionOption::action)
+                    .containsExactly(ClaimAction.RETURN_COLLECT_INVOICE);
+        }
+    }
+
+    @Test
+    void availableActions_locallyRecordedInvoice_offersResendOnly() {
+        OrderClaim claim = claim(1L, "RETURNS_COMPLETED", 1).toBuilder()
+                .returnDeliveryType("수기관리")
+                .collectInvoiceNo("123456789012").collectCarrierCode("CJGLS")
+                .collectInvoiceSource(CollectInvoiceSource.LOCAL)
+                .build();
+
+        List<ClaimActionOption> options = adapter.availableActions(claim, Set.of());
+
+        assertThat(options).hasSize(1);
+        assertThat(options.get(0).action()).isEqualTo(ClaimAction.RETURN_COLLECT_INVOICE_RESEND);
+        // 🔴 송장을 다시 입력받지 않는다(D9) — 오타가 곧 D5 가 막은 '수정'이 된다.
+        assertThat(options.get(0).requires()).isEqualTo(ClaimAction.Requires.NONE);
+        assertThat(options.get(0).label()).isEqualTo("쿠팡에 다시 보내기");
+        assertThat(options.get(0).irreversible()).isFalse();
+    }
+
+    @Test
+    void availableActions_platformInvoiceAlreadyAttached_offersNothing() {
+        // D5 — 이미 쿠팡에 붙어 있으면 덮어쓰지 않는다(출처 불명인 기존 행도 플랫폼 값으로 취급).
+        for (CollectInvoiceSource source : new CollectInvoiceSource[]{CollectInvoiceSource.PLATFORM, null}) {
+            OrderClaim claim = claim(1L, "RETURNS_COMPLETED", 1).toBuilder()
+                    .returnDeliveryType("수기관리")
+                    .collectInvoiceNo("123456789012").collectInvoiceSource(source)
+                    .build();
+            assertThat(adapter.availableActions(claim, Set.of())).as("source=%s", source).isEmpty();
+        }
+    }
+
+    @Test
+    void availableActions_warehouseConfirm_keepsApproveAndAddsCollectInvoice() {
+        // D4 회귀 — 기존 상태 화이트리스트는 한 글자도 건드리지 않았다.
+        OrderClaim claim = claim(1L, "VENDOR_WAREHOUSE_CONFIRM", 1).toBuilder()
+                .returnDeliveryType("수기관리").build();
+
+        assertThat(adapter.availableActions(claim, Set.of())).extracting(ClaimActionOption::action)
+                .containsExactlyInAnyOrder(
+                        ClaimAction.RETURN_APPROVE, ClaimAction.RETURN_COLLECT_INVOICE);
+    }
+
+    @Test
+    void availableActions_exchangeClaim_ignoresCollectInvoiceRule() {
+        // 교환은 2축 판정 그대로다(회귀) — 회수종류를 채워도 반품 액션이 새어 나오지 않는다.
+        OrderClaim exchange = exchangeClaim("RECEIPT", "BeforeDirection").toBuilder()
+                .returnDeliveryType("수기관리").build();
+
+        assertThat(adapter.availableActions(exchange, Set.of())).extracting(ClaimActionOption::action)
+                .containsExactlyInAnyOrder(
+                        ClaimAction.EXCHANGE_COLLECT_INVOICE, ClaimAction.EXCHANGE_REJECT);
+    }
+
+    @Test
+    void execute_resendWhenCoupangAlreadyHasInvoice_doesNotSend() {
+        given(coupangProperties.getReturnRequestSinglePath()).willReturn(RETURN_REQUEST_SINGLE_PATH);
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(
+                "{\"code\":200,\"data\":{\"receiptId\":777,\"returnDeliveryDtos\":"
+                        + "[{\"deliveryCompanyCode\":\"CJGLS\",\"invoiceNumber\":\"123456789012\"}]}}");
+
+        ClaimActionOutcome outcome = adapter.execute(account(), List.of(localInvoiceClaim()),
+                new ClaimActionCommand(ClaimAction.RETURN_COLLECT_INVOICE_RESEND, null, null, null, null));
+
+        assertThat(outcome.succeeded()).isTrue();       // 서비스가 출처를 PLATFORM 으로 맞춰 버튼을 닫는다
+        verify(coupangApiClient, never()).post(anyString(), anyString(), any());
+    }
+
+    @Test
+    void execute_resendWhenCoupangHasNoInvoice_sendsTheStoredValues() throws Exception {
+        given(coupangProperties.getReturnRequestSinglePath()).willReturn(RETURN_REQUEST_SINGLE_PATH);
+        given(coupangProperties.getReturnExchangeInvoicePath()).willReturn(INVOICE_PATH);
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", Platform.COUPANG)).willReturn("CJGLS");
+        given(coupangApiClient.get(anyString(), anyString(), any()))
+                .willReturn("{\"code\":200,\"data\":{\"receiptId\":777,\"returnDeliveryDtos\":[]}}");
+        given(coupangApiClient.post(anyString(), anyString(), any())).willReturn("{\"code\":200}");
+
+        // 🔴 요청에 다른 번호가 실려 와도 무시하고 저장된 값을 보낸다(D5 가 막은 '수정' 방지).
+        adapter.execute(account(), List.of(localInvoiceClaim()),
+                new ClaimActionCommand(ClaimAction.RETURN_COLLECT_INVOICE_RESEND,
+                        "HANJIN", "999999999999", null, null));
+
+        ArgumentCaptor<String> path = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient).post(path.capture(), body.capture(), any());
+
+        JsonNode sent = objectMapper.readTree(body.getValue());
+        assertThat(sent.get("returnExchangeDeliveryType").asText()).isEqualTo("RETURN");
+        assertThat(sent.get("invoiceNumber").asText()).isEqualTo("123456789012");
+        assertThat(sent.get("deliveryCompanyCode").asText()).isEqualTo("CJGLS");
+        assertThat(sent.get("receiptId").isNumber()).isTrue();
+        // 등록과 완전히 같은 엔드포인트다 — 다른 것은 값의 출처뿐이다.
+        assertThat(path.getValue()).isEqualTo(
+                "/v2/providers/openapi/apis/api/v4/vendors/A001/return-exchange-invoices/manual");
+        verify(coupangApiClient).get(eq(
+                "/v2/providers/openapi/apis/api/v6/vendors/A001/returnRequests/777"), eq(""), any());
     }
 
     // ── 교환 4액션 (05) ──────────────────────────────────────────────────────────
@@ -422,6 +569,15 @@ class CoupangClaimActionAdapterTest {
                 .platformStatus(platformStatus)
                 .collectStatus(collectStatus)
                 .receivedAt(LocalDateTime.of(2026, 9, 1, 10, 20, 30))
+                .build();
+    }
+
+    /** 쿠팡이 거절해 우리 장부에만 남은 회수 송장 — 재전송의 전제다. */
+    private OrderClaim localInvoiceClaim() {
+        return claim(1L, "RETURNS_COMPLETED", 1).toBuilder()
+                .returnDeliveryType("수기관리")
+                .collectInvoiceNo("123456789012").collectCarrierCode("CJGLS")
+                .collectInvoiceSource(CollectInvoiceSource.LOCAL)
                 .build();
     }
 

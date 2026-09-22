@@ -2,6 +2,7 @@ package com.pms.service.claim;
 
 import com.pms.domain.ClaimAction;
 import com.pms.domain.ClaimType;
+import com.pms.domain.CollectInvoiceSource;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
 import com.pms.domain.OrderClaimAction;
@@ -49,9 +50,27 @@ public class ClaimActionServiceImpl implements ClaimActionService {
 
     private static final String ROLE_ADMIN = "ROLE_ADMIN";
 
+    /**
+     * 쿠팡이 거절해도 <b>우리 장부에 기록하고 200 으로</b> 돌려주는 액션 (FEATURE_2609_70 / D6).
+     *
+     * <p>🔴 이 집합 밖의 액션은 기존대로 {@link ClaimActionFailedException}(→502)이다 —
+     * 승인·거부가 실패했는데 200 을 주면 "됐다"고 읽힌다.
+     */
+    private static final Set<ClaimAction> COLLECT_INVOICE_ACTIONS = EnumSet.of(
+            ClaimAction.RETURN_COLLECT_INVOICE, ClaimAction.RETURN_COLLECT_INVOICE_RESEND);
+
+    /**
+     * 로컬 기록으로 떨어진 회차의 {@code request_summary} 접두 (D6).
+     *
+     * <p>감사기록에서 「로컬 기록」과 「그냥 실패」를 구분할 수 있어야 한다 —
+     * {@code order_claim_action} 스키마는 그대로 두고 요약 문자열로만 표시한다.
+     */
+    static final String LOCAL_RECORD_PREFIX = "LOCAL_RECORD ";
+
     private final List<ClaimActionAdapter> adapters;
     private final OrderClaimRepository orderClaimRepository;
     private final OrderClaimActionRepository orderClaimActionRepository;
+    private final ClaimCollectInvoiceRecorder collectInvoiceRecorder;
 
     @Override
     public ClaimActionResponse execute(Long claimId, ClaimActionRequest request) {
@@ -105,14 +124,35 @@ public class ClaimActionServiceImpl implements ClaimActionService {
             outcome = adapter.execute(account, siblings, command);
         } catch (RuntimeException e) {
             // 예외로 빠져나가는 경로에도 기록이 남아야 한다 — 기록한 뒤 예외를 그대로 올린다.
+            // 🔴 이 경로에서는 로컬 기록 폴백을 하지 않는다(D6) — 택배사 코드 검증 실패·접수번호
+            //    파싱 실패가 여기로 온다. 입력이 틀린 것이라 장부에 남기면 안 된다.
             record(claim, action, false, statusAtSend, summary, "ERROR", e.getMessage());
             throw e;
         }
-        record(claim, action, outcome.succeeded(), statusAtSend, summary,
+
+        boolean collectInvoice = COLLECT_INVOICE_ACTIONS.contains(action);
+        boolean localRecordOnly = collectInvoice && !outcome.succeeded();
+        // 접두는 결과를 안 뒤에 붙인다 — summarize(...)는 전송 전에 호출돼 그때는 결과를 모른다.
+        record(claim, action, outcome.succeeded(), statusAtSend,
+                localRecordOnly ? LOCAL_RECORD_PREFIX + summary : summary,
                 outcome.resultCode(), outcome.resultMessage());
 
         ClaimActionResponse response = new ClaimActionResponse(claim.getId(), action,
-                outcome.succeeded(), outcome.resultCode(), outcome.resultMessage());
+                outcome.succeeded(), outcome.resultCode(), outcome.resultMessage(), localRecordOnly);
+
+        if (collectInvoice) {
+            // 성공이면 마켓에도 붙었으니 PLATFORM, 거절이면 우리 장부에만 남으니 LOCAL(D6·D12).
+            // 등록은 요청값, 재전송은 이미 저장된 값이 출처다(D9 — 재전송은 값을 입력받지 않는다).
+            boolean resend = (action == ClaimAction.RETURN_COLLECT_INVOICE_RESEND);
+            collectInvoiceRecorder.record(siblings,
+                    resend ? claim.getCollectCarrierCode() : request.deliveryCompanyCode(),
+                    resend ? claim.getCollectInvoiceNo() : request.invoiceNumber(),
+                    outcome.succeeded() ? CollectInvoiceSource.PLATFORM : CollectInvoiceSource.LOCAL);
+            log.info("회수 송장 액션 완료: claim={} action={} receipt={} lines={} localRecordOnly={}",
+                    claim.getId(), action, claim.getExternalClaimId(), siblings.size(), localRecordOnly);
+            return response;                    // 🔴 쿠팡이 거절해도 예외를 던지지 않는다 → HTTP 200
+        }
+
         if (!outcome.succeeded()) {
             throw new ClaimActionFailedException(response);
         }

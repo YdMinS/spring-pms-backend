@@ -181,3 +181,5 @@ databaseChangeLog:
       file: db/changelog/changes/094-package-drop-effective-date.yaml
   - include:
       file: db/changelog/changes/095-baseentity-adoption.yaml
+  - include:
+      file: db/changelog/changes/096-claim-collect-invoice-source.yaml

@@ -36,6 +36,7 @@ class CoupangReturnClaimParserTest {
                   "cancelReasonCategory2": "필요없어짐",
                   "faultByType": "CUSTOMER",
                   "returnShippingCharge": 3000,
+                  "returnDeliveryType": "수기관리",
                   "returnDeliveryDtos": [{"deliveryInvoiceNo": "INV-9", "deliveryCompanyCode": "CJGLS"}],
                   "returnItems": [
                     {"shipmentBoxId": "B-1", "vendorItemId": "V-1", "vendorItemName": "양말", "cancelCount": 2},
@@ -59,6 +60,8 @@ class CoupangReturnClaimParserTest {
             assertThat(r.collectInvoiceNo()).isEqualTo("INV-9");
             assertThat(r.collectCarrierCode()).isEqualTo("CJGLS");
             assertThat(r.requesterName()).isEqualTo("홍길동");
+            // 회수종류는 접수 레벨 값이라 그 접수의 모든 라인에 같은 값이 실린다(2609_70 / D12).
+            assertThat(r.returnDeliveryType()).isEqualTo("수기관리");
             assertThat(r.receivedAt()).isEqualTo(LocalDateTime.of(2026, 9, 1, 10, 20, 30));
             assertThat(r.platformModifiedAt()).isEqualTo(LocalDateTime.of(2026, 9, 2, 11, 0, 0));
         });

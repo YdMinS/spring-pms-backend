@@ -23,6 +23,11 @@ import java.util.List;
  * {@code collect*} 는 회수(고객→판매자), {@code reship*} 는 재발송(판매자→고객) 송장이다 —
  * 방향이 다르므로 한 쌍으로 합치지 말 것. 재발송은 교환에만 채워진다.
  *
+ * {@code collectInvoiceSource} = {@code PLATFORM}(동기화가 쿠팡에서 읽어온 값) / {@code LOCAL}
+ * (쿠팡이 거절해 우리만 기록 → [쿠팡에 다시 보내기] 대상) / {@code null}(출처 불명인 기존 행,
+ * 플랫폼 값으로 취급). {@code returnDeliveryType} 은 회수종류 <b>원문</b>이며 화면이 「고객이 직접
+ * 보낸 건이라 넣을 송장이 없습니다」 안내를 그리는 근거다(FEATURE_2609_70 / D3·D12).
+ *
  * {@code orderItemId} 가 null 이면 주문 라인 미연결(D12) — 화면은 {@code linked} 로 배지를 띄우고
  * {@code itemName} 으로 최소 정보를 보여준다.
  */
@@ -43,6 +48,8 @@ public record OrderClaimResponse(
         Integer returnShippingCharge,
         String collectInvoiceNo,
         String collectCarrierCode,
+        String collectInvoiceSource,
+        String returnDeliveryType,
         String reshipInvoiceNo,
         String reshipCarrierCode,
         String requesterName,

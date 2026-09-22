@@ -72,7 +72,9 @@ class OrderControllerTest extends BaseIntegrationTest {
                 .sellerName("테스트셀러").businessRegistration("123-45-67890").build());
         MarketplaceAccount account = marketplaceAccountRepository.save(MarketplaceAccountFixture.coupangCoreBuilder()
                 .seller(seller).platform(Platform.COUPANG).accountAlias("쿠팡본점")
-                .isActive(true).build());
+                .isActive(true)
+                // 반품/교환 화면이 "마지막 동기화" 를 여기서 읽는다(2609_70 / D16).
+                .lastClaimSyncAt(LocalDateTime.of(2026, 9, 22, 9, 30)).build());
         // 자격증명은 별도 행이다(2609_26) — 동기화 경로가 vendorId 를 읽으므로 함께 시드한다.
         MarketplaceAccountFixture.saveCredential(credentialRepository, account, "A00012345", null);
         // 주문 3층 + 쿠팡 거울 (2609_26) — 조회 윈도우(syncDays) 안에 들도록 ordered_at 은 지금.
@@ -119,6 +121,8 @@ class OrderControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data").isArray())
                 .andExpect(jsonPath("$.data[0].accountAlias").value("쿠팡본점"))
                 .andExpect(jsonPath("$.data[0].sellerName").value("테스트셀러"))
+                // 2609_70 / D16 — 새 API 를 만들지 않고 이 응답에 얹는다
+                .andExpect(jsonPath("$.data[0].lastClaimSyncAt").exists())
                 .andReturn().getResponse().getContentAsString();
 
         // D2 보안 회귀: 동기화 화면에 자격증명을 흘리지 않는다

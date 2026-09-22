@@ -14,6 +14,10 @@ import java.time.LocalDateTime;
  * {@code reship*}·{@code collectStatus} 는 교환 전용이라 반품 파서는 null 을 넘기고,
  * {@code returnShippingCharge} 는 반대로 반품 전용이라 교환 파서가 null 을 넘긴다(컬럼 이름이 곧
  * 의미다 — 교환 배송비가 필요해지면 그때 컬럼을 만든다).
+ *
+ * <p>{@code returnDeliveryType}(회수종류) 도 반품 전용이다(FEATURE_2609_70 / D12) — 교환 응답에는
+ * 그 필드가 없으므로 교환 파서는 null 을 넘긴다. <b>접수(receipt) 레벨</b> 값이라 그 접수의 모든
+ * 라인에 같은 값이 복제된다({@code reasonCode}·{@code faultType} 과 같은 자리).
  */
 public record ClaimRecord(
         String externalClaimId,
@@ -34,6 +38,7 @@ public record ClaimRecord(
         String reshipInvoiceNo,
         String reshipCarrierCode,
         String requesterName,
+        String returnDeliveryType,
         LocalDateTime receivedAt,
         LocalDateTime platformModifiedAt) {
 }

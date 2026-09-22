@@ -2,6 +2,7 @@ package com.pms.service.claim;
 
 import com.pms.domain.ClaimAction;
 import com.pms.domain.ClaimType;
+import com.pms.domain.CollectInvoiceSource;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
 import com.pms.domain.OrderClaimAction;
@@ -53,6 +54,8 @@ class ClaimActionServiceImplTest {
 
     private static final String APPROVAL_PATH =
             "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/returnRequests/{receiptId}/approval";
+    private static final String INVOICE_PATH =
+            "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/return-exchange-invoices/manual";
 
     @Mock private OrderClaimRepository orderClaimRepository;
     @Mock private OrderClaimActionRepository orderClaimActionRepository;
@@ -60,6 +63,7 @@ class ClaimActionServiceImplTest {
     @Mock private com.pms.config.CoupangProperties coupangProperties;
     @Mock private com.pms.service.CarrierCodeService carrierCodeService;
     @Mock private CoupangClaimAdapter coupangClaimAdapter;
+    @Mock private ClaimCollectInvoiceRecorder collectInvoiceRecorder;
 
     private ClaimActionServiceImpl service;
 
@@ -69,7 +73,8 @@ class ClaimActionServiceImplTest {
                 coupangApiClient, coupangProperties, carrierCodeService, coupangClaimAdapter,
                 new com.fasterxml.jackson.databind.ObjectMapper());
         service = new ClaimActionServiceImpl(
-                List.of(adapter), orderClaimRepository, orderClaimActionRepository);
+                List.of(adapter), orderClaimRepository, orderClaimActionRepository,
+                collectInvoiceRecorder);
         authenticateAs("ROLE_ADMIN");
     }
 
@@ -274,6 +279,99 @@ class ClaimActionServiceImplTest {
         verify(orderClaimRepository).findSiblingsBulk(any(), anyList());
         verify(orderClaimActionRepository).findByOrderClaim_IdInAndSucceededTrue(anyList());
         verify(orderClaimRepository, never()).findSiblings(any(), any(), anyString());
+    }
+
+    // ── 회수 송장 로컬 기록 폴백 (2609_70) ──────────────────────────────────────
+
+    @Test
+    void execute_collectInvoiceRejectedByCoupang_recordsLocallyWithoutThrowing() {
+        OrderClaim claim = manualCollectClaim(1L);
+        givenClaimWithSiblings(claim, claim, manualCollectClaim(2L));
+        givenNoPriorActions();
+        given(coupangProperties.getReturnExchangeInvoicePath()).willReturn(INVOICE_PATH);
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", Platform.COUPANG)).willReturn("CJGLS");
+        given(coupangApiClient.post(anyString(), anyString(), any()))
+                .willReturn("{\"code\":400,\"message\":\"등록할 수 없는 상태입니다\"}");
+
+        ClaimActionResponse response = service.execute(1L, collectInvoiceRequest());
+
+        // 🔴 쿠팡이 거절해도 예외가 아니다 — 우리 장부는 채우고 200 으로 돌려준다(D6).
+        assertThat(response.succeeded()).isFalse();
+        assertThat(response.localRecordOnly()).isTrue();
+        assertThat(response.resultMessage()).isEqualTo("등록할 수 없는 상태입니다");
+        verify(collectInvoiceRecorder).record(anyList(), eq("CJGLS"), eq("123456789012"),
+                eq(CollectInvoiceSource.LOCAL));
+
+        // 감사기록에서 「로컬 기록」과 「그냥 실패」를 구분할 수 있어야 한다.
+        ArgumentCaptor<OrderClaimAction> saved = ArgumentCaptor.forClass(OrderClaimAction.class);
+        verify(orderClaimActionRepository).save(saved.capture());
+        assertThat(saved.getValue().isSucceeded()).isFalse();
+        assertThat(saved.getValue().getRequestSummary()).startsWith("LOCAL_RECORD ");
+    }
+
+    @Test
+    void execute_collectInvoiceAccepted_marksSourceAsPlatform() {
+        OrderClaim claim = manualCollectClaim(1L);
+        givenClaimWithSiblings(claim, claim);
+        givenNoPriorActions();
+        given(coupangProperties.getReturnExchangeInvoicePath()).willReturn(INVOICE_PATH);
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", Platform.COUPANG)).willReturn("CJGLS");
+        given(coupangApiClient.post(anyString(), anyString(), any())).willReturn("{\"code\":200}");
+
+        ClaimActionResponse response = service.execute(1L, collectInvoiceRequest());
+
+        assertThat(response.succeeded()).isTrue();
+        assertThat(response.localRecordOnly()).isFalse();
+        verify(collectInvoiceRecorder).record(anyList(), eq("CJGLS"), eq("123456789012"),
+                eq(CollectInvoiceSource.PLATFORM));
+
+        ArgumentCaptor<OrderClaimAction> saved = ArgumentCaptor.forClass(OrderClaimAction.class);
+        verify(orderClaimActionRepository).save(saved.capture());
+        assertThat(saved.getValue().getRequestSummary()).doesNotStartWith("LOCAL_RECORD ");
+    }
+
+    @Test
+    void execute_adapterThrows_doesNotRecordLocally() {
+        // 🔴 예외 경로는 입력이 틀린 것(택배사 코드·접수번호)이라 장부에 남기면 안 된다.
+        OrderClaim claim = manualCollectClaim(1L);
+        givenClaimWithSiblings(claim, claim);
+        givenNoPriorActions();
+        given(coupangProperties.getReturnExchangeInvoicePath()).willReturn(INVOICE_PATH);
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", Platform.COUPANG))
+                .willThrow(new IllegalArgumentException("등록되지 않은 택배사입니다"));
+
+        assertThatThrownBy(() -> service.execute(1L, collectInvoiceRequest()))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        verify(collectInvoiceRecorder, never()).record(anyList(), any(), any(), any());
+        verify(coupangApiClient, never()).post(anyString(), anyString(), any());
+    }
+
+    @Test
+    void execute_approveRejectedByCoupang_stillThrowsInsteadOfFallingBack() {
+        // 폴백이 회수 송장 밖으로 새면 "됐다"고 읽히는 실패가 생긴다.
+        OrderClaim claim = claim(1L, "VENDOR_WAREHOUSE_CONFIRM", 1);
+        givenClaimWithSiblings(claim, claim);
+        givenNoPriorActions();
+        given(coupangProperties.getReturnApprovalPath()).willReturn(APPROVAL_PATH);
+        given(coupangApiClient.patch(anyString(), anyString(), any()))
+                .willReturn("{\"code\":400,\"message\":\"이미 처리된 반품입니다\"}");
+
+        assertThatThrownBy(() -> service.execute(1L, approveRequest()))
+                .isInstanceOf(ClaimActionFailedException.class);
+
+        verify(collectInvoiceRecorder, never()).record(anyList(), any(), any(), any());
+    }
+
+    private ClaimActionRequest collectInvoiceRequest() {
+        return new ClaimActionRequest(ClaimAction.RETURN_COLLECT_INVOICE,
+                "CJGLS", "123456789012", null, null);
+    }
+
+    /** 회수종류가 수기관리 + 송장 없음 = 회수 송장 등록이 열리는 반품 라인. */
+    private OrderClaim manualCollectClaim(Long id) {
+        return claim(id, "RETURNS_COMPLETED", 1).toBuilder()
+                .returnDeliveryType("수기관리").build();
     }
 
     private void givenClaimWithSiblings(OrderClaim anchor, OrderClaim... siblings) {

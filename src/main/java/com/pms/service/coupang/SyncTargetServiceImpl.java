@@ -51,6 +51,7 @@ public class SyncTargetServiceImpl implements SyncTargetService {
                 .lastSyncAt(account.getLastSyncAt())
                 .lastOrderSyncAt(account.getLastOrderSyncAt())
                 .lastCancelSyncAt(account.getLastCancelSyncAt())
+                .lastClaimSyncAt(account.getLastClaimSyncAt())
                 .lastSyncError(account.getLastSyncError())
                 .build();
     }

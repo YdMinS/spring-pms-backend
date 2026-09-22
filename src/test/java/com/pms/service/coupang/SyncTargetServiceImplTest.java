@@ -39,6 +39,7 @@ class SyncTargetServiceImplTest {
                 .lastSyncStatus(SyncStatus.PARTIAL)
                 .lastSyncAt(LocalDateTime.now())
                 .lastSyncError("취소 보정 실패 — HTTP 504 from Coupang")
+                .lastClaimSyncAt(LocalDateTime.of(2026, 9, 22, 9, 30))
                 .build();
     }
 
@@ -56,6 +57,8 @@ class SyncTargetServiceImplTest {
                 .containsExactly("셀러A", "셀러B");
         assertThat(targets.get(0).getLastSyncStatus()).isEqualTo("PARTIAL");
         assertThat(targets.get(0).getLastSyncError()).isEqualTo("취소 보정 실패 — HTTP 504 from Coupang");
+        // 반품/교환 화면의 "마지막 동기화" 원천 — 새 컬럼·새 API 없이 이 응답에 얹는다(2609_70 / D16).
+        assertThat(targets.get(0).getLastClaimSyncAt()).isEqualTo(LocalDateTime.of(2026, 9, 22, 9, 30));
     }
 
     @Test

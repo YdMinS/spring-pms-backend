@@ -1,0 +1,33 @@
+# 회수송장 출처 + 회수종류 (FEATURE_2609_70 / D12).
+#
+# collect_invoice_source  null     = 기존 행 (출처 불명 · 화면은 플랫폼 값으로 취급)
+#                         PLATFORM = 동기화가 쿠팡에서 읽어온 값
+#                         LOCAL    = 쿠팡이 거절해 우리만 기록한 값 (D6) → 재전송 대상 (D7)
+# return_delivery_type    쿠팡 returnDeliveryType 원문 (전담택배 / 연동택배 / 수기관리 / "")
+#                         null = 아직 안 읽은 기존 행 → 판정은 D2 대로 "연다"
+#
+# ⚠️ 우리 enum 으로 정규화하지 않는다 — platform_status 와 같은 자세(원문 보존).
+#    한글 값이 올 수 있어 길이에 여유를 둔다.
+# ⚠️ BOOLEAN/BIT 컬럼 없음 → MySQL 물리타입 후속(006) 불필요.
+# 백필 없음 · 인덱스 없음. 기존 행은 다음 동기화가 채운다.
+databaseChangeLog:
+
+  - changeSet:
+      id: 096-1-order-claim-collect-invoice-source
+      author: oclyx
+      comment: "FEATURE_2609_70/D12: order_claim.collect_invoice_source + return_delivery_type."
+      changes:
+        - addColumn:
+            tableName: order_claim
+            columns:
+              - column:
+                  name: collect_invoice_source
+                  type: VARCHAR(20)
+                  remarks: PLATFORM(sync) | LOCAL(recorded by us after the market rejected) | null(legacy)
+              - column:
+                  name: return_delivery_type
+                  type: VARCHAR(30)
+                  remarks: Coupang returnDeliveryType, raw (전담택배/연동택배/수기관리/empty)
+      rollback:
+        - dropColumn: { tableName: order_claim, columnName: collect_invoice_source }
+        - dropColumn: { tableName: order_claim, columnName: return_delivery_type }

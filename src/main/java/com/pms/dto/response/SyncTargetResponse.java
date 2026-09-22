@@ -32,6 +32,7 @@ public class SyncTargetResponse {
     private LocalDateTime lastSyncAt;       // 마지막 시도
     private LocalDateTime lastOrderSyncAt;  // ordersheets 마지막 성공
     private LocalDateTime lastCancelSyncAt; // 취소 보정 마지막 성공
+    private LocalDateTime lastClaimSyncAt;  // 클레임 적재+추적이 끝난 마지막 회차 (2609_70 / D16)
     private String lastSyncError;           // 서버가 확정한 사유 문구(클라는 가공 없이 노출)
     // vendorId / accessKey / secretKey: 절대 포함하지 않음
 }
