@@ -3,9 +3,12 @@ package com.pms.repository;
 import com.pms.domain.Platform;
 import com.pms.domain.PriceChangeLog;
 import com.pms.domain.PriceTargetType;
+import com.pms.domain.Product;
 import com.pms.dto.response.PriceChangeView;
+
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -78,4 +81,18 @@ public interface PriceChangeLogRepository extends JpaRepository<PriceChangeLog, 
      * (FEATURE_2609_69 / A). History never blocks deletion — it is displayed only.
      */
     long countByProductId(Long productId);
+
+    /**
+     * Move every row of this product onto another product (FEATURE_2609_69 / B, merge).
+     *
+     * <p>🔴 {@code clearAutomatically}/{@code flushAutomatically} are load-bearing, not decoration: a bulk
+     * UPDATE bypasses the persistence context, so without them the delete guard later in the same merge
+     * transaction would read a stale first-level cache, wrongly report "still linked" and roll the whole
+     * merge back.</p>
+     *
+     * @return number of rows moved
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE PriceChangeLog l SET l.product = :target WHERE l.product.id = :source")
+    int reassignProduct(@Param("target") Product target, @Param("source") Long source);
 }
