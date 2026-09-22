@@ -179,6 +179,10 @@ public class ProductUsageService {
             refs.add(new ProductUsageResponse.ListingOptionRef(
                     option.getId(),
                     option.getOptionName(),
+                    // 🔴 옵션 id 로는 어떤 화면도 열 수 없다. 옵션이 속한 셀을 같이 실어 보내야 화면이
+                    // 판매 상품 상세로 바로 보낼 수 있다(2026-09-23).
+                    listing.getId(),
+                    listing.getName(),
                     account.map(MarketplaceAccount::getId).orElse(null),
                     account.map(MarketplaceAccount::getAccountAlias).orElse(null),
                     platform.name(),
