@@ -3,11 +3,9 @@ package com.pms.service;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
-import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.request.BatchChannelAddRequest;
 import com.pms.dto.request.ChannelAddRequest;
@@ -16,11 +14,9 @@ import com.pms.dto.response.ChannelAddResponse;
 import com.pms.exception.DuplicateChannelException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CategoryMappingRepository;
-import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.SellerRepository;
 import lombok.RequiredArgsConstructor;
@@ -36,7 +32,6 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
  * Channel add (FEATURE_2608_06 / 15). See {@link ChannelAddService}.
@@ -59,10 +54,8 @@ public class ChannelAddServiceImpl implements ChannelAddService {
 
     private final MasterProductRepository masterProductRepository;
     private final MasterProductOptionRepository masterProductOptionRepository;
-    private final MasterProductOptionItemRepository masterProductOptionItemRepository;
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
-    private final ProductListingProductRepository productListingProductRepository;
     private final SellerRepository sellerRepository;
     private final CategoryMappingRepository categoryMappingRepository;
     private final ListingAssetService listingAssetService;
@@ -112,7 +105,7 @@ public class ChannelAddServiceImpl implements ChannelAddService {
             throw new IllegalArgumentException(platform + " 카테고리 매핑 미설정");
         }
 
-        // --- copy: master options → listing options + BOM ---
+        // --- copy: master options → listing options (구성품은 마스터 옵션이 갖는다, 2609_71) ---
         ProductListing cell = productListingRepository.save(ProductListing.builder()
                 .masterProduct(master)
                 .seller(seller)
@@ -122,13 +115,8 @@ public class ChannelAddServiceImpl implements ChannelAddService {
                 .status(ListingStatus.DRAFT)
                 .build());
 
-        List<Long> optionIds = masterOptions.stream().map(MasterProductOption::getId).collect(Collectors.toList());
-        Map<Long, List<MasterProductOptionItem>> itemsByOption = masterProductOptionItemRepository
-                .findByOptionIdIn(optionIds).stream()
-                .collect(Collectors.groupingBy(it -> it.getOption().getId()));
-
         for (MasterProductOption masterOption : masterOptions) {
-            ProductListingOption listingOption = productListingOptionRepository.save(ProductListingOption.builder()
+            productListingOptionRepository.save(ProductListingOption.builder()
                     .productListing(cell)
                     // 🔴 2609_22/D1: the master↔cell link is this FK, not the name. Omitting it would make every
                     // option of a new channel "channel-only" (D2) — silently skipped by propagation, price
@@ -138,15 +126,8 @@ public class ChannelAddServiceImpl implements ChannelAddService {
                     .sellingPrice(BigDecimal.ZERO)    // placeholder; regenerate fills the real price below
                     .platformOptionId(null)           // issued by 3c
                     .build());
-            for (MasterProductOptionItem item : itemsByOption.getOrDefault(masterOption.getId(), List.of())) {
-                productListingProductRepository.save(ProductListingProduct.builder()
-                        .productListingOption(listingOption)
-                        .product(item.getProduct())
-                        .quantity(item.getQuantity())
-                        .build());
-            }
         }
-        // Flush so the reused seam reads the copied options/BOM.
+        // Flush so the reused seam reads the copied options.
         productListingRepository.flush();
 
         // --- auto-generate (reuse 3b-2 seam; margin/box/delivery unset → 400 rolls back) ---

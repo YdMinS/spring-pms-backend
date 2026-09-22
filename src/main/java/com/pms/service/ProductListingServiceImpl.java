@@ -4,10 +4,8 @@ import com.pms.domain.Category;
 import com.pms.domain.CarrierRate;
 import com.pms.domain.Package;
 import com.pms.domain.Platform;
-import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.request.CreateProductListingRequest;
 import com.pms.dto.response.ProductListingResponse;
@@ -19,9 +17,7 @@ import com.pms.repository.CategoryRepository;
 import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.service.listing.CellBomResolver;
-import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -37,12 +33,16 @@ import java.util.Map;
 /**
  * ProductListingServiceImpl - Product listing service implementation
  *
- * Handles CRUD operations for ProductListing entities with validation
+ * Handles read/update/delete of ProductListing entities with validation
  * for referenced entities (Category, CarrierRate, Package).
+ *
+ * 🔴 2609_71/D7: 셀을 직접 만드는 경로는 없다 — 판매상품은 마스터를 통해서만 생긴다
+ * (ChannelAddServiceImpl · CoupangListingImportServiceImpl · MasterFromChannelServiceImpl).
+ * 이 서비스의 update 는 마스터 미연결 셀의 이름·마켓 상품 ID·옵션 행만 고치며 구성품은 다루지 않는다.
  *
  * Transaction Management:
  * - Class-level @Transactional(readOnly = true) for all read operations
- * - Method-level @Transactional override for write operations (create, update, delete)
+ * - Method-level @Transactional override for write operations (update, delete)
  *
  * Key Features:
  * - platformProductId uniqueness validation
@@ -60,109 +60,13 @@ public class ProductListingServiceImpl implements ProductListingService {
 
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
-    private final ProductListingProductRepository productListingProductRepository;
-    /** 셀 옵션의 구성품을 <b>읽는</b> 유일한 창구(2609_71). 위 리포지토리는 쓰기 전용으로만 남아 있다. */
+    /** 셀 옵션의 구성품을 얻는 유일한 창구(2609_71) — 셀 BOM 테이블은 사라졌다. */
     private final CellBomResolver cellBomResolver;
-    private final ProductRepository productRepository;
     private final CategoryRepository categoryRepository;
     private final CarrierRateRepository carrierRateRepository;
     private final PackageRepository packageRepository;
     private final SellerRepository sellerRepository;
     private static final int DEFAULT_PAGE_SIZE = 20;
-
-    /**
-     * Create a new product listing with options and products in a single transaction.
-     *
-     * Validates:
-     * 1. platformProductId is not already in use
-     * 2. All optional references (category, delivery, package) exist if provided
-     * 3. All options have at least one product
-     *
-     * Throws IllegalArgumentException if platformProductId exists.
-     * Throws ResourceNotFoundException if any reference entity not found.
-     *
-     * @param request CreateProductListingRequest with options and products
-     * @return ProductListingResponse with created listing
-     */
-    @Override
-    @Transactional
-    public ProductListingResponse create(CreateProductListingRequest request) {
-        // Validate platform and platformProductId uniqueness
-        if (productListingRepository.existsByPlatformProductId(request.getPlatformProductId())) {
-            throw new IllegalArgumentException(
-                    "Product listing with platformProductId '" + request.getPlatformProductId() + "' already exists"
-            );
-        }
-
-        // Resolve seller (required)
-        Seller seller = sellerRepository.findById(request.getSellerId())
-                .orElseThrow(() -> new ResourceNotFoundException("Seller", request.getSellerId()));
-
-        // Resolve optional references
-        Category category = null;
-        if (request.getCategoryId() != null) {
-            category = categoryRepository.findById(request.getCategoryId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Category", request.getCategoryId()));
-        }
-
-        CarrierRate delivery = null;
-        if (request.getDeliveryId() != null) {
-            delivery = carrierRateRepository.findById(request.getDeliveryId())
-                    .orElseThrow(() -> new ResourceNotFoundException("CarrierRate", request.getDeliveryId()));
-        }
-
-        Package pkg = null;
-        if (request.getPackageId() != null) {
-            pkg = packageRepository.findById(request.getPackageId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Package", request.getPackageId()));
-        }
-
-        // Build and save listing
-        ProductListing listing = ProductListing.builder()
-                .seller(seller)
-                .platform(Platform.from(request.getPlatform()))
-                .platformProductId(request.getPlatformProductId())
-                .name(request.getName())
-                .category(category)
-                .delivery(delivery)
-                .package_(pkg)
-                .build();
-
-        ProductListing saved = productListingRepository.save(listing);
-
-        // Create options and products if provided
-        if (request.getOptions() != null && !request.getOptions().isEmpty()) {
-            for (CreateProductListingRequest.OptionRequest optionReq : request.getOptions()) {
-                // 2609_22/D1: this legacy API knows no master, so masterProductOption stays null — every option
-                // created here is a channel-only option (D2) and master propagation will not touch it. New code
-                // creates cells through the channel-add path (ChannelAddServiceImpl), which sets the FK.
-                ProductListingOption option = ProductListingOption.builder()
-                        .productListing(saved)
-                        .optionName(optionReq.getOptionName())
-                        .sellingPrice(optionReq.getSellingPrice())
-                        .platformOptionId(optionReq.getPlatformOptionId())
-                        .build();
-                ProductListingOption savedOption = productListingOptionRepository.save(option);
-
-                // Add products to option
-                if (optionReq.getProducts() != null && !optionReq.getProducts().isEmpty()) {
-                    for (CreateProductListingRequest.OptionRequest.ProductRequest prodReq : optionReq.getProducts()) {
-                        Product referencedProduct = productRepository.findById(prodReq.getProductId())
-                                .orElseThrow(() -> new ResourceNotFoundException("Product", prodReq.getProductId()));
-
-                        ProductListingProduct product = ProductListingProduct.builder()
-                                .productListingOption(savedOption)
-                                .product(referencedProduct)
-                                .quantity(prodReq.getQuantity())
-                                .build();
-                        productListingProductRepository.save(product);
-                    }
-                }
-            }
-        }
-
-        return loadProductListingWithOptions(saved);
-    }
 
     /**
      * Retrieve a product listing by ID.
@@ -285,9 +189,8 @@ public class ProductListingServiceImpl implements ProductListingService {
 
         ProductListing saved = productListingRepository.save(updated);
 
-        // Update options: delete old ones and create new ones
-        // Delete products first (due to FK constraint from ProductListingProduct -> ProductListingOption)
-        productListingProductRepository.deleteByProductListingId(saved.getId());
+        // Update options: delete old ones and create new ones.
+        // 2609_71: 구성품은 마스터 옵션이 갖는다 — 이 경로는 옵션 행만 다시 만든다.
         productListingOptionRepository.deleteByProductListingId(saved.getId());
 
         if (request.getOptions() != null && !request.getOptions().isEmpty()) {
@@ -301,22 +204,7 @@ public class ProductListingServiceImpl implements ProductListingService {
                         .sellingPrice(optionReq.getSellingPrice())
                         .platformOptionId(optionReq.getPlatformOptionId())
                         .build();
-                ProductListingOption savedOption = productListingOptionRepository.save(option);
-
-                // Add products to option
-                if (optionReq.getProducts() != null && !optionReq.getProducts().isEmpty()) {
-                    for (CreateProductListingRequest.OptionRequest.ProductRequest prodReq : optionReq.getProducts()) {
-                        Product referencedProduct = productRepository.findById(prodReq.getProductId())
-                                .orElseThrow(() -> new ResourceNotFoundException("Product", prodReq.getProductId()));
-
-                        ProductListingProduct product = ProductListingProduct.builder()
-                                .productListingOption(savedOption)
-                                .product(referencedProduct)
-                                .quantity(prodReq.getQuantity())
-                                .build();
-                        productListingProductRepository.save(product);
-                    }
-                }
+                productListingOptionRepository.save(option);
             }
         }
 
@@ -326,9 +214,7 @@ public class ProductListingServiceImpl implements ProductListingService {
     /**
      * Delete a product listing.
      *
-     * Cascades to child rows in FK order (composition → options → listing).
-     * Note: Product master records are NOT deleted - only the
-     * ProductListingProduct composition rows are removed.
+     * Cascades to child rows in FK order (options → listing).
      *
      * @param id Product listing ID
      * @throws ResourceNotFoundException if listing not found
@@ -344,9 +230,7 @@ public class ProductListingServiceImpl implements ProductListingService {
             throw new IllegalArgumentException("마스터에 연결된 판매상품은 삭제할 수 없습니다");
         }
 
-        // Delete in FK order: composition rows -> options -> listing
-        // (Product master is untouched - composition rows are the child of Product)
-        productListingProductRepository.deleteByProductListingId(id);
+        // Delete in FK order: options -> listing (2609_71: 셀 구성품 행은 더 이상 없다).
         productListingOptionRepository.deleteByProductListingId(id);
         productListingRepository.delete(listing);
     }

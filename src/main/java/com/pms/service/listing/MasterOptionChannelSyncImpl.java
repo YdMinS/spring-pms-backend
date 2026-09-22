@@ -3,15 +3,11 @@ package com.pms.service.listing;
 import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
-import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.OptionApprovalStatus;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
-import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.service.ListingAssetService;
 import lombok.RequiredArgsConstructor;
@@ -39,9 +35,9 @@ import java.util.stream.Collectors;
  * matched in memory. Reading options per cell would be an N+1 on a master with many channels.
  * {@link #syncStructure} is cell-scoped and follows its own two-query rule.</p>
  *
- * <p>No explicit {@code flush()} between the BOM writes and {@code recalculateOptionPrices}: the cost sum
- * reads the lines through a query, so JPA auto-flush covers it (same reasoning as the 84 re-sync).
- * {@code ChannelAddServiceImpl} flushes because it runs the whole {@code regenerateAssets} seam.</p>
+ * <p>2609_71: 이 컴포넌트는 더 이상 셀 BOM 을 쓰지 않는다 — 구성품은 마스터 옵션이 갖고
+ * {@code master_product_option_id} FK 하나로 따라온다. 남은 책임은 <b>옵션 행의 구조</b>(생성·이름·on/off)와
+ * 구성이 바뀐 뒤의 판매가 재계산이다.</p>
  */
 @Component
 @RequiredArgsConstructor
@@ -51,9 +47,7 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
 
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
-    private final ProductListingProductRepository productListingProductRepository;
     private final MasterProductOptionRepository masterProductOptionRepository;
-    private final MasterProductOptionItemRepository masterProductOptionItemRepository;
     private final ListingAssetService listingAssetService;
 
     @Override
@@ -63,17 +57,13 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
             return;     // no channel yet (e.g. right after master creation) → nothing to propagate to
         }
         Map<Long, List<ProductListingOption>> optionsByCell = optionsByCell(cells);
-        // Master items are the BOM source for every cell — read once, copied N times.
-        List<MasterProductOptionItem> items = masterProductOptionItemRepository.findByOptionId(option.getId());
 
         for (ProductListing cell : cells) {
-            ProductListingOption existing = match(optionsByCell.get(cell.getId()), option.getId());
-            if (existing != null) {
-                rebuildLines(existing, items);      // re-added option: reuse the row, `active` untouched
-            } else {
-                createCellOption(cell, option, items);
+            if (match(optionsByCell.get(cell.getId()), option.getId()) == null) {
+                createCellOption(cell, option);
             }
-            // Both branches changed the cell's composition → the placeholder/stale price must be re-derived.
+            // 2609_71: 구성품은 마스터 옵션이 갖는다 — 셀에 복사할 것이 없다. 그래도 이 셀의 원가 합이
+            // 바뀌었으므로(옵션이 새로 붙었거나 다시 켜졌다) 판매가는 다시 계산한다.
             listingAssetService.recalculateOptionPrices(cell);
         }
     }
@@ -140,15 +130,13 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
             return;
         }
         Map<Long, List<ProductListingOption>> optionsByCell = optionsByCell(cells);
-        // Master items are the BOM source for every cell — read once, copied N times.
-        List<MasterProductOptionItem> items = masterProductOptionItemRepository.findByOptionId(option.getId());
 
         for (ProductListing cell : cells) {
-            ProductListingOption existing = match(optionsByCell.get(cell.getId()), option.getId());
-            if (existing == null) {
+            if (match(optionsByCell.get(cell.getId()), option.getId()) == null) {
                 continue;   // this channel does not carry the option → creating it is not this hook's job
             }
-            rebuildLines(existing, items);      // replace, never merge (see the interface note)
+            // 2609_71: 셀 BOM 사본이 없으므로 교체할 줄이 없다. 마스터 items 가 곧 셀의 구성품이고,
+            // 새 구성으로 계산한 원가 합이 판매가에 반영되도록 여기서 재계산만 한다.
             listingAssetService.recalculateOptionPrices(cell);
         }
     }
@@ -169,8 +157,7 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
         // (1) missing: in the master, not on this cell → create, switched off (see the interface rules).
         for (MasterProductOption masterOption : masterOptions) {
             if (match(cellOptions, masterOption.getId()) == null) {
-                createCellOption(cell, masterOption,
-                        masterProductOptionItemRepository.findByOptionId(masterOption.getId()));
+                createCellOption(cell, masterOption);
                 changed = true;
             }
         }
@@ -248,10 +235,11 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
      * New channel option row. Mirrors the {@code ChannelAddServiceImpl} copy rule with ONE difference:
      * {@code active} is set to {@code false} explicitly — the entity default is {@code true}, which is the
      * channel-creation default and must not be inherited here.
+     *
+     * <p>2609_71: 구성품은 복사하지 않는다 — FK 하나로 마스터 옵션의 items 가 곧 이 옵션의 구성품이 된다.</p>
      */
-    private void createCellOption(ProductListing cell, MasterProductOption masterOption,
-                                  List<MasterProductOptionItem> items) {
-        ProductListingOption created = productListingOptionRepository.save(ProductListingOption.builder()
+    private void createCellOption(ProductListing cell, MasterProductOption masterOption) {
+        productListingOptionRepository.save(ProductListingOption.builder()
                 .productListing(cell)
                 // 🔴 2609_22/D1: without this FK the new row would be born channel-only and be skipped by
                 // propagation, price recalculation and the stock clamp for ever (D2) — silently.
@@ -262,26 +250,6 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
                 .platformOptionId(null)                 // issued by the 3c push
                 .approvalStatus(OptionApprovalStatus.NOT_APPROVED)
                 .build());
-        copyLines(created, items);
-    }
-
-    /**
-     * Replace (never merge) the option's BOM lines with the master items — see the interface note on why
-     * {@link OptionQuantitySync} is the wrong tool here.
-     */
-    private void rebuildLines(ProductListingOption cellOption, List<MasterProductOptionItem> items) {
-        productListingProductRepository.deleteByProductListingOptionId(cellOption.getId());
-        copyLines(cellOption, items);
-    }
-
-    private void copyLines(ProductListingOption cellOption, List<MasterProductOptionItem> items) {
-        for (MasterProductOptionItem item : items) {
-            productListingProductRepository.save(ProductListingProduct.builder()
-                    .productListingOption(cellOption)
-                    .product(item.getProduct())
-                    .quantity(item.getQuantity())
-                    .build());
-        }
     }
 
     /** Switch an option off, keeping the row. Already-off options are not re-saved. */

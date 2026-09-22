@@ -12,32 +12,18 @@ import org.springframework.data.domain.Page;
  * Handles business logic for platform product listings (e.g., Coupang).
  *
  * Core responsibilities:
- * - CRUD operations for ProductListing entities
+ * - Read/update/delete of ProductListing entities
  * - Reference validation (Category, CarrierRate, Package FK checks)
  * - Uniqueness constraint on platformProductId per listing
  * - Pagination support for platform-based queries
  *
- * This service does NOT handle ProductListingOption or ProductListingProduct.
- * Those are managed separately via their own services.
+ * 🔴 2609_71/D7: 셀을 직접 만드는 경로는 없다 — 판매상품은 마스터를 통해서만 생긴다. 구성품 역시 이 서비스가
+ * 다루지 않는다: 셀 옵션의 구성품은 마스터 옵션(master_product_option_item)이 소유하고,
+ * {@code CellBomResolver} 하나만 그것을 읽는다.
  *
  * @see ProductListingServiceImpl for implementation details
  */
 public interface ProductListingService {
-
-    /**
-     * Create a new product listing on a platform.
-     *
-     * Validates:
-     * - platform and platformProductId are not blank
-     * - platformProductId is unique (not already in use)
-     * - Referenced category, delivery, package exist (if provided)
-     *
-     * @param request CreateProductListingRequest containing platform, platformProductId, and optional references
-     * @return ProductListingResponse with created listing ID and details
-     * @throws IllegalArgumentException if platformProductId already exists
-     * @throws ResourceNotFoundException if referenced category, delivery, or package not found
-     */
-    ProductListingResponse create(CreateProductListingRequest request);
 
     /**
      * Retrieve a product listing by ID.

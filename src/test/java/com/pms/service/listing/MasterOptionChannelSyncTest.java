@@ -3,17 +3,12 @@ package com.pms.service.listing;
 import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
-import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.OptionApprovalStatus;
 import com.pms.domain.Platform;
-import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
-import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.service.ListingAssetService;
 import org.junit.jupiter.api.Test;
@@ -49,11 +44,8 @@ class MasterOptionChannelSyncTest {
 
     @Mock private ProductListingRepository productListingRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
-    @Mock private ProductListingProductRepository productListingProductRepository;
     @Mock private MasterProductOptionRepository masterProductOptionRepository;
-    @Mock private MasterProductOptionItemRepository masterProductOptionItemRepository;
     @Mock private ListingAssetService listingAssetService;
-    @Mock private OptionQuantitySync optionQuantitySync;      // must stay unused — see the idempotency test
     @InjectMocks private MasterOptionChannelSyncImpl sync;
 
     private static final Long MASTER_ID = 10L;
@@ -69,11 +61,6 @@ class MasterOptionChannelSyncTest {
 
     private MasterProductOption option(Long id, String name) {
         return MasterProductOption.builder().id(id).name(name).masterProduct(MASTER).build();
-    }
-
-    private MasterProductOptionItem item(Long productId, int quantity) {
-        return MasterProductOptionItem.builder()
-                .product(Product.builder().id(productId).build()).quantity(quantity).build();
     }
 
     /** 2609_22/D2: no link = channel-only option — the master owns nothing here. */
@@ -98,7 +85,6 @@ class MasterOptionChannelSyncTest {
         ProductListing onMarket = cell(2L, "COUPANG-99");
         given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(draft, onMarket));
         given(productListingOptionRepository.findByProductListingIdIn(anyCollection())).willReturn(List.of());
-        given(masterProductOptionItemRepository.findByOptionId(5L)).willReturn(List.of(item(7L, 2)));
 
         sync.onOptionCreated(MASTER_ID, option(5L, "2개입"));
 
@@ -115,35 +101,24 @@ class MasterOptionChannelSyncTest {
         assertThat(saved.getAllValues())
                 .allSatisfy(o -> assertThat(o.getMasterProductOption().getId()).isEqualTo(5L));
 
-        // BOM lines copied per cell, then the real price derived once per cell.
-        ArgumentCaptor<ProductListingProduct> lines = ArgumentCaptor.forClass(ProductListingProduct.class);
-        verify(productListingProductRepository, times(2)).save(lines.capture());
-        assertThat(lines.getAllValues()).extracting(ProductListingProduct::getQuantity).containsOnly(2);
+        // 2609_71: 구성품은 복사하지 않는다(FK 하나로 따라온다) — 셀마다 판매가만 다시 계산한다.
         verify(listingAssetService, times(1)).recalculateOptionPrices(draft);
         verify(listingAssetService, times(1)).recalculateOptionPrices(onMarket);
     }
 
     @Test
-    void onOptionCreated_linkedRowExists_rebuildsLinesOnly_keepsActiveFlag() {
-        // A deleted-then-re-added option: the row survived (switched off), so reuse it — but its BOM is
-        // stale, and re-adding must not silently re-activate it either.
+    void onOptionCreated_linkedRowExists_reusesRow_keepsActiveFlag() {
+        // A deleted-then-re-added option: the row survived (switched off), so reuse it — re-adding must not
+        // silently re-activate it. 2609_71: 그 행의 구성품은 FK 를 타고 새 items 를 곧바로 따른다.
         ProductListing cell = cell(1L, null);
         ProductListingOption existing = cellOption(50L, cell, "2개입", false, option(5L, "2개입"));
         given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
         given(productListingOptionRepository.findByProductListingIdIn(anyCollection()))
                 .willReturn(List.of(existing));
-        given(masterProductOptionItemRepository.findByOptionId(5L)).willReturn(List.of(item(7L, 3)));
 
         sync.onOptionCreated(MASTER_ID, option(5L, "2개입"));
 
         verify(productListingOptionRepository, never()).save(any());        // no new row, active untouched
-        // ⚠️ Replace, never merge: syncLines would only touch products present on both sides and leave the
-        // deleted option's stale composition (→ wrong cost → wrong price) behind.
-        verify(productListingProductRepository).deleteByProductListingOptionId(50L);
-        verify(optionQuantitySync, never()).syncLines(any(), any());
-        ArgumentCaptor<ProductListingProduct> lines = ArgumentCaptor.forClass(ProductListingProduct.class);
-        verify(productListingProductRepository).save(lines.capture());
-        assertThat(lines.getValue().getQuantity()).isEqualTo(3);
         verify(listingAssetService).recalculateOptionPrices(cell);
     }
 
@@ -154,7 +129,6 @@ class MasterOptionChannelSyncTest {
         given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
         given(productListingOptionRepository.findByProductListingIdIn(anyCollection()))
                 .willReturn(List.of(cellOption(50L, cell, "1개입", true, option(4L, "1개입"))));
-        given(masterProductOptionItemRepository.findByOptionId(5L)).willReturn(List.of(item(7L, 2)));
 
         sync.onOptionCreated(MASTER_ID, option(5L, "2개입"));
 
@@ -171,7 +145,6 @@ class MasterOptionChannelSyncTest {
                 .mapToObj(i -> cell((long) i, null)).toList();
         given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(cells);
         given(productListingOptionRepository.findByProductListingIdIn(anyCollection())).willReturn(List.of());
-        given(masterProductOptionItemRepository.findByOptionId(5L)).willReturn(List.of());
 
         sync.onOptionCreated(MASTER_ID, option(5L, "2개입"));
 
@@ -268,10 +241,9 @@ class MasterOptionChannelSyncTest {
         verify(productListingOptionRepository).save(saved.capture());
         assertThat(saved.getValue().getId()).isEqualTo(50L);
         assertThat(saved.getValue().getActive()).isFalse();
-        // 🔴 42: the row and its BOM lines are kept — deactivation already keeps it out of the push payload.
+        // 🔴 42: the row is kept — deactivation already keeps it out of the push payload.
         verify(productListingOptionRepository, never()).delete(any());
         verify(productListingOptionRepository, never()).deleteAll(any());
-        verify(productListingProductRepository, never()).deleteByProductListingOptionId(any());
         // Remaining options' prices did not move.
         verify(listingAssetService, never()).recalculateOptionPrices(any());
     }
@@ -279,26 +251,17 @@ class MasterOptionChannelSyncTest {
     // ------------------------------------------------- onOptionComponentsChanged (2609_64)
 
     @Test
-    void onOptionComponentsChanged_replacesCellBomLines() {
-        // The master option's component set changed ([1,2] → [1,3]); the cell BOM must be REPLACED, not
-        // merged — OptionQuantitySync would leave the line for product 2 behind (wrong cost, wrong price).
+    void onOptionComponentsChanged_recalculatesPriceOfCellsCarryingTheOption() {
+        // 2609_71: 마스터 옵션의 구성이 바뀌면 셀 옵션의 구성품도 FK 를 타고 저절로 바뀐다 — 복사할 줄이
+        // 없으므로 남는 일은 바뀐 원가 합을 판매가에 반영하는 것뿐이다.
         ProductListing cell = cell(1L, "COUPANG-99");
         MasterProductOption option = option(5L, "2개입");
         given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
         given(productListingOptionRepository.findByProductListingIdIn(anyCollection()))
                 .willReturn(List.of(cellOption(50L, cell, "2개입", true, option)));
-        given(masterProductOptionItemRepository.findByOptionId(5L))
-                .willReturn(List.of(item(1L, 1), item(3L, 2)));
 
         sync.onOptionComponentsChanged(MASTER_ID, option);
 
-        verify(productListingProductRepository).deleteByProductListingOptionId(50L);
-        ArgumentCaptor<ProductListingProduct> lines = ArgumentCaptor.forClass(ProductListingProduct.class);
-        verify(productListingProductRepository, times(2)).save(lines.capture());
-        assertThat(lines.getAllValues()).extracting(line -> line.getProduct().getId())
-                .containsExactly(1L, 3L);
-        verify(optionQuantitySync, never()).syncLines(any(), any());
-        // Prices follow the composition.
         verify(listingAssetService).recalculateOptionPrices(cell);
         // 🔴 "the composition changed" is not "an option appeared" — no new cell option row here.
         verify(productListingOptionRepository, never()).save(any());
@@ -310,12 +273,9 @@ class MasterOptionChannelSyncTest {
         given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
         given(productListingOptionRepository.findByProductListingIdIn(anyCollection()))
                 .willReturn(List.of(cellOption(50L, cell, "채널전용", true)));
-        given(masterProductOptionItemRepository.findByOptionId(5L)).willReturn(List.of(item(1L, 1)));
 
         sync.onOptionComponentsChanged(MASTER_ID, option(5L, "2개입"));
 
-        verify(productListingProductRepository, never()).deleteByProductListingOptionId(any());
-        verify(productListingProductRepository, never()).save(any());
         verify(listingAssetService, never()).recalculateOptionPrices(any());
     }
 
@@ -329,7 +289,6 @@ class MasterOptionChannelSyncTest {
         // Linked to an option this master no longer has (a legacy row — the FK is normally SET NULL, D22).
         given(productListingOptionRepository.findByProductListingId(1L))
                 .willReturn(List.of(cellOption(50L, draft, "옛옵션", true, option(9L, "옛옵션"))));
-        given(masterProductOptionItemRepository.findByOptionId(5L)).willReturn(List.of(item(7L, 2)));
 
         sync.syncStructure(draft);
 
@@ -386,7 +345,6 @@ class MasterOptionChannelSyncTest {
         sync.syncStructure(draft);
 
         verify(productListingOptionRepository, never()).save(any());
-        verify(productListingProductRepository, never()).save(any());
         verify(listingAssetService, never()).recalculateOptionPrices(any());
     }
 }

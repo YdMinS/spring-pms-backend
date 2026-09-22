@@ -14,7 +14,6 @@ import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.domain.PurchaseRecord;
 import com.pms.domain.Seller;
 import com.pms.domain.StockMovement;
@@ -30,7 +29,6 @@ import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
@@ -71,7 +69,6 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
     @Autowired private MasterProductOptionRepository masterProductOptionRepository;
     @Autowired private MasterProductOptionItemRepository masterProductOptionItemRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
-    @Autowired private ProductListingProductRepository productListingProductRepository;
     @Autowired private ShoppingListItemRepository shoppingListItemRepository;
     @Autowired private PurchaseRecordRepository purchaseRecordRepository;
     @Autowired private StockMovementRepository stockMovementRepository;
@@ -106,8 +103,6 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
         ProductListingOption option = productListingOptionRepository.save(ProductListingOption.builder()
                 .productListing(listing).optionName("기본").sellingPrice(new BigDecimal("9900"))
                 .masterProductOption(masterOption).platformOptionId("OPT1").build());
-        productListingProductRepository.save(ProductListingProduct.builder()
-                .productListingOption(option).product(product).quantity(2).build());   // 셀 BOM(사본)
 
         // 주문 3층 + 쿠팡 거울 (2609_26). 추출 윈도우(syncDays) 안에 들도록 ordered_at 은 지금.
         Order order = orderRepository.save(Order.builder()

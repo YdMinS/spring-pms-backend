@@ -16,7 +16,6 @@ import com.pms.domain.PlatformCategory;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.CommissionRateRepository;
@@ -28,7 +27,6 @@ import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
@@ -68,7 +66,6 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
     @Autowired private ProductRepository productRepository;
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
-    @Autowired private ProductListingProductRepository productListingProductRepository;
     @Autowired private MarginPolicyRepository marginPolicyRepository;
     @Autowired private CommissionRateRepository commissionRateRepository;
     @Autowired private GeneratedProductDataRepository generatedProductDataRepository;
@@ -140,11 +137,9 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                 MasterProductOption.builder().masterProduct(master).name("기본").build());
         masterProductOptionItemRepository.save(MasterProductOptionItem.builder()
                 .option(masterOption).product(product).quantity(1).build());
-        ProductListingOption option = productListingOptionRepository.save(ProductListingOption.builder()
+        productListingOptionRepository.save(ProductListingOption.builder()
                 .productListing(listing).optionName("기본").masterProductOption(masterOption)
                 .sellingPrice(BigDecimal.ZERO).build());
-        productListingProductRepository.save(ProductListingProduct.builder()
-                .productListingOption(option).product(product).quantity(1).build());
 
         given(productImageLoader.load(any())).willReturn(new byte[]{1, 2, 3});
         given(thumbnailRenderer.render(any(), any(), any())).willReturn(new byte[]{4, 5, 6});
@@ -185,7 +180,6 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
         // Price history rows FK-reference the options a regeneration repriced (2609_28) — child first.
         priceChangeLogRepository.deleteAll();
         generatedProductDataRepository.deleteAll();
-        productListingProductRepository.deleteAll();
         productListingOptionRepository.deleteAll();
         productListingRepository.deleteAll();
         // The master FK-references carrier_rate/package (default delivery/box) — remove it before base cleanup.

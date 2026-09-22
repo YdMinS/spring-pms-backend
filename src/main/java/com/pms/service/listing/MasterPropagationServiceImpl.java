@@ -1,15 +1,11 @@
 package com.pms.service.listing;
 
 import com.pms.domain.MasterProduct;
-import com.pms.domain.MasterProductOption;
 import com.pms.domain.ProductListing;
-import com.pms.domain.ProductListingOption;
 import com.pms.dto.response.PropagateResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.GeneratedProductDataRepository;
-import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
-import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.service.ListingAssetService;
 import lombok.RequiredArgsConstructor;
@@ -22,8 +18,6 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
  * Layer A: local propagation of master changes to linked channel cells (FEATURE_2608_06 / 3d). See
@@ -42,11 +36,8 @@ public class MasterPropagationServiceImpl implements MasterPropagationService {
 
     private final MasterProductRepository masterProductRepository;
     private final ProductListingRepository productListingRepository;
-    private final ProductListingOptionRepository productListingOptionRepository;
-    private final MasterProductOptionRepository masterProductOptionRepository;
     private final GeneratedProductDataRepository generatedProductDataRepository;
     private final ListingAssetService listingAssetService;
-    private final OptionQuantitySync optionQuantitySync;
     private final MasterOptionChannelSync masterOptionChannelSync;
 
     /** Self proxy so {@link #propagateOne} goes through the {@code REQUIRES_NEW} advice (not a direct call). */
@@ -84,52 +75,15 @@ public class MasterPropagationServiceImpl implements MasterPropagationService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void propagateOne(ProductListing cell) {
         // 1. Reconcile this cell's option STRUCTURE with the master (86): create options the master gained,
-        //    switch off orphans it no longer has. Runs first so the quantity sync below already sees them.
         //    ⚠️ Cell-scoped on purpose — this method runs once per cell in its own REQUIRES_NEW transaction.
         masterOptionChannelSync.syncStructure(cell);
-        // 2. Sync matched-option BOM quantities from the master (quantities of already-matched lines).
-        syncOptionQuantities(cell);
+        // 2. 2609_71: 수량 동기화 단계는 사라졌다 — 셀에 구성품 사본이 없어 맞출 대상이 없다. 구성품은
+        //    master_product_option_id FK 를 타고 마스터 옵션의 items 를 그대로 따른다.
         // 3. Re-generate assets via the 03 seam (thumbnail / detail stub / per-option selling price). Reuse-only.
         listingAssetService.regenerateAssets(cell);
         // 4. Mark on-market cells pending; DRAFT cells (no market id) are never marked.
         if (cell.getPlatformProductId() != null) {
             productListingRepository.save(cell.toBuilder().needsMarketSync(true).build());
-        }
-    }
-
-    /**
-     * Sync BOM line quantities from the master to linked cell options. Match cell option ↔ master option by
-     * {@code master_product_option_id} (2609_22/D1); within a matched option, match BOM lines to master items
-     * by {@code productId} and update the quantity only where both sides have that product. A cell-only
-     * product is left as-is; a master-only product is skipped.
-     *
-     * <p>⚠️ 2609_22/D2: a <b>channel-only</b> option (FK null) is skipped entirely — it exists on this channel
-     * alone, so the master has no quantities to push down.</p>
-     *
-     * <p>⚠️ Quantities only — <b>option structure</b> (missing options, orphans) is reconciled one step
-     * earlier by {@link MasterOptionChannelSync#syncStructure} (86), not here.</p>
-     */
-    private void syncOptionQuantities(ProductListing cell) {
-        MasterProduct master = cell.getMasterProduct();
-        if (master == null) {
-            return;
-        }
-        Map<Long, MasterProductOption> masterOptionsById = masterProductOptionRepository
-                .findByMasterProductId(master.getId()).stream()
-                .collect(Collectors.toMap(MasterProductOption::getId, o -> o, (first, dup) -> first));
-
-        for (ProductListingOption cellOption : productListingOptionRepository.findByProductListingId(cell.getId())) {
-            // ⚠️ id only — safe on a LAZY proxy (no extra query per option).
-            MasterProductOption linked = cellOption.getMasterProductOption();
-            if (linked == null) {
-                continue;   // channel-only option → the master owns nothing here (D2)
-            }
-            MasterProductOption masterOption = masterOptionsById.get(linked.getId());
-            if (masterOption == null) {
-                continue;   // linked to an option this master no longer has → skip
-            }
-            // Shared line rule (84): quantities only, matched by productId. Never re-implement here.
-            optionQuantitySync.syncLines(cellOption, masterOption);
         }
     }
 }

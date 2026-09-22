@@ -33,7 +33,6 @@ import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.RefreshTokenRepository;
@@ -102,7 +101,6 @@ class ChannelAddControllerTest {
     @Autowired private MasterProductOptionItemRepository masterProductOptionItemRepository;
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
-    @Autowired private ProductListingProductRepository productListingProductRepository;
     @Autowired private GeneratedProductDataRepository generatedProductDataRepository;
     @Autowired private CarrierRepository carrierRepository;
     @Autowired private CarrierRateRepository carrierRateRepository;
@@ -187,7 +185,6 @@ class ChannelAddControllerTest {
         TenantContext.set(1L);
         refreshTokenRepository.deleteAll();
         generatedProductDataRepository.deleteAll();
-        productListingProductRepository.deleteAll();
         productListingOptionRepository.deleteAll();
         productListingRepository.deleteAll();
         categoryMappingRepository.deleteAll();
@@ -307,9 +304,6 @@ class ChannelAddControllerTest {
     @Test
     void unlinkChannel_adminToken_detachesCell() throws Exception {
         Long listingId = createRegisteredCell();
-        List<ProductListingOption> before = productListingOptionRepository.findByProductListingId(listingId);
-        long bomBefore = productListingProductRepository.findByProductListingOptionIdIn(
-                before.stream().map(ProductListingOption::getId).toList()).size();
 
         mockMvc.perform(delete(BASE + "/" + masterId + "/listings/" + listingId + "/link")
                         .header("Authorization", "Bearer " + adminToken))
@@ -320,11 +314,10 @@ class ChannelAddControllerTest {
         ProductListing detached = productListingRepository.findScopedById(listingId).orElseThrow();
         assertThat(detached.getMasterProduct()).isNull();
         List<ProductListingOption> after = productListingOptionRepository.findByProductListingId(listingId);
+        // 🔴 2609_71: 옵션 행은 남고 마스터 FK 만 비워진다 — 그 순간부터 구성품을 알 수 없는 채널 전용
+        //    옵션이 된다. 다시 붙이는 창구는 마켓 상품 ID 로 마스터를 만드는 경로다.
         assertThat(after).isNotEmpty()
                 .allSatisfy(option -> assertThat(option.getMasterProductOption()).isNull());
-        // 🔴 구성(BOM)은 그대로 — 지우면 「미연결 셀 → 마스터 생성」이 막힌다(D3).
-        assertThat(productListingProductRepository.findByProductListingOptionIdIn(
-                after.stream().map(ProductListingOption::getId).toList())).hasSize((int) bomBefore);
     }
 
     @Test

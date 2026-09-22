@@ -11,7 +11,6 @@ import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.request.ListingImportPreviewRequest;
 import com.pms.dto.request.ListingImportRequest;
@@ -26,7 +25,6 @@ import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
@@ -89,7 +87,6 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
     private final MasterProductOptionItemRepository masterProductOptionItemRepository;
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
-    private final ProductListingProductRepository productListingProductRepository;
     private final ProductRepository productRepository;
     private final SellerRepository sellerRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
@@ -239,28 +236,19 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
                 .tags(channelTags.isEmpty() ? null : channelTags)
                 .build());
 
-        // --- 3) cell options + 4) cell BOM
+        // --- 3) cell options (구성품은 연결된 마스터 옵션이 갖는다 — 2609_71)
         // 2609_63/D6: 재사용 셀이면 기존 옵션 행도 다시 쓴다. 매칭 축은 matchOptions 와 같다(vendorItemId → 이름).
         List<ProductListingOption> existingOptions = ctx.existing() == null ? List.of()
                 : productListingOptionRepository.findByProductListingId(cell.getId());
         Map<ListingImportRequest.OptionSpec, ProductListingOption> reuseBySpec =
                 matchExistingOptions(request.getOptions(), pairs, existingOptions);
 
-        // 🔴 재사용할 옵션의 BOM <b>만</b> 지운다(1쿼리, 즉시 실행). 셀 전체 BOM 을 지우면 아래에서 비활성으로
-        // 내릴 잔여 옵션의 구성까지 사라진다 — 그 행은 다시 켜질 수 있고(규칙 42), 구성이 빈 옵션은
-        // 「미연결 셀 → 마스터 생성」도 막는다(2609_63/D6-1).
-        if (!reuseBySpec.isEmpty()) {
-            productListingProductRepository.deleteByProductListingOptionIdIn(
-                    reuseBySpec.values().stream().map(ProductListingOption::getId).toList());
-            productListingProductRepository.flush();
-        }
-
         for (ListingImportRequest.OptionSpec spec : request.getOptions()) {
             ImportedProduct.Option market = pairs.get(spec);
             ProductListingOption reusable = reuseBySpec.get(spec);
             ProductListingOption.ProductListingOptionBuilder optionBuilder =
                     reusable != null ? reusable.toBuilder() : ProductListingOption.builder();
-            ProductListingOption listingOption = productListingOptionRepository.save(optionBuilder
+            productListingOptionRepository.save(optionBuilder
                     .productListing(cell)
                     .masterProductOption(masterOptionBySpec.get(spec))     // FK, 01/D1
                     // D12: the market already shows this name — a master rename must not silently overwrite it.
@@ -289,13 +277,6 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
                     .categoryAttributes(keepsOwnCategory ? emptyToNull(market.attributes()) : null)
                     .categoryNotices(keepsOwnCategory ? emptyToNull(market.notices()) : null)
                     .build());
-            for (ListingImportRequest.Component component : spec.getComponents()) {
-                productListingProductRepository.save(ProductListingProduct.builder()
-                        .productListingOption(listingOption)
-                        .product(componentProducts.get(component.getProductId()))
-                        .quantity(component.getQuantity())
-                        .build());
-            }
         }
 
         // 마켓에 더 이상 없는 잔여 옵션은 <b>비활성</b>으로 내린다 — 🔴 지우지 않는다(규칙 42 + order_line ·

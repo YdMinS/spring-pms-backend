@@ -31,7 +31,6 @@ import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.RefreshTokenRepository;
@@ -98,7 +97,6 @@ class BatchChannelAddControllerTest {
     @Autowired private MasterProductOptionItemRepository masterProductOptionItemRepository;
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
-    @Autowired private ProductListingProductRepository productListingProductRepository;
     @Autowired private GeneratedProductDataRepository generatedProductDataRepository;
     @Autowired private CarrierRepository carrierRepository;
     @Autowired private CarrierRateRepository carrierRateRepository;
@@ -190,7 +188,6 @@ class BatchChannelAddControllerTest {
         TenantContext.set(1L);
         refreshTokenRepository.deleteAll();
         generatedProductDataRepository.deleteAll();
-        productListingProductRepository.deleteAll();
         productListingOptionRepository.deleteAll();
         productListingRepository.deleteAll();
         categoryMappingRepository.deleteAll();

@@ -9,7 +9,6 @@ import com.pms.exception.ValidationException;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductListingTagRevisionRepository;
 import org.junit.jupiter.api.Test;
@@ -44,7 +43,6 @@ class ChannelLinkServiceTest {
     @Mock private MasterProductRepository masterProductRepository;
     @Mock private ProductListingRepository productListingRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
-    @Mock private ProductListingProductRepository productListingProductRepository;
     @Mock private GeneratedProductDataRepository generatedProductDataRepository;
     @Mock private ProductListingTagRevisionRepository productListingTagRevisionRepository;
     @InjectMocks private ChannelLinkServiceImpl service;
@@ -102,9 +100,6 @@ class ChannelLinkServiceTest {
         // 해제는 FK 두 개만 비운다 — 마켓에 등록된 셀이라 가격·재고·승인상태는 그대로다.
         assertThat(optionCaptor.getValue()).allSatisfy(option -> assertThat(option.getActive()).isTrue());
 
-        // 🔴 BOM 을 함께 지우는 것이 이 조각의 최대 실패 모드다 — 지우면 「미연결 셀 → 마스터 생성」이 막힌다(D3).
-        verify(productListingProductRepository, never()).deleteByProductListingId(any());
-        verify(productListingProductRepository, never()).deleteByProductListingOptionId(any());
     }
 
     @Test
@@ -139,10 +134,9 @@ class ChannelLinkServiceTest {
 
         service.deleteDraftChannel(MASTER_ID, LISTING_ID);
 
-        // 🔴 순서가 규칙이다: 구성 → 옵션 → 자동생성물 → 태그이력 → 셀(NOT NULL FK 라 자식이 먼저다).
-        InOrder order = inOrder(productListingProductRepository, productListingOptionRepository,
+        // 🔴 순서가 규칙이다: 옵션 → 자동생성물 → 태그이력 → 셀(NOT NULL FK 라 자식이 먼저다).
+        InOrder order = inOrder(productListingOptionRepository,
                 generatedProductDataRepository, productListingTagRevisionRepository, productListingRepository);
-        order.verify(productListingProductRepository).deleteByProductListingId(LISTING_ID);
         order.verify(productListingOptionRepository).deleteByProductListingId(LISTING_ID);
         order.verify(generatedProductDataRepository).deleteByProductListingId(LISTING_ID);
         order.verify(productListingTagRevisionRepository).deleteByProductListing_Id(LISTING_ID);
@@ -159,7 +153,6 @@ class ChannelLinkServiceTest {
         assertThatThrownBy(() -> service.deleteDraftChannel(MASTER_ID, LISTING_ID))
                 .isInstanceOf(ValidationException.class)
                 .hasMessage("마켓에 등록된 채널은 삭제할 수 없습니다. 연결 해제 후 정리하세요");
-        verify(productListingProductRepository, never()).deleteByProductListingId(any());
         verify(productListingOptionRepository, never()).deleteByProductListingId(any());
         verify(generatedProductDataRepository, never()).deleteByProductListingId(any());
         verify(productListingTagRevisionRepository, never()).deleteByProductListing_Id(any());

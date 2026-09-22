@@ -67,4 +67,17 @@ public interface ProductListingOptionRepository extends JpaRepository<ProductLis
     @EntityGraph(attributePaths = {"productListing", "productListing.masterProduct",
             "masterProductOption", "masterProductOption.masterProduct"})
     List<ProductListingOption> findWithConfigByIdIn(Collection<Long> ids);
+
+    /**
+     * 주어진 마스터 옵션들에 연결된 채널 옵션 + 그 셀·판매자 (FEATURE_2609_71 / 04).
+     *
+     * <p>「이 물품을 쓰는 판매 옵션은 무엇인가」의 <b>역방향</b> 조회다. 2609_71 이전에는
+     * {@code product_listing_product} 를 물품 id 로 뒤졌지만, 셀 구성품 사본이 사라져 이제는
+     * 마스터 옵션({@code master_product_option_item})에서 출발해 FK 를 타고 내려온다.
+     *
+     * <p>⚠️ {@code productListing} · {@code seller} 를 함께 읽는다 — 호출부가 셀의 판매자·플랫폼·상태를
+     * 곧바로 쓰므로 LAZY 로 두면 행마다 쿼리가 나간다.
+     */
+    @EntityGraph(attributePaths = {"productListing", "productListing.seller"})
+    List<ProductListingOption> findByMasterProductOption_IdIn(Collection<Long> masterOptionIds);
 }

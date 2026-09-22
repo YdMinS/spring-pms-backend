@@ -15,6 +15,9 @@ import com.pms.repository.SellerRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -30,6 +33,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *
  * <p>D32 는 양방향으로 고정한다 — 연결된 셀의 legacy 수정은 400(이 경로가 옵션을 전부 delete + recreate 해
  * 마스터 FK·옵션 id·승인상태를 날린다), 미연결 셀은 계속 200(마켓 상품 ID 오타를 고칠 유일한 창구).</p>
+ *
+ * <p>2609_71/D7: 셀 <b>직접 등록</b>(POST)은 사라졌다 — 판매상품은 마스터를 통해서만 생긴다.</p>
  */
 class ProductListingControllerTest extends BaseIntegrationTest {
 
@@ -37,6 +42,10 @@ class ProductListingControllerTest extends BaseIntegrationTest {
     @Autowired private MasterProductRepository masterProductRepository;
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductRepository productRepository;
+    // ⚠️ actuator 가 controllerEndpointHandlerMapping 도 올려서 타입만으로는 두 개다 — 이름으로 고른다.
+    @Autowired
+    @Qualifier("requestMappingHandlerMapping")
+    private RequestMappingHandlerMapping handlerMapping;
 
     private static final String BASE = "/api/product-listings";
 
@@ -71,12 +80,27 @@ class ProductListingControllerTest extends BaseIntegrationTest {
         return objectMapper.writeValueAsString(CreateProductListingRequest.builder()
                 .sellerId(sellerId).platform("COUPANG")
                 .platformProductId(platformProductId).name(name)
+                // 2609_71/D8: 옵션 요청에 구성품(products) 필드는 없다 — 구성품은 마스터가 갖는다.
                 .options(List.of(CreateProductListingRequest.OptionRequest.builder()
                         .optionName("6입").sellingPrice(new BigDecimal("5900"))
-                        .products(List.of(CreateProductListingRequest.OptionRequest.ProductRequest.builder()
-                                .productId(productId).quantity(6).build()))
                         .build()))
                 .build());
+    }
+
+    /**
+     * 2609_71/D7: 직접 등록 엔드포인트가 정말 사라졌는가.
+     *
+     * <p>🔴 상태 코드로 보지 않는다 — {@code GlobalExceptionHandler} 의 catch-all 이
+     * {@code HttpRequestMethodNotSupportedException} 까지 500 으로 덮어 405 가 나오지 않는다. 전체 컨텍스트의
+     * 핸들러 매핑을 직접 뒤지는 쪽이 정확하고, 누가 POST 를 되살리면 그 순간 깨진다.</p>
+     */
+    @Test
+    void testCreateListingEndpointGone() {
+        boolean mapped = handlerMapping.getHandlerMethods().keySet().stream()
+                .anyMatch(info -> info.getMethodsCondition().getMethods().contains(RequestMethod.POST)
+                        && info.getPatternValues().contains(BASE));
+
+        org.assertj.core.api.Assertions.assertThat(mapped).isFalse();
     }
 
     // ---- master-link filter (05 가 이 3가지에 전부 의존한다) ----

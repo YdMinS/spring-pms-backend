@@ -9,7 +9,6 @@ import com.pms.exception.ValidationException;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductListingTagRevisionRepository;
 import lombok.RequiredArgsConstructor;
@@ -28,9 +27,10 @@ import java.util.List;
  * {@code price_change_log} 가 셀/셀옵션을 FK 로 문다). 그래서 이 조각은 행을 지우지 않고 FK 두 개만 비운다
  * (PLAN/D2·D3).</p>
  *
- * <p>🔴 해제 때 <b>BOM({@code product_listing_product})·자동생성물·태그·배송 override·옵션의 가격/재고/
- * 마켓 식별자/승인상태/active 를 건드리지 않는다.</b> BOM 을 지우면 「미연결 셀 → 마스터 생성」이 막힌다
- * ({@code ListingMasterCreateServiceImpl} 의 "구성품이 없는 옵션").</p>
+ * <p>🔴 해제 때 <b>자동생성물·태그·배송 override·옵션의 가격/재고/마켓 식별자/승인상태/active 를 건드리지
+ * 않는다.</b> 구성품은 2609_71 이후 마스터 옵션이 갖는다 — 해제로 FK 가 null 이 되면 그 옵션은 채널 전용이
+ * 되어 구성품을 알 수 없는 상태가 된다. 다시 붙이는 창구는 쿠팡 상품 ID 편입({@code MasterFromChannelService})
+ * 이다.</p>
  *
  * <p>⚠️ {@code MasterProductServiceImpl} 에 넣지 않는다 — 그 클래스는 이미 1300줄이 넘는다.</p>
  */
@@ -41,7 +41,6 @@ public class ChannelLinkServiceImpl implements ChannelLinkService {
     private final MasterProductRepository masterProductRepository;
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
-    private final ProductListingProductRepository productListingProductRepository;
     private final GeneratedProductDataRepository generatedProductDataRepository;
     private final ProductListingTagRevisionRepository productListingTagRevisionRepository;
 
@@ -101,7 +100,6 @@ public class ChannelLinkServiceImpl implements ChannelLinkService {
             throw new ValidationException("마켓에 등록된 채널은 삭제할 수 없습니다. 연결 해제 후 정리하세요");
         }
 
-        productListingProductRepository.deleteByProductListingId(productListingId);
         productListingOptionRepository.deleteByProductListingId(productListingId);
         generatedProductDataRepository.deleteByProductListingId(productListingId);
         productListingTagRevisionRepository.deleteByProductListing_Id(productListingId);

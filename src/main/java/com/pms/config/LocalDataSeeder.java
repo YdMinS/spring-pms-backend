@@ -12,7 +12,6 @@ import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Role;
 import com.pms.domain.Seller;
 import com.pms.domain.User;
@@ -25,7 +24,6 @@ import com.pms.repository.MarginPolicyRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
@@ -77,7 +75,6 @@ public class LocalDataSeeder implements CommandLineRunner {
     private final ProductRepository productRepository;
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
-    private final ProductListingProductRepository productListingProductRepository;
     private final CarrierRepository carrierRepository;
     private final CarrierRateRepository carrierRateRepository;
     private final PackageRepository packageRepository;
@@ -166,12 +163,11 @@ public class LocalDataSeeder implements CommandLineRunner {
 
     /**
      * 판매상품(ProductListing) 시드 — 목록(GET /api/product-listings?platform=COUPANG)과
-     * 상세/수정 화면이 offline 에서 동작하도록 옵션·연결상품까지 채운다.
+     * 상세 화면이 offline 에서 동작하도록 옵션까지 채운다.
      *
-     * <ul>
-     *   <li>판매상품 A: 단일 옵션 + Product A 1개</li>
-     *   <li>판매상품 B: 묶음 옵션 + Product B 1 / Product C 2 (다중 상품 매핑 검증)</li>
-     * </ul>
+     * <p>🔴 2609_71: 구성품은 시드하지 않는다. 셀 옵션의 구성품은 마스터 옵션(master_product_option_item)을
+     * 타고만 얻으며, 이 시더는 마스터를 만들지 않으므로 두 옵션 모두 <b>채널 전용</b>(masterProductOption
+     * null)이다 — 상세 응답의 구성품 칸은 비어 나온다. 「구성품 0개」가 아니라 「알 수 없음」이라는 뜻이다.
      *
      * category / delivery / package_ 는 nullable 이므로 생략(로컬 최소 데이터).
      */
@@ -179,47 +175,32 @@ public class LocalDataSeeder implements CommandLineRunner {
         if (productListingRepository.count() > 0 || products.size() < 3) {
             return;
         }
-        // 판매상품 A: 단일 옵션 + Product A
+        // 판매상품 A: 단일 옵션
         ProductListing listingA = productListingRepository.save(ProductListing.builder()
                 .platform(Platform.COUPANG)
                 .platformProductId("LOCAL-0001")
                 .name("로컬 판매상품 A")
                 .seller(seller)
                 .build());
-        ProductListingOption optionA = productListingOptionRepository.save(ProductListingOption.builder()
+        productListingOptionRepository.save(ProductListingOption.builder()
                 .productListing(listingA)
                 .optionName("기본 옵션")
                 .sellingPrice(new BigDecimal("15000"))
                 .platformOptionId("LOCAL-OPT-0001")
                 .build());
-        productListingProductRepository.save(ProductListingProduct.builder()
-                .productListingOption(optionA)
-                .product(products.get(0))
-                .quantity(1)
-                .build());
 
-        // 판매상품 B: 묶음 옵션 + Product B 1 / Product C 2
+        // 판매상품 B: 묶음 옵션
         ProductListing listingB = productListingRepository.save(ProductListing.builder()
                 .platform(Platform.COUPANG)
                 .platformProductId("LOCAL-0002")
                 .name("로컬 판매상품 B (2종 묶음)")
                 .seller(seller)
                 .build());
-        ProductListingOption optionB = productListingOptionRepository.save(ProductListingOption.builder()
+        productListingOptionRepository.save(ProductListingOption.builder()
                 .productListing(listingB)
                 .optionName("묶음 옵션")
                 .sellingPrice(new BigDecimal("32000"))
                 .platformOptionId("LOCAL-OPT-0002")
-                .build());
-        productListingProductRepository.save(ProductListingProduct.builder()
-                .productListingOption(optionB)
-                .product(products.get(1))
-                .quantity(1)
-                .build());
-        productListingProductRepository.save(ProductListingProduct.builder()
-                .productListingOption(optionB)
-                .product(products.get(2))
-                .quantity(2)
                 .build());
         log.info("[LOCAL-SEED] 2 product listings seeded (platform=COUPANG)");
     }

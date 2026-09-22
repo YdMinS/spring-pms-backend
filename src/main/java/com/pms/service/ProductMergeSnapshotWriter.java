@@ -28,7 +28,7 @@ import java.util.Map;
  *
  * <p>There is no rollback feature — this file is the evidence that makes an undo possible by hand. It is
  * written <b>before</b> a single row moves and holds: both products' current field values, the row ids of
- * the nine tables that reference a product, and the {@code box_recipe} rows about to be deleted.</p>
+ * the eight tables that reference a product, and the {@code box_recipe} rows about to be deleted.</p>
  *
  * <p>🔴 <b>A write failure fails the merge.</b> No evidence means no way back, so the exception propagates
  * and rolls the whole transaction back — it is never downgraded to a warning.</p>
@@ -48,14 +48,17 @@ public class ProductMergeSnapshotWriter {
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
     /**
-     * The nine tables carrying a {@code product_id} FK (PLAN, verified 2026-09-22 by
+     * The eight tables carrying a {@code product_id} FK (PLAN, verified 2026-09-22 by
      * {@code grep -l 'JoinColumn(name = "product_id"' domain/*.java}). Links are listed too even though the
      * merge never moves them — the snapshot records the state, not the plan.
+     *
+     * <p>🔴 2609_71: {@code product_listing_product} 는 목록에서 빠졌다 — 테이블이 사라졌고(changeset 097),
+     * 셀 옵션의 구성품은 {@code master_product_option_item} 하나가 갖는다. 없는 테이블을 조회하면
+     * 스냅샷 실패 = 병합 전체 실패다.</p>
      */
     private static final List<String> REFERENCE_TABLES = List.of(
             "master_product_component",
             "master_product_option_item",
-            "product_listing_product",
             "purchase_record",
             "stock_movement",
             "shipment_parcel_item",

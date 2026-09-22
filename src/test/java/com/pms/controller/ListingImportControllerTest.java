@@ -38,7 +38,6 @@ import com.pms.repository.MasterProductRepository;
 import com.pms.repository.PackageRepository;
 import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductListingTagRevisionRepository;
 import com.pms.repository.ProductRepository;
@@ -107,7 +106,6 @@ class ListingImportControllerTest {
     @Autowired private CoupangAccountCredentialRepository credentialRepository;
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
-    @Autowired private ProductListingProductRepository productListingProductRepository;
     @Autowired private ProductListingTagRevisionRepository productListingTagRevisionRepository;
     @Autowired private GeneratedProductDataRepository generatedProductDataRepository;
     @Autowired private CarrierRepository carrierRepository;
@@ -216,7 +214,6 @@ class ListingImportControllerTest {
         refreshTokenRepository.deleteAll();
         generatedProductDataRepository.deleteAll();
         productListingTagRevisionRepository.deleteAll();
-        productListingProductRepository.deleteAll();
         productListingOptionRepository.deleteAll();
         productListingRepository.deleteAll();
         credentialRepository.deleteAll();          // FK child first
@@ -328,7 +325,6 @@ class ListingImportControllerTest {
         try {
             assertThat(productListingRepository.findAll()).hasSize(1);
             assertThat(productListingOptionRepository.findAll()).hasSize(1);
-            assertThat(productListingProductRepository.findAll()).hasSize(1);
         } finally {
             TenantContext.clear();
         }

@@ -52,7 +52,6 @@ import com.pms.repository.SellerRepository;
 import com.pms.service.listing.OptionCheckSuffix;
 import com.pms.service.listing.MasterOptionChannelSync;
 import com.pms.service.listing.MasterPropagationService;
-import com.pms.service.listing.OptionQuantitySync;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import com.pms.service.listing.shipping.ShippingOverrideKeys;
@@ -114,7 +113,6 @@ class MasterProductServiceTest {
     @Mock private RegistrationNameGenerator registrationNameGenerator;
     @Mock private OptionCheckSuffixResolver optionCheckSuffixResolver;
     @Mock private ListingAssetService listingAssetService;
-    @Mock private OptionQuantitySync optionQuantitySync;
     @Mock private MasterOptionChannelSync masterOptionChannelSync;
     // 2609_64: injected into the service but never mocked here before — updateComposition must NOT
     // call it (D12), and test (1) pins that with verify(never()).
@@ -1416,7 +1414,6 @@ class MasterProductServiceTest {
 
         assertThat(response.getMarketRegistered()).isTrue();     // still locked for rename/delete
         verify(optionItemRepository).deleteByOptionId(10L);
-        verify(optionQuantitySync).syncLines(eq(channelOption), any(MasterProductOption.class));
         verify(listingAssetService).recalculateOptionPrices(any());
         ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
         verify(productListingRepository).save(captor.capture());
@@ -1440,7 +1437,6 @@ class MasterProductServiceTest {
         assertThat(response.getPackageId()).isEqualTo(5L);
         assertThat(response.getMarketRegistered()).isTrue();
         // quantities did not move → no channel re-sync
-        verify(optionQuantitySync, never()).syncLines(any(), any());
         verify(listingAssetService, never()).recalculateOptionPrices(any());
     }
 
@@ -1542,14 +1538,14 @@ class MasterProductServiceTest {
     }
 
     @Test
-    void updateOption_quantityChange_syncsLinesAndRecalculatesPricesOnly() {
+    void updateOption_quantityChange_recalculatesPricesOnly() {
         ProductListingOption channelOption = givenDraftChannel();
         given(productListingOptionRepository.findByProductListingId(200L)).willReturn(List.of(channelOption));
 
         service.updateOption(1L, 10L, MasterOptionRequest.builder()
                 .name("2세트").items(List.of(item(1L, 3))).build());
 
-        verify(optionQuantitySync).syncLines(eq(channelOption), any(MasterProductOption.class));
+        // 2609_71: 셀로 수량을 복사하는 단계는 없다 — 바뀐 수량은 원가 합을 통해 판매가에만 반영된다.
         ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
         verify(listingAssetService).recalculateOptionPrices(captor.capture());
         assertThat(captor.getValue().getId()).isEqualTo(200L);
@@ -1567,7 +1563,6 @@ class MasterProductServiceTest {
         service.updateOption(1L, 10L, MasterOptionRequest.builder()
                 .name("2세트").items(List.of(item(1L, 2))).packageId(5L).build());
 
-        verify(optionQuantitySync, never()).syncLines(any(), any());
         verify(listingAssetService, never()).recalculateOptionPrices(any());
         verify(listingAssetService, never()).regenerateAssets(any());
     }
@@ -1584,18 +1579,16 @@ class MasterProductServiceTest {
         // 86: the cascade itself lives in MasterOptionChannelSync (asserted in its own test); here we only
         // pin that updateOption hands it the old and new name.
         verify(masterOptionChannelSync).onOptionRenamed(1L, 10L, "두세트");
-        // quantities unchanged → no quantity re-sync
-        verify(optionQuantitySync, never()).syncLines(any(), any());
+        // quantities unchanged → no price re-sync either
+        verify(listingAssetService, never()).recalculateOptionPrices(any());
     }
 
     @Test
     void updateOption_renameAndQuantityChange_cascadesThenResyncs() {
-        // Regression guard: after the cascade the channel option carries the NEW name, so the quantity
-        // re-sync must match on it — matching the old name would silently find nothing.
+        // Regression guard: the rename cascade and the price re-sync both run, and matching is by FK
+        // (2609_22/D1) — the channel row carrying the NEW name is still found.
         ProductListingOption channelOption = givenDraftChannel();
         given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(masterOption(10L, "2세트")));
-        // The cascade (now MasterOptionChannelSync, mocked here) has already renamed the channel row, so the
-        // quantity re-sync that follows reads it under the NEW name.
         ProductListingOption renamed = channelOption.toBuilder().optionName("두세트").build();
         given(productListingOptionRepository.findByProductListingId(200L)).willReturn(List.of(renamed));
 
@@ -1603,7 +1596,6 @@ class MasterProductServiceTest {
                 .name("두세트").items(List.of(item(1L, 3))).build());
 
         verify(masterOptionChannelSync).onOptionRenamed(1L, 10L, "두세트");
-        verify(optionQuantitySync).syncLines(eq(renamed), any(MasterProductOption.class));
         verify(listingAssetService).recalculateOptionPrices(any());
         verify(listingAssetService, never()).regenerateAssets(any());
     }
@@ -2401,6 +2393,5 @@ class MasterProductServiceTest {
         assertThat(synced.getValue().getId()).isEqualTo(10L);
         verify(masterOptionChannelSync, never())
                 .onOptionComponentsChanged(eq(1L), argThat(option -> option.getId().equals(11L)));
-        verify(optionQuantitySync, never()).syncLines(any(), any());
     }
 }
