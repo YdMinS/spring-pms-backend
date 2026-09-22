@@ -82,6 +82,9 @@ oklyx:
     vendor-item-price-path: /v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendorItemId}/prices/{price}
     # Return/cancel request list query GET_RETURN_REQUEST_BY_QUERY (cancelType=CANCEL to reconcile paid-order cancellations).
     returnrequests-path: /v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests
+    # Single return receipt lookup, used right before re-sending a collect invoice: if Coupang already has one
+    # attached we skip the send. Same v6 prefix as the list above - do NOT mix versions here.
+    return-request-single-path: /v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests/{receiptId}
     # Return-withdrawal history by date range GET_RETURN_WITHDRAW_BY_DATE. Withdrawn return receipts simply
     # disappear from returnRequests, so this is the only signal that closes them (WITHDRAWN) instead of
     # letting them rot until the STALE sweep. Coupang caps this range at 7 days (both ends inclusive).

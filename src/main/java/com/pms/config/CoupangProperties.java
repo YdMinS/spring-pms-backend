@@ -102,6 +102,17 @@ public class CoupangProperties {
     private String returnrequestsPath = "/v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests";
 
     /**
+     * 반품 접수 <b>단건</b> 조회 경로(GET). {vendorId}·{receiptId} 치환. FEATURE_2609_70 / D8.
+     *
+     * <p>회수 송장을 다시 보내기 직전에 "이미 쿠팡에 붙어 있는지"를 확인하는 용도다 —
+     * 낡은 우리 상태 때문에 못 보내는 일과 중복 전송을 동시에 막는다.
+     * ⚠️ 목록({@link #returnrequestsPath})과 같은 <b>v6</b> 다 — 버전을 섞지 말 것.
+     * ⚠️ 실계정 미검증이라 상수가 아니라 설정으로 뺀다(액션 경로들과 같은 판단).
+     */
+    private String returnRequestSinglePath =
+            "/v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests/{receiptId}";
+
+    /**
      * 반품철회 이력 기간별 조회 경로(GET_RETURN_WITHDRAW_BY_DATE). {vendorId} 치환.
      *
      * 철회된 반품 접수는 returnRequests 목록에서 사라지기만 해서 로컬 미완결 건이 STALE 로 떨어질 때까지

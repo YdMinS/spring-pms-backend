@@ -11,6 +11,7 @@ import org.springframework.util.StreamUtils;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.regex.Pattern;
 
 /**
  * {@link CoupangApiClient} 의 로컬 Mock 구현 — 라이브 쿠팡 호출 없이 fixture JSON 을 반환한다.
@@ -21,6 +22,7 @@ import java.nio.charset.StandardCharsets;
  * <p><b>분기</b>(path substring):
  * <ul>
  *   <li>{@code ordersheets} 포함 → {@code fixtures/coupang/ordersheets.json}</li>
+ *   <li>{@code /returnRequests/{숫자}} (GET) → 반품 접수 단건 응답(2609_70, 회수 송장 <b>있음</b>)</li>
  *   <li>{@code returnRequests} 포함 → {@code fixtures/coupang/returnRequests.json}</li>
  *   <li>{@code seller-products} 포함(GET) + query 에 {@code sellerProductName=} → 상품명 검색 목록
  *       fixture (2609_67). 🔴 path 로 가를 수 없다 — 검색과 단건 조회의 경로 접두어가 같다</li>
@@ -63,6 +65,22 @@ public class MockCoupangApiClient implements CoupangApiClient {
      */
     private static final String CANCEL_OK =
             "{\"code\":200,\"data\":{\"failedVendorItemIds\":[],\"receiptMap\":{}}}";
+    /**
+     * 반품 접수 <b>단건</b> 조회 응답(FEATURE_2609_70 / D8). 회수 송장 재전송이 "이미 붙어 있는지"를
+     * 보는 자리다.
+     *
+     * ⚠️ {@code fixtures/coupang/returnRequests.json} 은 {@code "data": []} 라 접수를 꺼낼 수 없어
+     * 여기 상수로 둔다({@link #ACTION_OK}·{@link #CANCEL_OK} 와 같은 자세). 회수 운송장이
+     * <b>있는</b> 응답이 기본 — 없는 경우는 테스트에서 mock 으로 만든다.
+     */
+    private static final String RETURN_REQUEST_SINGLE =
+            "{\"code\":200,\"message\":\"OK\",\"data\":{\"receiptId\":123,"
+                    + "\"returnDeliveryType\":\"수기관리\","
+                    + "\"returnDeliveryDtos\":[{\"deliveryCompanyCode\":\"CJGLS\","
+                    + "\"invoiceNumber\":\"1234567890\"}]}}";
+    /** {@code /returnRequests/{숫자}} = 단건 경로. 목록 분기보다 <b>먼저</b> 가려내야 한다. */
+    private static final Pattern RETURN_REQUEST_SINGLE_PATH =
+            Pattern.compile(".*/returnRequests/\\d+$");
 
     // 3c fixtures (inline): register → sellerProductId, fetchStatus → 승인완료 + option ids.
     private static final String SELLER_PRODUCT_REGISTER =
@@ -215,6 +233,11 @@ public class MockCoupangApiClient implements CoupangApiClient {
     private String resolve(String path) {
         if (path.contains("ordersheets")) {
             return load(ORDERSHEETS_FIXTURE);
+        }
+        // 🔴 단건 경로를 목록보다 먼저 가려낸다 — 순서가 뒤집히면 목록 모양이 단건 자리로 들어와
+        //    로컬에서만 조용히 틀린다(2609_70 / D8).
+        if (RETURN_REQUEST_SINGLE_PATH.matcher(path).matches()) {
+            return RETURN_REQUEST_SINGLE;
         }
         if (path.contains("returnRequests")) {
             return load(RETURN_REQUESTS_FIXTURE);

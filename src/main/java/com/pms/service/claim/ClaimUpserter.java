@@ -2,6 +2,7 @@ package com.pms.service.claim;
 
 import com.pms.domain.ClaimStatus;
 import com.pms.domain.ClaimType;
+import com.pms.domain.CollectInvoiceSource;
 import com.pms.domain.CoupangOrderLine;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
@@ -73,6 +74,11 @@ public class ClaimUpserter {
                     .returnShippingCharge(record.returnShippingCharge())
                     .collectInvoiceNo(record.collectInvoiceNo())
                     .collectCarrierCode(record.collectCarrierCode())
+                    // 파싱값이 있으면 그 송장의 출처는 플랫폼이다(2609_70 D12). 없으면 null 로 둔다 —
+                    // "아직 송장이 없다"와 "우리가 기록했다"를 구분해야 재전송 버튼이 정확해진다.
+                    .collectInvoiceSource(record.collectInvoiceNo() != null
+                            ? CollectInvoiceSource.PLATFORM : null)
+                    .returnDeliveryType(record.returnDeliveryType())
                     .reshipInvoiceNo(record.reshipInvoiceNo())
                     .reshipCarrierCode(record.reshipCarrierCode())
                     .requesterName(record.requesterName())
@@ -114,8 +120,16 @@ public class ClaimUpserter {
                 .reasonText(record.reasonText())
                 .faultType(record.faultType())
                 .returnShippingCharge(record.returnShippingCharge())
-                .collectInvoiceNo(record.collectInvoiceNo())
-                .collectCarrierCode(record.collectCarrierCode())
+                // 🔴 회수 송장은 플랫폼 값이 있을 때만 덮는다(2609_70 D13, externalBoxId 와 같은 규칙) —
+                // 그대로 덮으면 다음 동기화가 로컬 기록(LOCAL)을 지운다. 회수종류도 같은 규칙이다.
+                .collectInvoiceNo(record.collectInvoiceNo() != null
+                        ? record.collectInvoiceNo() : existing.getCollectInvoiceNo())
+                .collectCarrierCode(record.collectCarrierCode() != null
+                        ? record.collectCarrierCode() : existing.getCollectCarrierCode())
+                .collectInvoiceSource(record.collectInvoiceNo() != null
+                        ? CollectInvoiceSource.PLATFORM : existing.getCollectInvoiceSource())
+                .returnDeliveryType(record.returnDeliveryType() != null
+                        ? record.returnDeliveryType() : existing.getReturnDeliveryType())
                 .reshipInvoiceNo(record.reshipInvoiceNo())
                 .reshipCarrierCode(record.reshipCarrierCode())
                 .requesterName(record.requesterName())
@@ -242,8 +256,16 @@ public class ClaimUpserter {
                 || !Objects.equals(existing.getReasonText(), record.reasonText())
                 || !Objects.equals(existing.getFaultType(), record.faultType())
                 || !Objects.equals(existing.getReturnShippingCharge(), record.returnShippingCharge())
-                || !Objects.equals(existing.getCollectInvoiceNo(), record.collectInvoiceNo())
-                || !Objects.equals(existing.getCollectCarrierCode(), record.collectCarrierCode())
+                // 🔴 덮어쓰기 규칙(D13)과 같은 조건이어야 한다 — 안 맞추면 로컬 기록이 있는 행마다
+                //    매 회차 "달라졌다"로 판정돼 값이 그대로인 UPDATE 가 돈다.
+                || (record.collectInvoiceNo() != null
+                        && !Objects.equals(existing.getCollectInvoiceNo(), record.collectInvoiceNo()))
+                || (record.collectCarrierCode() != null
+                        && !Objects.equals(existing.getCollectCarrierCode(), record.collectCarrierCode()))
+                || (record.collectInvoiceNo() != null
+                        && existing.getCollectInvoiceSource() != CollectInvoiceSource.PLATFORM)
+                || (record.returnDeliveryType() != null
+                        && !Objects.equals(existing.getReturnDeliveryType(), record.returnDeliveryType()))
                 || !Objects.equals(existing.getReshipInvoiceNo(), record.reshipInvoiceNo())
                 || !Objects.equals(existing.getReshipCarrierCode(), record.reshipCarrierCode())
                 || !Objects.equals(existing.getRequesterName(), record.requesterName())

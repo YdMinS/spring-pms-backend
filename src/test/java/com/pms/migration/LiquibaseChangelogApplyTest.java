@@ -927,4 +927,32 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID = '095-baseentity-adoption'",
                 Integer.class)).isEqualTo(1);
     }
+
+    /**
+     * changeset 096: 회수 송장 출처 + 회수종류 (FEATURE_2609_70 / D12).
+     *
+     * <p>🔴 두 컬럼 모두 <b>nullable</b> 이다. {@code collect_invoice_source} 의 NULL 은
+     * 「출처 불명인 기존 행」이고, {@code return_delivery_type} 의 NULL 은 「아직 안 읽은 행」이라
+     * 액션 판정에서 <b>열리는</b> 쪽으로 해석된다(D2) — 백필하지 않는다.
+     * <p>⚠️ boolean 컬럼이 없으므로 MySQL BIT 후속(006 패턴)도 필요 없다.
+     */
+    @Test
+    void claimCollectInvoiceSourceApplied() {
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM order_claim "
+                        + "WHERE collect_invoice_source IS NOT NULL OR return_delivery_type IS NOT NULL",
+                Integer.class)).isZero();
+
+        for (String column : new String[]{"COLLECT_INVOICE_SOURCE", "RETURN_DELIVERY_TYPE"}) {
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+                            + "WHERE TABLE_NAME = 'ORDER_CLAIM' AND COLUMN_NAME = ?", String.class, column))
+                    .as("order_claim.%s nullable", column)
+                    .isEqualTo("YES");
+        }
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID = '096-1-order-claim-collect-invoice-source'",
+                Integer.class)).isEqualTo(1);
+    }
 }

@@ -21,6 +21,15 @@ public enum ClaimAction {
     /** 🔴 환불 확정 — 되돌릴 수 없다. */
     RETURN_APPROVE(ClaimType.RETURN, "반품 승인", Requires.NONE, true),
     RETURN_COLLECT_INVOICE(ClaimType.RETURN, "회수 송장 등록", Requires.INVOICE, false),
+    /**
+     * 쿠팡이 회수 송장 등록을 거절해 우리 장부에만 남은 값을 <b>그대로 다시 보낸다</b>
+     * (FEATURE_2609_70 / D7~D9).
+     *
+     * <p>{@code requires=NONE} 인 이유가 핵심이다 — 송장번호를 다시 입력받으면 오타로 다른 번호가
+     * 들어가고, 그건 D5 가 막은 <b>수정</b>이 된다. 서버가 저장된 값을 싣는다.
+     * <p>값 기록의 재시도라 {@code irreversible=false}(2단 확인 없음).
+     */
+    RETURN_COLLECT_INVOICE_RESEND(ClaimType.RETURN, "쿠팡에 다시 보내기", Requires.NONE, false),
 
     EXCHANGE_RECEIVE_CONFIRM(ClaimType.EXCHANGE, "교환 입고확인", Requires.NONE, false),
     /** 🔴 되돌릴 수 없다. */

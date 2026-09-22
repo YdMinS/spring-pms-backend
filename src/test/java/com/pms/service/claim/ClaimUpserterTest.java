@@ -2,6 +2,7 @@ package com.pms.service.claim;
 
 import com.pms.domain.ClaimStatus;
 import com.pms.domain.ClaimType;
+import com.pms.domain.CollectInvoiceSource;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Order;
 import com.pms.domain.OrderClaim;
@@ -142,6 +143,56 @@ class ClaimUpserterTest {
     }
 
     @Test
+    void upsert_platformHasNoCollectInvoice_keepsOurLocalRecord() {
+        // 🔴 D13 — 그대로 덮으면 다음 동기화가 우리 기록(LOCAL)을 지운다.
+        OrderClaim existing = existingClaim(ClaimStatus.RECEIVED, "UC", 2).toBuilder()
+                .collectInvoiceNo("L1").collectCarrierCode("HANJIN")
+                .collectInvoiceSource(CollectInvoiceSource.LOCAL)
+                .platformStatus("PR")                   // 값 하나는 바꿔서 갱신 경로를 타게 한다
+                .build();
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+                1L, ClaimType.RETURN, "R-1", "V-1")).willReturn(Optional.of(existing));
+
+        upserter.upsert(account, ClaimType.RETURN, recordWithCollectInvoice(null, null));
+
+        ArgumentCaptor<OrderClaim> captor = ArgumentCaptor.forClass(OrderClaim.class);
+        verify(orderClaimRepository).save(captor.capture());
+        assertThat(captor.getValue().getCollectInvoiceNo()).isEqualTo("L1");
+        assertThat(captor.getValue().getCollectCarrierCode()).isEqualTo("HANJIN");
+        assertThat(captor.getValue().getCollectInvoiceSource()).isEqualTo(CollectInvoiceSource.LOCAL);
+    }
+
+    @Test
+    void upsert_platformHasCollectInvoice_overwritesAndMarksPlatform() {
+        OrderClaim existing = existingClaim(ClaimStatus.RECEIVED, "UC", 2).toBuilder()
+                .collectInvoiceNo("L1").collectCarrierCode("HANJIN")
+                .collectInvoiceSource(CollectInvoiceSource.LOCAL)
+                .build();
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+                1L, ClaimType.RETURN, "R-1", "V-1")).willReturn(Optional.of(existing));
+
+        upserter.upsert(account, ClaimType.RETURN, recordWithCollectInvoice("P9", "CJGLS"));
+
+        ArgumentCaptor<OrderClaim> captor = ArgumentCaptor.forClass(OrderClaim.class);
+        verify(orderClaimRepository).save(captor.capture());
+        assertThat(captor.getValue().getCollectInvoiceNo()).isEqualTo("P9");
+        assertThat(captor.getValue().getCollectInvoiceSource()).isEqualTo(CollectInvoiceSource.PLATFORM);
+    }
+
+    @Test
+    void upsert_newClaimWithoutCollectInvoice_leavesSourceNull() {
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+                1L, ClaimType.RETURN, "R-1", "V-1")).willReturn(Optional.empty());
+
+        upserter.upsert(account, ClaimType.RETURN, recordWithCollectInvoice(null, null));
+
+        ArgumentCaptor<OrderClaim> captor = ArgumentCaptor.forClass(OrderClaim.class);
+        verify(orderClaimRepository).save(captor.capture());
+        assertThat(captor.getValue().getCollectInvoiceSource()).isNull();
+        assertThat(captor.getValue().getReturnDeliveryType()).isEqualTo("수기관리");
+    }
+
+    @Test
     void relink_fourKeyMatches_linksWithoutConsumingAttempt() {
         OrderLine line = orderLine(20L);
         given(orderClaimRepository.findById(1L)).willReturn(Optional.of(unlinked(1L)));
@@ -254,6 +305,7 @@ class ClaimUpserterTest {
         return new ClaimRecord("E-1", "O-1", "B-1", "V-1", "양말", 1,
                 ClaimStatus.IN_PROGRESS, "PROGRESS", "BeforeDirection", "DEFECT", "상품 불량", "VENDOR", null,
                 "COL-1", "CJGLS", reshipInvoiceNo, reshipCarrierCode, "홍길동",
+                null,                                  // returnDeliveryType — 반품 전용
                 LocalDateTime.of(2026, 9, 1, 10, 0), LocalDateTime.of(2026, 9, 1, 10, 0));
     }
 
@@ -304,6 +356,15 @@ class ClaimUpserterTest {
     private ClaimRecord record(String boxId, ClaimStatus status, String platformStatus, int quantity) {
         return new ClaimRecord("R-1", "O-1", boxId, "V-1", "양말", quantity, status, platformStatus,
                 null, "CHANGEMIND", "단순변심", "CUSTOMER", 3000, "INV-9", "CJGLS", null, null, "홍길동",
+                "수기관리",
+                LocalDateTime.of(2026, 9, 1, 10, 0), LocalDateTime.of(2026, 9, 1, 10, 0));
+    }
+
+    /** 회수 송장만 달리한 레코드 — 나머지는 existingClaim 과 같은 값이다. */
+    private ClaimRecord recordWithCollectInvoice(String collectInvoiceNo, String collectCarrierCode) {
+        return new ClaimRecord("R-1", "O-1", "B-1", "V-1", "양말", 2,
+                ClaimStatus.RECEIVED, "UC", null, "CHANGEMIND", "단순변심", "CUSTOMER", 3000,
+                collectInvoiceNo, collectCarrierCode, null, null, "홍길동", "수기관리",
                 LocalDateTime.of(2026, 9, 1, 10, 0), LocalDateTime.of(2026, 9, 1, 10, 0));
     }
 
@@ -315,6 +376,7 @@ class ClaimUpserterTest {
                 .itemName("양말").quantity(quantity).status(status).platformStatus(platformStatus)
                 .reasonCode("CHANGEMIND").reasonText("단순변심").faultType("CUSTOMER")
                 .returnShippingCharge(3000).collectInvoiceNo("INV-9").collectCarrierCode("CJGLS")
+                .collectInvoiceSource(CollectInvoiceSource.PLATFORM).returnDeliveryType("수기관리")
                 .requesterName("홍길동")
                 .receivedAt(LocalDateTime.of(2026, 9, 1, 10, 0))
                 .platformModifiedAt(LocalDateTime.of(2026, 9, 1, 10, 0))

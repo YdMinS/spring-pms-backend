@@ -74,6 +74,9 @@ public class CoupangReturnClaimParser {
                     null,                                      // reshipInvoiceNo — 교환 전용
                     null,                                      // reshipCarrierCode — 교환 전용
                     text(receipt, "requesterName"),            // D19 — 이름만
+                    // 회수종류 — 접수 레벨 값이라 라인마다 복제한다(2609_70 D12). 원문 그대로 저장하고
+                    // 우리 enum 으로 정규화하지 않는다 — 액션 판정은 블랙리스트라서다(D2).
+                    text(receipt, "returnDeliveryType"),
                     receivedAt,
                     CoupangTimestamps.parse(text(receipt, "modifiedAt"))));
         }
