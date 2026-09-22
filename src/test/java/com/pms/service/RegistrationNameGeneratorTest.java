@@ -6,11 +6,10 @@ import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
+import com.pms.service.listing.CellBomResolver;
 import com.pms.repository.ProductRepository;
 import com.pms.service.listing.OptionCheckSuffix;
 import org.junit.jupiter.api.Test;
@@ -36,7 +35,7 @@ class RegistrationNameGeneratorTest {
     @Mock private MasterProductOptionItemRepository optionItemRepository;
     @Mock private MasterProductComponentRepository componentRepository;
     @Mock private ProductRepository productRepository;
-    @Mock private ProductListingProductRepository productListingProductRepository;
+    @Mock private CellBomResolver cellBomResolver;
     @InjectMocks private RegistrationNameGenerator generator;
 
     /** An explicit ON suffix (enabled=true, "옵션확인") — the value some level would set to append it. */
@@ -194,12 +193,12 @@ class RegistrationNameGeneratorTest {
     // ---------------------------------------------------------------- channel-only single option (2609_22/D7)
 
     @Test
-    void 채널전용옵션1개_셀BOM으로_생성() {
+    void 채널전용옵션1개_구성품있으면_그대로생성() {
         // FK null = channel-only (D2): the master has no option to read, so the CELL's own BOM builds the name
         // in the same shape — without D7 this would fall back to the master's internal label.
         ProductListingOption channelOnly = ProductListingOption.builder().id(100L).optionName("6개입").build();
-        given(productListingProductRepository.findByProductListingOptionId(100L)).willReturn(List.of(
-                ProductListingProduct.builder().product(product(10L, null, "생수")).quantity(6).build()));
+        given(cellBomResolver.forOption(channelOnly)).willReturn(CellBomResolver.Bom.of(
+                List.of(new CellBomResolver.Line(1L, product(10L, null, "생수"), 6))));
 
         String name = generator.generate(master(), List.of(channelOnly), DEFAULT_SUFFIX);
 
@@ -207,9 +206,9 @@ class RegistrationNameGeneratorTest {
     }
 
     @Test
-    void 채널전용옵션1개_셀BOM_비어있으면_마스터이름폴백() {
+    void 채널전용옵션1개_미매핑이면_마스터이름폴백() {
         ProductListingOption channelOnly = ProductListingOption.builder().id(100L).optionName("6개입").build();
-        given(productListingProductRepository.findByProductListingOptionId(100L)).willReturn(List.of());
+        given(cellBomResolver.forOption(channelOnly)).willReturn(CellBomResolver.Bom.UNMAPPED);
 
         assertThat(generator.generate(master(), List.of(channelOnly), DEFAULT_SUFFIX)).isEqualTo("마스터A");
     }

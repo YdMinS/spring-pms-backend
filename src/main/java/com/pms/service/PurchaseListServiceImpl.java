@@ -6,7 +6,6 @@ import com.pms.domain.OrderLine;
 import com.pms.domain.OrderStatus;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.domain.PurchaseRecord;
 import com.pms.domain.Seller;
 import com.pms.domain.ShoppingListItem;
@@ -28,12 +27,12 @@ import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.ShoppingListItemRepository;
 import com.pms.service.cost.CostPropagationService;
+import com.pms.service.listing.CellBomResolver;
 import com.pms.service.stock.StockLedgerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -43,6 +42,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -70,7 +70,8 @@ public class PurchaseListServiceImpl implements PurchaseListService {
     private final OrderLineRepository orderLineRepository;
     private final CoupangOrderLineRepository coupangOrderLineRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
-    private final ProductListingProductRepository productListingProductRepository;
+    /** 셀 옵션의 구성품은 마스터를 타고 얻는다(2609_71) — 셀 BOM 사본을 읽지 않는다. */
+    private final CellBomResolver cellBomResolver;
     private final ProductRepository productRepository;
     private final SellerRepository sellerRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
@@ -89,27 +90,26 @@ public class PurchaseListServiceImpl implements PurchaseListService {
         // 2) 결제완료 주문을 옵션→BOM 전개해 (order_line, product) 라인 upsert.
         List<OrderLine> lines = purchaseTargetLines();
         Map<Long, String> vendorItemIds = vendorItemIdsByLine(lines);
+        Map<Long, ProductListingOption> optionsByLine = optionsByLine(lines, vendorItemIds);
+        // 🔴 BOM 은 주문 라인마다 읽지 않고 한 번에 모은다(2609_71 — 반복문 안의 forOption 은 N+1).
+        Map<Long, CellBomResolver.Bom> boms = cellBomResolver.forOptions(distinctOptions(optionsByLine));
         for (OrderLine line : lines) {
             int q = line.purchasableQty();
             if (q <= 0) continue;
 
-            String vendorItemId = vendorItemIds.get(line.getId());
-            if (vendorItemId == null) continue;  // 거울 행 없음 = 옵션 매칭 키가 없다
+            ProductListingOption option = optionsByLine.get(line.getId());
+            if (option == null) continue;        // 거울 행 없음 / 미매핑 → 조회에서 unmapped 로 노출
 
-            Optional<ProductListingOption> optionOpt =
-                    productListingOptionRepository.findByPlatformOptionId(vendorItemId);
-            if (optionOpt.isEmpty()) continue;   // 미매핑 → 조회에서 unmapped 로 노출
-
-            List<ProductListingProduct> boms =
-                    productListingProductRepository.findByProductListingOptionId(optionOpt.get().getId());
-            for (ProductListingProduct bom : boms) {
-                int lineQty = q * bom.getQuantity();
+            CellBomResolver.Bom bom = boms.getOrDefault(option.getId(), CellBomResolver.Bom.UNMAPPED);
+            if (bom.unmapped()) continue;        // 채널 전용 옵션 → 조회에서 unmapped 로 노출
+            for (CellBomResolver.Line bomLine : bom.lines()) {
+                int lineQty = q * bomLine.quantity();
                 ShoppingListItem item = shoppingListItemRepository
-                        .findByOrderLine_IdAndProduct_Id(line.getId(), bom.getProduct().getId())
+                        .findByOrderLine_IdAndProduct_Id(line.getId(), bomLine.productId())
                         .map(existing -> existing.toBuilder().autoQty(lineQty).build())  // auto 만 교체, manual 보존
                         .orElseGet(() -> ShoppingListItem.builder()
                                 .orderLine(line)
-                                .product(bom.getProduct())
+                                .product(bomLine.product())
                                 .autoQty(lineQty)
                                 .manualQty(0)
                                 .build());
@@ -343,15 +343,18 @@ public class PurchaseListServiceImpl implements PurchaseListService {
     private List<UnmappedOrder> buildUnmapped() {
         List<OrderLine> lines = purchaseTargetLines();
         Map<Long, String> vendorItemIds = vendorItemIdsByLine(lines);
+        Map<Long, ProductListingOption> optionsByLine = optionsByLine(lines, vendorItemIds);
+        Map<Long, CellBomResolver.Bom> boms = cellBomResolver.forOptions(distinctOptions(optionsByLine));
         Map<String, List<OrderLine>> byItem = new LinkedHashMap<>();
         for (OrderLine line : lines) {
             if (line.purchasableQty() <= 0) continue;
             String vendorItemId = vendorItemIds.get(line.getId());
             if (vendorItemId == null) continue;
-            Optional<ProductListingOption> optionOpt =
-                    productListingOptionRepository.findByPlatformOptionId(vendorItemId);
-            boolean mapped = optionOpt.isPresent()
-                    && !productListingProductRepository.findByProductListingOptionId(optionOpt.get().getId()).isEmpty();
+            // 2609_71: 미매핑 = 옵션을 못 찾았거나, 마스터에 연결되지 않아 구성품을 알 수 없거나
+            // (채널 전용 옵션), 마스터 옵션에 구성품이 하나도 없는 경우. 셋 다 살 것을 뽑을 수 없다.
+            ProductListingOption option = optionsByLine.get(line.getId());
+            boolean mapped = option != null
+                    && !boms.getOrDefault(option.getId(), CellBomResolver.Bom.UNMAPPED).isEmpty();
             if (!mapped) {
                 byItem.computeIfAbsent(vendorItemId, k -> new ArrayList<>()).add(line);
             }
@@ -363,5 +366,28 @@ public class PurchaseListServiceImpl implements PurchaseListService {
                     return new UnmappedOrder(e.getKey(), group.get(0).getItemName(), qty, group.size());
                 })
                 .toList();
+    }
+
+    /**
+     * 주문 라인 → 채널 옵션. vendorItemId 당 한 번만 조회한다(같은 옵션의 주문이 여러 건이어도 쿼리는 1회).
+     * 옵션을 못 찾은 라인은 아예 들어 있지 않다 — 그 라인은 미매핑이다.
+     */
+    private Map<Long, ProductListingOption> optionsByLine(List<OrderLine> lines, Map<Long, String> vendorItemIds) {
+        Map<String, Optional<ProductListingOption>> cache = new HashMap<>();
+        Map<Long, ProductListingOption> byLine = new LinkedHashMap<>();
+        for (OrderLine line : lines) {
+            String vendorItemId = vendorItemIds.get(line.getId());
+            if (vendorItemId == null) continue;   // 거울 행 없음 = 옵션 매칭 키가 없다
+            cache.computeIfAbsent(vendorItemId, productListingOptionRepository::findByPlatformOptionId)
+                    .ifPresent(option -> byLine.put(line.getId(), option));
+        }
+        return byLine;
+    }
+
+    /** 같은 옵션이 여러 라인에 걸려 있어도 BOM 조회는 한 번이면 된다. */
+    private static List<ProductListingOption> distinctOptions(Map<Long, ProductListingOption> optionsByLine) {
+        Map<Long, ProductListingOption> byId = new LinkedHashMap<>();
+        optionsByLine.values().forEach(option -> byId.putIfAbsent(option.getId(), option));
+        return List.copyOf(byId.values());
     }
 }

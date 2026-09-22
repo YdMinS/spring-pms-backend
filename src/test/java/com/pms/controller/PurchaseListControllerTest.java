@@ -10,6 +10,9 @@ import com.pms.domain.OrderStatus;
 import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
+import com.pms.domain.MasterProduct;
+import com.pms.domain.MasterProductOption;
+import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.ProductListingProduct;
 import com.pms.domain.PurchaseRecord;
@@ -23,6 +26,9 @@ import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.OrderRepository;
 import com.pms.repository.OrderShipmentRepository;
+import com.pms.repository.MasterProductOptionItemRepository;
+import com.pms.repository.MasterProductOptionRepository;
+import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
@@ -61,6 +67,9 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
     @Autowired private CoupangOrderLineRepository coupangOrderLineRepository;
     @Autowired private ProductRepository productRepository;
     @Autowired private ProductListingRepository productListingRepository;
+    @Autowired private MasterProductRepository masterProductRepository;
+    @Autowired private MasterProductOptionRepository masterProductOptionRepository;
+    @Autowired private MasterProductOptionItemRepository masterProductOptionItemRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
     @Autowired private ProductListingProductRepository productListingProductRepository;
     @Autowired private ShoppingListItemRepository shoppingListItemRepository;
@@ -84,13 +93,21 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
         Product product = productRepository.save(Product.builder()
                 .productName("양말A").build());
         productId = product.getId();
+        // 2609_71: 구성품은 마스터를 타고 읽힌다 — 실제 셀처럼 마스터 옵션에 연결한다(2609_22/D1).
+        MasterProduct master = masterProductRepository.save(MasterProduct.builder()
+                .name("양말 마스터").active(true).build());
+        MasterProductOption masterOption = masterProductOptionRepository.save(
+                MasterProductOption.builder().masterProduct(master).name("기본").build());
+        masterProductOptionItemRepository.save(MasterProductOptionItem.builder()
+                .option(masterOption).product(product).quantity(2).build());           // BOM: A×2
         ProductListing listing = productListingRepository.save(ProductListing.builder()
-                .platform(Platform.COUPANG).platformProductId("P001").name("양말세트").seller(seller).build());
+                .platform(Platform.COUPANG).platformProductId("P001").name("양말세트").seller(seller)
+                .masterProduct(master).build());
         ProductListingOption option = productListingOptionRepository.save(ProductListingOption.builder()
                 .productListing(listing).optionName("기본").sellingPrice(new BigDecimal("9900"))
-                .platformOptionId("OPT1").build());
+                .masterProductOption(masterOption).platformOptionId("OPT1").build());
         productListingProductRepository.save(ProductListingProduct.builder()
-                .productListingOption(option).product(product).quantity(2).build());   // BOM: A×2
+                .productListingOption(option).product(product).quantity(2).build());   // 셀 BOM(사본)
 
         // 주문 3층 + 쿠팡 거울 (2609_26). 추출 윈도우(syncDays) 안에 들도록 ordered_at 은 지금.
         Order order = orderRepository.save(Order.builder()

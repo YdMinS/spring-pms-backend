@@ -12,7 +12,6 @@ import com.pms.domain.PlatformCategory;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.response.RepricingCandidatesResponse;
 import com.pms.dto.response.RepricingCandidatesResponse.Exclusion;
@@ -20,7 +19,7 @@ import com.pms.dto.response.RepricingCandidatesResponse.Row;
 import com.pms.repository.MarginPolicyRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
+import com.pms.service.listing.CellBomResolver;
 import com.pms.repository.ProductListingRepository;
 import com.pms.service.ListingAssetService;
 import com.pms.service.MasterChannelConfigService;
@@ -33,9 +32,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
-import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -66,7 +66,7 @@ class RepricingServiceTest {
 
     @Mock private ProductListingRepository productListingRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
-    @Mock private ProductListingProductRepository productListingProductRepository;
+    @Mock private CellBomResolver cellBomResolver;
     @Mock private MarginPolicyRepository marginPolicyRepository;
     @Mock private MasterChannelConfigService masterChannelConfigService;
     @Mock private ListingAssetService listingAssetService;
@@ -82,7 +82,7 @@ class RepricingServiceTest {
                 new PriceCalculator(marginPolicyRepository, masterChannelConfigService, VAT);
         // 실행(02) 협력자는 조회 경로에서 한 번도 쓰이지 않는다 — mock 을 넘기되 어떤 스텁도 두지 않는다.
         service = new RepricingServiceImpl(productListingRepository, productListingOptionRepository,
-                productListingProductRepository, priceCalculator, listingAssetService, channelResolver,
+                cellBomResolver, priceCalculator, listingAssetService, channelResolver,
                 marketplaceAccountRepository, priceHistoryRecorder);
     }
 
@@ -111,12 +111,17 @@ class RepricingServiceTest {
                 .build();
     }
 
-    /** BOM 1줄 = 5000 원짜리 물품 1개. */
-    private ProductListingProduct bom(ProductListingOption option) {
-        return ProductListingProduct.builder().id(option.getId())
-                .productListingOption(option)
-                .product(Product.builder().id(1L).productName("생수").price(new BigDecimal("5000")).build())
-                .quantity(1).build();
+    /** BOM 1줄 = 5000 원짜리 물품 1개 (2609_71: 마스터를 타고 온다). */
+    private CellBomResolver.Bom bom() {
+        return CellBomResolver.Bom.of(List.of(new CellBomResolver.Line(1L,
+                Product.builder().id(1L).productName("생수").price(new BigDecimal("5000")).build(), 1)));
+    }
+
+    /** optionId → BOM. 채널 전용 옵션은 여기 들어가지 않는다. */
+    private Map<Long, CellBomResolver.Bom> boms(List<ProductListingOption> options) {
+        Map<Long, CellBomResolver.Bom> map = new LinkedHashMap<>();
+        options.forEach(option -> map.put(option.getId(), bom()));
+        return map;
     }
 
     /** 셀·옵션·BOM 로드와 마진 프리셋을 한 번에 세운다. 기준값은 테스트마다 다르다. */
@@ -125,9 +130,7 @@ class RepricingServiceTest {
         given(productListingRepository.findRepricingTargets(null, null)).willReturn(cells);
         given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(options);
         given(productListingOptionRepository.findWithConfigByIdIn(any())).willReturn(options);
-        List<ProductListingProduct> lines = new ArrayList<>();
-        options.forEach(option -> lines.add(bom(option)));
-        given(productListingProductRepository.findWithProductByOptionIdIn(anyCollection())).willReturn(lines);
+        given(cellBomResolver.forOptions(anyCollection())).willReturn(boms(options));
         lenient().when(marginPolicyRepository.findBySellerIdAndPlatform(SELLER_ID, Platform.COUPANG))
                 .thenReturn(Optional.of(policy));
     }
@@ -276,8 +279,7 @@ class RepricingServiceTest {
                 .willReturn(List.of(registered, unregistered));
         // 식별자 없는 옵션은 동반 로드 대상에서 이미 빠져 있어야 한다.
         given(productListingOptionRepository.findWithConfigByIdIn(List.of(50L))).willReturn(List.of(registered));
-        given(productListingProductRepository.findWithProductByOptionIdIn(anyCollection()))
-                .willReturn(List.of(bom(registered)));
+        given(cellBomResolver.forOptions(anyCollection())).willReturn(boms(List.of(registered)));
         given(marginPolicyRepository.findBySellerIdAndPlatform(SELLER_ID, Platform.COUPANG))
                 .willReturn(Optional.of(policy("1000", null)));
         givenPricingConfig(cell, mo);
@@ -378,6 +380,6 @@ class RepricingServiceTest {
         verify(masterChannelConfigService, times(3)).resolveDelivery(eq(cell), any());
         // 셀·옵션·BOM 로드는 각 1쿼리.
         verify(productListingOptionRepository, times(1)).findWithConfigByIdIn(any());
-        verify(productListingProductRepository, times(1)).findWithProductByOptionIdIn(anyCollection());
+        verify(cellBomResolver, times(1)).forOptions(anyCollection());
     }
 }

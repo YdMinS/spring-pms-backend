@@ -13,7 +13,6 @@ import com.pms.domain.ProductImage;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.domain.TemplateField;
 import com.pms.domain.ThumbnailTemplate;
 import com.pms.dto.response.GeneratedProductResponse;
@@ -21,7 +20,7 @@ import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
+import com.pms.service.listing.CellBomResolver;
 import com.pms.repository.ProductListingRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,7 +58,7 @@ class ListingAssetServiceTest {
 
     @Mock private ProductListingRepository productListingRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
-    @Mock private ProductListingProductRepository productListingProductRepository;
+    @Mock private CellBomResolver cellBomResolver;
     @Mock private MasterProductOptionRepository masterProductOptionRepository;
     @Mock private MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     @Mock private GeneratedProductDataRepository generatedProductDataRepository;
@@ -128,8 +127,8 @@ class ListingAssetServiceTest {
                 .masterProduct(master).build();
 
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
-        given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
-                .willReturn(List.of(ProductListingProduct.builder().product(product()).quantity(1).build()));
+        given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.of(
+                List.of(new CellBomResolver.Line(1L, product(), 1))));
         given(productImageLoader.loadUrl("https://cdn/override.jpg")).willReturn(new byte[]{9});
         given(generatedProductDataRepository.findByProductListingId(CELL_ID)).willReturn(Optional.empty());
         commonRenderStubs();
@@ -180,8 +179,8 @@ class ListingAssetServiceTest {
         given(productImageUrlResolver.resolve(refEntry)).willReturn("products/live.jpg");
 
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
-        given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
-                .willReturn(List.of(ProductListingProduct.builder().product(product()).quantity(1).build()));
+        given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.of(
+                List.of(new CellBomResolver.Line(1L, product(), 1))));
         given(productImageLoader.loadUrl("products/live.jpg")).willReturn(new byte[]{9});
         given(generatedProductDataRepository.findByProductListingId(CELL_ID)).willReturn(Optional.empty());
         commonRenderStubs();
@@ -199,8 +198,8 @@ class ListingAssetServiceTest {
         ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
 
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
-        given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
-                .willReturn(List.of(ProductListingProduct.builder().product(product).quantity(1).build()));
+        given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.of(
+                List.of(new CellBomResolver.Line(1L, product, 1))));
         given(productImageLoader.load(product)).willReturn(new byte[]{7});
         given(generatedProductDataRepository.findByProductListingId(CELL_ID)).willReturn(Optional.empty());
         commonRenderStubs();
@@ -223,8 +222,8 @@ class ListingAssetServiceTest {
         ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
 
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
-        given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
-                .willReturn(List.of(ProductListingProduct.builder().product(product()).quantity(1).build()));
+        given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.of(
+                List.of(new CellBomResolver.Line(1L, product(), 1))));
         given(productImageLoader.load(any())).willReturn(new byte[]{7});
         GeneratedProductData existing = GeneratedProductData.builder()
                 .id(77L).productListing(cell).thumbnailUrl("old.jpg").build();
@@ -246,8 +245,8 @@ class ListingAssetServiceTest {
         ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
 
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
-        given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
-                .willReturn(List.of(ProductListingProduct.builder().product(product()).quantity(1).build()));
+        given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.of(
+                List.of(new CellBomResolver.Line(1L, product(), 1))));
         given(productImageLoader.load(any())).willReturn(new byte[]{7});
         given(channelTemplateResolver.resolveThumbnail(any())).willReturn(template());
         given(thumbnailRenderer.render(any(), any(), any())).willReturn(new byte[]{1, 2, 3});
@@ -288,8 +287,8 @@ class ListingAssetServiceTest {
         given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
         given(productListingRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
-        given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
-                .willReturn(List.of(ProductListingProduct.builder().product(product()).quantity(1).build()));
+        given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.of(
+                List.of(new CellBomResolver.Line(1L, product(), 1))));
         given(productImageLoader.load(any())).willReturn(new byte[]{7});
         given(generatedProductDataRepository.findByProductListingId(CELL_ID)).willReturn(Optional.empty());
         commonRenderStubs();
@@ -313,8 +312,8 @@ class ListingAssetServiceTest {
         ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
 
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
-        given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
-                .willReturn(List.of(ProductListingProduct.builder().product(product()).quantity(1).build()));
+        given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.of(
+                List.of(new CellBomResolver.Line(1L, product(), 1))));
         given(productImageLoader.load(any())).willReturn(new byte[]{7});
         given(generatedProductDataRepository.findByProductListingId(CELL_ID)).willReturn(Optional.empty());
         commonRenderStubs();
@@ -374,8 +373,8 @@ class ListingAssetServiceTest {
         ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
 
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
-        given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
-                .willReturn(List.of(ProductListingProduct.builder().product(product()).quantity(1).build()));
+        given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.of(
+                List.of(new CellBomResolver.Line(1L, product(), 1))));
         given(priceCalculator.calculatePrices(any(), any(), any()))
                 .willReturn(new PriceCalculator.PriceResult(new BigDecimal("10670"), new BigDecimal("13340")));
         given(detailContentGenerator.generate(any())).willReturn("<p>운동화</p>");
@@ -406,8 +405,8 @@ class ListingAssetServiceTest {
         ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
 
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
-        given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
-                .willReturn(List.of(ProductListingProduct.builder().product(product()).quantity(1).build()));
+        given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.of(
+                List.of(new CellBomResolver.Line(1L, product(), 1))));
         given(productImageLoader.load(any())).willReturn(new byte[]{7});
         given(channelTemplateResolver.resolveThumbnail(any())).willReturn(template());
         given(thumbnailRenderer.render(any(), any(), any())).willReturn(new byte[]{1, 2, 3});
@@ -451,8 +450,8 @@ class ListingAssetServiceTest {
         given(generatedProductDataRepository.findByProductListingId(CELL_ID))
                 .willReturn(Optional.of(override), Optional.of(afterFlip));
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
-        given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
-                .willReturn(List.of(ProductListingProduct.builder().product(product()).quantity(1).build()));
+        given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.of(
+                List.of(new CellBomResolver.Line(1L, product(), 1))));
         given(productImageLoader.load(any())).willReturn(new byte[]{7});
         given(channelTemplateResolver.resolveThumbnail(any())).willReturn(template());
         given(thumbnailRenderer.render(any(), any(), any())).willReturn(new byte[]{1, 2, 3});
@@ -565,6 +564,9 @@ class ListingAssetServiceTest {
         given(priceCalculator.calculatePrices(any(), any(), any()))
                 .willReturn(new PriceCalculator.PriceResult(new BigDecimal("10670"), new BigDecimal("13340")));
 
+        // 2609_71: 이 옵션들은 마스터 옵션이 없다 = 구성품을 알 수 없다(원가 0, 기존 빈 BOM 과 같다).
+        given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.UNMAPPED);
+
         service.recalculateOptionPrices(cell);
 
         org.mockito.ArgumentCaptor<ProductListingOption> saved =
@@ -590,6 +592,9 @@ class ListingAssetServiceTest {
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(renamed));
         given(priceCalculator.calculatePrices(any(), any(), any()))
                 .willReturn(new PriceCalculator.PriceResult(new BigDecimal("10670"), new BigDecimal("13340")));
+
+        // 2609_71: 이 옵션들은 마스터 옵션이 없다 = 구성품을 알 수 없다(원가 0, 기존 빈 BOM 과 같다).
+        given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.UNMAPPED);
 
         service.recalculateOptionPrices(cell);
 
@@ -624,6 +629,9 @@ class ListingAssetServiceTest {
         given(priceCalculator.calculatePrices(any(), any(), any()))
                 .willReturn(new PriceCalculator.PriceResult(new BigDecimal("10670"), new BigDecimal("13340")));
 
+        // 2609_71: 이 옵션들은 마스터 옵션이 없다 = 구성품을 알 수 없다(원가 0, 기존 빈 BOM 과 같다).
+        given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.UNMAPPED);
+
         service.recalculateOptionPrices(cell);
 
         // 값이 그대로인 옵션(52)은 행을 만들지 않는다. saveAll 은 파급 전체에 1회다(행마다 save 금지).
@@ -653,6 +661,9 @@ class ListingAssetServiceTest {
         given(priceCalculator.calculatePrices(any(), any(), any()))
                 .willReturn(new PriceCalculator.PriceResult(new BigDecimal("10670"), new BigDecimal("13340")));
 
+        // 2609_71: 이 옵션들은 마스터 옵션이 없다 = 구성품을 알 수 없다(원가 0, 기존 빈 BOM 과 같다).
+        given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.UNMAPPED);
+
         service.recalculateOptionPrices(cell);
 
         assertThat(capturePriceHistory()).hasSize(1);
@@ -669,6 +680,9 @@ class ListingAssetServiceTest {
                 .willReturn(List.of(autoOption(50L, "6000")));
         given(priceCalculator.calculatePrices(any(), any(), any()))
                 .willReturn(new PriceCalculator.PriceResult(new BigDecimal("10670"), new BigDecimal("13340")));
+
+        // 2609_71: 이 옵션들은 마스터 옵션이 없다 = 구성품을 알 수 없다(원가 0, 기존 빈 BOM 과 같다).
+        given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.UNMAPPED);
 
         service.recalculateOptionPrices(draft);
 
@@ -725,8 +739,8 @@ class ListingAssetServiceTest {
         given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
         given(productListingRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
-        given(productListingProductRepository.findByProductListingOptionId(OPTION_ID))
-                .willReturn(List.of(ProductListingProduct.builder().product(product()).quantity(1).build()));
+        given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.of(
+                List.of(new CellBomResolver.Line(1L, product(), 1))));
         given(productImageLoader.load(any())).willReturn(new byte[]{7});
         return cell;
     }
