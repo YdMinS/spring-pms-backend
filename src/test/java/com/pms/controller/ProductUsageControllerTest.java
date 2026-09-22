@@ -102,6 +102,10 @@ class ProductUsageControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.productId").value(linkedProductId))
                 .andExpect(jsonPath("$.data.masterProducts.length()").value(1))
                 .andExpect(jsonPath("$.data.masterProducts[0].name").value("생수 마스터"))
+                // 마스터에 붙은 판매 채널이 마스터 아래로 실려 온다(2026-09-23).
+                .andExpect(jsonPath("$.data.masterProducts[0].channels.length()").value(1))
+                .andExpect(jsonPath("$.data.masterProducts[0].channels[0].listingName").value("셀"))
+                .andExpect(jsonPath("$.data.masterProducts[0].channels[0].accountAlias").value("쿠팡 본계정"))
                 .andExpect(jsonPath("$.data.listingOptions.length()").value(1))
                 .andExpect(jsonPath("$.data.listingOptions[0].name").value("6개입"))
                 .andExpect(jsonPath("$.data.listingOptions[0].quantity").value(6))

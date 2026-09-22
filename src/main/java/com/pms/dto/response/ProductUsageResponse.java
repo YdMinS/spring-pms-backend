@@ -23,7 +23,7 @@ import java.util.List;
  * that was ever bought, moved or shipped could be deleted (PLAN D3).</p>
  *
  * @param productId       the inspected product
- * @param masterProducts  masters composed of this product
+ * @param masterProducts  masters composed of this product, each with the channels it is sold on
  * @param listingOptions  channel listing options composed of this product (resolved through the master),
  *                        each carrying its owning cell id so the screen can link straight to that cell
  * @param history         per-table row counts of past records
@@ -40,8 +40,20 @@ public record ProductUsageResponse(
         List<String> blockers
 ) {
 
-    /** A master that contains this product, with that master's per-option quantities for reference. */
-    public record MasterProductRef(Long id, String name, List<OptionQty> optionQuantities) {}
+    /**
+     * A master that contains this product, with that master's per-option quantities and the channels
+     * it is sold on.
+     *
+     * @param channels 이 마스터에 붙어 있는 판매 채널 **전부**. 🔴 {@code listingOptions} 와 다르다 —
+     *                 그쪽은 옵션 FK 를 타고 내려온 것이라 FK 가 비어 있는 셀(편입·옛 데이터)이 빠진다.
+     *                 화면은 "이 물품이 어디서 팔리나"를 묻는 것이므로 마스터에 붙은 채널을 다 보여준다.
+     */
+    public record MasterProductRef(Long id, String name, List<OptionQty> optionQuantities,
+                                   List<ChannelRef> channels) {}
+
+    /** One channel cell (판매 상품) that a master is sold on. */
+    public record ChannelRef(Long listingId, String listingName, Long marketplaceAccountId,
+                             String accountAlias, String platform, String status) {}
 
     /** One entry of a master option's quantity vector for this product. */
     public record OptionQty(Long optionId, String optionName, Integer quantity) {}
