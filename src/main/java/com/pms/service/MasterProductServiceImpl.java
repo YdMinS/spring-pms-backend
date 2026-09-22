@@ -641,8 +641,11 @@ public class MasterProductServiceImpl implements MasterProductService {
      * MUST-KEEP: refuse to create a second master for a component set that already has one (2609_46).
      *
      * <p>The screen checks this before unlocking the rest of the form, but the screen is bypassable — this
-     * is the final line. The message names the existing master so the user can go add an option to it, and
-     * calls out a soft-deleted one (invisible on the list screen, which is why they got here).</p>
+     * is the final line. The message names the existing master so the user can go add an option to it.</p>
+     *
+     * <p>🔁 2609_72: masters are no longer hidden, so the named duplicate is always visible on the list
+     * screen. The {@code active=false} suffix below can still fire for legacy rows written before that
+     * change.</p>
      *
      * @param selfId the master being edited (2609_64/D7: keeping its own set is never a duplicate), or null
      *               on create. 🔴 One judgement function for both paths — a second one would drift.
