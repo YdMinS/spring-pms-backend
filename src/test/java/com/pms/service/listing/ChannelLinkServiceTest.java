@@ -145,6 +145,23 @@ class ChannelLinkServiceTest {
         order.verify(productListingRepository).flush();
     }
 
+    /** D12: 마켓 상품 ID 만 본다 — 상태가 DRAFT 가 아니어도 마켓에 없는 셀은 지울 수 있어야 한다. */
+    @Test
+    void deleteDraftChannel_unregisteredNonDraftCell_deletes() {
+        ProductListing listing = cell(MASTER_ID, null, ListingStatus.SELLING);
+        givenMasterAndListing(listing);
+
+        service.deleteDraftChannel(MASTER_ID, LISTING_ID);
+
+        InOrder order = inOrder(productListingOptionRepository,
+                generatedProductDataRepository, productListingTagRevisionRepository, productListingRepository);
+        order.verify(productListingOptionRepository).deleteByProductListingId(LISTING_ID);
+        order.verify(generatedProductDataRepository).deleteByProductListingId(LISTING_ID);
+        order.verify(productListingTagRevisionRepository).deleteByProductListing_Id(LISTING_ID);
+        order.verify(productListingRepository).delete(listing);
+        order.verify(productListingRepository).flush();
+    }
+
     /** 🔴 등록된 셀을 지우는 것이 이 조각의 최대 사고다 — 어떤 delete 도 호출되면 안 된다. */
     @Test
     void deleteDraftChannel_registeredCell_throws() {

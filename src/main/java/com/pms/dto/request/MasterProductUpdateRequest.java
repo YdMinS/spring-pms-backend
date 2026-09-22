@@ -13,9 +13,8 @@ import java.util.Map;
  * Master product content-patch request (FEATURE_2608_06 / 3b-1). PATCH semantics: a null field keeps the
  * existing value.
  *
- * <p>{@code active} toggles soft-delete (false) / restore (true). Changing {@code componentProductIds}
- * re-validates every existing option against the new component set in the same transaction (a mismatch
- * rolls the whole patch back → 400).</p>
+ * <p>Changing {@code componentProductIds} re-validates every existing option against the new component
+ * set in the same transaction (a mismatch rolls the whole patch back → 400).</p>
  */
 @Getter
 @NoArgsConstructor
@@ -29,9 +28,6 @@ public class MasterProductUpdateRequest {
 
     @Schema(description = "UI input field values (key -> value)", nullable = true)
     private Map<String, String> fieldValues;
-
-    @Schema(description = "Activation flag (false = soft delete, true = restore)", nullable = true)
-    private Boolean active;
 
     @Schema(description = "New component product IDs; re-validates existing options", nullable = true)
     private List<Long> componentProductIds;

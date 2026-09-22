@@ -34,7 +34,6 @@ import com.pms.dto.response.MasterChannelOptionsResponse;
 import com.pms.dto.response.MasterOptionResponse;
 import com.pms.dto.response.MasterProductByComponentsResponse;
 import com.pms.dto.response.MasterProductResponse;
-import com.pms.exception.MasterProductInUseException;
 import com.pms.exception.ValidationException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CarrierRateRepository;
@@ -146,10 +145,9 @@ public class MasterProductServiceImpl implements MasterProductService {
                 Math.max(query.getPage(), 0), normalizeSize(query.getSize()), parseSort(query.getSort()));
         String keyword = query.getSearch() == null ? null : query.getSearch().trim();
 
-        // Active only — soft-deleted (active=false) masters are hidden from the list (recover via PATCH active=true).
         Page<MasterProduct> masters = (keyword == null || keyword.isEmpty())
-                ? masterProductRepository.findByActiveTrue(pageable)
-                : masterProductRepository.searchActivePage(keyword, pageable);
+                ? masterProductRepository.findAllScoped(pageable)
+                : masterProductRepository.searchPage(keyword, pageable);
         // Overlay + lock judgement run on the PAGE CONTENT only — never load everything and sub-list.
         List<Long> ids = masters.getContent().stream().map(MasterProduct::getId).toList();
         // Resolve the list cover from the __source__ mapping (37) in one batch query. Priority mirrors
@@ -608,7 +606,6 @@ public class MasterProductServiceImpl implements MasterProductService {
                 .map(m -> MasterProductByComponentsResponse.builder()
                         .id(m.getId())
                         .name(m.getName())
-                        .active(Boolean.TRUE.equals(m.getActive()))
                         .optionCount(optionCounts.getOrDefault(m.getId(), 0L).intValue())
                         .build())
                 .toList();
@@ -726,7 +723,6 @@ public class MasterProductServiceImpl implements MasterProductService {
         MasterProduct updated = masterProductRepository.save(existing.toBuilder()
                 .name(request.getName() != null ? request.getName() : existing.getName())
                 .fieldValues(request.getFieldValues() != null ? request.getFieldValues() : existing.getFieldValues())
-                .active(request.getActive() != null ? request.getActive() : existing.getActive())
                 // null = keep existing; a given id replaces (explicit unset via null is a follow-up).
                 .defaultDelivery(request.getDefaultDeliveryId() != null
                         ? requireDelivery(request.getDefaultDeliveryId()) : existing.getDefaultDelivery())
@@ -1015,21 +1011,6 @@ public class MasterProductServiceImpl implements MasterProductService {
             throw new ValidationException("이 마스터의 채널이 아닌 항목이 포함되었습니다: " + unknown);
         }
         return cells.stream().filter(cell -> requested.contains(cell.getId())).toList();
-    }
-
-    @Override
-    @Transactional
-    public void deleteMasterProduct(Long id) {
-        MasterProduct existing = requireScopedMaster(id);
-        // Block delete while any channel cell is live on the market (platformProductId != null) — deleting
-        // the master would orphan the market listings. The user must stop those channels first (409).
-        long onMarket = productListingRepository.findByMasterProductId(id).stream()
-                .filter(l -> l.getPlatformProductId() != null)
-                .count();
-        if (onMarket > 0) {
-            throw new MasterProductInUseException(onMarket);
-        }
-        masterProductRepository.save(existing.toBuilder().active(false).build());
     }
 
     // ---------------------------------------------------------------- option CRUD
@@ -1673,7 +1654,6 @@ public class MasterProductServiceImpl implements MasterProductService {
         return MasterProductResponse.builder()
                 .id(master.getId())
                 .name(master.getName())
-                .active(master.getActive())
                 .sourceImageUrl(master.getSourceImageUrl())
                 .fieldValues(master.getFieldValues())
                 .tags(master.getTags())

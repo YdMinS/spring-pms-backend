@@ -34,6 +34,7 @@ import com.pms.dto.response.ShippingForceApplyResponse;
 import com.pms.service.CategoryMetaService;
 import com.pms.service.MasterProductImageService;
 import com.pms.service.MasterProductService;
+import com.pms.service.listing.MasterDeleteService;
 import com.pms.service.listing.MasterFromChannelService;
 import com.pms.service.listing.MasterPropagationService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -66,6 +67,7 @@ public class MasterProductController {
     private final MasterProductImageService masterProductImageService;
     private final CategoryMetaService categoryMetaService;
     private final MasterFromChannelService masterFromChannelService;
+    private final MasterDeleteService masterDeleteService;
     /** 2609_64/D12: asset regeneration is triggered here, after the composition save has committed. */
     private final MasterPropagationService masterPropagationService;
 
@@ -92,8 +94,7 @@ public class MasterProductController {
     @GetMapping("/by-components")
     @Operation(summary = "Find master products built from the exact same component set",
             description = "구성상품(물품) 조합이 **정확히 같은** 마스터를 돌려준다. 순서 무관, 부분집합·상위집합은 "
-                    + "다른 마스터로 보고 제외한다. 삭제된 마스터도 `active:false` 로 함께 내려간다 "
-                    + "(목록에 안 보여서 또 만드는 것을 막기 위함). 없으면 빈 배열.")
+                    + "다른 마스터로 보고 제외한다. 없으면 빈 배열.")
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<List<MasterProductByComponentsResponse>>> findByComponents(
             @RequestParam("productIds") List<Long> productIds) {
@@ -229,10 +230,11 @@ public class MasterProductController {
     }
 
     @DeleteMapping("/{id}")
-    @Operation(summary = "Soft-delete master product (active=false)")
+    @Operation(summary = "Hard-delete a master product (children + unregistered channels; 409 while a "
+            + "channel is on the market)")
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<Void>> deleteMasterProduct(@PathVariable Long id) {
-        masterProductService.deleteMasterProduct(id);
+        masterDeleteService.deleteMaster(id);
         return ResponseEntity.ok(ResponseDTO.success(null));
     }
 
