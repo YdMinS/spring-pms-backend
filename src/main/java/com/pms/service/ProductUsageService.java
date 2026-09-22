@@ -155,9 +155,14 @@ public class ProductUsageService {
     private List<ProductUsageResponse.ListingOptionRef> collectListingOptions(Long productId) {
         // masterOptionId → 이 물품의 수량. 같은 옵션에 같은 물품이 두 줄이면 첫 줄이 이긴다(다른 읽기 경로와 동일).
         Map<Long, Integer> quantityByMasterOption = new LinkedHashMap<>();
+        // masterOptionId → 그 옵션이 속한 마스터. 🔴 이 finder 가 master 를 fetch join 하므로 여기서 같이
+        // 담아 둔다 — 나중에 옵션마다 `getMasterProduct()` 를 타면 옵션 수만큼 쿼리가 더 나간다.
+        Map<Long, Long> masterIdByMasterOption = new HashMap<>();
         for (MasterProductOptionItem item
                 : masterProductOptionItemRepository.findWithMasterByProductIdIn(List.of(productId))) {
             quantityByMasterOption.putIfAbsent(item.getOption().getId(), item.getQuantity());
+            masterIdByMasterOption.putIfAbsent(
+                    item.getOption().getId(), item.getOption().getMasterProduct().getId());
         }
         if (quantityByMasterOption.isEmpty()) {
             return List.of();
@@ -183,6 +188,7 @@ public class ProductUsageService {
                     // 판매 상품 상세로 바로 보낼 수 있다(2026-09-23).
                     listing.getId(),
                     listing.getName(),
+                    masterIdByMasterOption.get(option.getMasterProductOption().getId()),
                     account.map(MarketplaceAccount::getId).orElse(null),
                     account.map(MarketplaceAccount::getAccountAlias).orElse(null),
                     platform.name(),

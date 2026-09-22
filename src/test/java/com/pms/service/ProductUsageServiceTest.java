@@ -211,6 +211,8 @@ class ProductUsageServiceTest {
             // 옵션 id 로는 화면을 열 수 없다 — 셀 id 를 같이 실어야 판매 상품 상세로 갈 수 있다(2026-09-23).
             assertThat(o.listingId()).isEqualTo(11L);
             assertThat(o.listingName()).isEqualTo("셀");
+            // 화면이 판매 채널을 마스터 아래로 접으려면 어느 마스터의 것인지 알아야 한다(2026-09-23).
+            assertThat(o.masterProductId()).isEqualTo(1L);
             assertThat(o.marketplaceAccountId()).isEqualTo(99L);
             assertThat(o.accountAlias()).isEqualTo("쿠팡 본계정");
             assertThat(o.platform()).isEqualTo("COUPANG");
