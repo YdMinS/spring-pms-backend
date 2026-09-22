@@ -8,6 +8,8 @@ import com.pms.domain.CategoryMapping;
 import com.pms.domain.CommissionRate;
 import com.pms.domain.MarginPolicy;
 import com.pms.domain.MasterProduct;
+import com.pms.domain.MasterProductOption;
+import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.Package;
 import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
@@ -22,6 +24,8 @@ import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.MarginPolicyRepository;
+import com.pms.repository.MasterProductOptionItemRepository;
+import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingProductRepository;
@@ -72,6 +76,8 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
     private com.pms.repository.PriceChangeLogRepository priceChangeLogRepository;
     @Autowired private CategoryRepository categoryRepository;
     @Autowired private MasterProductRepository masterProductRepository;
+    @Autowired private MasterProductOptionRepository masterProductOptionRepository;
+    @Autowired private MasterProductOptionItemRepository masterProductOptionItemRepository;
     @Autowired private CategoryMappingRepository categoryMappingRepository;
     @Autowired private PlatformCategoryRepository platformCategoryRepository;
     // carrierRepository / carrierRateRepository / packageRepository are inherited from BaseIntegrationTest.
@@ -129,8 +135,14 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                 .masterProduct(master)
                 .build());
         listingId = listing.getId();
+        // 2609_71: 셀 옵션의 구성품은 마스터를 타고 읽힌다 — 실제 셀처럼 마스터 옵션에 연결한다(2609_22/D1).
+        MasterProductOption masterOption = masterProductOptionRepository.save(
+                MasterProductOption.builder().masterProduct(master).name("기본").build());
+        masterProductOptionItemRepository.save(MasterProductOptionItem.builder()
+                .option(masterOption).product(product).quantity(1).build());
         ProductListingOption option = productListingOptionRepository.save(ProductListingOption.builder()
-                .productListing(listing).optionName("기본").sellingPrice(BigDecimal.ZERO).build());
+                .productListing(listing).optionName("기본").masterProductOption(masterOption)
+                .sellingPrice(BigDecimal.ZERO).build());
         productListingProductRepository.save(ProductListingProduct.builder()
                 .productListingOption(option).product(product).quantity(1).build());
 
@@ -178,6 +190,8 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
         productListingRepository.deleteAll();
         // The master FK-references carrier_rate/package (default delivery/box) — remove it before base cleanup.
         categoryMappingRepository.deleteAll();
+        masterProductOptionItemRepository.deleteAll();
+        masterProductOptionRepository.deleteAll();
         masterProductRepository.deleteAll();
     }
 

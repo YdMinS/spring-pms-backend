@@ -8,7 +8,6 @@ import com.pms.domain.OrderStatus;
 import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.domain.PurchaseRecord;
 import com.pms.domain.Seller;
 import com.pms.config.CoupangProperties;
@@ -27,7 +26,7 @@ import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
+import com.pms.service.listing.CellBomResolver;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.SellerRepository;
@@ -45,12 +44,14 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
@@ -70,7 +71,7 @@ class PurchaseListServiceTest {
     @Mock private OrderLineRepository orderLineRepository;
     @Mock private CoupangOrderLineRepository coupangOrderLineRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
-    @Mock private ProductListingProductRepository productListingProductRepository;
+    @Mock private CellBomResolver cellBomResolver;
     @Mock private ProductRepository productRepository;
     @Mock private SellerRepository sellerRepository;
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
@@ -144,10 +145,10 @@ class PurchaseListServiceTest {
         given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of(line));
         given(coupangOrderLineRepository.findByOrderLine_IdIn(List.of(10L))).willReturn(List.of(mirror(line, "OPT1")));
         given(productListingOptionRepository.findByPlatformOptionId("OPT1")).willReturn(Optional.of(option));
-        given(productListingProductRepository.findByProductListingOptionId(1L)).willReturn(List.of(
-                ProductListingProduct.builder().id(1L).product(a).quantity(2).build(),   // A×2 → 6
-                ProductListingProduct.builder().id(2L).product(b).quantity(1).build()    // B×1 → 3
-        ));
+        given(cellBomResolver.forOptions(anyCollection())).willReturn(Map.of(1L,
+                CellBomResolver.Bom.of(List.of(
+                        new CellBomResolver.Line(1L, a, 2),    // A×2 → 6
+                        new CellBomResolver.Line(2L, b, 1))))); // B×1 → 3
         given(shoppingListItemRepository.findByOrderLine_IdAndProduct_Id(anyLong(), anyLong()))
                 .willReturn(Optional.empty());
 
@@ -186,9 +187,8 @@ class PurchaseListServiceTest {
         given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of(line));
         given(coupangOrderLineRepository.findByOrderLine_IdIn(List.of(10L))).willReturn(List.of(mirror(line, "OPT1")));
         given(productListingOptionRepository.findByPlatformOptionId("OPT1")).willReturn(Optional.of(option));
-        given(productListingProductRepository.findByProductListingOptionId(1L)).willReturn(List.of(
-                ProductListingProduct.builder().id(1L).product(a).quantity(2).build()    // 3×2 = 6
-        ));
+        given(cellBomResolver.forOptions(anyCollection())).willReturn(Map.of(1L,
+                CellBomResolver.Bom.of(List.of(new CellBomResolver.Line(1L, a, 2)))));   // 3×2 = 6
         given(shoppingListItemRepository.findByOrderLine_IdAndProduct_Id(10L, PRODUCT_ID))
                 .willReturn(Optional.of(existing));
 

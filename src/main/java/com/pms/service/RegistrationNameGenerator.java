@@ -6,12 +6,11 @@ import com.pms.domain.MasterProductOption;
 import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductRepository;
+import com.pms.service.listing.CellBomResolver;
 import com.pms.service.listing.OptionCheckSuffix;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -48,8 +47,8 @@ public class RegistrationNameGenerator {
     private final MasterProductOptionItemRepository optionItemRepository;
     private final MasterProductComponentRepository componentRepository;
     private final ProductRepository productRepository;
-    /** 2609_22/D7: cell BOM lines, the fallback source for a channel-only single option. */
-    private final ProductListingProductRepository productListingProductRepository;
+    /** 셀 옵션의 구성품은 마스터를 타고 얻는다(2609_71) — 셀 BOM 사본을 읽지 않는다. */
+    private final CellBomResolver cellBomResolver;
 
     /**
      * Build the master-level registration name (34 {@code MasterProductResponse.registrationName}) — branches
@@ -131,20 +130,21 @@ public class RegistrationNameGenerator {
     }
 
     /**
-     * 2609_22/D7: same shape as {@link #singleOptionName} but built from the <b>cell's</b> BOM — the only
-     * source a channel-only option has. Empty BOM → the master's name (defensive; a cell option always has
-     * lines on the normal path).
+     * 2609_22/D7: same shape as {@link #singleOptionName}, for a cell option the master does not own.
+     *
+     * <p>⚠️ 2609_71 이후 이 경로는 사실상 마스터 이름 폴백이다 — 호출 조건이 「마스터 옵션 없음」이고,
+     * 구성품의 유일한 출처가 마스터가 됐으므로 채널 전용 옵션은 구성품을 알 수 없다(미매핑). 폴백을
+     * 남겨 두는 이유는 조용히 빈 이름을 만들지 않기 위해서다.
      */
     private String cellOptionName(MasterProduct master, ProductListingOption cellOption) {
-        List<ProductListingProduct> lines =
-                productListingProductRepository.findByProductListingOptionId(cellOption.getId());
+        // 2609_71: 구성품은 마스터를 타고 읽는다. 채널 전용 옵션(미매핑)·빈 BOM → 마스터 이름으로 폴백.
+        List<CellBomResolver.Line> lines = cellBomResolver.forOption(cellOption).lines();
         if (lines.isEmpty()) {
             return master.getName();
         }
-        return lines.stream()
-                .sorted(Comparator.comparing(line -> line.getProduct().getId()))   // stable productId order
-                .map(line -> label(line.getProduct().getBrand(), line.getProduct().getProductName())
-                        + " x " + line.getQuantity())
+        return lines.stream()   // 물품 id 오름차순은 resolver 가 이미 보장한다
+                .map(line -> label(line.product().getBrand(), line.productName())
+                        + " x " + line.quantity())
                 .collect(Collectors.joining(" + "));
     }
 

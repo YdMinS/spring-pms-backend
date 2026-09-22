@@ -7,7 +7,6 @@ import com.pms.domain.MasterProductOption;
 import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.domain.PriceChangeReason;
 import com.pms.dto.request.PriceOverrideRequest;
 import com.pms.dto.response.PriceOverrideResult;
@@ -21,10 +20,10 @@ import com.pms.exception.CoupangRateLimitedException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.service.ListingAssetService;
 import com.pms.service.PriceCalculator;
+import com.pms.service.listing.CellBomResolver;
 import com.pms.service.listing.ListingChannel;
 import com.pms.service.listing.ListingChannelResolver;
 import lombok.RequiredArgsConstructor;
@@ -72,7 +71,8 @@ public class RepricingServiceImpl implements RepricingService {
 
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
-    private final ProductListingProductRepository productListingProductRepository;
+    /** 셀 옵션의 구성품은 마스터를 타고 얻는다(2609_71). */
+    private final CellBomResolver cellBomResolver;
     private final PriceCalculator priceCalculator;
     // 02(실행)이 쓰는 것들. 🔴 ListingOptionService 는 여기 없다 — setOptionPrices 재사용 금지가 D8 이다.
     private final ListingAssetService listingAssetService;
@@ -100,7 +100,8 @@ public class RepricingServiceImpl implements RepricingService {
         }
 
         List<ProductListingOption> options = loadOptions(cells);
-        Map<Long, BigDecimal> costSums = costSums(options);
+        // 2609_71: 구성품은 마스터를 타고, 옵션 수와 무관하게 쿼리 1회로 모은다(D16 의 BOM 1쿼리 자리).
+        Map<Long, CellBomResolver.Bom> boms = cellBomResolver.forOptions(options);
 
         // Per-cell and per-(cell, master option) resolution caches — the whole point of D16.
         Map<Long, CellBasis> cellBasisCache = new HashMap<>();
@@ -111,8 +112,8 @@ public class RepricingServiceImpl implements RepricingService {
         for (ProductListingOption option : options) {
             ProductListing cell = option.getProductListing();
             CellBasis cellBasis = cellBasisCache.computeIfAbsent(cell.getId(), id -> resolveCellBasis(cell));
-            Row row = row(cell, option, cellBasis, costSums.getOrDefault(option.getId(), BigDecimal.ZERO),
-                    optionBasisCache);
+            Row row = row(cell, option, cellBasis,
+                    boms.getOrDefault(option.getId(), CellBomResolver.Bom.UNMAPPED), optionBasisCache);
             rows.add(row);
             accumulators
                     .computeIfAbsent(groupKey(cell), key -> new Accumulator(cell.getSeller().getId(),
@@ -480,27 +481,21 @@ public class RepricingServiceImpl implements RepricingService {
     }
 
     /** Σ(product.price × quantity) per option, from ONE BOM query (null price = 0). */
-    private Map<Long, BigDecimal> costSums(List<ProductListingOption> options) {
-        if (options.isEmpty()) {
-            return Map.of();
-        }
-        Set<Long> optionIds = options.stream().map(ProductListingOption::getId).collect(Collectors.toSet());
-        Map<Long, BigDecimal> sums = new HashMap<>();
-        for (ProductListingProduct line : productListingProductRepository.findWithProductByOptionIdIn(optionIds)) {
-            BigDecimal price = line.getProduct().getPrice();
-            if (price == null) {
-                continue;
+    private static BigDecimal costSum(CellBomResolver.Bom bom) {
+        BigDecimal sum = BigDecimal.ZERO;
+        for (CellBomResolver.Line line : bom.lines()) {
+            BigDecimal price = line.product().getPrice();
+            if (price != null) {
+                sum = sum.add(price.multiply(BigDecimal.valueOf(line.quantity())));
             }
-            sums.merge(line.getProductListingOption().getId(),
-                    price.multiply(BigDecimal.valueOf(line.getQuantity())), BigDecimal::add);
         }
-        return sums;
+        return sum;
     }
 
     // ---------------------------------------------------------------- per row
 
     private Row row(ProductListing cell, ProductListingOption option, CellBasis cellBasis,
-                    BigDecimal costSum, Map<String, OptionBasis> optionBasisCache) {
+                    CellBomResolver.Bom bom, Map<String, OptionBasis> optionBasisCache) {
         BigDecimal marketPrice = option.getMarketPrice();
         BigDecimal sellingPrice = option.getSellingPrice();
         BigDecimal judgedPrice = marketPrice != null ? marketPrice : sellingPrice;
@@ -515,6 +510,13 @@ public class RepricingServiceImpl implements RepricingService {
             return uncalculable(cell, option, judgedPrice, marketPrice, sellingPrice, pendingPush,
                     cellBasis.error());
         }
+        // 🔴 2609_71: 마스터에 연결되지 않은 옵션은 구성품을 알 수 없다. 원가 0 으로 계산하면 마진이
+        //    부풀어 조용히 틀린 가격이 나가므로, 건너뛰고 사유를 행에 실어 화면에 드러낸다.
+        if (bom.unmapped()) {
+            return uncalculable(cell, option, judgedPrice, marketPrice, sellingPrice, pendingPush,
+                    "마스터에 연결되지 않은 옵션이라 구성품을 알 수 없습니다");
+        }
+        BigDecimal costSum = costSum(bom);
         OptionBasis optionBasis = optionBasisCache.computeIfAbsent(
                 cell.getId() + "|" + masterOptionId(option),
                 key -> resolveOptionBasis(cellBasis.basis(), cell, option.getMasterProductOption()));

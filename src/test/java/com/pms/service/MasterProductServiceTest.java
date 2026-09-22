@@ -17,7 +17,6 @@ import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
-import com.pms.domain.ProductListingProduct;
 import com.pms.domain.Seller;
 import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterCompositionRequest;
@@ -46,7 +45,7 @@ import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingProductRepository;
+import com.pms.service.listing.CellBomResolver;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
@@ -69,6 +68,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -107,7 +107,7 @@ class MasterProductServiceTest {
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock private ProductListingRepository productListingRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
-    @Mock private ProductListingProductRepository productListingProductRepository;
+    @Mock private CellBomResolver cellBomResolver;
     @Mock private GeneratedProductDataRepository generatedProductDataRepository;
     @Mock private MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     @Mock private SellerRepository sellerRepository;
@@ -1695,9 +1695,23 @@ class MasterProductServiceTest {
         return MasterProductOptionItem.builder().option(option).product(product).quantity(quantity).build();
     }
 
-    private ProductListingProduct cellLine(ProductListingOption option, Product product, int quantity) {
-        return ProductListingProduct.builder()
-                .productListingOption(option).product(product).quantity(quantity).build();
+    /** 셀 옵션의 구성품 1줄 — 2609_71 이후 마스터를 타고 오므로 {@link CellBomResolver} 가 돌려준다. */
+    private CellLine cellLine(ProductListingOption option, Product product, int quantity) {
+        return new CellLine(option, product, quantity);
+    }
+
+    private record CellLine(ProductListingOption option, Product product, int quantity) {}
+
+    /** 줄 목록 → optionId → Bom (resolver 반환 모양). */
+    private Map<Long, CellBomResolver.Bom> cellBoms(CellLine... lines) {
+        Map<Long, List<CellBomResolver.Line>> grouped = new LinkedHashMap<>();
+        for (CellLine line : lines) {
+            grouped.computeIfAbsent(line.option().getId(), key -> new ArrayList<>())
+                    .add(new CellBomResolver.Line(null, line.product(), line.quantity()));
+        }
+        Map<Long, CellBomResolver.Bom> boms = new LinkedHashMap<>();
+        grouped.forEach((optionId, items) -> boms.put(optionId, CellBomResolver.Bom.of(items)));
+        return boms;
     }
 
     @Test
@@ -1719,8 +1733,8 @@ class MasterProductServiceTest {
         given(generatedProductDataRepository.findByProductListingIdIn(any()))
                 .willReturn(List.of(generated(cell)));
         given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of(o1));
-        given(productListingProductRepository.findByProductListingOptionIdIn(any()))
-                .willReturn(List.of(cellLine(o1, p1, 1)));
+        given(cellBomResolver.forOptions(any()))
+                .willReturn(cellBoms(cellLine(o1, p1, 1)));
         given(sellerRepository.findAllById(any())).willReturn(List.of(seller));
 
         ChannelSyncPreviewResponse preview = service.previewChannelSync(1L);
@@ -1760,8 +1774,8 @@ class MasterProductServiceTest {
                 .willReturn(List.of(generated(cell)));
         given(productListingOptionRepository.findByProductListingIdIn(any()))
                 .willReturn(List.of(kept, channelOnly));
-        given(productListingProductRepository.findByProductListingOptionIdIn(any()))
-                .willReturn(List.of(cellLine(kept, p1, 1)));
+        given(cellBomResolver.forOptions(any()))
+                .willReturn(cellBoms(cellLine(kept, p1, 1)));
         given(sellerRepository.findAllById(any())).willReturn(List.of(seller));
 
         ChannelSyncPreviewResponse preview = service.previewChannelSync(1L);
@@ -1798,7 +1812,7 @@ class MasterProductServiceTest {
         given(generatedProductDataRepository.findByProductListingIdIn(any()))
                 .willReturn(List.of(generated(cell)));
         given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of(o1, o2));
-        given(productListingProductRepository.findByProductListingOptionIdIn(any())).willReturn(List.of(
+        given(cellBomResolver.forOptions(any())).willReturn(cellBoms(
                 cellLine(o1, p1, 1), cellLine(o1, p3, 9),       // p3 is cell-only → left as-is → no mismatch
                 cellLine(o2, p1, 3)));                          // 3 != master 5 → mismatch (option is inactive)
         given(sellerRepository.findAllById(any())).willReturn(List.of(seller));
@@ -1832,8 +1846,8 @@ class MasterProductServiceTest {
                 .willReturn(List.of(generated(cell)));
         given(productListingOptionRepository.findByProductListingIdIn(any()))
                 .willReturn(List.of(kept, offChannelOnly));
-        given(productListingProductRepository.findByProductListingOptionIdIn(any()))
-                .willReturn(List.of(cellLine(kept, p1, 1)));
+        given(cellBomResolver.forOptions(any()))
+                .willReturn(cellBoms(cellLine(kept, p1, 1)));
         given(sellerRepository.findAllById(any())).willReturn(List.of(seller));
 
         ChannelSyncPreviewResponse preview = service.previewChannelSync(1L);
@@ -1864,8 +1878,8 @@ class MasterProductServiceTest {
                 .willReturn(List.of(generated(cell)));
         given(productListingOptionRepository.findByProductListingIdIn(any()))
                 .willReturn(List.of(kept, channelOnly));
-        given(productListingProductRepository.findByProductListingOptionIdIn(any()))
-                .willReturn(List.of(cellLine(kept, p1, 1)));
+        given(cellBomResolver.forOptions(any()))
+                .willReturn(cellBoms(cellLine(kept, p1, 1)));
         given(sellerRepository.findAllById(any())).willReturn(List.of(seller));
 
         ChannelSyncPreviewResponse preview = service.previewChannelSync(1L);
@@ -1920,8 +1934,8 @@ class MasterProductServiceTest {
         given(generatedProductDataRepository.findByProductListingIdIn(any()))
                 .willReturn(List.of(generated(cell)));
         given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of(o1));
-        given(productListingProductRepository.findByProductListingOptionIdIn(any()))
-                .willReturn(List.of(cellLine(o1, p1, 3)));
+        given(cellBomResolver.forOptions(any()))
+                .willReturn(cellBoms(cellLine(o1, p1, 3)));
         given(sellerRepository.findAllById(any())).willReturn(List.of(seller));
 
         ChannelSyncPreviewResponse preview = service.previewChannelSync(1L);
@@ -1980,7 +1994,7 @@ class MasterProductServiceTest {
                 .willReturn(List.of(generated(cell1), generated(cell2), generated(cell3)));
         given(productListingOptionRepository.findByProductListingIdIn(any()))
                 .willReturn(List.of(o11, o12, o21, o22, o31, o32));
-        given(productListingProductRepository.findByProductListingOptionIdIn(any())).willReturn(List.of(
+        given(cellBomResolver.forOptions(any())).willReturn(cellBoms(
                 cellLine(o11, p1, 1), cellLine(o21, p1, 1), cellLine(o31, p1, 1)));
         given(sellerRepository.findAllById(any())).willReturn(List.of(sellerA, sellerB));
 
@@ -1995,7 +2009,7 @@ class MasterProductServiceTest {
         verify(productListingRepository, times(1)).findByMasterProductId(1L);
         verify(generatedProductDataRepository, times(1)).findByProductListingIdIn(any());
         verify(productListingOptionRepository, times(1)).findByProductListingIdIn(any());
-        verify(productListingProductRepository, times(1)).findByProductListingOptionIdIn(any());
+        verify(cellBomResolver, times(1)).forOptions(any());
         verify(optionItemRepository, times(1)).findByOptionIdIn(any());
         verify(sellerRepository, times(1)).findAllById(any());
     }
