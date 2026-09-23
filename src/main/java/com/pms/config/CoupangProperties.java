@@ -149,8 +149,12 @@ public class CoupangProperties {
      * 회차당 추적 슬라이스 상한(D10) = 호출 폭주 안전망. 0 = 슬라이스 조회 비활성.
      * ⚠️ 0 이어도 STALE 스윕은 돈다 — 스윕은 쿠팡을 치지 않는 로컬 종결이고, 이걸 같이 끄면
      * 미완결이 무한히 쌓여 다시 켤 때 슬라이스가 폭발한다.
+     *
+     * 🔴 <b>실제 호출은 이 값의 4배</b>다 — 슬라이스마다 status 4종(RU/UC/CC/PR)을 돌기 때문이다.
+     * {@code returnRequests} 가 status·orderId 중 하나를 요구해서 status 를 생략할 수 없다
+     * (2026-09-23 프로덕션 400 실측). 그래서 기본값을 6 → <b>2</b> 로 낮췄다(호출 6 → 8).
      */
-    private int claimTrackingMaxSlices = 6;
+    private int claimTrackingMaxSlices = 2;
 
     /**
      * exchangeRequests(교환 요청 목록) 조회 경로. {vendorId} 치환.

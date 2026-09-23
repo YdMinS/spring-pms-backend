@@ -118,6 +118,7 @@ class CoupangClaimAdapterTest {
     @Test
     void syncExchanges_openClaimFrom20DaysAgo_addsSlicesOfExchangeWindowWidth() {
         // 20일 범위 ÷ 6일 폭 = 슬라이스 3개 → 신규 창 1 + 슬라이스 3
+        props.setClaimTrackingMaxSlices(6);     // 상한(기본 2)을 열어 폭만 검증한다
         given(orderClaimRepository.findOpen(eq(1L), eq(ClaimType.EXCHANGE), any()))
                 .willReturn(List.of(openClaim(1L, 20)));
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(emptyData());
@@ -203,6 +204,7 @@ class CoupangClaimAdapterTest {
         // 시절에는 이 400 이 가려져 있었다. 창은 from 자정 ~ to 23:59:59 라 설정값보다 하루치가 더
         // 길다 — exchange-window-days=7 이면 7일 24시간이 되어 거절당한다.
         // 신규 창과 추적 슬라이스가 같은 폭을 쓰므로 한 테스트로 둘 다 고정한다.
+        props.setClaimTrackingMaxSlices(6);     // 상한(기본 2)을 열어 창 폭만 검증한다
         given(orderClaimRepository.findOpen(eq(1L), eq(ClaimType.EXCHANGE), any()))
                 .willReturn(List.of(openClaim(1L, 20)));
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(emptyData());
