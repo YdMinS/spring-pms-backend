@@ -33,8 +33,14 @@ import java.util.Set;
 /**
  * {@link CoupangReturnSyncService} 구현 — returnRequests 페이징 조회 후 취소수량 매칭 보정.
  *
+ * 🔴 {@code returnRequests} 는 <b>status 와 orderId 중 하나가 필수</b>다 — 둘 다 빼면 쿠팡이
+ * {@code 400 "OrderId can't be null , if doesn't pass the parameter status"} 로 거절한다
+ * (2026-09-23 프로덕션 실측). 그래서 이 클래스의 모든 목록 조회는 <b>status 또는 cancelType 을 실어</b>
+ * 보낸다. "status 를 생략하면 전 상태 조회" 는 <b>틀린 전제</b>다 — 되돌리지 말 것.
+ *
  * 두 경로로 취소를 잡는다 — 둘 다 날짜창 배치라 계정당 호출 수는 상수(1 + status 4종)다:
  *  1) 취소 배치(cancelType=CANCEL, status·orderId 제외, createdAt 기준) — 고객 결제취소를 조회.
+ *     ⚠️ 이 배치만 status 없이 나가는데, {@code cancelType=CANCEL} 이 status 를 대신한다(실측 통과).
  *  2) 반품 배치(status=RU/UC/CC/PR, cancelType 생략 = RETURN 기본값) — 판매자 품절취소·고객 출고중지요청은
  *     쿠팡에서 receiptType=RETURN 으로 기록되어 (1)의 cancelType=CANCEL 필터에 안 잡힌다 →
  *     이 경로가 status 4종 날짜창 조회로 그런 취소도 반영한다.
@@ -42,7 +48,8 @@ import java.util.Set;
  *
  * 같은 응답에서 반품 클레임(order_claim)도 적재한다(FEATURE_2609_18 / D15 — 쿠팡 호출 0건 추가).
  * 적재만으로는 창을 벗어난 뒤의 상태 전이를 놓치므로, {@link #trackOpenClaims} 가 미완결 건의 접수일
- * 범위를 추가로 훑는다(D7) — 계정당 호출은 5 + 슬라이스(상한 claim-tracking-max-slices)다.
+ * 범위를 추가로 훑는다(D7) — 계정당 호출은 5 + 슬라이스×status 4종(슬라이스 상한
+ * claim-tracking-max-slices, 기본 2)이다.
  * {@link #trackOpenClaims} 는 그 앞에 반품철회 이력을 한 번 조회해 철회 건을 {@code WITHDRAWN} 으로
  * 종결한다(2609_21/01) — 미완결이 있는 계정만, 회차당 +1 호출.
  * ⚠️ 취소 보정과 클레임 적재는 서로 다른 관심사다(D16): 적재가 실패해도 취소 보정은 끝나야 하므로
@@ -131,7 +138,8 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
      * 넘어갔을 수 있어 CC(반품완료)·PR(쿠팡확인요청) 까지 4종을 모두 훑는다.
      *
      * ⚠️ 주문번호 1건당 1호출(구 reconcilePreShipment)로 되돌리지 말 것 — 2026-09-02 dev 에서 초당
-     * 버스트로 HTTP 429 를 유발했다. status 를 지정하면 orderId 없이 날짜창 조회가 되므로 루프는 불필요하다.
+     * 버스트로 HTTP 429 를 유발했다. status 를 지정하면 orderId 없이 날짜창 조회가 된다
+     * (반대로 <b>status 를 빼면 orderId 가 필수</b>라 400 이다 — 클래스 주석 참고).
      * 조회창은 반품 "접수" 생성시각 기준이라 주문 나이와 무관 → (1) 과 같은 신규 조회 창을 공유한다
      * ({@link #newClaimWindow} — cancelSyncDays 가 하한).
      */
@@ -155,8 +163,10 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
      * 조회는 신규 조회 창과 같은 {@code collect()} 를 탄다 — {@code applyCancel} 과 클레임 upsert 가
      * 함께 돌지만 <b>둘 다 멱등</b>이라 무해하고, 신규 창에서 놓친 건을 주워 담는 이득이 있다.
      *
-     * ⚠️ 슬라이스마다 status 4종을 도는 형태로 만들지 말 것 — 호출이 4배가 된다. status 를 생략하면
-     * 전 상태 조회가 된다는 전제가 dev 에서 깨지면, 슬라이스 상한을 낮추고(6→2) 4종 루프로 바꾼다.
+     * 🔴 슬라이스마다 <b>status 4종을 돈다</b>. 원래는 status 를 생략해 전 상태를 한 번에 받으려 했으나,
+     * {@code returnRequests} 는 status·orderId 중 하나가 필수라 그 조회가 프로덕션에서 400 이었다
+     * (2026-09-23 실측 — 넌세르미 계정 500). 호출 폭증은 슬라이스 상한을 6→2 로 낮춰 상쇄했다
+     * (슬라이스 6 → 2×4 = 8). 상한을 다시 올리려면 호출 수가 4배로 곱해진다는 것을 알고 올릴 것.
      * ⚠️ 상한(D10)에 걸린 분은 다음 회차로 이월되지 않는다 — 커서가 없어 다음 회차도 같은 앞부분을
      * 자른다. 근거는 D11 이다: 미완결이 claim-stale-days 안이면 상한이 아예 안 걸리고, 잘리는 쪽은
      * 항상 최신 구간이라 신규 조회 창이 이미 덮는다. 커서를 도입하지 말 것.
@@ -180,13 +190,19 @@ public class CoupangReturnSyncServiceImpl implements CoupangReturnSyncService {
         List<SyncWindow> windows = claimTrackingSlicer.slices(remaining,
                 coupangProperties.getClaimWindowMaxDays(), coupangProperties.getClaimTrackingMaxSlices());
         for (SyncWindow slice : windows) {
-            // cancelType 생략 = RETURN 기본값 / status 생략 = 전 상태
-            String query = windowQuery(slice);
-            CancelSyncResult r = collect(account, path, query, MAX_PAGES_PER_STATUS);
+            // cancelType 생략 = RETURN 기본값 / status 는 필수라 반품 배치와 같은 4종 루프를 돈다.
+            String window = "&" + windowQuery(slice);
+            int pages = 0;
+            int matched = 0;
+            for (String status : RETURN_STATUSES) {
+                CancelSyncResult r = collect(account, path, "status=" + status + window, MAX_PAGES_PER_STATUS);
+                pages += r.pages();
+                matched += r.matchedUpdated();
+            }
             slices++;
             // Slice results are not surfaced in OrderSyncResult -> this log is the only way to verify D16.
             log.info("Claim tracking slice: account={} from={} to={} pages={} matchedUpdated={}",
-                    account.getId(), slice.from(), slice.to(), r.pages(), r.matchedUpdated());
+                    account.getId(), slice.from(), slice.to(), pages, matched);
         }
         return new ClaimTrackingResult(slices, staleClosed);
     }
