@@ -955,4 +955,45 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID = '096-1-order-claim-collect-invoice-source'",
                 Integer.class)).isEqualTo(1);
     }
+
+    /**
+     * changeset 098: 물품 바코드 유일성.
+     *
+     * <p>🔴 유일 범위는 {@code (tenant_id, barcode_id)} 다 — 같은 EAN 이 여러 테넌트의 카탈로그에
+     * 동시에 존재하는 것이 정상이라 단일 컬럼 유일로 걸면 먼저 등록한 테넌트가 코드를 독점한다.
+     * <p>⚠️ {@code barcode_id} 는 계속 nullable 이고, 유일 키는 NULL 을 여러 개 허용한다 — 바코드 없는
+     * 물품이 1천 건 이상이다. preCondition({@code onFail: HALT}) 은 중복이 남은 DB 에서 배포를 멈춘다.
+     */
+    @Test
+    void productBarcodeUniqueApplied() {
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE TABLE_NAME = 'PRODUCTS' AND COLUMN_NAME = 'BARCODE_ID'", String.class))
+                .isEqualTo("YES");
+
+        // ⚠️ 이 컨텍스트는 클래스 전체가 공유한다 — 넣은 행은 반드시 되돌린다(finally).
+        try {
+            jdbcTemplate.update("INSERT INTO tenant (id, name) VALUES (2, '두 번째 업체')");
+            jdbcTemplate.update("INSERT INTO products (tenant_id, product_name, barcode_id, active) "
+                    + "VALUES (1, '아몬드 초코볼', '2087686005954', TRUE)");
+            // 바코드 없는 행은 몇 개든 들어간다 (NULL 은 유일 키가 세지 않는다)
+            jdbcTemplate.update("INSERT INTO products (tenant_id, product_name, active) VALUES (1, '무바코드1', TRUE)");
+            jdbcTemplate.update("INSERT INTO products (tenant_id, product_name, active) VALUES (1, '무바코드2', TRUE)");
+            // 🔴 다른 업체는 같은 EAN 을 쓸 수 있어야 한다 — 이게 복합 유일로 간 이유다
+            jdbcTemplate.update("INSERT INTO products (tenant_id, product_name, barcode_id, active) "
+                    + "VALUES (2, '아몬드 초코볼', '2087686005954', TRUE)");
+
+            assertThatThrownBy(() -> jdbcTemplate.update(
+                    "INSERT INTO products (tenant_id, product_name, barcode_id, active) "
+                            + "VALUES (1, '어쏘티드 초코볼', '2087686005954', TRUE)"))
+                    .isInstanceOf(DataAccessException.class);
+        } finally {
+            jdbcTemplate.update("DELETE FROM products");
+            jdbcTemplate.update("DELETE FROM tenant WHERE id = 2");
+        }
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID = '098-product-barcode-unique'",
+                Integer.class)).isEqualTo(1);
+    }
 }

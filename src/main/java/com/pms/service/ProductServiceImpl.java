@@ -6,6 +6,7 @@ import com.pms.dto.request.CreateProductRequest;
 import com.pms.dto.request.UpdateProductRequest;
 import com.pms.dto.response.ProductResponse;
 import com.pms.dto.response.ProductUsageResponse;
+import com.pms.exception.BusinessException;
 import com.pms.exception.ProductInUseException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.ProductRepository;
@@ -15,6 +16,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -51,9 +53,12 @@ public class ProductServiceImpl implements ProductService {
         }
         validateNetContentUnit(request.getNetContentUnit(), request.getNetContent());
 
+        String barcodeId = normalizeBarcode(request.getBarcodeId());
+        assertBarcodeFree(barcodeId, null);
+
         // Build product using immutable pattern
         Product product = Product.builder()
-                .barcodeId(request.getBarcodeId())
+                .barcodeId(barcodeId)
                 .brand(request.getBrand())
                 .price(request.getPrice())
                 .productName(request.getProductName())
@@ -130,9 +135,18 @@ public class ProductServiceImpl implements ProductService {
         String finalNetContent = request.getNetContent().orElse(product.getNetContent());
         validateNetContentUnit(finalUnit, finalNetContent);
 
+        // ⚠️ Only checked when the request actually carried a barcode. An edit that never mentions it must
+        // not fail on a duplicate somebody else created earlier — otherwise a legacy clash would freeze
+        // every other field of both products. `id` is excluded, so resending one's own code is a no-op.
+        String finalBarcode = product.getBarcodeId();
+        if (request.getBarcodeId().isPresent()) {
+            finalBarcode = normalizeBarcode(request.getBarcodeId().get());
+            assertBarcodeFree(finalBarcode, id);
+        }
+
         // Build updated product using immutable pattern - use toBuilder to preserve audit fields
         Product updated = product.toBuilder()
-                .barcodeId(request.getBarcodeId().orElse(product.getBarcodeId()))
+                .barcodeId(finalBarcode)
                 .brand(request.getBrand().orElse(product.getBrand()))
                 .price(request.getPrice().orElse(product.getPrice()))
                 .productName(request.getProductName().orElse(product.getProductName()))
@@ -152,6 +166,49 @@ public class ProductServiceImpl implements ProductService {
         request.getPrice().ifPresent(newPrice -> priceHistoryRecorder.recordProductCost(
                 saved, oldPrice, newPrice, PriceChangeReason.PRODUCT_EDIT, null));
         return mapToResponse(saved);
+    }
+
+    /**
+     * Trim a barcode and turn a blank one into {@code null}.
+     *
+     * <p>🔴 "" and null must not be two different states: the unique key ignores NULLs but would treat
+     * empty strings as ordinary colliding values, so the second product saved with a blank barcode would
+     * fail with a database error instead of simply having no barcode. Sending {@code ""} on an update is
+     * therefore also the way to CLEAR a barcode.</p>
+     */
+    private String normalizeBarcode(String barcodeId) {
+        if (barcodeId == null) {
+            return null;
+        }
+        String trimmed = barcodeId.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    /**
+     * Refuse a barcode another product in this tenant already owns (409).
+     *
+     * <p>Mirrors the {@code uq_products_tenant_barcode} key (changeset 098) so the user gets a readable
+     * message instead of a raw constraint violation. The message names the offending product's id and
+     * name — without them nobody can tell which row to fix, and the row may well be soft-deleted and
+     * invisible in the list.</p>
+     *
+     * <p>⚠️ No format validation here (check digit, length): the migrated data contains barcodes that fail
+     * a check-digit test, and rejecting them would make those products uneditable.</p>
+     *
+     * @param barcodeId normalised barcode; {@code null} means "no barcode" and is always allowed
+     * @param selfId    product being updated, excluded from the check; {@code null} when creating
+     */
+    private void assertBarcodeFree(String barcodeId, Long selfId) {
+        if (barcodeId == null) {
+            return;
+        }
+        for (Product other : productRepository.findAllByBarcodeId(barcodeId)) {
+            if (!other.getId().equals(selfId)) {
+                throw new BusinessException(
+                        "이 바코드를 이미 가진 물품이 있습니다: " + other.getId() + " " + other.getProductName(),
+                        HttpStatus.CONFLICT);
+            }
+        }
     }
 
     /**

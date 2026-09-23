@@ -68,6 +68,18 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     Optional<Product> findByBarcodeId(String barcodeId);
 
     /**
+     * Every product carrying this barcode, soft-deleted ones included (barcode uniqueness guard).
+     *
+     * <p>Returns a list, not an {@code Optional}: the guard has to run on databases that still hold a
+     * legacy duplicate pair, and {@code findByBarcodeId} would blow up with a non-unique result there
+     * instead of reporting the clash. Soft-deleted rows count because the DB key counts them too
+     * (changeset 098) — a barcode still sitting on a hidden row cannot be handed to a new product, and the
+     * 409 has to name that row or nobody can find the cause. Derived query → Hibernate's
+     * {@code @TenantId} filter applies, so the check is tenant-scoped exactly like the constraint.</p>
+     */
+    List<Product> findAllByBarcodeId(String barcodeId);
+
+    /**
      * Distinct tenant ids across all products, ignoring the {@code @TenantId} filter.
      *
      * <p>Native query so it bypasses Hibernate's tenant discriminator — there is no separate Tenant
