@@ -26,11 +26,12 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     Page<Product> findByActiveTrue(Pageable pageable);
 
     /**
-     * Active products matched by ONE keyword against four things.
+     * Active products matched by ONE keyword against five things.
      *
      * <ul>
      *   <li><b>productName</b>, <b>brand</b>, <b>description</b> — case-insensitive <b>partial</b> match</li>
      *   <li><b>the product's own oclyx id</b> — <b>exact</b> match</li>
+     *   <li><b>barcodeId</b> — <b>exact</b> match</li>
      * </ul>
      *
      * <p>🔴 The id is matched exactly on purpose: a number under {@code like %..%} would drag in every
@@ -38,15 +39,24 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
      * Comparing the number itself rather than {@code cast(p.id as string)} also keeps the primary key
      * index usable.</p>
      *
+     * <p>🔴 The barcode is matched exactly for the same reason, and the reason bites harder here: a
+     * 13-digit EAN under {@code like %..%} would be dragged in by any short number the operator types.
+     * The comparison is on the string as given — a barcode is not necessarily numeric (CODE_128), so it
+     * is never parsed as a number. {@code (tenant_id, barcode_id)} is unique since changeset 098, so
+     * within a tenant an exact hit is at most one product. {@code barcode_id} is NULL — never {@code ''} —
+     * when absent (changeset 100 normalised the blanks, and the service stores blank as null), and a blank
+     * keyword never reaches this query at all: {@code getAllProducts} sends it to {@code findByActiveTrue}.</p>
+     *
      * <p>{@code idValue} is the same keyword pre-parsed by the service: {@code null} whenever the keyword
      * is not a plain {@code Long} (text, or a number too large), which switches the id branch off and
      * leaves the text match alone. There is no parameter selecting WHAT to search — the keyword is one,
-     * and only the server knows what an id looks like (2609_60 / D3·D8).</p>
+     * and only the server knows what an id or a barcode looks like (2609_60 / D3·D8).</p>
      */
     @Query("SELECT p FROM Product p WHERE p.active = true " +
            "AND (LOWER(p.productName) LIKE LOWER(CONCAT('%', :keyword, '%')) " +
            "OR LOWER(p.brand) LIKE LOWER(CONCAT('%', :keyword, '%')) " +
            "OR LOWER(p.description) LIKE LOWER(CONCAT('%', :keyword, '%')) " +
+           "OR p.barcodeId = :keyword " +
            "OR (:idValue IS NOT NULL AND p.id = :idValue))")
     Page<Product> searchByKeyword(@Param("keyword") String keyword,
                                   @Param("idValue") Long idValue,

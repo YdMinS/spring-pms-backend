@@ -17,9 +17,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@link ProductRepository#searchByKeyword} against a real DB.
  *
  * <p>The search is one JPQL that ORs a case-insensitive partial match on name/brand/description with an
- * <b>exact</b> match on the product's own oclyx id. Only real SQL shows that the id match is exact (a
- * shorter number must not drag in the longer ids containing it) and that the {@code :idValue IS NOT NULL}
- * guard actually binds when the parameter is null — a mocked service test cannot cover either.</p>
+ * <b>exact</b> match on the product's own oclyx id and on its barcode. Only real SQL shows that those two
+ * matches are exact (a shorter number must not drag in the longer values containing it) and that the
+ * {@code :idValue IS NOT NULL} guard actually binds when the parameter is null — a mocked service test
+ * cannot cover either.</p>
  *
  * <p>Ids are pinned with a native UPDATE after the insert: {@code @GeneratedValue(IDENTITY)} ignores any
  * id handed to {@code persist()}, and the "longer id" case needs two ids in a known prefix relation.</p>
@@ -92,6 +93,42 @@ class ProductSearchByIdTest {
         givenProductWithId(9001L, "삭제된 물품", false);
 
         assertThat(repository.searchByKeyword("9001", 9001L, FIRST_PAGE).getContent()).isEmpty();
+    }
+
+    /**
+     * The barcode is matched exactly: the typed barcode must not drag in the longer barcodes that merely
+     * contain it, and a barcode that is only a prefix of the stored one must not hit either.
+     */
+    @Test
+    void matchesTheBarcodeExactly() {
+        em.persist(Product.builder().productName("생수 2L").barcodeId("8801234567890").active(true).build());
+        em.persist(Product.builder().productName("아몬드 초코볼").barcodeId("88012345678901").active(true).build());
+        em.flush();
+
+        // 🔴 88012345678901 contains 8801234567890; under `like %..%` it would come back too.
+        assertThat(repository.searchByKeyword("8801234567890", 8801234567890L, FIRST_PAGE).getContent())
+                .extracting(Product::getProductName).containsExactly("생수 2L");
+        // And a partial barcode is not a barcode.
+        assertThat(repository.searchByKeyword("880123", 880123L, FIRST_PAGE).getContent()).isEmpty();
+    }
+
+    /** A barcode need not be numeric (CODE_128), so it is compared as a string, never parsed as a number. */
+    @Test
+    void matchesANonNumericBarcode() {
+        em.persist(Product.builder().productName("사내 포장재").barcodeId("PKG-A19").active(true).build());
+        em.flush();
+
+        assertThat(repository.searchByKeyword("PKG-A19", null, FIRST_PAGE).getContent())
+                .extracting(Product::getProductName).containsExactly("사내 포장재");
+    }
+
+    /** A soft-deleted product must not come back to life through its barcode either. */
+    @Test
+    void doesNotMatchAnInactiveProductByBarcode() {
+        em.persist(Product.builder().productName("삭제된 물품").barcodeId("8809999999999").active(false).build());
+        em.flush();
+
+        assertThat(repository.searchByKeyword("8809999999999", 8809999999999L, FIRST_PAGE).getContent()).isEmpty();
     }
 
     private void givenProductWithId(long id, String productName, boolean active) {
