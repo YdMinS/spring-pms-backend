@@ -274,6 +274,45 @@ class ShipmentConfirmParcelTest {
         assertThat(parcels.get(0).getOrderShipment()).isSameAs(boxA);
     }
 
+    /**
+     * 6. 🔴 단건 발송처리 — 사용자가 하이픈을 넣어도 저장·전송 둘 다 벗긴 값이다(쿠팡이 하이픈을 거부한다).
+     * 저장만 벗기면 전송이 400 이고, 전송만 벗기면 우리 DB 의 송장이 스캔·대사에서 어긋난다.
+     */
+    @Test
+    void testConfirmManualStripsHyphensFromInvoice() throws Exception {
+        OrderShipment boxA = shipment(11L, BOX_A);
+        OrderLine anchor = line(boxA, "3823839899", OrderStatus.PREPARING);
+        given(orderLineRepository.findWithAccountAndSellerById(anchor.getId())).willReturn(Optional.of(anchor));
+        given(orderLineRepository.findByExternalOrderId(ORDER_ID)).willReturn(List.of(anchor));
+        given(carrierCodeService.validateDeliveryCompanyCode("HANJIN", Platform.COUPANG)).willReturn("HANJIN");
+        given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(successResponse(BOX_A));
+
+        service.confirmManual(new ManualShipmentRequest(anchor.getId(), "HANJIN", "2558-2825 3026"));
+
+        assertThat(parcels).extracting(ShipmentParcel::getInvoiceNumber).containsExactly("255828253026");
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient).post(anyString(), body.capture(), any());
+        JsonNode dtos = objectMapper.readTree(body.getValue()).get("orderSheetInvoiceApplyDtos");
+        assertThat(dtos.get(0).get("invoiceNumber").asText()).isEqualTo("255828253026");
+    }
+
+    /** 7. 일괄(택배사 결과 파일) 경로도 같다 — 파일에 하이픈이 섞여 와도 저장·전송이 벗긴 값이다. */
+    @Test
+    void testConfirmStripsHyphensFromUploadedInvoice() throws Exception {
+        OrderShipment boxA = shipment(11L, BOX_A);
+        OrderLine line = line(boxA, "3823839899", OrderStatus.PREPARING);
+        given(orderLineRepository.findByExternalOrderId(ORDER_ID)).willReturn(List.of(line));
+        given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(successResponse(BOX_A));
+
+        service.confirm(xlsx(new Object[][]{{ORDER_ID, "2558-2825-3026"}}));
+
+        assertThat(parcels).extracting(ShipmentParcel::getInvoiceNumber).containsExactly("255828253026");
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient).post(anyString(), body.capture(), any());
+        JsonNode dtos = objectMapper.readTree(body.getValue()).get("orderSheetInvoiceApplyDtos");
+        assertThat(dtos.get(0).get("invoiceNumber").asText()).isEqualTo("255828253026");
+    }
+
     // ---- fixtures -------------------------------------------------------------------------------
 
     private MarketplaceAccount account() {

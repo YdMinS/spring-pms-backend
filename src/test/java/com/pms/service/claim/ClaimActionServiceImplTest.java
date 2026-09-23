@@ -330,6 +330,33 @@ class ClaimActionServiceImplTest {
         assertThat(saved.getValue().getRequestSummary()).doesNotStartWith("LOCAL_RECORD ");
     }
 
+    /**
+     * 🔴 회수 송장도 하이픈·공백을 벗겨서 보내고 벗겨서 기록한다 — 쿠팡이 하이픈 섞인 송장번호를 거부한다.
+     * 전송·장부·감사 세 곳이 같은 문자열이어야 나중에 대사가 된다.
+     */
+    @Test
+    void execute_collectInvoiceWithHyphens_sendsAndRecordsNormalized() {
+        OrderClaim claim = manualCollectClaim(1L);
+        givenClaimWithSiblings(claim, claim);
+        givenNoPriorActions();
+        given(coupangProperties.getReturnExchangeInvoicePath()).willReturn(INVOICE_PATH);
+        given(carrierCodeService.validateDeliveryCompanyCode("CJGLS", Platform.COUPANG)).willReturn("CJGLS");
+        given(coupangApiClient.post(anyString(), anyString(), any())).willReturn("{\"code\":200}");
+
+        service.execute(1L, new ClaimActionRequest(ClaimAction.RETURN_COLLECT_INVOICE,
+                "CJGLS", "1234-5678 9012", null, null));
+
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient).post(anyString(), body.capture(), any());
+        assertThat(body.getValue()).contains("\"invoiceNumber\":\"123456789012\"");
+        verify(collectInvoiceRecorder).record(anyList(), eq("CJGLS"), eq("123456789012"),
+                eq(CollectInvoiceSource.PLATFORM));
+
+        ArgumentCaptor<OrderClaimAction> saved = ArgumentCaptor.forClass(OrderClaimAction.class);
+        verify(orderClaimActionRepository).save(saved.capture());
+        assertThat(saved.getValue().getRequestSummary()).contains("invoice=123456789012");
+    }
+
     @Test
     void execute_adapterThrows_doesNotRecordLocally() {
         // 🔴 예외 경로는 입력이 틀린 것(택배사 코드·접수번호)이라 장부에 남기면 안 된다.

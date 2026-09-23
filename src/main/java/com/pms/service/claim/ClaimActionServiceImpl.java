@@ -13,6 +13,7 @@ import com.pms.exception.BusinessException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.OrderClaimActionRepository;
 import com.pms.repository.OrderClaimRepository;
+import com.pms.service.InvoiceNumbers;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -115,9 +116,11 @@ public class ClaimActionServiceImpl implements ClaimActionService {
                                      ClaimActionRequest request) {
         ClaimAction action = request.action();
         String statusAtSend = claim.getPlatformStatus();
-        String summary = summarize(request, siblings);
+        // 회수 송장도 하이픈·공백을 벗긴 값 하나로 간다 — 전송(어댑터)·기록(장부)·감사(요약)가 같은 문자열을 본다.
+        String invoiceNumber = InvoiceNumbers.normalize(request.invoiceNumber());
+        String summary = summarize(request, siblings, invoiceNumber);
         ClaimActionCommand command = new ClaimActionCommand(action, request.deliveryCompanyCode(),
-                request.invoiceNumber(), request.regNumber(), request.rejectCode());
+                invoiceNumber, request.regNumber(), request.rejectCode());
 
         ClaimActionOutcome outcome;
         try {
@@ -146,7 +149,7 @@ public class ClaimActionServiceImpl implements ClaimActionService {
             boolean resend = (action == ClaimAction.RETURN_COLLECT_INVOICE_RESEND);
             collectInvoiceRecorder.record(siblings,
                     resend ? claim.getCollectCarrierCode() : request.deliveryCompanyCode(),
-                    resend ? claim.getCollectInvoiceNo() : request.invoiceNumber(),
+                    resend ? claim.getCollectInvoiceNo() : invoiceNumber,
                     outcome.succeeded() ? CollectInvoiceSource.PLATFORM : CollectInvoiceSource.LOCAL);
             log.info("회수 송장 액션 완료: claim={} action={} receipt={} lines={} localRecordOnly={}",
                     claim.getId(), action, claim.getExternalClaimId(), siblings.size(), localRecordOnly);
@@ -254,15 +257,20 @@ public class ClaimActionServiceImpl implements ClaimActionService {
         return adapters.stream().filter(a -> a.platform().equals(platform)).findFirst();
     }
 
-    /** {@code k=v} 를 {@code ,} 로 이은 한 줄. ⚠️ PII 금지 — 송장번호·거부코드·수량까지만. */
-    private String summarize(ClaimActionRequest request, List<OrderClaim> siblings) {
+    /**
+     * {@code k=v} 를 {@code ,} 로 이은 한 줄. ⚠️ PII 금지 — 송장번호·거부코드·수량까지만.
+     *
+     * <p>송장번호는 <b>정규화된 값</b>을 따로 받는다 — 감사기록이 우리가 실제로 보내고 저장한 값과 달라지면
+     * 사후 대사에서 두 값을 비교할 수 없다.
+     */
+    private String summarize(ClaimActionRequest request, List<OrderClaim> siblings, String invoiceNumber) {
         List<String> parts = new ArrayList<>();
         parts.add("lines=" + siblings.size());
         if (request.deliveryCompanyCode() != null && !request.deliveryCompanyCode().isBlank()) {
             parts.add("carrier=" + request.deliveryCompanyCode());
         }
-        if (request.invoiceNumber() != null && !request.invoiceNumber().isBlank()) {
-            parts.add("invoice=" + request.invoiceNumber());
+        if (invoiceNumber != null && !invoiceNumber.isBlank()) {
+            parts.add("invoice=" + invoiceNumber);
         }
         if (request.rejectCode() != null && !request.rejectCode().isBlank()) {
             parts.add("rejectCode=" + request.rejectCode());
