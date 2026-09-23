@@ -1007,6 +1007,37 @@ public class ProductServiceTest {
         assertThat(captor.getValue().getId()).isEqualTo(productId);
     }
 
+    /**
+     * 🔴 The delete must let go of the barcode.
+     *
+     * <p>The row survives the soft delete with every column, and {@code uq_products_tenant_barcode}
+     * (changeset 098) counts hidden rows — so a barcode left here would be reserved forever and the
+     * product that replaces the deleted one could never take it over. The end-to-end proof is
+     * {@code ProductBarcodeReleaseIntegrationTest}; this one pins the write itself.</p>
+     */
+    @Test
+    @DisplayName("Should clear the barcode when soft deleting so the code can be reused")
+    public void testDeleteProductReleasesBarcode() {
+        // Given - the fixture carries barcode 1234567890123
+        Long productId = 1L;
+        Product existingProduct = ProductTestFixture.createProduct(productId);
+
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(existingProduct));
+        when(productRepository.save(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        givenDeletable(productId);
+
+        // When
+        productService.deleteProduct(productId);
+
+        // Then
+        org.mockito.ArgumentCaptor<Product> captor = org.mockito.ArgumentCaptor.forClass(Product.class);
+        verify(productRepository).save(captor.capture());
+        assertThat(captor.getValue().getBarcodeId()).isNull();
+        assertThat(captor.getValue().getActive()).isFalse();
+        // Everything else survives the delete - only active and barcodeId change
+        assertThat(captor.getValue().getProductName()).isEqualTo(existingProduct.getProductName());
+    }
+
     // ==================== Barcode uniqueness (changeset 098) ====================
 
     /**
