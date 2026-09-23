@@ -996,4 +996,47 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID = '098-product-barcode-unique'",
                 Integer.class)).isEqualTo(1);
     }
+
+    /**
+     * changeset 099: 이미 삭제된 물품이 들고 있던 바코드 놓아주기.
+     *
+     * <p>🔴 빈 DB 에 적용되므로 바뀐 행은 0건이다 — 여기서 검증할 수 있는 것은 (a) 백업 표가 실제로
+     * 생겼는가(= rollback 이 되돌릴 근거가 있는가)와 (b) 업데이트 대상을 고르는 조건이 이 DB 방언에서
+     * 의도대로 동작하는가 둘이다. (b) 는 H2(MODE=MySQL)의 {@code active = FALSE} 비교와 빈 문자열
+     * 제외가 조용히 어긋나면 **활성 물품의 바코드까지 지워지는** 자리라 직접 건다.
+     */
+    @Test
+    void releaseDeletedProductBarcodeApplied() {
+        // (a) 롤백 근거 = 백업 표. 조회가 성공하는 것 자체가 표와 컬럼의 존재 증명이다.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_barcode_release_backup "
+                        + "WHERE product_id IS NOT NULL OR tenant_id IS NOT NULL OR barcode_id IS NOT NULL",
+                Integer.class)).isZero();
+
+        // (b) 선택 조건 — 삭제 + 바코드 있는 행 하나만 고른다.
+        // ⚠️ 조건식은 changeset 의 WHERE 절과 같은 문자열이다. 한쪽을 고치면 다른 쪽도 고칠 것.
+        try {
+            jdbcTemplate.update("INSERT INTO products (tenant_id, product_name, barcode_id, active) "
+                    + "VALUES (1, '살아있는 물품', '8801234567890', TRUE)");
+            jdbcTemplate.update("INSERT INTO products (tenant_id, product_name, barcode_id, active) "
+                    + "VALUES (1, '삭제된 물품', '8809876543210', FALSE)");
+            jdbcTemplate.update("INSERT INTO products (tenant_id, product_name, barcode_id, active) "
+                    + "VALUES (1, '삭제된 무바코드', '', FALSE)");
+
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM products "
+                            + "WHERE active = FALSE AND barcode_id IS NOT NULL AND barcode_id <> ''",
+                    Integer.class)).isEqualTo(1);
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT product_name FROM products "
+                            + "WHERE active = FALSE AND barcode_id IS NOT NULL AND barcode_id <> ''",
+                    String.class)).isEqualTo("삭제된 물품");
+        } finally {
+            jdbcTemplate.update("DELETE FROM products");
+        }
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID = '099-release-deleted-product-barcode'",
+                Integer.class)).isEqualTo(1);
+    }
 }

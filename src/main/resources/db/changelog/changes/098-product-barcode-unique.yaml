@@ -11,10 +11,12 @@
 #    ~1,200 products that have no barcode legal. The application turns "" into NULL so a blank never
 #    becomes a colliding empty string.
 #
-# 🔴 The key counts SOFT-DELETED rows too (active = 0). MySQL has no partial unique index, and emulating
-#    one (generated column) buys nothing here: a deleted product's barcode simply stays reserved, and the
-#    409 message names the row so an operator can find it. ProductMergeService releases the source's
-#    barcode before the target adopts it for exactly this reason.
+# 🔴 The key counts SOFT-DELETED rows too (active = 0) — MySQL has no partial unique index. So the rule
+#    is NOT "a deleted product's barcode stays reserved" (that was this comment's original claim and it
+#    turned out to be the bug: a user deleting one of two duplicates could never give that code to the
+#    survivor). Instead NO hidden row is allowed to hold a barcode: ProductServiceImpl.deleteProduct
+#    releases it on delete, ProductMergeService releases the source's before the target adopts it, and
+#    changeset 099 cleared the rows deleted before that. App check and this key therefore always agree.
 #
 # 🔴 PRE-FLIGHT — run this on the target DB BEFORE deploying:
 #      SELECT tenant_id, barcode_id, COUNT(*) FROM products

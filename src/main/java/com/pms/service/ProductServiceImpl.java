@@ -12,6 +12,7 @@ import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.ProductRepository;
 import com.pms.service.price.PriceHistoryRecorder;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -35,6 +36,7 @@ import java.math.BigDecimal;
  * will be added in subsequent phases (2-2, 2-3, 2-4, 2-5) following TDD pattern
  */
 @Service
+@Slf4j
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class ProductServiceImpl implements ProductService {
@@ -189,8 +191,15 @@ public class ProductServiceImpl implements ProductService {
      *
      * <p>Mirrors the {@code uq_products_tenant_barcode} key (changeset 098) so the user gets a readable
      * message instead of a raw constraint violation. The message names the offending product's id and
-     * name — without them nobody can tell which row to fix, and the row may well be soft-deleted and
-     * invisible in the list.</p>
+     * name — without them nobody can tell which row to fix.</p>
+     *
+     * <p>🔴 The scan deliberately includes soft-deleted rows, exactly like the database key does, and
+     * that stays correct because {@code deleteProduct} blanks the barcode on the way out: a hidden row
+     * owns no barcode any more, so app and key always give the same verdict. Do NOT "fix" this by
+     * filtering on {@code active} — the key has no such filter (MySQL has no partial unique index), so
+     * the app would start accepting rows the database then rejects with an unreadable 500. Legacy rows
+     * deleted before changeset 099 are the one case where a hidden row still answers here, and the
+     * message names it so an operator can clear it.</p>
      *
      * <p>⚠️ No format validation here (check digit, length): the migrated data contains barcodes that fail
      * a check-digit test, and rejecting them would make those products uneditable.</p>
@@ -302,12 +311,29 @@ public class ProductServiceImpl implements ProductService {
             throw new ProductInUseException(usage.blockers());
         }
 
+        // 🔴 Releasing the barcode is part of the delete, not an extra.
+        // The row survives a soft delete with every column intact, and uq_products_tenant_barcode
+        // (changeset 098) counts hidden rows too — MySQL has no partial unique index. So a barcode left
+        // on a deleted product stays reserved forever and can never be given to the product that
+        // replaces it, which is exactly what the user hits while cleaning up duplicates. Blanking it
+        // here keeps the application guard (assertBarcodeFree, which also scans inactive rows) and the
+        // database key in agreement: no hidden row owns a barcode, so both answer the same way.
+        // Same move as ProductMergeService.releaseSourceBarcode, applied to the ordinary delete.
+        String releasedBarcode = product.getBarcodeId();
+
         // Soft delete using immutable pattern with Builder - use toBuilder to preserve audit fields
         Product deletedProduct = product.toBuilder()
                 .active(false)
+                .barcodeId(null)
                 .build();
 
         // Save updated product
         productRepository.save(deletedProduct);
+
+        // ⚠️ The barcode is gone from the row: there is no restore endpoint, so this log line is the only
+        // trace left of which code the product used to carry.
+        if (releasedBarcode != null) {
+            log.info("Released barcode {} from soft-deleted product {}", releasedBarcode, id);
+        }
     }
 }

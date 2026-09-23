@@ -1,0 +1,65 @@
+# Release the barcodes still held by already soft-deleted products.
+#
+# WHAT THIS CHANGES — exactly one column on one set of rows:
+#     products.barcode_id  ->  NULL     for every row with  active = FALSE  and a non-empty barcode_id.
+#   Active products are never touched. No row is deleted. No other column is written.
+#
+# WHY:
+#   Deleting a product is a SOFT delete (active = 0); the row keeps every column. Until changeset 099
+#   it also kept barcode_id, and uq_products_tenant_barcode (changeset 098) counts hidden rows — MySQL
+#   has no partial unique index. So a barcode on a deleted product was reserved forever: the user who
+#   deleted one of two duplicate products could never hand that code to the survivor (reported 2026-09).
+#   ProductServiceImpl.deleteProduct now blanks the barcode as part of the delete; this changeset
+#   applies the same rule to the rows deleted before that change existed.
+#
+# 🔴 REVERSIBLE ON PURPOSE. The released values are copied into product_barcode_release_backup FIRST,
+#    so the rollback below can put every one of them back. The backup table survives the forward run and
+#    is the only record of which code each deleted product used to carry — do not drop it by hand.
+#
+# 🔴 COUNT BEFORE DEPLOYING (expected to be small; informational, this changeset is not conditional):
+#      SELECT COUNT(*) FROM products WHERE active = 0 AND barcode_id IS NOT NULL AND barcode_id <> '';
+#
+# ⚠️ ORDER vs 098: 098 runs first and HALTS on any duplicate (tenant_id, barcode_id) pair, counting
+#    hidden rows. If a remaining duplicate pair involves a soft-deleted row, 099 would have cleared it —
+#    but 098 never gets past its precondition, so the deploy still stops. Check which side of the pair is
+#    deleted and clear that one by hand, or move this changeset ahead of 098 in the master changelog:
+#      SELECT id, product_name, active, barcode_id FROM products WHERE barcode_id = '<code>';
+databaseChangeLog:
+
+  - changeSet:
+      id: 099-release-deleted-product-barcode
+      author: oclyx
+      comment: "Blank barcode_id on soft-deleted products; released values kept in product_barcode_release_backup for rollback."
+      changes:
+        - createTable:
+            tableName: product_barcode_release_backup
+            remarks: "Barcodes released from soft-deleted products by changeset 099. Rollback source; never read by the application."
+            columns:
+              - column:
+                  name: product_id
+                  type: BIGINT
+                  constraints: { primaryKey: true, nullable: false }
+              - column: { name: tenant_id, type: BIGINT }
+              - column: { name: barcode_id, type: VARCHAR(50) }
+        # Copy first, blank second — the UPDATE below is only reversible because this ran.
+        - sql:
+            sql: >-
+              INSERT INTO product_barcode_release_backup (product_id, tenant_id, barcode_id)
+              SELECT id, tenant_id, barcode_id FROM products
+               WHERE active = FALSE AND barcode_id IS NOT NULL AND barcode_id <> ''
+        - sql:
+            sql: >-
+              UPDATE products SET barcode_id = NULL
+               WHERE active = FALSE AND barcode_id IS NOT NULL AND barcode_id <> ''
+      rollback:
+        # Correlated subquery, not a JOIN UPDATE: portable across MySQL and H2 (MODE=MySQL).
+        # Restoring can fail on uq_products_tenant_barcode if the freed code was meanwhile given to
+        # another product — that is the rollback telling you the data moved on, not a defect.
+        - sql:
+            sql: >-
+              UPDATE products SET barcode_id = (
+                SELECT b.barcode_id FROM product_barcode_release_backup b WHERE b.product_id = products.id
+              )
+               WHERE id IN (SELECT product_id FROM product_barcode_release_backup)
+        - dropTable:
+            tableName: product_barcode_release_backup

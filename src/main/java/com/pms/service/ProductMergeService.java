@@ -186,9 +186,11 @@ public class ProductMergeService {
     /**
      * Blank the source's barcode when the merged product is taking that very code over.
      *
-     * <p>A no-op otherwise: the source is soft-deleted, and a code nobody else wants may stay on the hidden
-     * row. {@code saveAndFlush} is deliberate — the release has to reach the database before the target's
-     * UPDATE does, or the unique key fires on the instant both rows hold the code.</p>
+     * <p>A no-op otherwise: {@code ProductService.deleteProduct} at the end of the merge blanks the
+     * source's barcode anyway, so a code nobody else wants needs no special handling here. This method
+     * exists for the ORDER: {@code saveAndFlush} pushes the release to the database before the target's
+     * UPDATE, and the target adopts the code long before the delete runs — without it the unique key
+     * fires on the instant both rows hold the code.</p>
      */
     private void releaseSourceBarcode(Product source, String mergedBarcodeId) {
         String sourceBarcode = source.getBarcodeId();
