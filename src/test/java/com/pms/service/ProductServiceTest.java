@@ -474,6 +474,38 @@ public class ProductServiceTest {
         verify(productRepository).findByActiveTrue(any(org.springframework.data.domain.Pageable.class));
     }
 
+    /**
+     * 「판매채널」 컬럼 (2026-09-23).
+     *
+     * <p>🔴 채널 수는 <b>페이지의 물품 id 로 한 번</b> 모은다 — 물품마다 세면 한 페이지가 수십 쿼리가 된다.
+     * 세는 규칙 자체는 {@code ProductUsageService} 가 소유하고 실제 SQL 로 검증한다
+     * ({@code ProductChannelCountTest}). 여기서 지키는 것은 <b>호출 모양</b>이다.</p>
+     */
+    @Test
+    @DisplayName("Should fill the channel count from one batched lookup for the whole page")
+    public void testGetAllProducts_ChannelCountBatchedOncePerPage() {
+        // Given
+        Product product1 = ProductTestFixture.createProduct(1L);
+        Product product2 = ProductTestFixture.createLaptopProduct(2L);
+        org.springframework.data.domain.Pageable pageable =
+                org.springframework.data.domain.PageRequest.of(0, 20);
+        when(productRepository.findByActiveTrue(any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(
+                        java.util.List.of(product1, product2), pageable, 2L));
+        // 2번 물품은 어느 마스터에도 안 붙어 결과 맵에 없다 → 화면엔 0.
+        when(productUsageService.countChannelsByProduct(java.util.List.of(1L, 2L)))
+                .thenReturn(java.util.Map.of(1L, 3));
+
+        // When
+        org.springframework.data.domain.Page<ProductResponse> result =
+                productService.getAllProducts(0, 20, null);
+
+        // Then
+        assertThat(result.getContent()).extracting(ProductResponse::getChannelCount)
+                .containsExactly(3, 0);
+        verify(productUsageService, times(1)).countChannelsByProduct(anyCollection());
+    }
+
     // ==================== Phase 2-2 Cycle 5: testGetAllProducts_DefaultPageSize ====================
 
     @Test
