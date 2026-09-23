@@ -162,6 +162,19 @@ class PackingScanTest {
         verifyNoInteractions(stockOutService);
     }
 
+    /**
+     * 🔴 하이픈·공백을 넣어 친 송장번호도 자기 박스를 연다 — 저장값이 정규화돼 있으므로 조회 쪽도 벗겨야 한다.
+     * 스텁은 정규화된 값({@code INVOICE})으로만 걸려 있어, 벗기지 않으면 "송장번호를 찾을 수 없습니다"가 된다.
+     */
+    @Test
+    void testScanStripsHyphensFromScannedInvoice() {
+        givenParcel(PackingFixtures.parcel(PARCEL_ID, shipment, ParcelStatus.PACKED, 1));
+
+        PackingScanResponse response = service.scan("1234-5678 9012");
+
+        assertThat(response.parcel().invoiceNumber()).isEqualTo(INVOICE);
+    }
+
     @Test
     void testIsLastParcelIgnoresZeroRemainingParcel() {
         // ① 백필이 만든 박스: PENDING 이지만 이미 다 나간 주문이라 잔량이 0 → 마지막 박스가 아니다.

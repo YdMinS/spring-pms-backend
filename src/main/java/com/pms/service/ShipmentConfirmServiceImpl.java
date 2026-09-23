@@ -205,7 +205,8 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
 
     @Override
     public ManualShipmentResult confirmManual(ManualShipmentRequest request) {
-        String invoiceNumber = request.invoiceNumber().trim();          // D15
+        // 하이픈·공백 제거(쿠팡이 거부한다) — 저장·전송이 같은 값이 되도록 진입부에서 한 번만 한다.
+        String invoiceNumber = InvoiceNumbers.normalizeRequired(request.invoiceNumber());   // D15
         // 1) 앵커 라인 — account 를 eager 로 읽는 finder 만 사용(open-in-view=false)
         OrderLine anchor = orderLineRepository.findWithAccountAndSellerById(request.orderItemId())
                 .orElseThrow(() -> new IllegalArgumentException("주문 라인을 찾을 수 없습니다"));
@@ -655,7 +656,8 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
                     continue;
                 }
                 String orderId = cellString(row.getCell(COL_ORDER_ID), formatter);
-                String invoiceNumber = cellString(row.getCell(COL_INVOICE), formatter);
+                // 결과 파일의 송장에도 하이픈이 섞여 올 수 있다 — 전송·저장·중복 제거가 같은 값을 보게 한다.
+                String invoiceNumber = InvoiceNumbers.normalize(cellString(row.getCell(COL_INVOICE), formatter));
                 if (orderId.isBlank() || invoiceNumber.isBlank()) {
                     continue;                       // 주문번호/운송장번호 중 하나라도 공백이면 스킵
                 }

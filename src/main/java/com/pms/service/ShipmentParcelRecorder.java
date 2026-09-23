@@ -49,10 +49,12 @@ public class ShipmentParcelRecorder {
     @Transactional
     public Optional<ShipmentParcel> record(OrderShipment shipment, String invoiceNumber,
                                            String carrierCode, String carrierName) {
-        if (shipment == null || shipment.getId() == null || invoiceNumber == null || invoiceNumber.isBlank()) {
+        // 저장값은 언제나 정규화된 송장번호다(하이픈·공백 제거) — 세 경로(단건·일괄·동기화 백필)가 여기로 모이므로
+        // 여기서 한 번 벗기면 조회(스캔)·대사가 같은 값을 본다.
+        String invoice = InvoiceNumbers.normalize(invoiceNumber);
+        if (shipment == null || shipment.getId() == null || invoice == null || invoice.isEmpty()) {
             return Optional.empty();
         }
-        String invoice = invoiceNumber.trim();
         Optional<ShipmentParcel> existing =
                 shipmentParcelRepository.findByOrderShipment_IdAndInvoiceNumber(shipment.getId(), invoice);
         if (existing.isPresent()) {

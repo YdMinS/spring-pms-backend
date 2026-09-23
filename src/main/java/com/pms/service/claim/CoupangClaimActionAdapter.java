@@ -10,6 +10,7 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
 import com.pms.domain.Platform;
 import com.pms.service.CarrierCodeService;
+import com.pms.service.InvoiceNumbers;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangCredentials;
 import com.pms.service.coupang.SyncWindow;
@@ -305,7 +306,7 @@ public class CoupangClaimActionAdapter implements ClaimActionAdapter {
         body.put("returnExchangeDeliveryType", deliveryType);
         body.put("receiptId", receiptId);
         body.put("deliveryCompanyCode", deliveryCompanyCode);
-        body.put("invoiceNumber", command.invoiceNumber().trim());
+        body.put("invoiceNumber", InvoiceNumbers.normalizeRequired(command.invoiceNumber()));
         if (command.regNumber() != null && !command.regNumber().isBlank()) {
             body.put("regNumber", command.regNumber().trim());
         }
@@ -416,7 +417,7 @@ public class CoupangClaimActionAdapter implements ClaimActionAdapter {
         Map<String, Object> body = exchangeBody(account, exchangeId);
         body.put("shipmentBoxId", shipmentBoxId);
         body.put("goodsDeliveryCode", deliveryCompanyCode);
-        body.put("invoiceNumber", command.invoiceNumber().trim());
+        body.put("invoiceNumber", InvoiceNumbers.normalizeRequired(command.invoiceNumber()));
         return body;
     }
 
