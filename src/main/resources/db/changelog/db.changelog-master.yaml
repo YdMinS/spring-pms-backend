@@ -192,5 +192,11 @@ databaseChangeLog:
   #    which is exactly how prod went down on 2026-09-23. Releasing first leaves 098 a clean table.
   - include:
       file: db/changelog/changes/099-release-deleted-product-barcode.yaml
+  # 🔴 100 도 098 앞이다 — 같은 이유의 두 번째 사고(2026-09-23 prod). MySQL 은 NULL 중복은 허용하지만
+  #    '' 는 값으로 세기 때문에, 바코드가 빈 문자열인 레거시 행들이 098 을 1062(Duplicate entry '1-')로
+  #    죽였다. 098 의 preCondition 은 `<> ''` 로 빈 값을 빼고 세어 통과했고 — 검사 기준과 제약 기준이
+  #    어긋난 것이 원인이다. 100 이 '' 를 NULL 로 정규화해 098 에게 깨끗한 표를 넘긴다.
+  - include:
+      file: db/changelog/changes/100-normalize-blank-barcode.yaml
   - include:
       file: db/changelog/changes/098-product-barcode-unique.yaml
