@@ -263,8 +263,9 @@ class CoupangReturnSyncServiceImplTest {
     }
 
     @Test
-    void trackOpenClaims_queriesOneSlice_withoutStatusFilter() {
-        // status 를 슬라이스마다 4번 도는 형태로 만들면 호출이 4배가 된다 — 생략 = 전 상태 조회가 전제(PLAN §4).
+    void trackOpenClaims_queriesEachStatus_perSlice() {
+        // 이 버그의 핵심: status 가 실제로 쿼리에 실려 나가야 한다. 둘 다 빼면 쿠팡이 400 을 준다
+        // ("OrderId can't be null , if doesn't pass the parameter status", 2026-09-23 프로덕션 실측).
         given(orderClaimRepository.findOpen(eq(1L), eq(ClaimType.RETURN), any()))
                 .willReturn(List.of(openClaim(1L, 5)));
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(emptyData());
@@ -273,26 +274,34 @@ class CoupangReturnSyncServiceImplTest {
 
         ArgumentCaptor<String> queries = ArgumentCaptor.forClass(String.class);
         // 철회 이력 조회가 앞에 하나 더 붙으므로 추적 호출은 경로로 가른다.
-        verify(coupangApiClient, times(1)).get(contains("returnRequests"), queries.capture(), any());
-        assertThat(queries.getValue()).contains(expectedFrom(5)).doesNotContain("status=");
+        verify(coupangApiClient, times(4)).get(contains("returnRequests"), queries.capture(), any());
+
+        List<String> all = queries.getAllValues();
+        assertThat(all).filteredOn(q -> q.contains("status=RU")).hasSize(1);
+        assertThat(all).filteredOn(q -> q.contains("status=UC")).hasSize(1);
+        assertThat(all).filteredOn(q -> q.contains("status=CC")).hasSize(1);
+        assertThat(all).filteredOn(q -> q.contains("status=PR")).hasSize(1);
+        assertThat(all).allMatch(q -> q.contains(expectedFrom(5)));
+        // status 를 실었으니 orderId 는 여전히 불필요하다(주문번호 단위 조회로 되돌아가면 여기서 깨진다).
+        assertThat(all).noneMatch(q -> q.contains("orderId="));
         assertThat(result.slices()).isEqualTo(1);
     }
 
     @Test
-    void trackOpenClaims_capsSlices_atConfiguredMax() {
-        // 60일 범위 = 30일 폭 슬라이스 2개지만 상한 1 로 잘린다(D10). 잘리는 쪽은 항상 최신 구간이라
-        // 신규 조회 창이 이미 덮는다.
-        props.setClaimTrackingMaxSlices(1);
+    void trackOpenClaims_capsSlices_atDefaultMaxTwo() {
+        // 90일 범위 = 30일 폭 슬라이스 4개지만 기본 상한 2 로 잘린다(D10). 잘리는 쪽은 항상 최신 구간이라
+        // 신규 조회 창이 이미 덮는다. 상한을 설정하지 않는 것이 요점이다 — 기본값 2 를 고정한다.
         props.setClaimStaleDays(9999);          // 스윕 비활성 스위치는 없다 — 크게 잡는 것이 유일한 구성법
         given(orderClaimRepository.findOpen(eq(1L), eq(ClaimType.RETURN), any()))
-                .willReturn(List.of(openClaim(1L, 60)));
+                .willReturn(List.of(openClaim(1L, 90)));
         given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(emptyData());
 
         ClaimTrackingResult result = service.trackOpenClaims(account);
 
-        verify(coupangApiClient, times(1)).get(contains("returnRequests"), anyString(), any());
+        // 슬라이스 2 × status 4종 = 8. 상한을 올리면 호출이 4배씩 곱해진다.
+        verify(coupangApiClient, times(8)).get(contains("returnRequests"), anyString(), any());
         verify(orderClaimRepository, never()).save(any());
-        assertThat(result.slices()).isEqualTo(1);
+        assertThat(result.slices()).isEqualTo(2);
     }
 
     // --- 철회 종결 (2609_21/01) ---
