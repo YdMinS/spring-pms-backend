@@ -49,6 +49,24 @@ public interface MasterProductOptionItemRepository extends JpaRepository<MasterP
     List<MasterProductOptionItem> findWithMasterByProductIdIn(@Param("productIds") Collection<Long> productIds);
 
     /**
+     * (productId, listingId) pairs through the option-item path — the second half of the channel count
+     * on the product list (2026-09-23).
+     *
+     * <p>Mirrors {@code MasterProductComponentRepository#findChannelListingIdsByProductIds}: the caller
+     * unions both result sets and counts distinct listing ids per product, so the same listing reached
+     * through both paths is counted once. By the option/component invariant
+     * ({@code assertCoversComponents}) this path adds nothing new — it is kept so the count cannot drift
+     * from the usage screen's own two-path collection.</p>
+     *
+     * <p>🔴 Tenant isolation is structural ({@code ProductListing} carries {@code @TenantId}); no manual
+     * tenant condition here.</p>
+     */
+    @Query("select distinct i.product.id, l.id from MasterProductOptionItem i "
+            + "join ProductListing l on l.masterProduct.id = i.option.masterProduct.id "
+            + "where i.product.id in :productIds")
+    List<Object[]> findChannelListingIdsByProductIds(@Param("productIds") Collection<Long> productIds);
+
+    /**
      * Drop every item row of one option (96 / ⑦). ⚠️ <b>Bulk JPQL on purpose</b> — the derived
      * {@code deleteByOptionId} loaded the rows and queued {@code em.remove}, and Hibernate's ActionQueue runs
      * INSERTs before DELETEs on flush, so the "replace = delete + re-insert" contract above blew up on

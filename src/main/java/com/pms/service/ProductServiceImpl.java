@@ -22,6 +22,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.List;
+import java.util.Map;
 
 /**
  * ProductServiceImpl - Product service implementation
@@ -30,7 +32,7 @@ import java.math.BigDecimal;
  * - create(CreateProductRequest request): Creates new product
  * - validatePrice(BigDecimal price): Validates price > 0
  * - validateNetContentUnit(String, String): Validates netContentUnit in [KG, G, L, ML]
- * - mapToResponse(Product product): Maps Product entity to ProductResponse
+ * - mapToResponse(Product product, Integer channelCount): Maps Product entity to ProductResponse
  *
  * Other CRUD methods (getProduct, getAllProducts, updateProduct, deleteProduct)
  * will be added in subsequent phases (2-2, 2-3, 2-4, 2-5) following TDD pattern
@@ -75,7 +77,8 @@ public class ProductServiceImpl implements ProductService {
                 .build();
 
         Product saved = productRepository.save(product);
-        return mapToResponse(saved);
+        // 갓 만든 물품은 아직 어떤 마스터에도 안 붙었다 — 조회 없이 0.
+        return mapToResponse(saved, 0);
     }
 
     @Override
@@ -87,7 +90,14 @@ public class ProductServiceImpl implements ProductService {
             throw new ResourceNotFoundException("Product", id);
         }
 
-        return mapToResponse(product);
+        // 단건도 같은 값을 채운다 — 같은 DTO 를 쓰는 상세가 목록과 다른 말을 하면(null) 화면이 「-」 로
+        // 표시하게 되어 "연결이 없다"와 구분이 안 된다. 물품 1개라 두 쿼리로 끝난다.
+        return mapToResponse(product, channelCountOf(product.getId()));
+    }
+
+    /** 단건 경로의 채널 수 — 목록과 같은 배치 헬퍼를 id 하나로 쓴다(정의가 갈라지지 않게). */
+    private Integer channelCountOf(Long productId) {
+        return productUsageService.countChannelsByProduct(List.of(productId)).getOrDefault(productId, 0);
     }
 
     @Override
@@ -109,8 +119,14 @@ public class ProductServiceImpl implements ProductService {
             productPage = productRepository.searchByKeyword(keyword, parseProductIdOrNull(keyword), pageable);
         }
 
+        // 🔴 채널 수는 **페이지의 물품 id 로 한 번에** 모은다(쿼리 2개 고정) — 매핑 안에서 물품마다
+        // 세면 한 페이지가 40 쿼리가 된다. 마스터 목록(110)의 커버 오버레이와 같은 모양이다.
+        Map<Long, Integer> channelCounts = productUsageService.countChannelsByProduct(
+                productPage.getContent().stream().map(Product::getId).toList());
+
         // Convert to response
-        return productPage.map(this::mapToResponse);
+        return productPage.map(product ->
+                mapToResponse(product, channelCounts.getOrDefault(product.getId(), 0)));
     }
 
     /**
@@ -184,7 +200,7 @@ public class ProductServiceImpl implements ProductService {
         // never mentions the price is not a price change (the recorder also drops equal values).
         request.getPrice().ifPresent(newPrice -> priceHistoryRecorder.recordProductCost(
                 saved, oldPrice, newPrice, PriceChangeReason.PRODUCT_EDIT, null));
-        return mapToResponse(saved);
+        return mapToResponse(saved, channelCountOf(saved.getId()));
     }
 
     /**
@@ -284,10 +300,13 @@ public class ProductServiceImpl implements ProductService {
      * Map Product entity to ProductResponse DTO
      *
      * @param product the product entity to map
+     * @param channelCount 연결된 판매채널 수 (2026-09-23). {@code null} 이면 응답에서도 null —
+     *                     화면은 그것을 「-」(모름) 로 읽고 0(연결 없음) 과 구분한다
      * @return ProductResponse DTO
      */
-    private ProductResponse mapToResponse(Product product) {
+    private ProductResponse mapToResponse(Product product, Integer channelCount) {
         return ProductResponse.builder()
+                .channelCount(channelCount)
                 .id(product.getId())
                 .barcodeId(product.getBarcodeId())
                 .brand(product.getBrand())

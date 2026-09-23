@@ -59,6 +59,15 @@ public class ProductResponse {
     @Schema(description = "Active status", example = "true")
     private Boolean active;
 
+    /**
+     * 이 물품이 연결된 판매채널(채널 셀) 수 — 「연결 현황」과 같은 정의 (2026-09-23).
+     *
+     * <p>⚠️ nullable: {@link #of(Product)} 같은 값 없는 매핑 경로에서는 채워지지 않는다. 화면은 null 을
+     * 0 으로 읽지 말고 「-」 로 표시한다(모르는 것과 없는 것은 다르다).</p>
+     */
+    @Schema(description = "Number of channel listings linked to this product", example = "3")
+    private Integer channelCount;
+
     @Schema(description = "Created timestamp", example = "2024-01-01T00:00:00")
     private LocalDateTime createdDate;
 
