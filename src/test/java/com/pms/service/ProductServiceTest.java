@@ -1006,4 +1006,94 @@ public class ProductServiceTest {
         assertThat(captor.getValue().getActive()).isFalse();
         assertThat(captor.getValue().getId()).isEqualTo(productId);
     }
+
+    // ==================== Barcode uniqueness (changeset 098) ====================
+
+    /**
+     * 🔴 The guard exists so the user gets a readable 409 instead of a raw constraint violation, and the
+     * message has to name the product already holding the code — otherwise the owner of a soft-deleted
+     * duplicate is invisible and the clash cannot be resolved.
+     */
+    @Test
+    @DisplayName("Should reject a create whose barcode another product already owns")
+    public void testCreateRejectsDuplicateBarcode() {
+        CreateProductRequest request = ProductTestFixture.createValidRequest();   // barcode 1234567890123
+        Product owner = ProductTestFixture.createProduct(7L);
+
+        when(productRepository.findAllByBarcodeId("1234567890123"))
+                .thenReturn(java.util.List.of(owner));
+
+        assertThatThrownBy(() -> productService.create(request))
+                .isInstanceOf(com.pms.exception.BusinessException.class)
+                .hasMessageContaining("7")
+                .hasMessageContaining("Galaxy S21");
+        verify(productRepository, never()).save(any(Product.class));
+    }
+
+    @Test
+    @DisplayName("Should reject an update whose barcode another product already owns")
+    public void testUpdateRejectsDuplicateBarcode() {
+        Long productId = 1L;
+        Product existingProduct = ProductTestFixture.createProduct(productId);
+        UpdateProductRequest request = UpdateProductRequest.builder()
+                .barcodeId(java.util.Optional.of("9876543210123")).build();
+        Product owner = ProductTestFixture.createLaptopProduct(9L);   // same barcode
+
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(existingProduct));
+        when(productRepository.findAllByBarcodeId("9876543210123")).thenReturn(java.util.List.of(owner));
+
+        assertThatThrownBy(() -> productService.updateProduct(productId, request))
+                .isInstanceOf(com.pms.exception.BusinessException.class)
+                .hasMessageContaining("9")
+                .hasMessageContaining("XPS 15");
+        verify(productRepository, never()).save(any(Product.class));
+    }
+
+    /**
+     * 🔴 Regression. Nothing forces a client to strip the unchanged barcode out of an edit, so a guard that
+     * did not exclude the product itself would make EVERY product with a barcode uneditable.
+     */
+    @Test
+    @DisplayName("Should accept an update that resends the product's own barcode")
+    public void testUpdateAcceptsOwnBarcode() {
+        Long productId = 1L;
+        Product existingProduct = ProductTestFixture.createProduct(productId);   // barcode 1234567890123
+        UpdateProductRequest request = UpdateProductRequest.builder()
+                .barcodeId(java.util.Optional.of("1234567890123"))
+                .productName(java.util.Optional.of("Galaxy S21 Ultra"))
+                .build();
+
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(existingProduct));
+        when(productRepository.findAllByBarcodeId("1234567890123"))
+                .thenReturn(java.util.List.of(existingProduct));
+        when(productRepository.save(any(Product.class))).thenAnswer(i -> i.getArgument(0));
+
+        ProductResponse response = productService.updateProduct(productId, request);
+
+        assertThat(response.getBarcodeId()).isEqualTo("1234567890123");
+        assertThat(response.getProductName()).isEqualTo("Galaxy S21 Ultra");
+    }
+
+    /**
+     * "" and null must not be two different states: the unique key ignores NULLs but would treat empty
+     * strings as ordinary colliding values, so the second blank-barcode product would die on a DB error.
+     * Surrounding whitespace is stripped for the same reason (" 123 " and "123" are the same code).
+     */
+    @Test
+    @DisplayName("Should store a blank barcode as null and trim a padded one")
+    public void testCreateNormalizesBarcode() {
+        when(productRepository.save(any(Product.class))).thenAnswer(i -> i.getArgument(0));
+
+        productService.create(CreateProductRequest.builder()
+                .productName("바코드 없는 물품").barcodeId("   ").build());
+        productService.create(CreateProductRequest.builder()
+                .productName("공백 낀 바코드").barcodeId("  1234567890123  ").build());
+
+        org.mockito.ArgumentCaptor<Product> captor = org.mockito.ArgumentCaptor.forClass(Product.class);
+        verify(productRepository, times(2)).save(captor.capture());
+        assertThat(captor.getAllValues().get(0).getBarcodeId()).isNull();
+        assertThat(captor.getAllValues().get(1).getBarcodeId()).isEqualTo("1234567890123");
+        // A blank barcode never even asks the database whether it is taken
+        verify(productRepository, never()).findAllByBarcodeId("");
+    }
 }

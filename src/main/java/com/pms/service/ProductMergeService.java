@@ -99,6 +99,14 @@ public class ProductMergeService {
         // Snapshot BEFORE anything moves (PLAN D7). A write failure throws and rolls the merge back.
         String snapshotFileName = snapshotWriter.write(target, source);
 
+        // 🔴 Release the source's barcode BEFORE the target claims it. The usual merge is "the surviving
+        // product takes the duplicate's barcode", and the source keeps every column through its soft
+        // delete — so with uq_products_tenant_barcode (changeset 098) in place the two rows would hold the
+        // same code for an instant and the UPDATE would fail with a raw constraint violation. Order is the
+        // whole point: this flushes first, the target adopts the code afterwards. The original value lives
+        // on in the snapshot written just above.
+        releaseSourceBarcode(source, fields.barcodeId() != null ? fields.barcodeId() : target.getBarcodeId());
+
         // The source name is read for the migration note; capture it before the bulk updates detach entities.
         String sourceName = source.getProductName();
         // Gallery order of the source, captured before the bulk update makes the two galleries
@@ -173,6 +181,22 @@ public class ProductMergeService {
                         HttpStatus.CONFLICT);
             }
         }
+    }
+
+    /**
+     * Blank the source's barcode when the merged product is taking that very code over.
+     *
+     * <p>A no-op otherwise: the source is soft-deleted, and a code nobody else wants may stay on the hidden
+     * row. {@code saveAndFlush} is deliberate — the release has to reach the database before the target's
+     * UPDATE does, or the unique key fires on the instant both rows hold the code.</p>
+     */
+    private void releaseSourceBarcode(Product source, String mergedBarcodeId) {
+        String sourceBarcode = source.getBarcodeId();
+        if (sourceBarcode == null || mergedBarcodeId == null
+                || !sourceBarcode.trim().equals(mergedBarcodeId.trim())) {
+            return;
+        }
+        productRepository.saveAndFlush(source.toBuilder().barcodeId(null).build());
     }
 
     /**

@@ -10,7 +10,15 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "products")
+// 🔴 The barcode is unique PER TENANT, never globally (changeset 098): the same retail EAN legitimately
+// lives in several tenants' catalogues, so a bare UNIQUE(barcode_id) would let the first tenant to
+// register a code take it away from all the others.
+// ⚠️ barcode_id stays nullable — MySQL (and H2 in MySQL mode) allow any number of NULLs under a unique
+// key, which is what keeps the products that carry no barcode legal. ProductServiceImpl normalises "" to
+// NULL so a blank never becomes a colliding empty string.
+@Table(name = "products",
+        uniqueConstraints = @UniqueConstraint(name = "uq_products_tenant_barcode",
+                columnNames = {"tenant_id", "barcode_id"}))
 @Getter
 @NoArgsConstructor
 @AllArgsConstructor

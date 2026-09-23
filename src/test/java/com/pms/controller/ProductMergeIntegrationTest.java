@@ -209,6 +209,27 @@ class ProductMergeIntegrationTest extends BaseIntegrationTest {
         assertThat(productRepository.findById(sourceId).orElseThrow().getActive()).isFalse();
     }
 
+    /**
+     * 🔴 The ordinary merge: the surviving product takes the duplicate's barcode. The source keeps all its
+     * columns through the soft delete, so without an explicit release both rows would hold the code at the
+     * same moment and {@code uq_products_tenant_barcode} (changeset 098) would abort the merge with a raw
+     * constraint violation. A mock never flushes, so only this round-trip catches it.
+     */
+    @Test
+    void testMergeMovesBarcodeOffTheSource() throws Exception {
+        Product source = productRepository.findById(sourceId).orElseThrow();
+        productRepository.saveAndFlush(source.toBuilder().barcodeId("014113950374").build());
+
+        mockMvc.perform(post("/api/products/merge")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(body(false)))
+                .andExpect(status().isOk());
+
+        assertThat(productRepository.findById(targetId).orElseThrow().getBarcodeId())
+                .isEqualTo("014113950374");
+        assertThat(productRepository.findById(sourceId).orElseThrow().getBarcodeId()).isNull();
+    }
+
     @Test
     void testMergeWithShoppingConflictEndToEnd() throws Exception {
         shoppingListItemRepository.save(shoppingRow(productRepository.findById(targetId).orElseThrow(), 2));

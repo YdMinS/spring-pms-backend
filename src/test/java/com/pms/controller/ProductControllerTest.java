@@ -352,9 +352,10 @@ public class ProductControllerTest extends BaseIntegrationTest {
     @Test
     @DisplayName("Should use default page size when not provided")
     public void testGetAllProducts_DefaultPageSize() throws Exception {
-        // Given
+        // Given — distinct barcodes: uq_products_tenant_barcode (changeset 098) forbids 25 copies of one code
         for (int i = 0; i < 25; i++) {
-            productRepository.save(ProductTestFixture.createProduct(null));
+            productRepository.save(ProductTestFixture.createProduct(null).toBuilder()
+                    .barcodeId("12345678900" + i).build());
         }
 
         // When & Then
@@ -408,7 +409,10 @@ public class ProductControllerTest extends BaseIntegrationTest {
     public void testGetAllProducts_OnlyActiveProducts() throws Exception {
         // Given
         productRepository.save(ProductTestFixture.createProduct(null)); // active
-        productRepository.save(ProductTestFixture.createInactiveProduct(null)); // inactive
+        // The two fixtures share a barcode, which uq_products_tenant_barcode (changeset 098) now forbids —
+        // the key counts soft-deleted rows too. The test is about `active`, so the code just has to differ.
+        productRepository.save(ProductTestFixture.createInactiveProduct(null).toBuilder()
+                .barcodeId("3333333333333").build()); // inactive
 
         // When & Then
         mockMvc.perform(get("/api/products")
