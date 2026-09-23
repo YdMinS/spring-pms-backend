@@ -552,7 +552,7 @@ public class ProductServiceTest {
         org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(0, 20);
         org.springframework.data.domain.Page<Product> productPage = new org.springframework.data.domain.PageImpl<>(products, pageable, 1L);
 
-        when(productRepository.searchByKeyword(eq("Samsung"), any(org.springframework.data.domain.Pageable.class))).thenReturn(productPage);
+        when(productRepository.searchByKeyword(eq("Samsung"), isNull(), any(org.springframework.data.domain.Pageable.class))).thenReturn(productPage);
 
         // When
         org.springframework.data.domain.Page<ProductResponse> result = productService.getAllProducts(0, 20, "Samsung");
@@ -562,7 +562,54 @@ public class ProductServiceTest {
                 .isNotNull()
                 .hasSize(1);
 
-        verify(productRepository).searchByKeyword(eq("Samsung"), any(org.springframework.data.domain.Pageable.class));
+        // A word is not an id: the id branch is switched off with a null.
+        verify(productRepository).searchByKeyword(eq("Samsung"), isNull(), any(org.springframework.data.domain.Pageable.class));
+    }
+
+    // ==================== Search by product id (2609_73) ====================
+
+    /**
+     * A numeric keyword is ALSO handed over as a parsed id — the text match is not dropped, the two are
+     * ORed in the query, so "500" still finds a product named "500ml 생수".
+     */
+    @Test
+    @DisplayName("Should pass a numeric keyword to the repository as a parsed product id")
+    public void testGetAllProducts_NumericSearch_PassesParsedId() {
+        // Given
+        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(0, 20);
+        org.springframework.data.domain.Page<Product> productPage = new org.springframework.data.domain.PageImpl<>(
+                java.util.Collections.singletonList(ProductTestFixture.createProduct(152L)), pageable, 1L);
+
+        when(productRepository.searchByKeyword(eq("152"), eq(152L), any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(productPage);
+
+        // When - the box is trimmed before both the text and the id reading
+        org.springframework.data.domain.Page<ProductResponse> result = productService.getAllProducts(0, 20, " 152 ");
+
+        // Then
+        assertThat(result).hasSize(1);
+        verify(productRepository).searchByKeyword(eq("152"), eq(152L), any(org.springframework.data.domain.Pageable.class));
+    }
+
+    /**
+     * 🔴 A number too large for a {@code Long} must not blow up the request — it is simply not an id, so
+     * the search falls back to the text match alone.
+     */
+    @Test
+    @DisplayName("Should treat an out-of-range number as text, not as an id")
+    public void testGetAllProducts_OverflowNumericSearch_IsNotAnId() {
+        // Given
+        String tooBig = "99999999999999999999999999";
+        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(0, 20);
+        org.springframework.data.domain.Page<Product> emptyPage = new org.springframework.data.domain.PageImpl<>(
+                java.util.Collections.emptyList(), pageable, 0L);
+
+        when(productRepository.searchByKeyword(eq(tooBig), isNull(), any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(emptyPage);
+
+        // When / Then - no NumberFormatException reaches the caller
+        assertThatCode(() -> productService.getAllProducts(0, 20, tooBig)).doesNotThrowAnyException();
+        verify(productRepository).searchByKeyword(eq(tooBig), isNull(), any(org.springframework.data.domain.Pageable.class));
     }
 
     // ==================== Phase 2-2 Cycle 9: testGetAllProducts_EmptySearch_AllProducts ====================
@@ -602,7 +649,7 @@ public class ProductServiceTest {
         org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(0, 20);
         org.springframework.data.domain.Page<Product> emptyPage = new org.springframework.data.domain.PageImpl<>(emptyList, pageable, 0L);
 
-        when(productRepository.searchByKeyword(eq("NonExistent"), any(org.springframework.data.domain.Pageable.class))).thenReturn(emptyPage);
+        when(productRepository.searchByKeyword(eq("NonExistent"), isNull(), any(org.springframework.data.domain.Pageable.class))).thenReturn(emptyPage);
 
         // When
         org.springframework.data.domain.Page<ProductResponse> result = productService.getAllProducts(0, 20, "NonExistent");

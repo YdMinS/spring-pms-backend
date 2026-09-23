@@ -105,11 +105,28 @@ public class ProductServiceImpl implements ProductService {
         if (search == null || search.trim().isEmpty()) {
             productPage = productRepository.findByActiveTrue(pageable);
         } else {
-            productPage = productRepository.searchByKeyword(search.trim(), pageable);
+            String keyword = search.trim();
+            productPage = productRepository.searchByKeyword(keyword, parseProductIdOrNull(keyword), pageable);
         }
 
         // Convert to response
         return productPage.map(this::mapToResponse);
+    }
+
+    /**
+     * The keyword read as an oclyx product id, or {@code null} when it is not one.
+     *
+     * <p>Anything that is not a plain number — and any number outside the {@code Long} range — is simply
+     * not an id, so the id branch of the search switches off and the name/brand/description match stands
+     * alone. This must never throw: a 30-digit string someone pastes into the box is an ordinary keyword,
+     * not a bad request.</p>
+     */
+    private static Long parseProductIdOrNull(String keyword) {
+        try {
+            return Long.valueOf(keyword);
+        } catch (NumberFormatException notAnId) {
+            return null;
+        }
     }
 
     @Override
