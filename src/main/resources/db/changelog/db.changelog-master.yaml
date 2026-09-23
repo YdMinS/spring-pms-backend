@@ -185,7 +185,12 @@ databaseChangeLog:
       file: db/changelog/changes/096-claim-collect-invoice-source.yaml
   - include:
       file: db/changelog/changes/097-drop-product-listing-product.yaml
-  - include:
-      file: db/changelog/changes/098-product-barcode-unique.yaml
+  # 🔴 099 BEFORE 098 — NOT a numbering mistake, do not "fix" it back into numeric order.
+  #    098 adds UNIQUE (tenant_id, barcode_id) and its precondition HALTs on any duplicate pair, counting
+  #    soft-deleted rows (MySQL has no partial unique index). 099 is what frees the barcodes those hidden
+  #    rows still hold. In 098-then-099 order the deploy stops at 098's precondition and 099 never runs —
+  #    which is exactly how prod went down on 2026-09-23. Releasing first leaves 098 a clean table.
   - include:
       file: db/changelog/changes/099-release-deleted-product-barcode.yaml
+  - include:
+      file: db/changelog/changes/098-product-barcode-unique.yaml
