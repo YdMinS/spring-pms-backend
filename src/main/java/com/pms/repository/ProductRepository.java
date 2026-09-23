@@ -26,14 +26,31 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     Page<Product> findByActiveTrue(Pageable pageable);
 
     /**
-     * Search products by keyword (for Phase 2-3 READ implementation)
-     * Searches in productName, brand, description fields
+     * Active products matched by ONE keyword against four things.
+     *
+     * <ul>
+     *   <li><b>productName</b>, <b>brand</b>, <b>description</b> — case-insensitive <b>partial</b> match</li>
+     *   <li><b>the product's own oclyx id</b> — <b>exact</b> match</li>
+     * </ul>
+     *
+     * <p>🔴 The id is matched exactly on purpose: a number under {@code like %..%} would drag in every
+     * longer id that merely contains it (mirrors {@code MasterProductRepository.searchPage}, 110).
+     * Comparing the number itself rather than {@code cast(p.id as string)} also keeps the primary key
+     * index usable.</p>
+     *
+     * <p>{@code idValue} is the same keyword pre-parsed by the service: {@code null} whenever the keyword
+     * is not a plain {@code Long} (text, or a number too large), which switches the id branch off and
+     * leaves the text match alone. There is no parameter selecting WHAT to search — the keyword is one,
+     * and only the server knows what an id looks like (2609_60 / D3·D8).</p>
      */
     @Query("SELECT p FROM Product p WHERE p.active = true " +
            "AND (LOWER(p.productName) LIKE LOWER(CONCAT('%', :keyword, '%')) " +
            "OR LOWER(p.brand) LIKE LOWER(CONCAT('%', :keyword, '%')) " +
-           "OR LOWER(p.description) LIKE LOWER(CONCAT('%', :keyword, '%')))")
-    Page<Product> searchByKeyword(@Param("keyword") String keyword, Pageable pageable);
+           "OR LOWER(p.description) LIKE LOWER(CONCAT('%', :keyword, '%')) " +
+           "OR (:idValue IS NOT NULL AND p.id = :idValue))")
+    Page<Product> searchByKeyword(@Param("keyword") String keyword,
+                                  @Param("idValue") Long idValue,
+                                  Pageable pageable);
 
     /**
      * Tenant-scoped fetch by id. Returns empty for a cross-tenant id.
@@ -66,6 +83,19 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
      * Find product by barcode ID
      */
     Optional<Product> findByBarcodeId(String barcodeId);
+
+    /**
+     * Every product carrying this barcode, soft-deleted ones included (barcode uniqueness guard).
+     *
+     * <p>Returns a list, not an {@code Optional}: the guard has to run on databases that still hold a
+     * legacy duplicate pair, and {@code findByBarcodeId} would blow up with a non-unique result there
+     * instead of reporting the clash. Soft-deleted rows count because the DB key counts them too
+     * (changeset 098) — the two must agree. In practice a hidden row no longer holds a barcode at all:
+     * {@code ProductServiceImpl.deleteProduct} releases it on delete and changeset 099 cleared the rows
+     * deleted before that, so this finder returns active owners only. Derived query → Hibernate's
+     * {@code @TenantId} filter applies, so the check is tenant-scoped exactly like the constraint.</p>
+     */
+    List<Product> findAllByBarcodeId(String barcodeId);
 
     /**
      * Distinct tenant ids across all products, ignoring the {@code @TenantId} filter.

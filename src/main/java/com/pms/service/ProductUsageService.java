@@ -31,10 +31,12 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * "Where is this product used?" (FEATURE_2609_69 / A).
@@ -95,6 +97,47 @@ public class ProductUsageService {
 
         return new ProductUsageResponse(product.getId(), masterProducts, listingOptions, history,
                 deletable, buildBlockers(masterProducts, listingOptions));
+    }
+
+    /**
+     * 「연결된 판매채널이 몇 개인가」 — 물품 여러 개를 한 번에 (2026-09-23).
+     *
+     * <p>세는 대상은 {@link #getUsage} 의 {@code masterProducts[].channels} 와 <b>같은 것</b>이다:
+     * 이 물품이 들어간 마스터에 붙은 판매상품(채널 셀)의 distinct 개수. 화면 두 곳이 다른 숫자를 말하면
+     * 사용자는 둘 중 무엇도 믿지 못한다 — 그래서 정의를 가진 이 클래스가 목록용 배치 조회도 소유한다.</p>
+     *
+     * <p>🔴 <b>쿼리 2개 고정</b>(구성상품 경로 + 옵션 items 경로). 페이지 크기와 무관하다 — 물품마다
+     * 조회하면 한 페이지가 20~40 쿼리가 된다. 두 경로의 결과는 서비스에서 <b>합집합</b>으로 모으고
+     * listing id 로 distinct 를 잡는다(양쪽에서 걸린 셀을 두 번 세지 않는다).</p>
+     *
+     * <p>⚠️ 셀의 상태(DRAFT·판매중지)나 마켓 등록 여부로 거르지 않는다 — 연결 현황 화면도 거르지 않는다.</p>
+     *
+     * @param productIds 물품 id (빈 목록이면 쿼리 0회)
+     * @return 물품 id → 연결된 채널 수. 채널이 없는 물품은 <b>키가 없다</b>(호출부가 0 으로 읽는다)
+     */
+    public Map<Long, Integer> countChannelsByProduct(Collection<Long> productIds) {
+        if (productIds == null || productIds.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<Long, Set<Long>> listingIdsByProduct = new HashMap<>();
+        collectPairs(listingIdsByProduct,
+                masterProductComponentRepository.findChannelListingIdsByProductIds(productIds));
+        collectPairs(listingIdsByProduct,
+                masterProductOptionItemRepository.findChannelListingIdsByProductIds(productIds));
+
+        Map<Long, Integer> counts = new HashMap<>();
+        listingIdsByProduct.forEach((productId, listingIds) -> counts.put(productId, listingIds.size()));
+        return counts;
+    }
+
+    /** {@code [productId, listingId]} 행들을 물품별 집합으로 접는다. */
+    private void collectPairs(Map<Long, Set<Long>> target, List<Object[]> rows) {
+        for (Object[] row : rows) {
+            Long productId = (Long) row[0];
+            Long listingId = (Long) row[1];
+            target.computeIfAbsent(productId, k -> new HashSet<>()).add(listingId);
+        }
     }
 
     /**

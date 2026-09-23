@@ -474,6 +474,38 @@ public class ProductServiceTest {
         verify(productRepository).findByActiveTrue(any(org.springframework.data.domain.Pageable.class));
     }
 
+    /**
+     * 「판매채널」 컬럼 (2026-09-23).
+     *
+     * <p>🔴 채널 수는 <b>페이지의 물품 id 로 한 번</b> 모은다 — 물품마다 세면 한 페이지가 수십 쿼리가 된다.
+     * 세는 규칙 자체는 {@code ProductUsageService} 가 소유하고 실제 SQL 로 검증한다
+     * ({@code ProductChannelCountTest}). 여기서 지키는 것은 <b>호출 모양</b>이다.</p>
+     */
+    @Test
+    @DisplayName("Should fill the channel count from one batched lookup for the whole page")
+    public void testGetAllProducts_ChannelCountBatchedOncePerPage() {
+        // Given
+        Product product1 = ProductTestFixture.createProduct(1L);
+        Product product2 = ProductTestFixture.createLaptopProduct(2L);
+        org.springframework.data.domain.Pageable pageable =
+                org.springframework.data.domain.PageRequest.of(0, 20);
+        when(productRepository.findByActiveTrue(any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(
+                        java.util.List.of(product1, product2), pageable, 2L));
+        // 2번 물품은 어느 마스터에도 안 붙어 결과 맵에 없다 → 화면엔 0.
+        when(productUsageService.countChannelsByProduct(java.util.List.of(1L, 2L)))
+                .thenReturn(java.util.Map.of(1L, 3));
+
+        // When
+        org.springframework.data.domain.Page<ProductResponse> result =
+                productService.getAllProducts(0, 20, null);
+
+        // Then
+        assertThat(result.getContent()).extracting(ProductResponse::getChannelCount)
+                .containsExactly(3, 0);
+        verify(productUsageService, times(1)).countChannelsByProduct(anyCollection());
+    }
+
     // ==================== Phase 2-2 Cycle 5: testGetAllProducts_DefaultPageSize ====================
 
     @Test
@@ -552,7 +584,7 @@ public class ProductServiceTest {
         org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(0, 20);
         org.springframework.data.domain.Page<Product> productPage = new org.springframework.data.domain.PageImpl<>(products, pageable, 1L);
 
-        when(productRepository.searchByKeyword(eq("Samsung"), any(org.springframework.data.domain.Pageable.class))).thenReturn(productPage);
+        when(productRepository.searchByKeyword(eq("Samsung"), isNull(), any(org.springframework.data.domain.Pageable.class))).thenReturn(productPage);
 
         // When
         org.springframework.data.domain.Page<ProductResponse> result = productService.getAllProducts(0, 20, "Samsung");
@@ -562,7 +594,54 @@ public class ProductServiceTest {
                 .isNotNull()
                 .hasSize(1);
 
-        verify(productRepository).searchByKeyword(eq("Samsung"), any(org.springframework.data.domain.Pageable.class));
+        // A word is not an id: the id branch is switched off with a null.
+        verify(productRepository).searchByKeyword(eq("Samsung"), isNull(), any(org.springframework.data.domain.Pageable.class));
+    }
+
+    // ==================== Search by product id (2609_73) ====================
+
+    /**
+     * A numeric keyword is ALSO handed over as a parsed id — the text match is not dropped, the two are
+     * ORed in the query, so "500" still finds a product named "500ml 생수".
+     */
+    @Test
+    @DisplayName("Should pass a numeric keyword to the repository as a parsed product id")
+    public void testGetAllProducts_NumericSearch_PassesParsedId() {
+        // Given
+        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(0, 20);
+        org.springframework.data.domain.Page<Product> productPage = new org.springframework.data.domain.PageImpl<>(
+                java.util.Collections.singletonList(ProductTestFixture.createProduct(152L)), pageable, 1L);
+
+        when(productRepository.searchByKeyword(eq("152"), eq(152L), any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(productPage);
+
+        // When - the box is trimmed before both the text and the id reading
+        org.springframework.data.domain.Page<ProductResponse> result = productService.getAllProducts(0, 20, " 152 ");
+
+        // Then
+        assertThat(result).hasSize(1);
+        verify(productRepository).searchByKeyword(eq("152"), eq(152L), any(org.springframework.data.domain.Pageable.class));
+    }
+
+    /**
+     * 🔴 A number too large for a {@code Long} must not blow up the request — it is simply not an id, so
+     * the search falls back to the text match alone.
+     */
+    @Test
+    @DisplayName("Should treat an out-of-range number as text, not as an id")
+    public void testGetAllProducts_OverflowNumericSearch_IsNotAnId() {
+        // Given
+        String tooBig = "99999999999999999999999999";
+        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(0, 20);
+        org.springframework.data.domain.Page<Product> emptyPage = new org.springframework.data.domain.PageImpl<>(
+                java.util.Collections.emptyList(), pageable, 0L);
+
+        when(productRepository.searchByKeyword(eq(tooBig), isNull(), any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(emptyPage);
+
+        // When / Then - no NumberFormatException reaches the caller
+        assertThatCode(() -> productService.getAllProducts(0, 20, tooBig)).doesNotThrowAnyException();
+        verify(productRepository).searchByKeyword(eq(tooBig), isNull(), any(org.springframework.data.domain.Pageable.class));
     }
 
     // ==================== Phase 2-2 Cycle 9: testGetAllProducts_EmptySearch_AllProducts ====================
@@ -602,7 +681,7 @@ public class ProductServiceTest {
         org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(0, 20);
         org.springframework.data.domain.Page<Product> emptyPage = new org.springframework.data.domain.PageImpl<>(emptyList, pageable, 0L);
 
-        when(productRepository.searchByKeyword(eq("NonExistent"), any(org.springframework.data.domain.Pageable.class))).thenReturn(emptyPage);
+        when(productRepository.searchByKeyword(eq("NonExistent"), isNull(), any(org.springframework.data.domain.Pageable.class))).thenReturn(emptyPage);
 
         // When
         org.springframework.data.domain.Page<ProductResponse> result = productService.getAllProducts(0, 20, "NonExistent");
@@ -1005,5 +1084,126 @@ public class ProductServiceTest {
         verify(productRepository, times(1)).save(captor.capture());
         assertThat(captor.getValue().getActive()).isFalse();
         assertThat(captor.getValue().getId()).isEqualTo(productId);
+    }
+
+    /**
+     * 🔴 The delete must let go of the barcode.
+     *
+     * <p>The row survives the soft delete with every column, and {@code uq_products_tenant_barcode}
+     * (changeset 098) counts hidden rows — so a barcode left here would be reserved forever and the
+     * product that replaces the deleted one could never take it over. The end-to-end proof is
+     * {@code ProductBarcodeReleaseIntegrationTest}; this one pins the write itself.</p>
+     */
+    @Test
+    @DisplayName("Should clear the barcode when soft deleting so the code can be reused")
+    public void testDeleteProductReleasesBarcode() {
+        // Given - the fixture carries barcode 1234567890123
+        Long productId = 1L;
+        Product existingProduct = ProductTestFixture.createProduct(productId);
+
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(existingProduct));
+        when(productRepository.save(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        givenDeletable(productId);
+
+        // When
+        productService.deleteProduct(productId);
+
+        // Then
+        org.mockito.ArgumentCaptor<Product> captor = org.mockito.ArgumentCaptor.forClass(Product.class);
+        verify(productRepository).save(captor.capture());
+        assertThat(captor.getValue().getBarcodeId()).isNull();
+        assertThat(captor.getValue().getActive()).isFalse();
+        // Everything else survives the delete - only active and barcodeId change
+        assertThat(captor.getValue().getProductName()).isEqualTo(existingProduct.getProductName());
+    }
+
+    // ==================== Barcode uniqueness (changeset 098) ====================
+
+    /**
+     * 🔴 The guard exists so the user gets a readable 409 instead of a raw constraint violation, and the
+     * message has to name the product already holding the code — otherwise the owner of a soft-deleted
+     * duplicate is invisible and the clash cannot be resolved.
+     */
+    @Test
+    @DisplayName("Should reject a create whose barcode another product already owns")
+    public void testCreateRejectsDuplicateBarcode() {
+        CreateProductRequest request = ProductTestFixture.createValidRequest();   // barcode 1234567890123
+        Product owner = ProductTestFixture.createProduct(7L);
+
+        when(productRepository.findAllByBarcodeId("1234567890123"))
+                .thenReturn(java.util.List.of(owner));
+
+        assertThatThrownBy(() -> productService.create(request))
+                .isInstanceOf(com.pms.exception.BusinessException.class)
+                .hasMessageContaining("7")
+                .hasMessageContaining("Galaxy S21");
+        verify(productRepository, never()).save(any(Product.class));
+    }
+
+    @Test
+    @DisplayName("Should reject an update whose barcode another product already owns")
+    public void testUpdateRejectsDuplicateBarcode() {
+        Long productId = 1L;
+        Product existingProduct = ProductTestFixture.createProduct(productId);
+        UpdateProductRequest request = UpdateProductRequest.builder()
+                .barcodeId(java.util.Optional.of("9876543210123")).build();
+        Product owner = ProductTestFixture.createLaptopProduct(9L);   // same barcode
+
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(existingProduct));
+        when(productRepository.findAllByBarcodeId("9876543210123")).thenReturn(java.util.List.of(owner));
+
+        assertThatThrownBy(() -> productService.updateProduct(productId, request))
+                .isInstanceOf(com.pms.exception.BusinessException.class)
+                .hasMessageContaining("9")
+                .hasMessageContaining("XPS 15");
+        verify(productRepository, never()).save(any(Product.class));
+    }
+
+    /**
+     * 🔴 Regression. Nothing forces a client to strip the unchanged barcode out of an edit, so a guard that
+     * did not exclude the product itself would make EVERY product with a barcode uneditable.
+     */
+    @Test
+    @DisplayName("Should accept an update that resends the product's own barcode")
+    public void testUpdateAcceptsOwnBarcode() {
+        Long productId = 1L;
+        Product existingProduct = ProductTestFixture.createProduct(productId);   // barcode 1234567890123
+        UpdateProductRequest request = UpdateProductRequest.builder()
+                .barcodeId(java.util.Optional.of("1234567890123"))
+                .productName(java.util.Optional.of("Galaxy S21 Ultra"))
+                .build();
+
+        when(productRepository.findById(productId)).thenReturn(java.util.Optional.of(existingProduct));
+        when(productRepository.findAllByBarcodeId("1234567890123"))
+                .thenReturn(java.util.List.of(existingProduct));
+        when(productRepository.save(any(Product.class))).thenAnswer(i -> i.getArgument(0));
+
+        ProductResponse response = productService.updateProduct(productId, request);
+
+        assertThat(response.getBarcodeId()).isEqualTo("1234567890123");
+        assertThat(response.getProductName()).isEqualTo("Galaxy S21 Ultra");
+    }
+
+    /**
+     * "" and null must not be two different states: the unique key ignores NULLs but would treat empty
+     * strings as ordinary colliding values, so the second blank-barcode product would die on a DB error.
+     * Surrounding whitespace is stripped for the same reason (" 123 " and "123" are the same code).
+     */
+    @Test
+    @DisplayName("Should store a blank barcode as null and trim a padded one")
+    public void testCreateNormalizesBarcode() {
+        when(productRepository.save(any(Product.class))).thenAnswer(i -> i.getArgument(0));
+
+        productService.create(CreateProductRequest.builder()
+                .productName("바코드 없는 물품").barcodeId("   ").build());
+        productService.create(CreateProductRequest.builder()
+                .productName("공백 낀 바코드").barcodeId("  1234567890123  ").build());
+
+        org.mockito.ArgumentCaptor<Product> captor = org.mockito.ArgumentCaptor.forClass(Product.class);
+        verify(productRepository, times(2)).save(captor.capture());
+        assertThat(captor.getAllValues().get(0).getBarcodeId()).isNull();
+        assertThat(captor.getAllValues().get(1).getBarcodeId()).isEqualTo("1234567890123");
+        // A blank barcode never even asks the database whether it is taken
+        verify(productRepository, never()).findAllByBarcodeId("");
     }
 }

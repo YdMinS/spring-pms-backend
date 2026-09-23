@@ -1,0 +1,57 @@
+# One barcode, one product — per tenant (FEATURE product-barcode-unique).
+#   Until now nothing stopped two products from carrying the same barcode_id: no DB constraint and no
+#   application check. The migration backfill has pushed the barcode-carrying population past a thousand
+#   rows, so the duplicates get locked out now, before more accumulate.
+#
+# 🔴 SCOPED BY TENANT on purpose. A bare UNIQUE(barcode_id) would mean the first tenant to register an EAN
+#    takes it away from every other tenant — the same retail product legitimately exists in many tenants'
+#    catalogues. The SaaS transition makes that fatal, so the key is (tenant_id, barcode_id).
+#
+# ⚠️ barcode_id stays NULLABLE. MySQL lets a UNIQUE key hold any number of NULLs, which is what keeps the
+#    ~1,200 products that have no barcode legal. The application turns "" into NULL so a blank never
+#    becomes a colliding empty string.
+#
+# 🔴 The key counts SOFT-DELETED rows too (active = 0) — MySQL has no partial unique index. So the rule
+#    is NOT "a deleted product's barcode stays reserved" (that was this comment's original claim and it
+#    turned out to be the bug: a user deleting one of two duplicates could never give that code to the
+#    survivor). Instead NO hidden row is allowed to hold a barcode: ProductServiceImpl.deleteProduct
+#    releases it on delete, ProductMergeService releases the source's before the target adopts it, and
+#    changeset 099 cleared the rows deleted before that. App check and this key therefore always agree.
+#
+# 🔴 PRE-FLIGHT — run this on the target DB BEFORE deploying:
+#      SELECT tenant_id, barcode_id, COUNT(*) FROM products
+#       WHERE barcode_id IS NOT NULL AND barcode_id <> ''
+#       GROUP BY tenant_id, barcode_id HAVING COUNT(*) > 1;
+#    Any row returned HALTS the deployment (the precondition below). Clear it by hand — decide which
+#    product keeps the code and blank the other one. 🔴 Never let a changeset edit the data: the two rows
+#    are different goods, and which one is wrong is a business judgement, not a migration rule.
+databaseChangeLog:
+
+  - changeSet:
+      id: 098-product-barcode-unique
+      author: oclyx
+      comment: "UNIQUE (tenant_id, barcode_id) on products; NULL barcodes stay unconstrained."
+      preConditions:
+        - onFail: HALT
+        - onFailMessage: >-
+            중복 바코드를 먼저 정리해야 한다. products 에 같은 (tenant_id, barcode_id) 를 가진 행이 남아 있어
+            유일 제약을 걸 수 없다. 위 주석의 PRE-FLIGHT 쿼리로 중복 행을 찾아, 어느 물품이 그 바코드를 가질지
+            사람이 정하고 나머지의 barcode_id 를 비운 뒤 다시 배포한다. 이 changeset 은 데이터를 고치지 않는다.
+        - sqlCheck:
+            expectedResult: 0
+            sql: >-
+              SELECT count(*) FROM (
+                SELECT 1 FROM products
+                 WHERE barcode_id IS NOT NULL AND barcode_id <> ''
+                 GROUP BY tenant_id, barcode_id
+                HAVING count(*) > 1
+              ) dup
+      changes:
+        - addUniqueConstraint:
+            tableName: products
+            columnNames: "tenant_id, barcode_id"
+            constraintName: uq_products_tenant_barcode
+      rollback:
+        - dropUniqueConstraint:
+            tableName: products
+            constraintName: uq_products_tenant_barcode

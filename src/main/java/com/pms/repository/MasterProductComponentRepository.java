@@ -33,6 +33,22 @@ public interface MasterProductComponentRepository extends JpaRepository<MasterPr
     @EntityGraph(attributePaths = "masterProduct")
     List<MasterProductComponent> findByProductId(Long productId);
 
+    /**
+     * (productId, listingId) pairs for the channel-count column on the product list (2026-09-23).
+     *
+     * <p>Same definition as the usage screen: a master this product is a component of, and every channel
+     * cell linked to that master ({@code ProductListingRepository#findByMasterProductIdIn}). Returned as
+     * pairs — not a {@code count} — because the caller unions these with the option-item path and a
+     * listing reachable through both must be counted once.</p>
+     *
+     * <p>🔴 Tenant isolation is structural: the ad-hoc join targets {@code ProductListing}, which carries
+     * {@code @TenantId}, so Hibernate filters it automatically. Do not add a manual tenant condition.</p>
+     */
+    @Query("select distinct c.product.id, l.id from MasterProductComponent c "
+            + "join ProductListing l on l.masterProduct.id = c.masterProduct.id "
+            + "where c.product.id in :productIds")
+    List<Object[]> findChannelListingIdsByProductIds(@Param("productIds") Collection<Long> productIds);
+
     void deleteByMasterProductId(Long masterProductId);
 
     /**

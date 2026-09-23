@@ -185,3 +185,7 @@ databaseChangeLog:
       file: db/changelog/changes/096-claim-collect-invoice-source.yaml
   - include:
       file: db/changelog/changes/097-drop-product-listing-product.yaml
+  - include:
+      file: db/changelog/changes/098-product-barcode-unique.yaml
+  - include:
+      file: db/changelog/changes/099-release-deleted-product-barcode.yaml
