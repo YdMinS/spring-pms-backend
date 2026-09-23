@@ -3,6 +3,7 @@ package com.pms.service.claim;
 import com.pms.domain.CollectInvoiceSource;
 import com.pms.domain.OrderClaim;
 import com.pms.repository.OrderClaimRepository;
+import com.pms.service.InvoiceNumbers;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -44,10 +45,11 @@ public class ClaimCollectInvoiceRecorder {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void record(List<OrderClaim> siblings, String carrierCode, String invoiceNumber,
                        CollectInvoiceSource source) {
-        if (invoiceNumber == null || invoiceNumber.isBlank()) {
+        // 장부에 남는 값도 전송한 값과 같아야 한다 — 하이픈·공백은 여기서도 벗긴다.
+        String invoice = InvoiceNumbers.normalize(invoiceNumber);
+        if (invoice == null || invoice.isEmpty()) {
             throw new IllegalArgumentException("회수 송장번호가 비어 있어 기록할 수 없습니다");
         }
-        String invoice = invoiceNumber.trim();
         String carrier = (carrierCode == null || carrierCode.isBlank()) ? null : carrierCode.trim();
 
         List<OrderClaim> updated = new ArrayList<>();

@@ -26,6 +26,7 @@ import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.ShipmentParcelItemRepository;
 import com.pms.repository.ShipmentParcelRepository;
+import com.pms.service.InvoiceNumbers;
 import com.pms.service.MasterChannelConfigService;
 import com.pms.service.stock.RemainingLine;
 import com.pms.service.stock.StockOutService;
@@ -80,7 +81,10 @@ public class PackingServiceImpl implements PackingService {
 
     @Override
     public PackingScanResponse scan(String invoiceNumber) {
-        String scanned = invoiceNumber == null ? "" : invoiceNumber.trim();
+        // 스캐너·손입력 어느 쪽이든 하이픈·공백은 벗겨서 찾는다 — 저장값이 정규화돼 있으므로
+        // 벗기지 않으면 "2558-2825-3026" 으로 친 사용자가 자기 박스를 못 연다.
+        String normalized = InvoiceNumbers.normalize(invoiceNumber);
+        String scanned = normalized == null ? "" : normalized;
         ShipmentParcel parcel = parcelRepository.findByInvoiceNumberOrderByIdAsc(scanned).stream()
                 .findFirst()
                 .orElseThrow(() -> new BusinessException(
