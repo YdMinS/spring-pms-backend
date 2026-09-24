@@ -92,23 +92,33 @@ public class ProductListingServiceImpl implements ProductListingService {
      * @param page Page number (0-indexed)
      * @param size Page size
      * @param masterLinked 마스터 연결 여부 필터(2609_22/04); null = 기존 동작(전체)
+     * @param search 검색어; null/공백 = 검색 없음(기존 쿼리 그대로)
      * @return Page of ProductListingResponse with options
      */
     @Override
-    public Page<ProductListingResponse> getByPlatform(Platform platform, int page, int size, Boolean masterLinked) {
+    public Page<ProductListingResponse> getByPlatform(
+            Platform platform, int page, int size, Boolean masterLinked, String search) {
         if (size <= 0) {
             size = DEFAULT_PAGE_SIZE;
         }
 
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "id"));
+        // 검색어는 여기서 한 번만 다듬는다 — 공백만 친 검색은 "검색 없음"이지 "이름에 공백 포함"이 아니다.
+        String keyword = search == null || search.isBlank() ? null : search.trim();
         // 2609_22/04: 3값 분기 — 미지정(null)은 기존 쿼리 그대로여야 한다(동작 무변경).
         Page<ProductListing> listingPage;
         if (masterLinked == null) {
-            listingPage = productListingRepository.findByPlatform(platform, pageable);
+            listingPage = keyword == null
+                    ? productListingRepository.findByPlatform(platform, pageable)
+                    : productListingRepository.searchByPlatform(platform, keyword, pageable);
         } else if (masterLinked) {
-            listingPage = productListingRepository.findByPlatformAndMasterProductIsNotNull(platform, pageable);
+            listingPage = keyword == null
+                    ? productListingRepository.findByPlatformAndMasterProductIsNotNull(platform, pageable)
+                    : productListingRepository.searchByPlatformAndMasterProductIsNotNull(platform, keyword, pageable);
         } else {
-            listingPage = productListingRepository.findByPlatformAndMasterProductIsNull(platform, pageable);
+            listingPage = keyword == null
+                    ? productListingRepository.findByPlatformAndMasterProductIsNull(platform, pageable)
+                    : productListingRepository.searchByPlatformAndMasterProductIsNull(platform, keyword, pageable);
         }
         return listingPage.map(this::loadProductListingWithOptions);
     }
