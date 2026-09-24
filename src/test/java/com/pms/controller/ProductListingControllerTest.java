@@ -130,6 +130,42 @@ class ProductListingControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.content.length()").value(2));
     }
 
+    // ---- 검색(2026-09-25): 필터와 함께 걸린다 ----
+
+    /**
+     * `search` 는 <b>선택</b>이고, 플랫폼·마스터연결 필터를 대체하지 않고 함께 걸린다.
+     * 공백만 보낸 검색이 "이름에 공백 포함"으로 새면 전체가 사라지므로 그 경우도 못박는다.
+     */
+    @Test
+    void testListSearchKeyword() throws Exception {
+        // 이름 부분일치
+        mockMvc.perform(get(BASE).param("platform", "COUPANG").param("search", "연결된")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content.length()").value(1))
+                .andExpect(jsonPath("$.data.content[0].id").value(linkedId));
+
+        // 마켓 상품 ID 정확일치
+        mockMvc.perform(get(BASE).param("platform", "COUPANG").param("search", "P-UNLINKED")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content.length()").value(1))
+                .andExpect(jsonPath("$.data.content[0].id").value(unlinkedId));
+
+        // 검색 + 마스터연결 필터는 AND — 연결된 셀만 보는 중엔 미연결 셀이 검색돼도 나오지 않는다.
+        mockMvc.perform(get(BASE).param("platform", "COUPANG").param("masterLinked", "true")
+                        .param("search", "미연결")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content.length()").value(0));
+
+        // 공백만 = 검색 없음(전체)
+        mockMvc.perform(get(BASE).param("platform", "COUPANG").param("search", "   ")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content.length()").value(2));
+    }
+
     // ---- D32: legacy 쓰기 차단 (양방향) ----
 
     @Test

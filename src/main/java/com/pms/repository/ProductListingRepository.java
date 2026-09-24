@@ -50,6 +50,47 @@ public interface ProductListingRepository extends JpaRepository<ProductListing, 
     Page<ProductListing> findByPlatformAndMasterProductIsNotNull(Platform platform, Pageable pageable);
 
     /**
+     * Keyword half of the listing screen's search (판매상품 조회, 2026-09-25). Matched against two things:
+     * <ul>
+     *   <li>the cell <b>name</b> — case-insensitive partial match</li>
+     *   <li>the <b>platform product id</b> (Coupang sellerProductId) — <b>exact</b> match</li>
+     * </ul>
+     *
+     * <p>The id is matched exactly on purpose, mirroring {@code MasterProductRepository.searchPage}: a
+     * numeric id under {@code like %..%} would drag in every longer id that merely contains it.</p>
+     *
+     * <p><b>Extension point</b>: another searchable field = one more {@code or} in this one constant, which
+     * every variant below shares (so search never diverges between the master-link tabs).</p>
+     */
+    String SEARCH_PREDICATE =
+            " and (lower(l.name) like lower(concat('%', :keyword, '%')) or l.platformProductId = :keyword)";
+
+    /** Keyword variant of {@link #findByPlatform} — same rows, narrowed by {@link #SEARCH_PREDICATE}. */
+    @Query(value = "select l from ProductListing l where l.platform = :platform" + SEARCH_PREDICATE,
+           countQuery = "select count(l) from ProductListing l where l.platform = :platform" + SEARCH_PREDICATE)
+    Page<ProductListing> searchByPlatform(@Param("platform") Platform platform,
+                                          @Param("keyword") String keyword,
+                                          Pageable pageable);
+
+    /** Keyword variant of {@link #findByPlatformAndMasterProductIsNull}. */
+    @Query(value = "select l from ProductListing l "
+            + "where l.platform = :platform and l.masterProduct is null" + SEARCH_PREDICATE,
+           countQuery = "select count(l) from ProductListing l "
+            + "where l.platform = :platform and l.masterProduct is null" + SEARCH_PREDICATE)
+    Page<ProductListing> searchByPlatformAndMasterProductIsNull(@Param("platform") Platform platform,
+                                                                @Param("keyword") String keyword,
+                                                                Pageable pageable);
+
+    /** Keyword variant of {@link #findByPlatformAndMasterProductIsNotNull}. */
+    @Query(value = "select l from ProductListing l "
+            + "where l.platform = :platform and l.masterProduct is not null" + SEARCH_PREDICATE,
+           countQuery = "select count(l) from ProductListing l "
+            + "where l.platform = :platform and l.masterProduct is not null" + SEARCH_PREDICATE)
+    Page<ProductListing> searchByPlatformAndMasterProductIsNotNull(@Param("platform") Platform platform,
+                                                                   @Param("keyword") String keyword,
+                                                                   Pageable pageable);
+
+    /**
      * Find a product listing by platform product ID.
      *
      * @param platformProductId Platform's product ID

@@ -48,9 +48,11 @@ public interface ProductListingService {
      * @param masterLinked 마스터 연결 여부 필터(2609_22/04). {@code null} = 필터 없음(기존 동작),
      *                     {@code false} = 마스터 미연결 셀만, {@code true} = 연결된 셀만. 3값이라
      *                     {@code boolean} 이 아니라 {@code Boolean} 이다.
+     * @param search 검색어(상품명 부분일치 · 마켓 상품 ID 정확일치). {@code null}/공백 = 검색 없음(기존 동작).
      * @return Page of ProductListingResponse objects
      */
-    Page<ProductListingResponse> getByPlatform(Platform platform, int page, int size, Boolean masterLinked);
+    Page<ProductListingResponse> getByPlatform(
+            Platform platform, int page, int size, Boolean masterLinked, String search);
 
     /**
      * Update an existing product listing.
