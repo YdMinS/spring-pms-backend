@@ -31,7 +31,7 @@ import org.springframework.web.bind.annotation.*;
  *
  * Endpoints:
  * - GET /{id} : Get listing by ID
- * - GET ?platform=... : Get listings by platform (paginated)
+ * - GET ?platform=...&search=... : Get listings by platform (paginated, optional keyword search)
  * - PATCH /{id} : Update listing (ADMIN)
  * - DELETE /{id} : Delete listing (ADMIN)
  *
@@ -87,6 +87,7 @@ public class ProductListingController {
      * @param page Page number (0-indexed, default 0)
      * @param size Page size (default 20, max typically 100)
      * @param masterLinked 마스터 연결 여부 필터(2609_22/04); 미지정 = 전체(기존 동작)
+     * @param search 검색어(상품명 부분일치 · 마켓 상품 ID 정확일치); 미지정/공백 = 검색 없음
      * @return HTTP 200 OK with paginated ProductListingResponse list
      */
     @GetMapping
@@ -104,9 +105,11 @@ public class ProductListingController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             // 3값(미지정/true/false)이라 boolean 으로 받지 말 것 — 미지정이 곧 "필터 없음"이다.
-            @RequestParam(required = false) Boolean masterLinked) {
+            @RequestParam(required = false) Boolean masterLinked,
+            // 공백 trim·빈 문자열 처리는 서비스가 한다 — 컨트롤러는 받은 그대로 넘긴다.
+            @RequestParam(required = false) String search) {
         Page<ProductListingResponse> response =
-                productListingService.getByPlatform(Platform.from(platform), page, size, masterLinked);
+                productListingService.getByPlatform(Platform.from(platform), page, size, masterLinked, search);
         return ResponseEntity.ok(ResponseDTO.success(response));
     }
 
