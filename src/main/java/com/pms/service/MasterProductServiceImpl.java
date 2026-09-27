@@ -1316,8 +1316,8 @@ public class MasterProductServiceImpl implements MasterProductService {
 
     /**
      * Option names are unique within a master. Every match map here is {@code (first, dup) -> first}, so
-     * same-named options would make master↔channel matching non-deterministic; it would also hand a user
-     * who cannot rename a locked option a way around the lock by adding a second option with that name.
+     * same-named options would make master↔channel matching non-deterministic. (Master option renames are no
+     * longer locked since 2609_74/D4 — only deletion is; uniqueness is kept for the matching reason alone.)
      *
      * @param excludeOptionId the option being edited (skipped), or null on create
      */
