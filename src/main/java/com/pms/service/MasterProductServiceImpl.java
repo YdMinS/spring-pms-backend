@@ -53,6 +53,7 @@ import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.service.listing.CellBomResolver;
 import com.pms.service.listing.ListingStockPolicy;
+import com.pms.service.listing.MarketOptionPolicy;
 import com.pms.service.listing.MasterOptionChannelSync;
 import com.pms.service.listing.MasterPropagationService;
 import com.pms.service.listing.OptionCheckSuffix;
@@ -159,7 +160,7 @@ public class MasterProductServiceImpl implements MasterProductService {
                         .collect(Collectors.toMap(
                                 r -> (Long) r[0], r -> (String) r[1], (first, dup) -> first));
         // 84: one batched lock judgement for the whole page (2 queries regardless of master count).
-        Map<Long, Set<String>> lockedByMaster = marketRegisteredOptionNames(ids);
+        Map<Long, Set<Long>> lockedByMaster = marketLockedOptionIds(ids);
         return masters.map(master -> {
             MasterProductResponse response = mapToResponse(
                     master, lockedByMaster.getOrDefault(master.getId(), Set.of()));
@@ -306,6 +307,7 @@ public class MasterProductServiceImpl implements MasterProductService {
                         .categoryName(category == null ? null : category.category().getName())
                         // ⚠️ never `platformCategoryCode != null` — see the field note (D10-1/D11).
                         .usesOwnCategory(category != null && category.own())
+                        .needsMarketSync(pl.isNeedsMarketSync())
                         .build());
             }
             return MatrixRow.builder()
@@ -797,7 +799,7 @@ public class MasterProductServiceImpl implements MasterProductService {
                 : optionItemRepository.findByOptionIdIn(existingIds)).stream()
                 .collect(Collectors.groupingBy(it -> it.getOption().getId(),
                         Collectors.toMap(it -> it.getProduct().getId(), MasterProductOptionItem::getQuantity)));
-        Set<String> lockedNames = marketRegisteredOptionNames(List.of(id)).getOrDefault(id, Set.of());
+        Set<Long> lockedOptionIds = marketLockedOptionIds(List.of(id)).getOrDefault(id, Set.of());
 
         // ---------------------------------------------------------------- validate (no writes)
 
@@ -827,19 +829,8 @@ public class MasterProductServiceImpl implements MasterProductService {
         // 2609_64/D3: the market lock is NOT relaxed for this endpoint — deleting a locked option here would
         // be exactly the "delete then re-add" way around deleteOption's guard.
         for (MasterProductOption gone : existing) {
-            if (!keptIds.contains(gone.getId()) && lockedNames.contains(gone.getName())) {
+            if (!keptIds.contains(gone.getId()) && lockedOptionIds.contains(gone.getId())) {
                 throw new ValidationException("쿠팡에 등록된 옵션은 삭제할 수 없습니다. 판매 중지 후 마켓에서 정리하세요.");
-            }
-        }
-        for (MasterCompositionRequest.OptionSpec spec : request.getOptions()) {
-            if (spec.getOptionId() == null) {
-                continue;
-            }
-            String oldName = existingById.get(spec.getOptionId()).getName();
-            // ⚠️ A locked option's QUANTITIES stay editable (existing rule, updateOption) — only the name and
-            // the delete are Coupang's to keep.
-            if (!Objects.equals(oldName, spec.getName()) && lockedNames.contains(oldName)) {
-                throw new ValidationException("쿠팡에 등록된 옵션은 이름을 바꿀 수 없습니다.");
             }
         }
         assertNoNameSwap(existing, request.getOptions());
@@ -1030,9 +1021,9 @@ public class MasterProductServiceImpl implements MasterProductService {
         masterOptionChannelSync.onOptionCreated(masterId, option);
         // A brand-new option can never be on the market, but run the same judgement rather than hard-coding
         // false — one rule, one code path.
-        Set<String> lockedNames = marketRegisteredOptionNames(List.of(masterId)).getOrDefault(masterId, Set.of());
+        Set<Long> lockedOptionIds = marketLockedOptionIds(List.of(masterId)).getOrDefault(masterId, Set.of());
         // clampedChannels = 0: a clamp can only happen when an existing master stock is lowered (update path).
-        return mapToOptionResponse(option, toVector(request), lockedNames.contains(option.getName()), 0);
+        return mapToOptionResponse(option, toVector(request), lockedOptionIds.contains(option.getId()), 0);
     }
 
     @Override
@@ -1049,23 +1040,17 @@ public class MasterProductServiceImpl implements MasterProductService {
         Map<Long, Integer> oldVector = optionItemRepository.findByOptionId(optionId).stream()
                 .collect(Collectors.toMap(it -> it.getProduct().getId(), MasterProductOptionItem::getQuantity));
 
-        Set<String> lockedNames = marketRegisteredOptionNames(List.of(masterId)).getOrDefault(masterId, Set.of());
-        boolean locked = lockedNames.contains(oldName);
+        Set<Long> lockedOptionIds = marketLockedOptionIds(List.of(masterId)).getOrDefault(masterId, Set.of());
+        boolean locked = lockedOptionIds.contains(optionId);
         boolean renamed = !Objects.equals(oldName, request.getName());
         // Sending the same items back is allowed — the frontend posts the whole form, so "identical = blocked"
         // would 400 an edit that only touched the delivery/box override.
         Map<Long, Integer> newVector = request.getItems() != null ? toVector(request) : null;
         boolean quantitiesChanged = newVector != null && !newVector.equals(oldVector);
 
-        if (locked && renamed) {
-            throw new ValidationException("쿠팡에 등록된 옵션은 이름을 바꿀 수 없습니다.");
-        }
-        // ⚠️ A locked option's QUANTITIES stay editable on purpose. The quantity vector is our own ledger
-        // (cost, stock, price basis), not something the market owns, and a mistyped quantity at registration
-        // time used to be unfixable: the option could not be edited, deleted, nor its cell/master removed.
-        // The market-visible consequence (the 수량/계량 고시 text drifting from what Coupang shows) is handled
-        // by resyncChannels raising needsMarketSync, which prompts [수정 요청] rather than blocking the fix.
-        // The name and the delete guard stay locked — those are the ones Coupang cannot take back.
+        // 2609_74/D4: the name lock is gone. A master option's name is our own label — the market never
+        // receives it directly. What reaches a channel is decided by MasterOptionChannelSync.onOptionRenamed
+        // (D10/D25), and the DELETE guard stays (D6). `locked` is still computed: the response flag needs it.
         if (renamed) {
             assertNameUnique(masterId, request.getName(), optionId);
         }
@@ -1112,10 +1097,10 @@ public class MasterProductServiceImpl implements MasterProductService {
         MasterProductOption option = requireOption(masterId, optionId);
 
         // Order matters: the more specific message wins when both apply. Deleting a market-registered option
-        // is blocked outright — otherwise "delete then re-add" would be a way around the edit lock, while
+        // is blocked outright — otherwise "delete then re-add" would be a way around the delete guard, while
         // Coupang keeps the approved option that can no longer be removed there.
-        Set<String> lockedNames = marketRegisteredOptionNames(List.of(masterId)).getOrDefault(masterId, Set.of());
-        if (lockedNames.contains(option.getName())) {
+        Set<Long> lockedOptionIds = marketLockedOptionIds(List.of(masterId)).getOrDefault(masterId, Set.of());
+        if (lockedOptionIds.contains(option.getId())) {
             throw new ValidationException("쿠팡에 등록된 옵션은 삭제할 수 없습니다. 판매 중지 후 마켓에서 정리하세요.");
         }
         // A master always keeps at least one option; dropping them all means deleting the master.
@@ -1150,23 +1135,37 @@ public class MasterProductServiceImpl implements MasterProductService {
             // a linked one takes the master's. Nothing is saved until the cell passes the name check.
             List<ProductListingOption> toSave = new ArrayList<>();
             Set<String> resultingNames = new LinkedHashSet<>();
+            List<String> lockedSkips = new ArrayList<>();
             boolean duplicate = false;
+            boolean marketNameChanged = false;
             for (ProductListingOption option : options) {
                 MasterProductOption linked = option.getMasterProductOption();
                 String masterName = linked == null ? null : masterNamesById.get(linked.getId());
-                String resulting = masterName != null ? masterName : option.getOptionName();
+                boolean alreadyApplied = masterName == null
+                        || (masterName.equals(option.getOptionName())
+                            && option.getOptionNameSource() == GeneratedContentSource.AUTO);
+                // 2609_74/D32·D33: a name-locked option is skipped on its own and keeps its current name —
+                // the approval result finds it by that name. The cell's other options are still applied.
+                boolean nameLocked = !alreadyApplied && MarketOptionPolicy.nameLocked(cell, option);
+                String resulting = masterName != null && !nameLocked ? masterName : option.getOptionName();
                 if (!resultingNames.add(resulting)) {
                     duplicate = true;
                     break;
                 }
-                boolean alreadyApplied = masterName == null
-                        || (masterName.equals(option.getOptionName())
-                            && option.getOptionNameSource() == GeneratedContentSource.AUTO);
+                if (nameLocked) {
+                    lockedSkips.add("심사 중이라 건너뜀: listingId=" + cell.getId()
+                            + ", option=" + option.getOptionName());
+                    continue;
+                }
                 if (!alreadyApplied) {
                     toSave.add(option.toBuilder()
                             .optionName(masterName)
                             .optionNameSource(GeneratedContentSource.AUTO)
                             .build());
+                    // 2609_74/D16: only a real name change on a market-carried option flags the cell.
+                    marketNameChanged = marketNameChanged
+                            || (!masterName.equals(option.getOptionName())
+                                && MarketOptionPolicy.carriedOnMarket(cell, option));
                 }
             }
             if (duplicate) {
@@ -1174,10 +1173,14 @@ public class MasterProductServiceImpl implements MasterProductService {
                 warnings.add("옵션명 중복으로 건너뜀: listingId=" + cell.getId());
                 continue;
             }
+            warnings.addAll(lockedSkips);
             if (toSave.isEmpty()) {
                 continue;   // already applied → no write, not counted
             }
             productListingOptionRepository.saveAll(toSave);
+            if (marketNameChanged && !cell.isNeedsMarketSync()) {
+                productListingRepository.save(cell.toBuilder().needsMarketSync(true).build());
+            }
             updatedCells++;
             updatedOptions += toSave.size();
         }
@@ -1253,8 +1256,8 @@ public class MasterProductServiceImpl implements MasterProductService {
     // ---------------------------------------------------------------- market lock (84)
 
     /**
-     * Which option names of each master are <b>locked</b> because they are live on a marketplace
-     * (FEATURE_2608_06 / 84). A locked option may not be renamed or deleted: the product already exists on
+     * Which options (by id) of each master are <b>locked</b> because they are live on a marketplace
+     * (FEATURE_2608_06 / 84). A locked option may not be deleted: the product already exists on
      * Coupang, where a rename permanently breaks option matching and an approved option cannot be removed
      * at all — that cleanup happens outside this system.
      *
@@ -1281,36 +1284,34 @@ public class MasterProductServiceImpl implements MasterProductService {
      * <p>⚠️ Exactly two queries regardless of how many masters are asked for — judging masters one at a time
      * would be an N+1 on the list endpoint.</p>
      */
-    private Map<Long, Set<String>> marketRegisteredOptionNames(Collection<Long> masterIds) {
+    private Map<Long, Set<Long>> marketLockedOptionIds(Collection<Long> masterIds) {
         if (masterIds == null || masterIds.isEmpty()) {
             return Map.of();
         }
-        Map<Long, Long> masterByCell = productListingRepository.findByMasterProductIdIn(masterIds).stream()
+        Map<Long, ProductListing> cellsById = productListingRepository.findByMasterProductIdIn(masterIds).stream()
                 .filter(cell -> cell.getPlatformProductId() != null)
-                .collect(Collectors.toMap(
-                        ProductListing::getId, cell -> cell.getMasterProduct().getId(), (first, dup) -> first));
-        if (masterByCell.isEmpty()) {
+                .collect(Collectors.toMap(ProductListing::getId, cell -> cell, (first, dup) -> first));
+        if (cellsById.isEmpty()) {
             return Map.of();
         }
-        Map<Long, Set<String>> lockedByMaster = new LinkedHashMap<>();
+        Map<Long, Set<Long>> lockedByMaster = new LinkedHashMap<>();
         for (ProductListingOption option : productListingOptionRepository
-                .findByProductListingIdIn(masterByCell.keySet())) {
-            if (!isOnMarket(option)) {
+                .findByProductListingIdIn(cellsById.keySet())) {
+            ProductListing cell = cellsById.get(option.getProductListing().getId());
+            // FK id only — safe on a LAZY proxy. A channel-only option (no link) locks nothing.
+            MasterProductOption linked = option.getMasterProductOption();
+            if (cell == null || linked == null || !MarketOptionPolicy.carriedOnMarket(cell, option)) {
                 continue;
             }
-            Long masterId = masterByCell.get(option.getProductListing().getId());
-            if (masterId != null) {
-                lockedByMaster.computeIfAbsent(masterId, key -> new LinkedHashSet<>())
-                        .add(option.getOptionName());
-            }
+            lockedByMaster.computeIfAbsent(cell.getMasterProduct().getId(), key -> new LinkedHashSet<>())
+                    .add(linked.getId());
         }
         return lockedByMaster;
     }
 
     /** The three-way OR above, for one channel option of an already market-registered cell. */
     private static boolean isOnMarket(ProductListingOption option) {
-        // 84 = 87's two terms + active; the shared pair lives in ProductListingOption#isMarketRegistered.
-        return Boolean.TRUE.equals(option.getActive()) || option.isMarketRegistered();
+        return MarketOptionPolicy.onMarket(option);
     }
 
     /**
@@ -1586,16 +1587,16 @@ public class MasterProductServiceImpl implements MasterProductService {
 
     /** Single-master convenience: judges the lock for this master alone (2 queries). */
     private MasterProductResponse mapToResponse(MasterProduct master) {
-        Set<String> lockedNames = marketRegisteredOptionNames(List.of(master.getId()))
+        Set<Long> lockedOptionIds = marketLockedOptionIds(List.of(master.getId()))
                 .getOrDefault(master.getId(), Set.of());
-        return mapToResponse(master, lockedNames);
+        return mapToResponse(master, lockedOptionIds);
     }
 
     /**
-     * @param lockedNames option names of this master that are live on a marketplace (84) — the list path
+     * @param lockedOptionIds option ids of this master that are live on a marketplace (84) — the list path
      *                    passes its batched judgement so the flag is never quietly reported as false
      */
-    private MasterProductResponse mapToResponse(MasterProduct master, Set<String> lockedNames) {
+    private MasterProductResponse mapToResponse(MasterProduct master, Set<Long> lockedOptionIds) {
         Long id = master.getId();
         List<MasterProductComponent> components = componentRepository.findByMasterProductId(id);
         List<MasterProductOption> options = optionRepository.findByMasterProductId(id);
@@ -1637,7 +1638,7 @@ public class MasterProductServiceImpl implements MasterProductService {
                         .packageId(o.getPackage_() != null ? o.getPackage_().getId() : null)
                         .categoryAttributes(o.getCategoryAttributes())
                         .categoryNotices(o.getCategoryNotices())
-                        .marketRegistered(lockedNames.contains(o.getName()))
+                        .marketRegistered(lockedOptionIds.contains(o.getId()))
                         // 102: without this the master detail response carries no stock and the option
                         // editor cannot prefill the existing value.
                         .stockQuantity(o.getStockQuantity())

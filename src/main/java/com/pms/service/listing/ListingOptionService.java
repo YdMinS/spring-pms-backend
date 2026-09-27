@@ -3,6 +3,7 @@ package com.pms.service.listing;
 import com.pms.dto.request.SetOptionNamesRequest;
 import com.pms.dto.request.SetOptionPricesRequest;
 import com.pms.dto.request.SetOptionStocksRequest;
+import com.pms.dto.response.ChannelApplyOptionNamesResponse;
 import com.pms.dto.response.ChannelPriceUpdateResponse;
 import com.pms.dto.response.ListingOptionsResponse;
 
@@ -85,4 +86,15 @@ public interface ListingOptionService {
      * reaches it with the next [수정 요청].</p>
      */
     ListingOptionsResponse setOptionNames(Long listingId, List<SetOptionNamesRequest.Item> names);
+
+    /**
+     * 2609_74/D15: reset THIS channel's option names to the linked master option's name (source → AUTO).
+     * The per-channel counterpart of the master-wide [옵션명 일괄 적용].
+     *
+     * <p>Skipped: channel-only options (no master name to take) and name-locked options (D32/D33 — on the market
+     * without an option id and the cell is not REJECTED; renaming them would break the name match of the
+     * approval result). A REJECTED cell's options without an id ARE renamed.
+     * A duplicate name inside the cell → 400, nothing saved. Local only — nothing is pushed.</p>
+     */
+    ChannelApplyOptionNamesResponse applyMasterOptionNames(Long listingId);
 }

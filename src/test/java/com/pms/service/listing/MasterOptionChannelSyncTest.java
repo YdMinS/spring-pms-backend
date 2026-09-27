@@ -222,6 +222,53 @@ class MasterOptionChannelSyncTest {
         verify(productListingOptionRepository, never()).save(any());
     }
 
+    // 2609_74/D25: on the market but no option id yet → the approval result matches it by name → no rename.
+    @Test
+    void onOptionRenamed_onMarketCellWithoutOptionId_isNotRenamed() {
+        ProductListing cell = cell(1L, "P-1");
+        given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
+        given(productListingOptionRepository.findByProductListingIdIn(anyCollection())).willReturn(List.of(
+                cellOption(50L, cell, "2개입", true, option(5L, "2개입"))));
+
+        sync.onOptionRenamed(MASTER_ID, 5L, "두개입");
+
+        verify(productListingOptionRepository, never()).save(any());
+        verify(productListingRepository, never()).save(any());
+    }
+
+    // 2609_74/D16: a market-carried option name that actually moved flags the cell.
+    @Test
+    void onOptionRenamed_onMarketOptionWithId_renamesAndFlagsCell() {
+        ProductListing cell = cell(1L, "P-1");
+        given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
+        given(productListingOptionRepository.findByProductListingIdIn(anyCollection())).willReturn(List.of(
+                cellOption(50L, cell, "2개입", true, option(5L, "2개입")).toBuilder()
+                        .platformOptionId("V-1").build()));
+
+        sync.onOptionRenamed(MASTER_ID, 5L, "두개입");
+
+        ArgumentCaptor<ProductListingOption> savedOption = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository).save(savedOption.capture());
+        assertThat(savedOption.getValue().getOptionName()).isEqualTo("두개입");
+        ArgumentCaptor<ProductListing> savedCell = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(savedCell.capture());
+        assertThat(savedCell.getValue().isNeedsMarketSync()).isTrue();
+    }
+
+    // A DRAFT cell is renamed as before and never flagged — nothing is on the market yet.
+    @Test
+    void onOptionRenamed_draftCell_renamesWithoutFlag() {
+        ProductListing cell = cell(1L, null);
+        given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(cell));
+        given(productListingOptionRepository.findByProductListingIdIn(anyCollection())).willReturn(List.of(
+                cellOption(50L, cell, "2개입", true, option(5L, "2개입"))));
+
+        sync.onOptionRenamed(MASTER_ID, 5L, "두개입");
+
+        verify(productListingOptionRepository, times(1)).save(any());
+        verify(productListingRepository, never()).save(any());
+    }
+
     // ---------------------------------------------------------------- onOptionRemoved
 
     @Test

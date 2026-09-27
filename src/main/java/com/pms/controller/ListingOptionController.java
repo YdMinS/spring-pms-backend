@@ -5,6 +5,7 @@ import com.pms.dto.request.SetActiveOptionsRequest;
 import com.pms.dto.request.SetOptionNamesRequest;
 import com.pms.dto.request.SetOptionPricesRequest;
 import com.pms.dto.request.SetOptionStocksRequest;
+import com.pms.dto.response.ChannelApplyOptionNamesResponse;
 import com.pms.dto.response.ChannelPriceUpdateResponse;
 import com.pms.dto.response.ListingOptionsResponse;
 import com.pms.service.listing.ListingOptionService;
@@ -65,6 +66,15 @@ public class ListingOptionController {
             @PathVariable Long id, @Valid @RequestBody SetOptionNamesRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(
                 listingOptionService.setOptionNames(id, request.getNames())));
+    }
+
+    @PostMapping("/product-listings/{id}/options/apply-master-names")
+    @Operation(summary = "Reset this channel's option names to the linked master option's name "
+            + "(channel-only options and name-locked options — no option id and the listing is not REJECTED — are skipped)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<ChannelApplyOptionNamesResponse>> applyMasterOptionNames(
+            @PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(listingOptionService.applyMasterOptionNames(id)));
     }
 
     @PutMapping("/product-listings/{id}/options/price")
