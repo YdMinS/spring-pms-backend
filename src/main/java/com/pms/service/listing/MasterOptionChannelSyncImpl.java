@@ -77,10 +77,13 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
         if (cells.isEmpty()) {
             return;
         }
-        for (List<ProductListingOption> cellOptions : optionsByCell(cells).values()) {
+        Map<Long, List<ProductListingOption>> optionsByCell = optionsByCell(cells);
+        for (ProductListing cell : cells) {
+            List<ProductListingOption> cellOptions = optionsByCell.get(cell.getId());
             boolean newNameTaken = cellOptions.stream()
                     .filter(cellOption -> !masterOptionId.equals(masterOptionId(cellOption)))
                     .anyMatch(cellOption -> Objects.equals(newName, cellOption.getOptionName()));
+            boolean marketNameChanged = false;
             for (ProductListingOption cellOption : cellOptions) {
                 if (!masterOptionId.equals(masterOptionId(cellOption))) {
                     continue;   // 2609_22/D1: the FK is the match key — the cell's own name is irrelevant here
@@ -92,14 +95,28 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
                 if (Objects.equals(newName, cellOption.getOptionName())) {
                     continue;   // already there → no write
                 }
+                // 2609_74/D25: on the market but no option id yet → fetchStatus can only find it by NAME,
+                // so renaming it now would lose the approval result for good. It is aligned later by the
+                // channel's [마스터 옵션명 반영] (D26), never automatically.
+                if (MarketOptionPolicy.awaitingMarketId(cell, cellOption)) {
+                    log.info("[OPTION-SYNC] cellId={} rename to '{}' skipped: awaiting market option id",
+                            cell.getId(), newName);
+                    continue;
+                }
                 if (newNameTaken) {
                     // A MANUAL_OVERRIDE sibling (or a legacy duplicate) already carries that name; two options
                     // with the same name in one cell are a marketplace error (Coupang itemName).
                     log.warn("[OPTION-SYNC] cellId={} rename to '{}' skipped: name already present",
-                            cellOption.getProductListing().getId(), newName);
+                            cell.getId(), newName);
                     continue;
                 }
                 productListingOptionRepository.save(cellOption.toBuilder().optionName(newName).build());
+                marketNameChanged = marketNameChanged || MarketOptionPolicy.carriedOnMarket(cell, cellOption);
+            }
+            // 2609_74/D16: a name that the market already shows has moved → the cell now disagrees with it.
+            // No push — the flag only surfaces [수정 요청].
+            if (marketNameChanged && !cell.isNeedsMarketSync()) {
+                productListingRepository.save(cell.toBuilder().needsMarketSync(true).build());
             }
         }
     }

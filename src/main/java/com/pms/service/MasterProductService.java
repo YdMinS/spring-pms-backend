@@ -191,6 +191,10 @@ public interface MasterProductService {
      * would leave two options with the same name is skipped <b>as a whole</b> and reported in
      * {@code warnings}: the other cells still get applied (never fail the batch over one cell).</p>
      *
+     * <p>2609_74/D32·D33: an option that is name-locked ({@code MarketOptionPolicy.nameLocked} — no option id
+     * yet and the cell is not REJECTED) is skipped on its own; the cell's other options are applied. Each skip
+     * adds {@code "심사 중이라 건너뜀: listingId={id}, option={current channel option name}"} to {@code warnings}.</p>
+     *
      * <p>⚠️ Local only — nothing is pushed to the market (the new names travel with the next [수정 요청]).</p>
      */
     ApplyOptionNamesResponse applyMasterOptionNames(Long masterId);

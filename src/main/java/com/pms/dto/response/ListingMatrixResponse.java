@@ -131,5 +131,9 @@ public class ListingMatrixResponse {
          */
         @Schema(description = "True when the cell uses its own (channel) category", example = "true")
         private boolean usesOwnCategory;
+
+        /** {@code ProductListing.needsMarketSync} — 로컬에서 바뀐 값이 아직 마켓에 가지 않았다([수정 요청] 필요). */
+        @Schema(description = "True when a local change has not been pushed to the market yet", example = "false")
+        private boolean needsMarketSync;
     }
 }

@@ -11,6 +11,7 @@ import com.pms.domain.ProductListingOption;
 import com.pms.dto.request.SetOptionNamesRequest;
 import com.pms.dto.request.SetOptionPricesRequest;
 import com.pms.dto.request.SetOptionStocksRequest;
+import com.pms.dto.response.ChannelApplyOptionNamesResponse;
 import com.pms.dto.response.ChannelPriceUpdateResponse;
 import com.pms.dto.response.ListingOptionsResponse;
 import com.pms.exception.ResourceNotFoundException;
@@ -36,6 +37,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -338,6 +340,18 @@ public class ListingOptionServiceImpl implements ListingOptionService {
                     .build());
         }
 
+        // 2609_74/D32·D33: a name-locked option is matched BY NAME when the approval result comes back, so a new
+        // name loses that result. One such item rejects the whole request (400, nothing saved). An item whose
+        // name stays the same and only the source moves (blank → master name equal to the current one) passes.
+        boolean renamesLockedOption = toSave.values().stream().anyMatch(saved -> {
+            ProductListingOption before = byId.get(saved.getId());
+            return MarketOptionPolicy.nameLocked(listing, before)
+                    && !Objects.equals(before.getOptionName(), saved.getOptionName());
+        });
+        if (renamesLockedOption) {
+            throw new IllegalArgumentException(MarketOptionPolicy.NAME_LOCKED_MESSAGE);
+        }
+
         // Return the full option set, with the saved rows swapped in (setOptionStocks' closing block) — and
         // judge uniqueness on exactly that view, before anything is written.
         List<ProductListingOption> merged = options.stream()
@@ -345,10 +359,74 @@ public class ListingOptionServiceImpl implements ListingOptionService {
                 .toList();
         assertNamesUnique(merged);
         productListingOptionRepository.saveAll(List.copyOf(toSave.values()));
+        // 2609_74/D16: a market-carried option whose name actually moved → the cell disagrees with the market.
+        boolean marketNameChanged = toSave.values().stream().anyMatch(saved -> {
+            ProductListingOption before = byId.get(saved.getId());
+            return !Objects.equals(before.getOptionName(), saved.getOptionName())
+                    && MarketOptionPolicy.carriedOnMarket(listing, before);
+        });
+        if (marketNameChanged && !listing.isNeedsMarketSync()) {
+            productListingRepository.save(listing.toBuilder().needsMarketSync(true).build());
+        }
 
         boolean needsResync = listing.getStatus() != null && listing.getStatus() != ListingStatus.DRAFT;
         return ListingOptionsResponse.of(listing, merged, needsResync,
                 registrationName(listing, merged), masterById);
+    }
+
+    @Override
+    @Transactional
+    public ChannelApplyOptionNamesResponse applyMasterOptionNames(Long listingId) {
+        ProductListing listing = productListingRepository.findScopedById(listingId)
+                .orElseThrow(() -> new ResourceNotFoundException("ProductListing", listingId));
+        if (listing.getMasterProduct() == null) {
+            throw new IllegalArgumentException("마스터에 연결되지 않은 판매상품입니다");
+        }
+
+        List<ProductListingOption> options = productListingOptionRepository.findByProductListingId(listingId);
+        Map<Long, MasterProductOption> masterById = masterOptionsById(listing);
+        Map<Long, ProductListingOption> toSave = new LinkedHashMap<>();
+        List<String> skippedAwaitingId = new ArrayList<>();
+        boolean marketNameChanged = false;
+        for (ProductListingOption option : options) {
+            MasterProductOption master = linkedMaster(option, masterById);
+            if (master == null) {
+                continue;   // channel-only option (2609_22/D2) — no master name to take
+            }
+            boolean alreadyApplied = master.getName().equals(option.getOptionName())
+                    && option.getOptionNameSource() == GeneratedContentSource.AUTO;
+            if (alreadyApplied) {
+                continue;
+            }
+            // 2609_74/D32·D33: skip condition = the name lock (a REJECTED cell is renamed, then re-sent).
+            if (MarketOptionPolicy.nameLocked(listing, option)) {
+                skippedAwaitingId.add(option.getOptionName());
+                continue;
+            }
+            toSave.put(option.getId(), option.toBuilder()
+                    .optionName(master.getName())
+                    .optionNameSource(GeneratedContentSource.AUTO)
+                    .build());
+            marketNameChanged = marketNameChanged
+                    || (!master.getName().equals(option.getOptionName())
+                        && MarketOptionPolicy.carriedOnMarket(listing, option));
+        }
+
+        List<ProductListingOption> merged = options.stream()
+                .map(option -> toSave.getOrDefault(option.getId(), option))
+                .toList();
+        assertNamesUnique(merged);
+        if (!toSave.isEmpty()) {
+            productListingOptionRepository.saveAll(List.copyOf(toSave.values()));
+        }
+        // 2609_74/D16
+        if (marketNameChanged && !listing.isNeedsMarketSync()) {
+            productListingRepository.save(listing.toBuilder().needsMarketSync(true).build());
+        }
+        return ChannelApplyOptionNamesResponse.builder()
+                .updatedOptions(toSave.size())
+                .skippedAwaitingId(skippedAwaitingId)
+                .build();
     }
 
     /**

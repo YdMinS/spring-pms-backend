@@ -1207,6 +1207,7 @@ class MasterProductServiceTest {
                                             OptionApprovalStatus approval) {
         return ProductListingOption.builder()
                 .id(id).productListing(cell).optionName(name)
+                .masterProductOption(MasterProductOption.builder().id(10L).build())
                 .active(active).platformOptionId(platformOptionId).approvalStatus(approval).build();
     }
 
@@ -1284,6 +1285,50 @@ class MasterProductServiceTest {
         verify(productListingOptionRepository, never()).findByProductListingIdIn(any());
     }
 
+    // 2609_74/D6: the lock follows the LINK — an imported option keeps Coupang's name, yet it is locked.
+    @Test
+    void lockJudgement_linkedOptionWithDifferentName_isLocked() {
+        ProductListing cell = onMarketCell(100L);
+        givenSingleOptionMaster(List.of(cell),
+                List.of(cellOption(5L, cell, "생수 500ml x 6", true, null, OptionApprovalStatus.NOT_APPROVED)));
+
+        assertThat(readMarketRegistered()).isTrue();
+    }
+
+    // 2609_74/D6: a same-named but unlinked (channel-only) option locks nothing.
+    @Test
+    void lockJudgement_sameNameButNotLinked_isNotLocked() {
+        ProductListing cell = onMarketCell(100L);
+        givenSingleOptionMaster(List.of(cell),
+                List.of(cellOption(5L, cell, "2세트", true, null, OptionApprovalStatus.NOT_APPROVED)
+                        .toBuilder().masterProductOption(null).build()));
+
+        assertThat(readMarketRegistered()).isFalse();
+    }
+
+    // 2609_74/D27: the matrix carries the cell's "변경 미반영" flag.
+    @Test
+    void getMatrix_exposesNeedsMarketSync() {
+        Seller seller1 = seller(1L, "판매자1");
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
+        MarketplaceAccount acc1 = account(10L, seller1, Platform.COUPANG, "메인");
+
+        ProductListing listing = ProductListing.builder()
+                .id(100L).seller(seller1).platform(Platform.COUPANG).platformProductId("X").name("리스팅")
+                .status(ListingStatus.SELLING).build()
+                .toBuilder().needsMarketSync(true).build();
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(marketplaceAccountRepository.findAll()).willReturn(List.of(acc1));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(listing));
+        given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of());
+        given(sellerRepository.findAllById(any())).willReturn(List.of(seller1));
+
+        ListingMatrixResponse matrix = service.getMatrix(1L);
+
+        assertThat(matrix.getRows().get(0).getCell().isNeedsMarketSync()).isTrue();
+    }
+
     @Test
     void lockJudgement_listPath_queriesLockRepositoriesOnce() {
         // N+1 guard: three masters, still exactly one query per lock repository.
@@ -1340,15 +1385,24 @@ class MasterProductServiceTest {
         return option;
     }
 
+    // 2609_74/D4: the name lock is gone — a market-registered master option can be renamed.
     @Test
-    void updateOption_lockedOption_renameThrows400() {
-        givenEditableOption(true);
+    void updateOption_lockedOption_rename_passes() {
+        MasterProductOption option = givenEditableOption(true);
+        given(optionRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(option));
+        given(componentRepository.findByMasterProductId(1L))
+                .willReturn(List.of(component(LOCK_MASTER, product(1L, "상품1"))));
+        given(productRepository.findAllById(any())).willReturn(List.of(product(1L, "상품1")));
 
-        assertThatThrownBy(() -> service.updateOption(1L, 10L, MasterOptionRequest.builder()
-                .name("3세트").items(List.of(item(1L, 2))).build()))
-                .isInstanceOf(ValidationException.class)
-                .hasMessage("쿠팡에 등록된 옵션은 이름을 바꿀 수 없습니다.");
-        verify(optionRepository, never()).save(any());
+        MasterOptionResponse response = service.updateOption(1L, 10L, MasterOptionRequest.builder()
+                .name("3세트").items(List.of(item(1L, 2))).build());
+
+        ArgumentCaptor<MasterProductOption> saved = ArgumentCaptor.forClass(MasterProductOption.class);
+        verify(optionRepository).save(saved.capture());
+        assertThat(saved.getValue().getName()).isEqualTo("3세트");
+        assertThat(response.getMarketRegistered()).isTrue();
+        verify(masterOptionChannelSync).onOptionRenamed(1L, 10L, "3세트");
     }
 
     /**
@@ -2012,6 +2066,62 @@ class MasterProductServiceTest {
                 .containsOnly(GeneratedContentSource.AUTO);
     }
 
+    // 2609_74/D16: a market-carried option's name actually moving flags the cell for [수정 요청].
+    @Test
+    void applyMasterOptionNames_marketCarriedNameChange_flagsCell() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
+        MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
+        MasterProductOption m2 = MasterProductOption.builder().id(6L).name("2세트").build();
+        ProductListing cell = previewCell(100L, seller(1L, "행복상회"), Platform.COUPANG, "P-1");
+
+        ProductListingOption overridden1 = cellOption(1L, cell, "채널이 붙인 이름", true, m1).toBuilder()
+                .optionNameSource(GeneratedContentSource.MANUAL_OVERRIDE).platformOptionId("V-1").build();
+        ProductListingOption overridden2 = cellOption(2L, cell, "채널이 붙인 다른 이름", true, m2).toBuilder()
+                .optionNameSource(GeneratedContentSource.MANUAL_OVERRIDE).platformOptionId("V-2").build();
+        ProductListingOption channelOnly = cellOption(3L, cell, "채널전용", true);
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1, m2));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cell));
+        given(productListingOptionRepository.findByProductListingId(100L))
+                .willReturn(List.of(overridden1, overridden2, channelOnly));
+
+        service.applyMasterOptionNames(1L);
+
+        ArgumentCaptor<ProductListing> saved = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(saved.capture());
+        assertThat(saved.getValue().isNeedsMarketSync()).isTrue();
+    }
+
+    // 2609_74/D32·D33: a name-locked option is skipped on its own; the cell's other options are applied.
+    @Test
+    void applyMasterOptionNames_nameLockedOption_skippedWithWarning() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
+        MasterProductOption m1 = MasterProductOption.builder().id(5L).name("1세트").build();
+        MasterProductOption m2 = MasterProductOption.builder().id(6L).name("2세트").build();
+        ProductListing cell = previewCell(100L, seller(1L, "행복상회"), Platform.COUPANG, "P-1");
+
+        ProductListingOption withId = cellOption(1L, cell, "채널이 붙인 이름", true, m1).toBuilder()
+                .optionNameSource(GeneratedContentSource.MANUAL_OVERRIDE).platformOptionId("V-1").build();
+        ProductListingOption locked = cellOption(2L, cell, "심사 중 이름", true, m2).toBuilder()
+                .optionNameSource(GeneratedContentSource.MANUAL_OVERRIDE).build();
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(m1, m2));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cell));
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(withId, locked));
+
+        ApplyOptionNamesResponse response = service.applyMasterOptionNames(1L);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ProductListingOption>> saved = ArgumentCaptor.forClass(List.class);
+        verify(productListingOptionRepository).saveAll(saved.capture());
+        assertThat(saved.getValue()).extracting(ProductListingOption::getId).containsExactly(1L);
+        assertThat(response.getUpdatedOptions()).isEqualTo(1);
+        assertThat(response.getWarnings())
+                .containsExactly("심사 중이라 건너뜀: listingId=100, option=심사 중 이름");
+    }
+
     @Test
     void applyMasterOptionNames_cellWhereResetWouldDuplicate_isSkippedWithWarning() {
         // The reset would give both options of cell 100 the name "1세트" (a duplicate Coupang itemName), so
@@ -2177,6 +2287,7 @@ class MasterProductServiceTest {
         given(productListingRepository.findByMasterProductIdIn(any())).willReturn(List.of(cell));
         given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of(
                 ProductListingOption.builder().id(500L).productListing(cell)
+                        .masterProductOption(MasterProductOption.builder().id(10L).build())
                         .optionName(optionName).sellingPrice(BigDecimal.TEN).active(true).build()));
     }
 
@@ -2220,17 +2331,21 @@ class MasterProductServiceTest {
         verify(masterPropagationService, never()).propagate(any());
     }
 
-    // (2) The market lock is not relaxed for this endpoint — and the guard runs before any write.
+    // (2) 2609_74/D4: renaming a locked option is allowed here too — only the delete guard stays.
     @Test
-    void updateComposition_lockedOptionRenamed_throws() {
+    void updateComposition_lockedOptionRenamed_passes() {
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true).build();
         MasterProductOption a = masterOption(master, 10L, "A");
         MasterProductOption b = masterOption(master, 11L, "B");
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
         given(optionRepository.findByMasterProductId(1L)).willReturn(List.of(a, b));
+        given(optionItemRepository.findByOptionIdIn(any())).willReturn(List.of(
+                optionItem(a, 1L, 1), optionItem(a, 2L, 1),
+                optionItem(b, 1L, 2), optionItem(b, 2L, 2)));
         given(productRepository.findAllById(any()))
                 .willReturn(List.of(product(1L, "상품1"), product(2L, "상품2")));
         given(componentRepository.findMasterIdsCoveringAll(any(), eq(2L))).willReturn(List.of());
+        given(optionRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
         givenOptionLockedOnMarket(master, "A");
 
         MasterCompositionRequest request = MasterCompositionRequest.builder()
@@ -2240,10 +2355,9 @@ class MasterProductServiceTest {
                         spec(11L, "B", item(1L, 2), item(2L, 2))))
                 .build();
 
-        assertThatThrownBy(() -> service.updateComposition(1L, request))
-                .isInstanceOf(ValidationException.class)
-                .hasMessage("쿠팡에 등록된 옵션은 이름을 바꿀 수 없습니다.");
-        verify(componentRepository, never()).deleteByMasterProductId(any());
+        service.updateComposition(1L, request);
+
+        verify(masterOptionChannelSync).onOptionRenamed(1L, 10L, "A2");
     }
 
     // (3) Dropping a locked option from the request is the "delete then re-add" way around deleteOption.
