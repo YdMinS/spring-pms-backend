@@ -9,6 +9,7 @@ import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
 import com.pms.dto.response.ListingRegisterResponse;
+import com.pms.dto.response.ListingStatusResponse;
 import com.pms.dto.response.ListingSyncResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.fixture.MarketplaceAccountFixture;
@@ -320,6 +321,85 @@ class ListingRegistrationServiceTest {
         assertThat(response.getFailed()).isEqualTo(1);
     }
 
+
+    // (g) 2609_74/D9: a rejected refresh carries the review reason read on demand.
+    @Test
+    void fetchStatus_rejected_returnsReviewNote() {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.SUBMITTED, "SP-1")));
+        stubAccountAndAdapter();
+        given(adapter.fetchStatus(any(), any()))
+                .willReturn(new FetchResult(ListingStatus.REJECTED, List.of(), "승인반려"));
+        given(adapter.fetchReviewNote(any(), any(), eq("승인반려"))).willReturn(ReviewNote.found("고시 누락"));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+
+        ListingStatusResponse response = service.fetchStatus(CELL_ID);
+
+        assertThat(response.getReviewNote()).isEqualTo("고시 누락");
+        assertThat(response.getReviewNoteState()).isEqualTo("FOUND");
+        assertThat(response.getStatus()).isEqualTo("REJECTED");
+    }
+
+    // (h) 2609_74/D19: a failed reason lookup never fails the refresh — the status is still saved.
+    @Test
+    void fetchStatus_reviewNoteLookupFails_stillReturnsStatus() {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.SUBMITTED, "SP-1")));
+        stubAccountAndAdapter();
+        given(adapter.fetchStatus(any(), any()))
+                .willReturn(new FetchResult(ListingStatus.REJECTED, List.of(), "승인반려"));
+        given(adapter.fetchReviewNote(any(), any(), any())).willThrow(new IllegalStateException("boom"));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+
+        ListingStatusResponse response = service.fetchStatus(CELL_ID);
+
+        assertThat(response.getStatus()).isEqualTo("REJECTED");
+        assertThat(response.getReviewNoteState()).isEqualTo("FAILED");
+        assertThat(response.getReviewNote()).isNull();
+        ArgumentCaptor<ProductListing> cellCaptor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(cellCaptor.capture());
+        assertThat(cellCaptor.getValue().getStatus()).isEqualTo(ListingStatus.REJECTED);
+    }
+
+    // (i) 2609_74: a status the adapter does not look up leaves both fields null.
+    @Test
+    void fetchStatus_noReviewNote_leavesBothFieldsNull() {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.SUBMITTED, "SP-1")));
+        stubAccountAndAdapter();
+        given(adapter.fetchStatus(any(), any())).willReturn(new FetchResult(
+                ListingStatus.SELLING, List.of(new FetchResult.OptionId("기본", "111", "222"))));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+
+        ListingStatusResponse response = service.fetchStatus(CELL_ID);
+
+        assertThat(response.getReviewNote()).isNull();
+        assertThat(response.getReviewNoteState()).isNull();
+    }
+
+    // (j) 2609_74: the sweep refreshes only — it never looks a review reason up.
+    @Test
+    void syncApprovals_neverLooksUpReviewNote() {
+        ProductListing ok = ProductListing.builder().id(1L).platform(Platform.COUPANG).name("ok")
+                .seller(Seller.builder().id(SELLER_ID).build())
+                .status(ListingStatus.SUBMITTED).platformProductId("SP-1").build();
+        ProductListing boom = ProductListing.builder().id(2L).platform(Platform.COUPANG).name("boom")
+                .seller(Seller.builder().id(SELLER_ID).build())
+                .status(ListingStatus.SUBMITTED).platformProductId("SP-2").build();
+        given(productListingRepository.findPendingApproval()).willReturn(List.of(ok, boom));
+        given(productListingRepository.findScopedById(1L)).willReturn(Optional.of(ok));
+        given(productListingRepository.findScopedById(2L)).willReturn(Optional.of(boom));
+        lenient().when(marketplaceAccountRepository.findBySeller_IdAndPlatform(eq(SELLER_ID), any()))
+                .thenReturn(Optional.of(account()));
+        given(resolver.resolve(Platform.COUPANG)).willReturn(adapter);
+        given(adapter.fetchStatus(eq(ok), any())).willReturn(new FetchResult(ListingStatus.SELLING, List.of()));
+        given(adapter.fetchStatus(eq(boom), any())).willThrow(new RuntimeException("coupang 500"));
+        lenient().when(productListingOptionRepository.findByProductListingId(1L)).thenReturn(List.of());
+
+        service.syncApprovals();
+
+        verify(adapter, never()).fetchReviewNote(any(), any(), any());
+    }
 
     // (f) 2609_39/D19 ③: 식별자를 <b>처음</b> 받는 옵션만 market_price 를 얻는다. 이미 식별자가 있던 옵션은
     //     재동기화일 뿐 가격을 보낸 적이 없으므로 그대로 둔다(089 이후 등록분이 「아직 안 밀림」으로 쌓이는 것을 막는다).

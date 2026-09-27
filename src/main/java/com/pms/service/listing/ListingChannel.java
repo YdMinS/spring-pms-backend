@@ -69,6 +69,19 @@ public interface ListingChannel {
     FetchResult fetchStatus(ProductListing cell, MarketplaceAccount acct);
 
     /**
+     * 2609_74/D9: the review reason for the given market status, read from the market on demand.
+     *
+     * <p>Returns {@code null} when this status carries no reason to look up — the adapter then makes
+     * <b>no marketplace call</b>. Which statuses qualify is channel vocabulary, so the adapter owns it.
+     * A failed lookup throws; the caller turns that into {@link ReviewNote#failed()}.</p>
+     *
+     * @param statusName the market's own status text ({@link FetchResult#statusName()})
+     */
+    default ReviewNote fetchReviewNote(ProductListing cell, MarketplaceAccount acct, String statusName) {
+        return null;
+    }
+
+    /**
      * Update the listing: rebuild the WHOLE product object → PUT (no incremental option add — approved
      * options cannot be added piecemeal on Coupang; the whole object is re-submitted for re-approval).
      *

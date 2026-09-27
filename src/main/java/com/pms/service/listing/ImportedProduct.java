@@ -32,10 +32,19 @@ import java.util.Map;
  *                     타입이면 {@code content} 자체가 URL, 아니면 HTML 안의 {@code img src}), 설명 흐름 순서
  *                     그대로. 원본에 가까운 제품 사진은 여기 있다. never null, empty when absent
  * @param options      marketplace options; never null, empty when absent
+ * @param statusName marketplace status as the market wrote it (Coupang {@code statusName}, 예 "부분승인완료"); null when absent
  */
 public record ImportedProduct(String productName, String brand, String categoryCode, ListingStatus status,
                               List<String> tags, String noticeGroup, List<String> thumbnailImages,
-                              List<String> detailImages, List<Option> options) {
+                              List<String> detailImages, List<Option> options, String statusName) {
+
+    /** 2609_74 이전의 9인자 형태를 쓰는 호출부(테스트·레거시)를 위한 편의 생성자 — {@code statusName = null}. */
+    public ImportedProduct(String productName, String brand, String categoryCode, ListingStatus status,
+                           List<String> tags, String noticeGroup, List<String> thumbnailImages,
+                           List<String> detailImages, List<Option> options) {
+        this(productName, brand, categoryCode, status, tags, noticeGroup, thumbnailImages, detailImages,
+                options, null);
+    }
 
     /**
      * 2609_67 이전의 8인자 형태를 쓰는 호출부(테스트·레거시)를 위한 편의 생성자 — {@code brand = null}.

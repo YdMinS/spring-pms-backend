@@ -42,6 +42,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.endsWith;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.lenient;
@@ -609,6 +610,66 @@ class CoupangListingAdapterTest {
         assertThat(result.options()).isEmpty();
     }
 
+
+    @Test
+    void fetchStatus_carriesStatusName() {
+        given(client.get(anyString(), eq(""), any())).willReturn(
+                "{\"code\":\"SUCCESS\",\"data\":{\"statusName\":\"부분승인완료\","
+                        + "\"items\":[{\"itemName\":\"1세트\",\"vendorItemId\":111,\"sellerProductItemId\":222}]}}");
+
+        FetchResult result = adapter.fetchStatus(cell(), acct());
+
+        assertThat(result.status()).isEqualTo(ListingStatus.SELLING);
+        assertThat(result.statusName()).isEqualTo("부분승인완료");
+    }
+
+    // ---------------------------------------------------------------- 2609_74: 심사 사유 조회
+
+    /** Order deliberately shuffled — the newest-first assumption must not be what makes this pass. */
+    private static final String MIXED_HISTORY = "{\"code\":\"SUCCESS\",\"data\":["
+            + "{\"status\":\"승인반려\",\"comment\":\"옛 사유\",\"createdAt\":\"2026-09-01T10:00:00\"},"
+            + "{\"status\":\"심사중\",\"comment\":\"컨텐츠 확인 대기중\",\"createdAt\":\"2026-09-20T10:00:00\"},"
+            + "{\"status\":\"승인반려\",\"comment\":\"고시 누락\",\"createdAt\":\"2026-09-10T10:00:00\"}]}";
+
+    @Test
+    void fetchReviewNote_rejected_readsNewestRejectionRow() {
+        given(client.get(endsWith("/histories"), eq(""), any())).willReturn(MIXED_HISTORY);
+
+        ReviewNote note = adapter.fetchReviewNote(cell(), acct(), "승인반려");
+
+        assertThat(note.state()).isEqualTo(ReviewNote.State.FOUND);
+        assertThat(note.text()).isEqualTo("고시 누락");
+    }
+
+    @Test
+    void fetchReviewNote_partial_readsNewestRowOfAnyStatus() {
+        given(client.get(endsWith("/histories"), eq(""), any())).willReturn(MIXED_HISTORY);
+
+        ReviewNote note = adapter.fetchReviewNote(cell(), acct(), "부분승인완료");
+
+        assertThat(note.state()).isEqualTo(ReviewNote.State.FOUND);
+        assertThat(note.text()).isEqualTo("컨텐츠 확인 대기중");
+    }
+
+    @Test
+    void fetchReviewNote_rejectedWithoutRejectionRow_notFound() {
+        given(client.get(endsWith("/histories"), eq(""), any())).willReturn(
+                "{\"code\":\"SUCCESS\",\"data\":["
+                        + "{\"status\":\"임시저장\",\"comment\":\"판매자 임시저장\",\"createdAt\":\"2026-09-01T10:00:00\"}]}");
+
+        ReviewNote note = adapter.fetchReviewNote(cell(), acct(), "승인반려");
+
+        assertThat(note.state()).isEqualTo(ReviewNote.State.NOT_FOUND);
+        assertThat(note.text()).isNull();
+    }
+
+    @Test
+    void fetchReviewNote_otherStatus_makesNoCall() {
+        ReviewNote note = adapter.fetchReviewNote(cell(), acct(), "승인완료");
+
+        assertThat(note).isNull();
+        verify(client, never()).get(anyString(), anyString(), any());
+    }
 
     // ---------------------------------------------------------------- 2609_67: 상품명 검색
 

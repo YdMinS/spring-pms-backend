@@ -14,8 +14,14 @@ import java.util.List;
  *
  * @param status  the cell status mapped from the market statusName
  * @param options per-option ids parsed from the market response (empty until approved)
+ * @param statusName the market's own status text (null when the adapter did not read it)
  */
-public record FetchResult(ListingStatus status, List<OptionId> options) {
+public record FetchResult(ListingStatus status, List<OptionId> options, String statusName) {
+
+    /** 2609_74 이전의 2인자 형태를 쓰는 호출부(테스트)를 위한 편의 생성자 — {@code statusName = null}. */
+    public FetchResult(ListingStatus status, List<OptionId> options) {
+        this(status, options, null);
+    }
 
     /**
      * A single option's market ids.

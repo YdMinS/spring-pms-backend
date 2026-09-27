@@ -65,6 +65,8 @@ public class CoupangListingAdapter implements ListingChannel {
 
     private static final String SELLER_PRODUCTS =
             "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products";
+    private static final String STATUS_REJECTED = "승인반려";
+    private static final String STATUS_PARTIALLY_APPROVED = "부분승인완료";
 
     /**
      * 온보딩(2026-09-19): 이미지 경로가 상대일 때 붙이는 접두어.
@@ -160,7 +162,42 @@ public class CoupangListingAdapter implements ListingChannel {
             options.add(new FetchResult.OptionId(
                     option.itemName(), option.vendorItemId(), option.sellerProductItemId()));
         }
-        return new FetchResult(product.status(), options);
+        return new FetchResult(product.status(), options, product.statusName());
+    }
+
+    @Override
+    public ReviewNote fetchReviewNote(ProductListing cell, MarketplaceAccount acct, String statusName) {
+        boolean rejected = STATUS_REJECTED.equals(statusName);
+        boolean partial = STATUS_PARTIALLY_APPROVED.equals(statusName);
+        if (!rejected && !partial) {
+            return null;        // D9: no history call for any other status
+        }
+        // First page only (D28) — no query string = nextToken 1, maxPerPage 10.
+        String raw = client.get(SELLER_PRODUCTS + "/" + cell.getPlatformProductId() + "/histories", "", acct);
+        JsonNode latest = null;
+        for (JsonNode row : readJson(raw).path("data")) {
+            // D9: a rejection reads the newest 승인반려 row; D29: a partial approval reads the newest row.
+            if (rejected && !STATUS_REJECTED.equals(asTextOrNull(row, "status"))) {
+                continue;
+            }
+            // createdAt is yyyy-MM-dd'T'HH:mm:ss → lexicographic order IS chronological order. The
+            // documentation shows newest-first but does not promise it, so the order is not trusted.
+            if (latest == null || compareCreatedAt(row, latest) > 0) {
+                latest = row;
+            }
+        }
+        String comment = latest == null ? null : asTextOrNull(latest, "comment");
+        return comment == null || comment.isBlank() ? ReviewNote.notFound() : ReviewNote.found(comment.trim());
+    }
+
+    /** null createdAt sorts first (oldest) — a row without a timestamp never wins over one that has it. */
+    private static int compareCreatedAt(JsonNode a, JsonNode b) {
+        String left = asTextOrNull(a, "createdAt");
+        String right = asTextOrNull(b, "createdAt");
+        if (left == null) {
+            return right == null ? 0 : -1;
+        }
+        return right == null ? 1 : left.compareTo(right);
     }
 
     /**
@@ -220,7 +257,8 @@ public class CoupangListingAdapter implements ListingChannel {
                 asTextOrNull(data.path("items").path(0).path("notices").path(0), "noticeCategoryName"),
                 thumbnailImages(data),
                 detailImages(data),
-                options);
+                options,
+                asTextOrNull(data, "statusName"));
     }
 
     /**
