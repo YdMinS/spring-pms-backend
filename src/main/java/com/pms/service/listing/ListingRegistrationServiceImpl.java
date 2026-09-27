@@ -4,11 +4,13 @@ import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OptionApprovalStatus;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.dto.response.ListingRegisterResponse;
 import com.pms.dto.response.ListingStatusResponse;
 import com.pms.dto.response.ListingSyncResponse;
+import com.pms.dto.response.MarketOptionResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
@@ -252,6 +254,83 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
                 .stillPending(stillPending)
                 .failed(failed)
                 .build();
+    }
+
+    @Override
+    public List<MarketOptionResponse> listMarketOptions(Long listingId) {
+        ProductListing cell = requireMarketCell(listingId);
+        ImportedProduct product = resolver.resolve(cell.getPlatform())
+                .fetchProduct(cell.getPlatformProductId(), resolveAccount(cell));
+
+        Map<String, ProductListingOption> holderByMarketId =
+                productListingOptionRepository.findByProductListingId(listingId).stream()
+                        .filter(o -> o.getPlatformOptionId() != null)
+                        .collect(Collectors.toMap(ProductListingOption::getPlatformOptionId, o -> o, (a, b) -> a));
+
+        return product.options().stream()
+                .map(market -> {
+                    ProductListingOption holder = market.vendorItemId() == null
+                            ? null : holderByMarketId.get(market.vendorItemId());
+                    return MarketOptionResponse.builder()
+                            .itemName(market.itemName())
+                            .vendorItemId(market.vendorItemId())
+                            .sellerProductItemId(market.sellerProductItemId())
+                            .salePrice(market.salePrice())
+                            .linkedOptionId(holder == null ? null : holder.getId())
+                            .linkedOptionName(holder == null ? null : holder.getOptionName())
+                            .build();
+                })
+                .toList();
+    }
+
+    @Override
+    @Transactional
+    public ListingStatusResponse.OptionStatus linkMarketOption(Long listingId, Long optionId, String vendorItemId) {
+        ProductListing cell = requireMarketCell(listingId);
+        List<ProductListingOption> options = productListingOptionRepository.findByProductListingId(listingId);
+        ProductListingOption option = options.stream()
+                .filter(o -> o.getId().equals(optionId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("리스팅 옵션 아님"));
+        // D13: only an option with NO id yet. Re-pointing an identified option is out of scope.
+        if (option.getPlatformOptionId() != null) {
+            throw new IllegalArgumentException("이미 쿠팡 옵션과 연결된 옵션입니다");
+        }
+        if (options.stream().anyMatch(o -> vendorItemId.equals(o.getPlatformOptionId()))) {
+            throw new IllegalArgumentException("다른 옵션이 이미 사용 중인 쿠팡 옵션입니다");
+        }
+
+        // The id is never trusted from the client: it must exist on the market at this moment.
+        ImportedProduct.Option market = resolver.resolve(cell.getPlatform())
+                .fetchProduct(cell.getPlatformProductId(), resolveAccount(cell)).options().stream()
+                .filter(o -> vendorItemId.equals(o.vendorItemId()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("쿠팡에 없는 옵션입니다"));
+
+        // Same rule the import path applies to an option it reads from the market (2609_22/D20,
+        // 2609_39/D19 ④): an id exists ⇒ approved, and the market's price is the price that is live.
+        ProductListingOption.ProductListingOptionBuilder builder = option.toBuilder()
+                .platformOptionId(market.vendorItemId())
+                .sellerProductItemId(market.sellerProductItemId())
+                .approvalStatus(OptionApprovalStatus.APPROVED);
+        if (market.salePrice() != null) {
+            builder.marketPrice(market.salePrice()).marketPriceAt(LocalDateTime.now());
+        }
+        return ListingStatusResponse.OptionStatus.from(productListingOptionRepository.save(builder.build()));
+    }
+
+    /** Scoped cell that is on the market and on a platform whose products can be read back. */
+    private ProductListing requireMarketCell(Long listingId) {
+        ProductListing cell = productListingRepository.findScopedById(listingId)
+                .orElseThrow(() -> new ResourceNotFoundException("ProductListing", listingId));
+        if (cell.getPlatformProductId() == null) {
+            throw new IllegalArgumentException("미등록");
+        }
+        // fetchProduct's default implementation throws UnsupportedOperationException (→ 500) — gate first.
+        if (cell.getPlatform() != Platform.COUPANG) {
+            throw new IllegalArgumentException(cell.getPlatform() + " 옵션 연결 미지원");
+        }
+        return cell;
     }
 
     /** One refresh's outcome, before it is shaped into a response (2609_74). */

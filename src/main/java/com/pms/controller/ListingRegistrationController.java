@@ -1,16 +1,21 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.MarketLinkRequest;
 import com.pms.dto.response.ListingRegisterResponse;
 import com.pms.dto.response.ListingStatusResponse;
 import com.pms.dto.response.ListingSyncResponse;
+import com.pms.dto.response.MarketOptionResponse;
 import com.pms.service.listing.ListingRegistrationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 /**
  * Channel registration endpoints (FEATURE_2608_06 / 3c). ADMIN-only via the global {@code POST /api/admin/**}
@@ -47,6 +52,23 @@ public class ListingRegistrationController {
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<ListingStatusResponse>> fetchStatus(@PathVariable Long id) {
         return ResponseEntity.ok(ResponseDTO.success(listingRegistrationService.fetchStatus(id)));
+    }
+
+    @GetMapping("/product-listings/{id}/market-options")
+    @Operation(summary = "Options as they exist on the market now (read-only; one marketplace GET)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<List<MarketOptionResponse>>> listMarketOptions(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(listingRegistrationService.listMarketOptions(id)));
+    }
+
+    @PutMapping("/product-listings/{id}/options/{optionId}/market-link")
+    @Operation(summary = "Attach a market option id to a channel option that has none (local only)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<ListingStatusResponse.OptionStatus>> linkMarketOption(
+            @PathVariable Long id, @PathVariable Long optionId,
+            @Valid @RequestBody MarketLinkRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                listingRegistrationService.linkMarketOption(id, optionId, request.getVendorItemId())));
     }
 
     @PostMapping("/listings/sync-approvals")
