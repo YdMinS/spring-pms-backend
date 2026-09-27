@@ -11,6 +11,7 @@ import com.pms.domain.ProductListingOption;
 import com.pms.dto.request.SetOptionNamesRequest;
 import com.pms.dto.request.SetOptionPricesRequest.OptionPrice;
 import com.pms.dto.request.SetOptionStocksRequest.OptionStock;
+import com.pms.dto.response.ChannelApplyOptionNamesResponse;
 import com.pms.dto.response.ChannelPriceUpdateResponse;
 import com.pms.dto.response.ListingOptionsResponse;
 import com.pms.repository.MasterProductOptionRepository;
@@ -427,6 +428,16 @@ class ListingOptionServiceTest {
                         .status(ListingStatus.DRAFT).masterProduct(master).build()));
     }
 
+    /** Like givenNamingListing, but the cell is on the market ("P-1") in the given status (2609_74/D32·D33). */
+    private void givenMarketNamingListing(ListingStatus status) {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터").build();
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(
+                List.of(MasterProductOption.builder().id(5L).name("2세트").build()));
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(
+                ProductListing.builder().id(LISTING_ID).platform(Platform.COUPANG).name("셀")
+                        .status(status).platformProductId("P-1").masterProduct(master).build()));
+    }
+
     // 6. A name the channel typed is stored and flagged MANUAL_OVERRIDE (so a master rename skips it, D4).
     @Test
     void setOptionNames_savesNameAsManualOverride() {
@@ -487,6 +498,107 @@ class ListingOptionServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("같은 이름의 옵션");
         verify(productListingOptionRepository, never()).saveAll(any());
+    }
+
+    // ---------------------------------------------------------------- 2609_74: channel [마스터 옵션명 반영]
+
+    @Test
+    void applyMasterOptionNames_resetsManualNameToMasterName() {
+        givenNamingListing();
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID)).willReturn(List.of(
+                namedOption(1L, "채널이 붙인 이름", MasterProductOption.builder().id(5L).build(),
+                        GeneratedContentSource.MANUAL_OVERRIDE)));
+
+        ChannelApplyOptionNamesResponse response = service.applyMasterOptionNames(LISTING_ID);
+
+        List<ProductListingOption> saved = captureSaved();
+        assertThat(saved.get(0).getOptionName()).isEqualTo("2세트");
+        assertThat(saved.get(0).getOptionNameSource()).isEqualTo(GeneratedContentSource.AUTO);
+        assertThat(response.getUpdatedOptions()).isEqualTo(1);
+        assertThat(response.getSkippedAwaitingId()).isEmpty();
+    }
+
+    // D33: a SELLING cell's option without an option id is name-locked too.
+    @Test
+    void applyMasterOptionNames_onMarketWithoutOptionId_isSkipped() {
+        givenMarketNamingListing(ListingStatus.SELLING);
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID)).willReturn(List.of(
+                namedOption(1L, "채널이 붙인 이름", MasterProductOption.builder().id(5L).build(),
+                        GeneratedContentSource.MANUAL_OVERRIDE)));
+
+        ChannelApplyOptionNamesResponse response = service.applyMasterOptionNames(LISTING_ID);
+
+        verify(productListingOptionRepository, never()).saveAll(any());
+        assertThat(response.getSkippedAwaitingId()).containsExactly("채널이 붙인 이름");
+    }
+
+    // D32: a REJECTED cell unlocks — the name is fixed and sent again with [수정 요청].
+    @Test
+    void applyMasterOptionNames_rejectedCell_renamesOptionWithoutId() {
+        givenMarketNamingListing(ListingStatus.REJECTED);
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID)).willReturn(List.of(
+                namedOption(1L, "채널이 붙인 이름", MasterProductOption.builder().id(5L).build(),
+                        GeneratedContentSource.MANUAL_OVERRIDE)));
+
+        ChannelApplyOptionNamesResponse response = service.applyMasterOptionNames(LISTING_ID);
+
+        List<ProductListingOption> saved = captureSaved();
+        assertThat(saved.get(0).getOptionName()).isEqualTo("2세트");
+        assertThat(saved.get(0).getOptionNameSource()).isEqualTo(GeneratedContentSource.AUTO);
+        assertThat(response.getSkippedAwaitingId()).isEmpty();
+    }
+
+    @Test
+    void setOptionNames_nameLockedOption_rename_throws400() {
+        givenMarketNamingListing(ListingStatus.SUBMITTED);
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID)).willReturn(List.of(
+                namedOption(1L, "2세트", MasterProductOption.builder().id(5L).build(),
+                        GeneratedContentSource.AUTO)));
+
+        assertThatThrownBy(() -> service.setOptionNames(LISTING_ID,
+                List.of(new SetOptionNamesRequest.Item(1L, "새 이름"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(MarketOptionPolicy.NAME_LOCKED_MESSAGE);
+        verify(productListingOptionRepository, never()).saveAll(any());
+    }
+
+    // D32: the name stays the same and only the source moves → not a rename, not rejected.
+    @Test
+    void setOptionNames_nameLockedOption_sourceOnlyChange_passes() {
+        givenMarketNamingListing(ListingStatus.SUBMITTED);
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID)).willReturn(List.of(
+                namedOption(1L, "2세트", MasterProductOption.builder().id(5L).build(),
+                        GeneratedContentSource.MANUAL_OVERRIDE)));
+
+        service.setOptionNames(LISTING_ID, List.of(new SetOptionNamesRequest.Item(1L, "  ")));
+
+        List<ProductListingOption> saved = captureSaved();
+        assertThat(saved.get(0).getOptionName()).isEqualTo("2세트");
+        assertThat(saved.get(0).getOptionNameSource()).isEqualTo(GeneratedContentSource.AUTO);
+    }
+
+    @Test
+    void applyMasterOptionNames_unlinkedListing_throws() {
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(listing(ListingStatus.DRAFT)));
+
+        assertThatThrownBy(() -> service.applyMasterOptionNames(LISTING_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("마스터에 연결되지 않은 판매상품입니다");
+    }
+
+    // D16: a market-carried option's name moving by hand flags the cell for [수정 요청].
+    @Test
+    void setOptionNames_marketCarriedNameChange_flagsCell() {
+        givenMarketNamingListing(ListingStatus.SELLING);
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID)).willReturn(List.of(
+                namedOption(1L, "2세트", MasterProductOption.builder().id(5L).build(),
+                        GeneratedContentSource.AUTO).toBuilder().platformOptionId("V-1").build()));
+
+        service.setOptionNames(LISTING_ID, List.of(new SetOptionNamesRequest.Item(1L, "새 이름")));
+
+        ArgumentCaptor<ProductListing> saved = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(saved.capture());
+        assertThat(saved.getValue().isNeedsMarketSync()).isTrue();
     }
 
     // ---------------------------------------------------------------- 2609_19: manual channel price

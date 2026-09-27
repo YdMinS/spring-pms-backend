@@ -539,8 +539,8 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.categoryNotices.용량").value("30포"));
     }
 
-    // 84: an option that is live on the market (the seeded cell has platformProductId + an active option
-    // named "기본") is locked for RENAME and DELETE — but its quantity vector stays editable, which is the
+    // 84: an option that is live on the market (the seeded cell has platformProductId + the option's own
+    // propagated row, switched on below) is locked for DELETE — but its quantity vector stays editable, which is the
     // only way back from a quantity mistyped at registration time. Wiring only; the judgement matrix and
     // the other guards live in MasterProductServiceTest.
     @Test
@@ -552,9 +552,16 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON).content(create))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.marketRegistered").value(true))
+                .andExpect(jsonPath("$.data.marketRegistered").value(false))
                 .andReturn().getResponse().getContentAsString();
         Long optionId = com.jayway.jsonpath.JsonPath.parse(created).read("$.data.id", Integer.class).longValue();
+        // 2609_74/D6: the lock follows the LINK. Switch on the row the create propagated to the seeded
+        // on-market cell (platformProductId "X") so this option is carried on the market.
+        ProductListingOption linkedRow = productListingOptionRepository.findAll().stream()
+                .filter(o -> o.getMasterProductOption() != null
+                        && optionId.equals(o.getMasterProductOption().getId()))
+                .findFirst().orElseThrow();
+        productListingOptionRepository.save(linkedRow.toBuilder().active(true).build());
 
         String update = "{\"name\":\"기본\",\"items\":["
                 + "{\"productId\":" + productId1 + ",\"quantity\":3},"
@@ -563,18 +570,19 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON).content(update))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.marketRegistered").value(true))    // still locked for rename/delete
+                .andExpect(jsonPath("$.data.marketRegistered").value(true))    // still locked for delete
                 .andExpect(jsonPath("$.data.items[?(@.productId == " + productId1 + ")].quantity").value(3));
 
-        // The rename guard is the half that stays: same option, new name → 400.
+        // 2609_74/D4: the rename guard is gone — a market-registered option can be renamed.
         String rename = "{\"name\":\"기본2\",\"items\":["
                 + "{\"productId\":" + productId1 + ",\"quantity\":3},"
                 + "{\"productId\":" + productId2 + ",\"quantity\":2}]}";
         mockMvc.perform(patch(PATH + "/" + masterId + "/options/" + optionId)
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON).content(rename))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.status").value("FAILURE"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.name").value("기본2"))
+                .andExpect(jsonPath("$.data.marketRegistered").value(true));
     }
 
     @Test

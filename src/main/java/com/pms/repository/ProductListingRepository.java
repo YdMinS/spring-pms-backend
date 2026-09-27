@@ -91,6 +91,27 @@ public interface ProductListingRepository extends JpaRepository<ProductListing, 
                                                                    Pageable pageable);
 
     /**
+     * 2609_74/D14: detached cells (no master) of ONE account = same seller + same platform, market-registered
+     * only. The condition mirrors {@code DetachedCellPolicy.requireReusable} — a row listed here is a row the
+     * import path will accept.
+     */
+    @Query("select l from ProductListing l "
+            + "where l.masterProduct is null and l.platform = :platform and l.seller.id = :sellerId "
+            + "and l.platformProductId is not null")
+    List<ProductListing> findDetachedOfAccount(@Param("platform") Platform platform,
+                                               @Param("sellerId") Long sellerId,
+                                               Pageable pageable);
+
+    /** Keyword variant of {@link #findDetachedOfAccount} — narrowed by {@link #SEARCH_PREDICATE}. */
+    @Query("select l from ProductListing l "
+            + "where l.masterProduct is null and l.platform = :platform and l.seller.id = :sellerId "
+            + "and l.platformProductId is not null" + SEARCH_PREDICATE)
+    List<ProductListing> searchDetachedOfAccount(@Param("platform") Platform platform,
+                                                 @Param("sellerId") Long sellerId,
+                                                 @Param("keyword") String keyword,
+                                                 Pageable pageable);
+
+    /**
      * Find a product listing by platform product ID.
      *
      * @param platformProductId Platform's product ID

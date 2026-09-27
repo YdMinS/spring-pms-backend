@@ -28,6 +28,7 @@ import java.math.BigDecimal;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -113,6 +114,10 @@ class ListingOptionControllerTest extends BaseIntegrationTest {
 
     private String namePath(Long id) {
         return "/api/admin/product-listings/" + id + "/options/name";
+    }
+
+    private String applyNamesPath(Long id) {
+        return "/api/admin/product-listings/" + id + "/options/apply-master-names";
     }
 
     // ---- authority (MUST-KEEP) ----
@@ -319,5 +324,27 @@ class ListingOptionControllerTest extends BaseIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"names\":[]}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    // ---- 2609_74: channel [마스터 옵션명 반영] ----
+
+    @Test
+    void applyMasterNames_noToken_returns401() throws Exception {
+        mockMvc.perform(post(applyNamesPath(listingId)))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void applyMasterNames_userToken_returns403() throws Exception {
+        mockMvc.perform(post(applyNamesPath(listingId)).header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void applyMasterNames_adminToken_returns200() throws Exception {
+        mockMvc.perform(post(applyNamesPath(listingId)).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.updatedOptions").exists())
+                .andExpect(jsonPath("$.data.skippedAwaitingId").isArray());
     }
 }

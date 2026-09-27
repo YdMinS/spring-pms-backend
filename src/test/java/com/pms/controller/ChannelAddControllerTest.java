@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.domain.Carrier;
 import com.pms.domain.CarrierRate;
 import com.pms.domain.Category;
+import com.pms.domain.ListingStatus;
 import com.pms.domain.CommissionRate;
 import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
@@ -63,6 +64,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -346,5 +348,41 @@ class ChannelAddControllerTest {
         assertThat(productListingRepository.findScopedById(listingId)).isEmpty();
         assertThat(productListingOptionRepository.findByProductListingId(listingId)).isEmpty();
         assertThat(generatedProductDataRepository.findByProductListingId(listingId)).isEmpty();
+    }
+
+    // ---- 2609_74/D1·D14: detached listing search ----
+
+    private String detachedPath() {
+        return BASE + "/" + masterId + "/listings/detached?sellerId=" + sellerId + "&platform=COUPANG";
+    }
+
+    @Test
+    void findDetached_noToken_returns401() throws Exception {
+        mockMvc.perform(get(detachedPath())).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void findDetached_userToken_returns403() throws Exception {
+        mockMvc.perform(get(detachedPath()).header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void findDetached_adminToken_listsOnlyDetachedCellsOfThatSeller() throws Exception {
+        TenantContext.set(1L);
+        Seller seller = sellerRepository.findById(sellerId).orElseThrow();
+        // (a) detached + on the market → re-attachable, listed.
+        productListingRepository.save(ProductListing.builder()
+                .platform(Platform.COUPANG).platformProductId("DET-1").name("미연결 셀")
+                .status(ListingStatus.SELLING).seller(seller).masterProduct(null).build());
+        // (b) detached but never on the market → cannot be re-attached, not listed.
+        productListingRepository.save(ProductListing.builder()
+                .platform(Platform.COUPANG).platformProductId(null).name("미전송 셀")
+                .status(ListingStatus.DRAFT).seller(seller).masterProduct(null).build());
+
+        mockMvc.perform(get(detachedPath()).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].platformProductId").value("DET-1"));
     }
 }

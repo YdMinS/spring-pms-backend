@@ -4,11 +4,13 @@ import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OptionApprovalStatus;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.dto.response.ListingRegisterResponse;
 import com.pms.dto.response.ListingStatusResponse;
 import com.pms.dto.response.ListingSyncResponse;
+import com.pms.dto.response.MarketOptionResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
@@ -30,7 +32,7 @@ import java.util.stream.Collectors;
  * Channel registration orchestration (FEATURE_2608_06 / 3c). See {@link ListingRegistrationService}.
  *
  * <p>Each write method is {@code @Transactional} (DB save atomicity); the single HTTP call runs inside the
- * transaction once, with no approval wait. {@code syncApprovals} reuses {@link #fetchStatus} directly (same
+ * transaction once, with no approval wait. {@code syncApprovals} reuses the private refresh core (same
  * code path) — the inner call is a self-invocation, so its {@code @Transactional} is intentionally not a new
  * boundary: the sweep is one transaction and a caught per-listing failure (pre-flush: account/HTTP error)
  * does not poison it, so successful promotions persist.</p>
@@ -145,6 +147,29 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
     @Override
     @Transactional
     public ListingStatusResponse fetchStatus(Long listingId) {
+        Refreshed refreshed = refresh(listingId);
+
+        // 2609_74/D9·D19: the reason is looked up on demand and never stored. A failed lookup must not
+        // fail the refresh — the status was already saved above.
+        ReviewNote note;
+        try {
+            note = refreshed.adapter().fetchReviewNote(
+                    refreshed.cell(), refreshed.account(), refreshed.result().statusName());
+        } catch (Exception e) {
+            log.warn("[LISTING-REVIEW-NOTE] listingId={} lookup failed: {}", listingId, e.getMessage());
+            note = ReviewNote.failed();
+        }
+
+        return ListingStatusResponse.builder()
+                .productListingId(refreshed.cell().getId())
+                .status(refreshed.result().status().name())
+                .options(refreshed.options())
+                .reviewNote(note == null ? null : note.text())
+                .reviewNoteState(note == null ? null : note.state().name())
+                .build();
+    }
+
+    private Refreshed refresh(Long listingId) {
         ProductListing cell = productListingRepository.findScopedById(listingId)
                 .orElseThrow(() -> new ResourceNotFoundException("ProductListing", listingId));
         if (cell.getPlatformProductId() == null) {
@@ -198,11 +223,7 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
             }
         }
 
-        return ListingStatusResponse.builder()
-                .productListingId(cell.getId())
-                .status(result.status().name())
-                .options(optionStatuses)
-                .build();
+        return new Refreshed(cell, acct, adapter, result, optionStatuses);
     }
 
     @Override
@@ -213,9 +234,11 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
         for (ProductListing cell : pending) {
             swept++;
             try {
-                // Reuse fetchStatus (same code path). Self-invocation: no new tx boundary — see class doc.
-                ListingStatusResponse result = fetchStatus(cell.getId());
-                if (ListingStatus.SELLING.name().equals(result.getStatus())) {
+                // Reuse the refresh core (same code path). Private call: no new tx boundary — see class doc.
+                // 2609_74: the sweep refreshes only — it never looks a review reason up (one extra market
+                // call per rejected listing would multiply across the whole sweep).
+                Refreshed refreshed = refresh(cell.getId());
+                if (refreshed.result().status() == ListingStatus.SELLING) {
                     promoted++;
                 } else {
                     stillPending++;
@@ -231,6 +254,88 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
                 .stillPending(stillPending)
                 .failed(failed)
                 .build();
+    }
+
+    @Override
+    public List<MarketOptionResponse> listMarketOptions(Long listingId) {
+        ProductListing cell = requireMarketCell(listingId);
+        ImportedProduct product = resolver.resolve(cell.getPlatform())
+                .fetchProduct(cell.getPlatformProductId(), resolveAccount(cell));
+
+        Map<String, ProductListingOption> holderByMarketId =
+                productListingOptionRepository.findByProductListingId(listingId).stream()
+                        .filter(o -> o.getPlatformOptionId() != null)
+                        .collect(Collectors.toMap(ProductListingOption::getPlatformOptionId, o -> o, (a, b) -> a));
+
+        return product.options().stream()
+                .map(market -> {
+                    ProductListingOption holder = market.vendorItemId() == null
+                            ? null : holderByMarketId.get(market.vendorItemId());
+                    return MarketOptionResponse.builder()
+                            .itemName(market.itemName())
+                            .vendorItemId(market.vendorItemId())
+                            .sellerProductItemId(market.sellerProductItemId())
+                            .salePrice(market.salePrice())
+                            .linkedOptionId(holder == null ? null : holder.getId())
+                            .linkedOptionName(holder == null ? null : holder.getOptionName())
+                            .build();
+                })
+                .toList();
+    }
+
+    @Override
+    @Transactional
+    public ListingStatusResponse.OptionStatus linkMarketOption(Long listingId, Long optionId, String vendorItemId) {
+        ProductListing cell = requireMarketCell(listingId);
+        List<ProductListingOption> options = productListingOptionRepository.findByProductListingId(listingId);
+        ProductListingOption option = options.stream()
+                .filter(o -> o.getId().equals(optionId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("리스팅 옵션 아님"));
+        // D13: only an option with NO id yet. Re-pointing an identified option is out of scope.
+        if (option.getPlatformOptionId() != null) {
+            throw new IllegalArgumentException("이미 쿠팡 옵션과 연결된 옵션입니다");
+        }
+        if (options.stream().anyMatch(o -> vendorItemId.equals(o.getPlatformOptionId()))) {
+            throw new IllegalArgumentException("다른 옵션이 이미 사용 중인 쿠팡 옵션입니다");
+        }
+
+        // The id is never trusted from the client: it must exist on the market at this moment.
+        ImportedProduct.Option market = resolver.resolve(cell.getPlatform())
+                .fetchProduct(cell.getPlatformProductId(), resolveAccount(cell)).options().stream()
+                .filter(o -> vendorItemId.equals(o.vendorItemId()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("쿠팡에 없는 옵션입니다"));
+
+        // Same rule the import path applies to an option it reads from the market (2609_22/D20,
+        // 2609_39/D19 ④): an id exists ⇒ approved, and the market's price is the price that is live.
+        ProductListingOption.ProductListingOptionBuilder builder = option.toBuilder()
+                .platformOptionId(market.vendorItemId())
+                .sellerProductItemId(market.sellerProductItemId())
+                .approvalStatus(OptionApprovalStatus.APPROVED);
+        if (market.salePrice() != null) {
+            builder.marketPrice(market.salePrice()).marketPriceAt(LocalDateTime.now());
+        }
+        return ListingStatusResponse.OptionStatus.from(productListingOptionRepository.save(builder.build()));
+    }
+
+    /** Scoped cell that is on the market and on a platform whose products can be read back. */
+    private ProductListing requireMarketCell(Long listingId) {
+        ProductListing cell = productListingRepository.findScopedById(listingId)
+                .orElseThrow(() -> new ResourceNotFoundException("ProductListing", listingId));
+        if (cell.getPlatformProductId() == null) {
+            throw new IllegalArgumentException("미등록");
+        }
+        // fetchProduct's default implementation throws UnsupportedOperationException (→ 500) — gate first.
+        if (cell.getPlatform() != Platform.COUPANG) {
+            throw new IllegalArgumentException(cell.getPlatform() + " 옵션 연결 미지원");
+        }
+        return cell;
+    }
+
+    /** One refresh's outcome, before it is shaped into a response (2609_74). */
+    private record Refreshed(ProductListing cell, MarketplaceAccount account, ListingChannel adapter,
+                             FetchResult result, List<ListingStatusResponse.OptionStatus> options) {
     }
 
     /** Resolve the (seller, platform) marketplace account for a cell (404 if none, 400 if inactive). */

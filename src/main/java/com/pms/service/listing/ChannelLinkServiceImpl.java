@@ -1,7 +1,9 @@
 package com.pms.service.listing;
 
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.dto.response.DetachedListingResponse;
 import com.pms.exception.BusinessException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.exception.ValidationException;
@@ -12,6 +14,9 @@ import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductListingTagRevisionRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,6 +41,8 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 public class ChannelLinkServiceImpl implements ChannelLinkService {
+
+    private static final int DETACHED_LIMIT = 20;
 
     private final MasterProductRepository masterProductRepository;
     private final ProductListingRepository productListingRepository;
@@ -113,6 +120,28 @@ public class ChannelLinkServiceImpl implements ChannelLinkService {
         } catch (DataIntegrityViolationException e) {
             throw new BusinessException("기록이 남아 있어 삭제할 수 없습니다", HttpStatus.CONFLICT);
         }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<DetachedListingResponse> findDetached(Long masterProductId, Long sellerId,
+                                                      String platform, String keyword) {
+        masterProductRepository.findScopedById(masterProductId)
+                .orElseThrow(() -> new ResourceNotFoundException("MasterProduct", masterProductId));
+        Platform target = Platform.from(platform);
+        Pageable newestFirst = PageRequest.of(0, DETACHED_LIMIT, Sort.by(Sort.Direction.DESC, "id"));
+        String term = keyword == null ? "" : keyword.trim();
+        List<ProductListing> found = term.isEmpty()
+                ? productListingRepository.findDetachedOfAccount(target, sellerId, newestFirst)
+                : productListingRepository.searchDetachedOfAccount(target, sellerId, term, newestFirst);
+        return found.stream()
+                .map(listing -> DetachedListingResponse.builder()
+                        .productListingId(listing.getId())
+                        .platformProductId(listing.getPlatformProductId())
+                        .name(listing.getName())
+                        .status(listing.getStatus() != null ? listing.getStatus().name() : null)
+                        .build())
+                .toList();
     }
 
     /**

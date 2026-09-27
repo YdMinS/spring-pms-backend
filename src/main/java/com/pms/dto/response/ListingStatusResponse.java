@@ -25,6 +25,15 @@ public class ListingStatusResponse {
     @Schema(description = "Per-option approval state")
     private List<OptionStatus> options;
 
+    /** 2609_74/D9: 심사 사유. 조회하지 않았거나 받지 못했으면 null. 저장되지 않는 값이다. */
+    @Schema(description = "Review reason read from the market on this refresh (null when none)",
+            example = "상품정보제공고시 누락")
+    private String reviewNote;
+
+    /** FOUND / NOT_FOUND / FAILED. null = 이 상태에서는 조회하지 않았다. */
+    @Schema(description = "Outcome of the review-reason lookup (null = not looked up)", example = "FOUND")
+    private String reviewNoteState;
+
     @Getter
     @Builder
     @Schema(description = "One option's approval state + market option id")

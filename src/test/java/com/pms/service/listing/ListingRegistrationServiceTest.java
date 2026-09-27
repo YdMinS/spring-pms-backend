@@ -9,7 +9,9 @@ import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
 import com.pms.dto.response.ListingRegisterResponse;
+import com.pms.dto.response.ListingStatusResponse;
 import com.pms.dto.response.ListingSyncResponse;
+import com.pms.dto.response.MarketOptionResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.GeneratedProductDataRepository;
@@ -40,6 +42,7 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 /**
  * Orchestration (FEATURE_2608_06 / 3c): register state promotion (no approval wait), fetch-status option sync
@@ -321,6 +324,85 @@ class ListingRegistrationServiceTest {
     }
 
 
+    // (g) 2609_74/D9: a rejected refresh carries the review reason read on demand.
+    @Test
+    void fetchStatus_rejected_returnsReviewNote() {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.SUBMITTED, "SP-1")));
+        stubAccountAndAdapter();
+        given(adapter.fetchStatus(any(), any()))
+                .willReturn(new FetchResult(ListingStatus.REJECTED, List.of(), "승인반려"));
+        given(adapter.fetchReviewNote(any(), any(), eq("승인반려"))).willReturn(ReviewNote.found("고시 누락"));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+
+        ListingStatusResponse response = service.fetchStatus(CELL_ID);
+
+        assertThat(response.getReviewNote()).isEqualTo("고시 누락");
+        assertThat(response.getReviewNoteState()).isEqualTo("FOUND");
+        assertThat(response.getStatus()).isEqualTo("REJECTED");
+    }
+
+    // (h) 2609_74/D19: a failed reason lookup never fails the refresh — the status is still saved.
+    @Test
+    void fetchStatus_reviewNoteLookupFails_stillReturnsStatus() {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.SUBMITTED, "SP-1")));
+        stubAccountAndAdapter();
+        given(adapter.fetchStatus(any(), any()))
+                .willReturn(new FetchResult(ListingStatus.REJECTED, List.of(), "승인반려"));
+        given(adapter.fetchReviewNote(any(), any(), any())).willThrow(new IllegalStateException("boom"));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+
+        ListingStatusResponse response = service.fetchStatus(CELL_ID);
+
+        assertThat(response.getStatus()).isEqualTo("REJECTED");
+        assertThat(response.getReviewNoteState()).isEqualTo("FAILED");
+        assertThat(response.getReviewNote()).isNull();
+        ArgumentCaptor<ProductListing> cellCaptor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(cellCaptor.capture());
+        assertThat(cellCaptor.getValue().getStatus()).isEqualTo(ListingStatus.REJECTED);
+    }
+
+    // (i) 2609_74: a status the adapter does not look up leaves both fields null.
+    @Test
+    void fetchStatus_noReviewNote_leavesBothFieldsNull() {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.SUBMITTED, "SP-1")));
+        stubAccountAndAdapter();
+        given(adapter.fetchStatus(any(), any())).willReturn(new FetchResult(
+                ListingStatus.SELLING, List.of(new FetchResult.OptionId("기본", "111", "222"))));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+
+        ListingStatusResponse response = service.fetchStatus(CELL_ID);
+
+        assertThat(response.getReviewNote()).isNull();
+        assertThat(response.getReviewNoteState()).isNull();
+    }
+
+    // (j) 2609_74: the sweep refreshes only — it never looks a review reason up.
+    @Test
+    void syncApprovals_neverLooksUpReviewNote() {
+        ProductListing ok = ProductListing.builder().id(1L).platform(Platform.COUPANG).name("ok")
+                .seller(Seller.builder().id(SELLER_ID).build())
+                .status(ListingStatus.SUBMITTED).platformProductId("SP-1").build();
+        ProductListing boom = ProductListing.builder().id(2L).platform(Platform.COUPANG).name("boom")
+                .seller(Seller.builder().id(SELLER_ID).build())
+                .status(ListingStatus.SUBMITTED).platformProductId("SP-2").build();
+        given(productListingRepository.findPendingApproval()).willReturn(List.of(ok, boom));
+        given(productListingRepository.findScopedById(1L)).willReturn(Optional.of(ok));
+        given(productListingRepository.findScopedById(2L)).willReturn(Optional.of(boom));
+        lenient().when(marketplaceAccountRepository.findBySeller_IdAndPlatform(eq(SELLER_ID), any()))
+                .thenReturn(Optional.of(account()));
+        given(resolver.resolve(Platform.COUPANG)).willReturn(adapter);
+        given(adapter.fetchStatus(eq(ok), any())).willReturn(new FetchResult(ListingStatus.SELLING, List.of()));
+        given(adapter.fetchStatus(eq(boom), any())).willThrow(new RuntimeException("coupang 500"));
+        lenient().when(productListingOptionRepository.findByProductListingId(1L)).thenReturn(List.of());
+
+        service.syncApprovals();
+
+        verify(adapter, never()).fetchReviewNote(any(), any(), any());
+    }
+
     // (f) 2609_39/D19 ③: 식별자를 <b>처음</b> 받는 옵션만 market_price 를 얻는다. 이미 식별자가 있던 옵션은
     //     재동기화일 뿐 가격을 보낸 적이 없으므로 그대로 둔다(089 이후 등록분이 「아직 안 밀림」으로 쌓이는 것을 막는다).
     @Test
@@ -349,5 +431,108 @@ class ListingRegistrationServiceTest {
         assertThat(savedFresh.getMarketPriceAt()).isNotNull();
         assertThat(savedResynced.getMarketPrice()).isNull();
         assertThat(savedResynced.getMarketPriceAt()).isNull();
+    }
+
+    // ---- 2609_74/D13: market option list + manual link ----
+
+    private ImportedProduct marketProduct() {
+        return new ImportedProduct("상품", "C-1", ListingStatus.SELLING, List.of(), List.of(
+                new ImportedProduct.Option("59g 6개", "V-1", "S-1", new BigDecimal("12900"), null, null),
+                new ImportedProduct.Option("59g 12개", "V-2", "S-2", new BigDecimal("23900"), null, null)));
+    }
+
+    private void givenMarketCell(List<ProductListingOption> options) {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.SELLING, "SP-1")));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(options);
+        stubAccountAndAdapter();
+        given(adapter.fetchProduct(eq("SP-1"), any())).willReturn(marketProduct());
+    }
+
+    private void givenCellAndOptions(List<ProductListingOption> options) {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.SELLING, "SP-1")));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(options);
+    }
+
+    @Test
+    void linkMarketOption_optionWithoutId_storesIdAndApproval() {
+        givenMarketCell(List.of(option()));
+        given(productListingOptionRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+
+        ListingStatusResponse.OptionStatus result = service.linkMarketOption(CELL_ID, 50L, "V-1");
+
+        ArgumentCaptor<ProductListingOption> captor = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository).save(captor.capture());
+        ProductListingOption saved = captor.getValue();
+        assertThat(saved.getPlatformOptionId()).isEqualTo("V-1");
+        assertThat(saved.getSellerProductItemId()).isEqualTo("S-1");
+        assertThat(saved.getApprovalStatus()).isEqualTo(OptionApprovalStatus.APPROVED);
+        assertThat(saved.getMarketPrice()).isEqualByComparingTo("12900");
+        // 🔴 Linking must never overwrite our selling price or option name with the market's values.
+        assertThat(saved.getSellingPrice()).isEqualByComparingTo("6000");
+        assertThat(saved.getOptionName()).isEqualTo("기본");
+        assertThat(result.getPlatformOptionId()).isEqualTo("V-1");
+    }
+
+    @Test
+    void linkMarketOption_optionAlreadyIdentified_throws() {
+        givenCellAndOptions(List.of(option().toBuilder().platformOptionId("V-9").build()));
+
+        assertThatThrownBy(() -> service.linkMarketOption(CELL_ID, 50L, "V-1"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("이미 쿠팡 옵션과 연결된 옵션입니다");
+        verify(productListingOptionRepository, never()).save(any());
+        verify(adapter, never()).fetchProduct(any(), any());
+    }
+
+    @Test
+    void linkMarketOption_idHeldByAnotherOption_throws() {
+        ProductListingOption other = ProductListingOption.builder().id(51L).optionName("다른")
+                .platformOptionId("V-1").build();
+        givenCellAndOptions(List.of(option(), other));
+
+        assertThatThrownBy(() -> service.linkMarketOption(CELL_ID, 50L, "V-1"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("다른 옵션이 이미 사용 중인 쿠팡 옵션입니다");
+        verify(productListingOptionRepository, never()).save(any());
+    }
+
+    @Test
+    void linkMarketOption_idNotOnMarket_throws() {
+        givenMarketCell(List.of(option()));
+
+        assertThatThrownBy(() -> service.linkMarketOption(CELL_ID, 50L, "V-404"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("쿠팡에 없는 옵션입니다");
+        verify(productListingOptionRepository, never()).save(any());
+    }
+
+    @Test
+    void linkMarketOption_draftCell_throws() {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.DRAFT, null)));
+
+        assertThatThrownBy(() -> service.linkMarketOption(CELL_ID, 50L, "V-1"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("미등록");
+        verifyNoInteractions(adapter);
+    }
+
+    @Test
+    void listMarketOptions_marksOptionsAlreadyLinked() {
+        givenMarketCell(List.of(ProductListingOption.builder().id(50L).optionName("12개")
+                .platformOptionId("V-2").build()));
+
+        List<MarketOptionResponse> result = service.listMarketOptions(CELL_ID);
+
+        assertThat(result).hasSize(2);
+        MarketOptionResponse first = result.stream().filter(r -> "V-1".equals(r.getVendorItemId())).findFirst().orElseThrow();
+        MarketOptionResponse second = result.stream().filter(r -> "V-2".equals(r.getVendorItemId())).findFirst().orElseThrow();
+        assertThat(first.getLinkedOptionId()).isNull();
+        assertThat(first.getSalePrice()).isEqualByComparingTo("12900");
+        assertThat(second.getLinkedOptionId()).isEqualTo(50L);
+        assertThat(second.getLinkedOptionName()).isEqualTo("12개");
+        verify(productListingOptionRepository, never()).save(any());
     }
 }

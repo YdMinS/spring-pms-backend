@@ -71,6 +71,9 @@ public interface MasterOptionChannelSync {
      * MANUAL_OVERRIDE sibling may legitimately hold that name, and duplicate names within one cell are a
      * marketplace error (Coupang {@code itemName}).</p>
      *
+     * <p>2609_74: a cell option that is on the market but has no option id yet is skipped (D25), and a cell
+     * whose market-carried option name actually moved gets {@code needsMarketSync = true} (D16).</p>
+     *
      * @param masterOptionId the renamed master option's id (the match key)
      */
     void onOptionRenamed(Long masterId, Long masterOptionId, String newName);

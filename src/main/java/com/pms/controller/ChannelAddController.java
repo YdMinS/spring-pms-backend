@@ -7,6 +7,7 @@ import com.pms.dto.request.ListingImportPreviewRequest;
 import com.pms.dto.request.ListingImportRequest;
 import com.pms.dto.response.BatchChannelAddResponse;
 import com.pms.dto.response.ChannelAddResponse;
+import com.pms.dto.response.DetachedListingResponse;
 import com.pms.dto.response.ListingImportPreviewResponse;
 import com.pms.service.ChannelAddService;
 import com.pms.service.listing.ChannelLinkService;
@@ -19,6 +20,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 /**
  * Channel add (FEATURE_2608_06 / 3b'): create a DRAFT channel-cell listing under a master product,
@@ -76,6 +79,18 @@ public class ChannelAddController {
             @PathVariable Long masterProductId, @Valid @RequestBody ListingImportRequest request) {
         ChannelAddResponse response = coupangListingImportService.importListing(masterProductId, request);
         return ResponseEntity.ok(ResponseDTO.success(response));
+    }
+
+    @GetMapping("/{masterProductId}/listings/detached")
+    @Operation(summary = "Detached (master-less) listings of one account, newest 20 — candidates to re-attach")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<List<DetachedListingResponse>>> findDetached(
+            @PathVariable Long masterProductId,
+            @RequestParam Long sellerId,
+            @RequestParam String platform,
+            @RequestParam(required = false) String keyword) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                channelLinkService.findDetached(masterProductId, sellerId, platform, keyword)));
     }
 
     @DeleteMapping("/{masterProductId}/listings/{listingId}/link")

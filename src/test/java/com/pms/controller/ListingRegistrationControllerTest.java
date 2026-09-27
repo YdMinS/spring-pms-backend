@@ -36,6 +36,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.http.MediaType;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -45,7 +46,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.lenient;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -221,5 +224,54 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.swept").isNumber());
+    }
+
+    // ---- 2609_74/D13: market option list + manual link ----
+
+    private String marketOptionsPath() {
+        return "/api/admin/product-listings/" + draftCellId + "/market-options";
+    }
+
+    private String marketLinkPath() {
+        return "/api/admin/product-listings/" + draftCellId + "/options/1/market-link";
+    }
+
+    @Test
+    void listMarketOptions_noToken_returns401() throws Exception {
+        mockMvc.perform(get(marketOptionsPath())).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void listMarketOptions_userToken_returns403() throws Exception {
+        mockMvc.perform(get(marketOptionsPath()).header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void listMarketOptions_draftCell_returns400() throws Exception {
+        mockMvc.perform(get(marketOptionsPath()).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value("FAILURE"));
+    }
+
+    @Test
+    void linkMarketOption_noToken_returns401() throws Exception {
+        mockMvc.perform(put(marketLinkPath()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"vendorItemId\":\"V-1\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void linkMarketOption_userToken_returns403() throws Exception {
+        mockMvc.perform(put(marketLinkPath()).header("Authorization", "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"vendorItemId\":\"V-1\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void linkMarketOption_blankVendorItemId_returns400() throws Exception {
+        mockMvc.perform(put(marketLinkPath()).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"vendorItemId\":\"\"}"))
+                .andExpect(status().isBadRequest());
     }
 }
