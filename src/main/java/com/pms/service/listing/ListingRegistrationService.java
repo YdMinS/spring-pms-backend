@@ -3,6 +3,9 @@ package com.pms.service.listing;
 import com.pms.dto.response.ListingRegisterResponse;
 import com.pms.dto.response.ListingStatusResponse;
 import com.pms.dto.response.ListingSyncResponse;
+import com.pms.dto.response.MarketOptionResponse;
+
+import java.util.List;
 
 /**
  * Channel registration orchestration (FEATURE_2608_06 / 3c). Owns the cell state machine
@@ -34,6 +37,19 @@ public interface ListingRegistrationService {
 
     /** Manual refresh: fetch market status + sync option ids/approval on SELLING. */
     ListingStatusResponse fetchStatus(Long listingId);
+
+    /**
+     * 2609_74/D13: the options as they exist on the market right now, each marked with the channel option
+     * that already holds its id (if any). One marketplace GET, zero writes.
+     */
+    List<MarketOptionResponse> listMarketOptions(Long listingId);
+
+    /**
+     * 2609_74/D13: attach a market option id to a channel option that has none — the manual counterpart of
+     * the name match in {@link #fetchStatus}. Only an option WITHOUT an id can be linked; an id that another
+     * option of the cell already holds is refused. Nothing is sent to the market.
+     */
+    ListingStatusResponse.OptionStatus linkMarketOption(Long listingId, Long optionId, String vendorItemId);
 
     /** Manual sweep of pending (SUBMITTED + not-approved) listings; per-listing failures isolated. */
     ListingSyncResponse syncApprovals();

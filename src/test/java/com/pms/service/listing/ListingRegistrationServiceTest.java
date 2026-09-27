@@ -11,6 +11,7 @@ import com.pms.domain.Seller;
 import com.pms.dto.response.ListingRegisterResponse;
 import com.pms.dto.response.ListingStatusResponse;
 import com.pms.dto.response.ListingSyncResponse;
+import com.pms.dto.response.MarketOptionResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.GeneratedProductDataRepository;
@@ -41,6 +42,7 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 /**
  * Orchestration (FEATURE_2608_06 / 3c): register state promotion (no approval wait), fetch-status option sync
@@ -429,5 +431,108 @@ class ListingRegistrationServiceTest {
         assertThat(savedFresh.getMarketPriceAt()).isNotNull();
         assertThat(savedResynced.getMarketPrice()).isNull();
         assertThat(savedResynced.getMarketPriceAt()).isNull();
+    }
+
+    // ---- 2609_74/D13: market option list + manual link ----
+
+    private ImportedProduct marketProduct() {
+        return new ImportedProduct("상품", "C-1", ListingStatus.SELLING, List.of(), List.of(
+                new ImportedProduct.Option("59g 6개", "V-1", "S-1", new BigDecimal("12900"), null, null),
+                new ImportedProduct.Option("59g 12개", "V-2", "S-2", new BigDecimal("23900"), null, null)));
+    }
+
+    private void givenMarketCell(List<ProductListingOption> options) {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.SELLING, "SP-1")));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(options);
+        stubAccountAndAdapter();
+        given(adapter.fetchProduct(eq("SP-1"), any())).willReturn(marketProduct());
+    }
+
+    private void givenCellAndOptions(List<ProductListingOption> options) {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.SELLING, "SP-1")));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(options);
+    }
+
+    @Test
+    void linkMarketOption_optionWithoutId_storesIdAndApproval() {
+        givenMarketCell(List.of(option()));
+        given(productListingOptionRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+
+        ListingStatusResponse.OptionStatus result = service.linkMarketOption(CELL_ID, 50L, "V-1");
+
+        ArgumentCaptor<ProductListingOption> captor = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository).save(captor.capture());
+        ProductListingOption saved = captor.getValue();
+        assertThat(saved.getPlatformOptionId()).isEqualTo("V-1");
+        assertThat(saved.getSellerProductItemId()).isEqualTo("S-1");
+        assertThat(saved.getApprovalStatus()).isEqualTo(OptionApprovalStatus.APPROVED);
+        assertThat(saved.getMarketPrice()).isEqualByComparingTo("12900");
+        // 🔴 Linking must never overwrite our selling price or option name with the market's values.
+        assertThat(saved.getSellingPrice()).isEqualByComparingTo("6000");
+        assertThat(saved.getOptionName()).isEqualTo("기본");
+        assertThat(result.getPlatformOptionId()).isEqualTo("V-1");
+    }
+
+    @Test
+    void linkMarketOption_optionAlreadyIdentified_throws() {
+        givenCellAndOptions(List.of(option().toBuilder().platformOptionId("V-9").build()));
+
+        assertThatThrownBy(() -> service.linkMarketOption(CELL_ID, 50L, "V-1"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("이미 쿠팡 옵션과 연결된 옵션입니다");
+        verify(productListingOptionRepository, never()).save(any());
+        verify(adapter, never()).fetchProduct(any(), any());
+    }
+
+    @Test
+    void linkMarketOption_idHeldByAnotherOption_throws() {
+        ProductListingOption other = ProductListingOption.builder().id(51L).optionName("다른")
+                .platformOptionId("V-1").build();
+        givenCellAndOptions(List.of(option(), other));
+
+        assertThatThrownBy(() -> service.linkMarketOption(CELL_ID, 50L, "V-1"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("다른 옵션이 이미 사용 중인 쿠팡 옵션입니다");
+        verify(productListingOptionRepository, never()).save(any());
+    }
+
+    @Test
+    void linkMarketOption_idNotOnMarket_throws() {
+        givenMarketCell(List.of(option()));
+
+        assertThatThrownBy(() -> service.linkMarketOption(CELL_ID, 50L, "V-404"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("쿠팡에 없는 옵션입니다");
+        verify(productListingOptionRepository, never()).save(any());
+    }
+
+    @Test
+    void linkMarketOption_draftCell_throws() {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.DRAFT, null)));
+
+        assertThatThrownBy(() -> service.linkMarketOption(CELL_ID, 50L, "V-1"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("미등록");
+        verifyNoInteractions(adapter);
+    }
+
+    @Test
+    void listMarketOptions_marksOptionsAlreadyLinked() {
+        givenMarketCell(List.of(ProductListingOption.builder().id(50L).optionName("12개")
+                .platformOptionId("V-2").build()));
+
+        List<MarketOptionResponse> result = service.listMarketOptions(CELL_ID);
+
+        assertThat(result).hasSize(2);
+        MarketOptionResponse first = result.stream().filter(r -> "V-1".equals(r.getVendorItemId())).findFirst().orElseThrow();
+        MarketOptionResponse second = result.stream().filter(r -> "V-2".equals(r.getVendorItemId())).findFirst().orElseThrow();
+        assertThat(first.getLinkedOptionId()).isNull();
+        assertThat(first.getSalePrice()).isEqualByComparingTo("12900");
+        assertThat(second.getLinkedOptionId()).isEqualTo(50L);
+        assertThat(second.getLinkedOptionName()).isEqualTo("12개");
+        verify(productListingOptionRepository, never()).save(any());
     }
 }

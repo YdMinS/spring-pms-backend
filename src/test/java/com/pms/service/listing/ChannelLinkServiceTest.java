@@ -3,8 +3,11 @@ package com.pms.service.listing;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.dto.response.DetachedListingResponse;
+import com.pms.exception.ResourceNotFoundException;
 import com.pms.exception.ValidationException;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MasterProductRepository;
@@ -18,6 +21,8 @@ import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 
 import java.util.List;
 import java.util.Optional;
@@ -25,10 +30,12 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 /**
  * 채널 연결 해제 · 미전송 채널 삭제(FEATURE_2609_63 / 01).
@@ -174,5 +181,77 @@ class ChannelLinkServiceTest {
         verify(generatedProductDataRepository, never()).deleteByProductListingId(any());
         verify(productListingTagRevisionRepository, never()).deleteByProductListing_Id(any());
         verify(productListingRepository, never()).delete(any());
+    }
+
+    // ---- 미연결 판매상품 검색 (2609_74/D1·D14) ----
+
+    private static final Long SELLER_ID = 3L;
+
+    private void givenMasterAndDetached() {
+        given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master(MASTER_ID)));
+        ProductListing detached = ProductListing.builder()
+                .id(LISTING_ID).name("생수").status(ListingStatus.SELLING).platformProductId("123").build();
+        given(productListingRepository.findDetachedOfAccount(eq(Platform.COUPANG), eq(SELLER_ID), any()))
+                .willReturn(List.of(detached));
+    }
+
+    @Test
+    void findDetached_noKeyword_usesAccountQuery() {
+        givenMasterAndDetached();
+
+        List<DetachedListingResponse> result = service.findDetached(MASTER_ID, SELLER_ID, "COUPANG", null);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getProductListingId()).isEqualTo(LISTING_ID);
+        assertThat(result.get(0).getPlatformProductId()).isEqualTo("123");
+        assertThat(result.get(0).getName()).isEqualTo("생수");
+        assertThat(result.get(0).getStatus()).isEqualTo("SELLING");
+        verify(productListingRepository, never()).searchDetachedOfAccount(any(), any(), any(), any());
+    }
+
+    @Test
+    void findDetached_blankKeyword_usesAccountQuery() {
+        givenMasterAndDetached();
+
+        service.findDetached(MASTER_ID, SELLER_ID, "COUPANG", "   ");
+
+        verify(productListingRepository).findDetachedOfAccount(any(), any(), any());
+        verify(productListingRepository, never()).searchDetachedOfAccount(any(), any(), any(), any());
+    }
+
+    @Test
+    void findDetached_keyword_isTrimmedAndSearched() {
+        given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master(MASTER_ID)));
+        given(productListingRepository.searchDetachedOfAccount(eq(Platform.COUPANG), eq(SELLER_ID), eq("생수"), any()))
+                .willReturn(List.of());
+
+        service.findDetached(MASTER_ID, SELLER_ID, "COUPANG", "  생수 ");
+
+        verify(productListingRepository).searchDetachedOfAccount(eq(Platform.COUPANG), eq(SELLER_ID), eq("생수"), any());
+        verify(productListingRepository, never()).findDetachedOfAccount(any(), any(), any());
+    }
+
+    @Test
+    void findDetached_limitsToTwentyNewestFirst() {
+        givenMasterAndDetached();
+
+        service.findDetached(MASTER_ID, SELLER_ID, "COUPANG", null);
+
+        ArgumentCaptor<Pageable> pageCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(productListingRepository).findDetachedOfAccount(eq(Platform.COUPANG), eq(SELLER_ID), pageCaptor.capture());
+        Pageable page = pageCaptor.getValue();
+        assertThat(page.getPageSize()).isEqualTo(20);
+        assertThat(page.getPageNumber()).isZero();
+        assertThat(page.getSort().getOrderFor("id")).isNotNull();
+        assertThat(page.getSort().getOrderFor("id").getDirection()).isEqualTo(Sort.Direction.DESC);
+    }
+
+    @Test
+    void findDetached_unknownMaster_throwsNotFound() {
+        given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.findDetached(MASTER_ID, SELLER_ID, "COUPANG", null))
+                .isInstanceOf(ResourceNotFoundException.class);
+        verifyNoInteractions(productListingRepository);
     }
 }
