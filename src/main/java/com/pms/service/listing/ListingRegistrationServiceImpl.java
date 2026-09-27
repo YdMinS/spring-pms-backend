@@ -30,7 +30,7 @@ import java.util.stream.Collectors;
  * Channel registration orchestration (FEATURE_2608_06 / 3c). See {@link ListingRegistrationService}.
  *
  * <p>Each write method is {@code @Transactional} (DB save atomicity); the single HTTP call runs inside the
- * transaction once, with no approval wait. {@code syncApprovals} reuses {@link #fetchStatus} directly (same
+ * transaction once, with no approval wait. {@code syncApprovals} reuses the private refresh core (same
  * code path) — the inner call is a self-invocation, so its {@code @Transactional} is intentionally not a new
  * boundary: the sweep is one transaction and a caught per-listing failure (pre-flush: account/HTTP error)
  * does not poison it, so successful promotions persist.</p>
@@ -145,6 +145,29 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
     @Override
     @Transactional
     public ListingStatusResponse fetchStatus(Long listingId) {
+        Refreshed refreshed = refresh(listingId);
+
+        // 2609_74/D9·D19: the reason is looked up on demand and never stored. A failed lookup must not
+        // fail the refresh — the status was already saved above.
+        ReviewNote note;
+        try {
+            note = refreshed.adapter().fetchReviewNote(
+                    refreshed.cell(), refreshed.account(), refreshed.result().statusName());
+        } catch (Exception e) {
+            log.warn("[LISTING-REVIEW-NOTE] listingId={} lookup failed: {}", listingId, e.getMessage());
+            note = ReviewNote.failed();
+        }
+
+        return ListingStatusResponse.builder()
+                .productListingId(refreshed.cell().getId())
+                .status(refreshed.result().status().name())
+                .options(refreshed.options())
+                .reviewNote(note == null ? null : note.text())
+                .reviewNoteState(note == null ? null : note.state().name())
+                .build();
+    }
+
+    private Refreshed refresh(Long listingId) {
         ProductListing cell = productListingRepository.findScopedById(listingId)
                 .orElseThrow(() -> new ResourceNotFoundException("ProductListing", listingId));
         if (cell.getPlatformProductId() == null) {
@@ -198,11 +221,7 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
             }
         }
 
-        return ListingStatusResponse.builder()
-                .productListingId(cell.getId())
-                .status(result.status().name())
-                .options(optionStatuses)
-                .build();
+        return new Refreshed(cell, acct, adapter, result, optionStatuses);
     }
 
     @Override
@@ -213,9 +232,11 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
         for (ProductListing cell : pending) {
             swept++;
             try {
-                // Reuse fetchStatus (same code path). Self-invocation: no new tx boundary — see class doc.
-                ListingStatusResponse result = fetchStatus(cell.getId());
-                if (ListingStatus.SELLING.name().equals(result.getStatus())) {
+                // Reuse the refresh core (same code path). Private call: no new tx boundary — see class doc.
+                // 2609_74: the sweep refreshes only — it never looks a review reason up (one extra market
+                // call per rejected listing would multiply across the whole sweep).
+                Refreshed refreshed = refresh(cell.getId());
+                if (refreshed.result().status() == ListingStatus.SELLING) {
                     promoted++;
                 } else {
                     stillPending++;
@@ -231,6 +252,11 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
                 .stillPending(stillPending)
                 .failed(failed)
                 .build();
+    }
+
+    /** One refresh's outcome, before it is shaped into a response (2609_74). */
+    private record Refreshed(ProductListing cell, MarketplaceAccount account, ListingChannel adapter,
+                             FetchResult result, List<ListingStatusResponse.OptionStatus> options) {
     }
 
     /** Resolve the (seller, platform) marketplace account for a cell (404 if none, 400 if inactive). */
