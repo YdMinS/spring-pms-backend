@@ -18,6 +18,9 @@ import com.pms.service.ShipmentConfirmResult.SkippedOrder;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangCredentials;
 import com.pms.service.coupang.OrderUpserter;
+import com.pms.service.reservation.InternalShipmentStageService;
+import com.pms.service.reservation.ReservedShipmentExecutor;
+import com.pms.service.reservation.ShipmentLocalState;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.Cell;
@@ -31,9 +34,13 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -94,6 +101,10 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
      */
     private static final Set<OrderStatus> UPDATE_MODE_STATUSES = SKIP_STATUSES;
 
+    /** 단건 발송처리 거절 — 내부 단계(결제완료) 배송 묶음(FEATURE_2609_75 / D27, PLAN §4-4). */
+    public static final String INTERNAL_STAGE_MANUAL_MESSAGE =
+            "내부 단계 주문은 여기서 발송처리할 수 없습니다. 「송장」에 송장을 저장한 뒤 출고관리의 [저장된 송장으로 발송]을 누르세요";
+
     private final CoupangApiClient coupangApiClient;
     private final CoupangProperties coupangProperties;
     private final OrderLineRepository orderLineRepository;
@@ -103,6 +114,8 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
     private final ObjectMapper objectMapper;
     private final OrderUpserter orderUpserter;
     private final ShipmentParcelRecorder shipmentParcelRecorder;
+    private final OrderAcknowledgeService orderAcknowledgeService;
+    private final InternalShipmentStageService internalShipmentStageService;
 
     @Override
     public ShipmentConfirmResult confirm(MultipartFile file) {
@@ -132,6 +145,8 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
         // 택배사 코드는 플랫폼당 한 번만 읽는다(박스 저장용 — 없어도 송장은 저장된다, PLAN 2609_40 D6).
         Map<Platform, String> carrierCodeCache = new EnumMap<>(Platform.class);
         int matchedOrders = 0;
+        // FEATURE_2609_75 / D27 — 내부 단계 주문은 발주처리 → 송장 등록 순으로 따로 보낸다(아래 shipInternalOrders).
+        Map<String, List<OrderLine>> internalOrders = new LinkedHashMap<>();
 
         for (String orderId : invoicesByOrderId.keySet()) {
             List<OrderLine> lines = orderLineRepository.findByExternalOrderId(orderId);
@@ -143,6 +158,10 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
             MarketplaceAccount account = lines.get(0).getOrder().getMarketplaceAccount();
             if (!Platform.COUPANG.equals(account.getPlatform())) {
                 unmatched.add(orderId);
+                continue;
+            }
+            if (hasInternalStage(lines)) {
+                internalOrders.put(orderId, lines);        // D27 — 실물 박스는 송장 등록 성공 뒤에 남긴다(D22)
                 continue;
             }
             // 🔴 실물 박스 저장은 여기 한 곳이다(PLAN 2609_40 D8·D30) — 전송 전, 상태 필터 전.
@@ -187,6 +206,14 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
             }
         }
 
+        if (!internalOrders.isEmpty()) {
+            InternalShipOutcome internal = shipInternalFromFile(internalOrders, invoicesByOrderId);
+            matchedOrders += internalOrders.size();
+            succeeded += internal.succeeded();
+            failed.addAll(internal.failed());
+            skipped.addAll(internal.skipped());
+        }
+
         log.info("발송처리 결과: rows={} matched={} skipped={} unmatched={} succeeded={} failed={}",
                 uploadRows.size(), matchedOrders, skipped.size(), unmatched.size(), succeeded, failed.size());
         if (!skipped.isEmpty()) {
@@ -227,6 +254,10 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
                 .toList();
         if (boxLines.isEmpty()) {
             boxLines = List.of(anchor);      // 방어적: 앵커는 항상 그 박스의 라인이다
+        }
+        // FEATURE_2609_75 / D27 — 내부 단계 묶음은 발주처리 전이다. 송장만 보내면 쿠팡이 거절하고, 실물 박스만 남는다.
+        if (hasInternalStage(boxLines)) {
+            throw new IllegalArgumentException(INTERNAL_STAGE_MANUAL_MESSAGE);
         }
         // 3) 모드 판정 = 앵커 상태(박스 상태의 거울). 클라이언트는 관여하지 않는다(D3).
         boolean update = anchor.getStatus() != null && UPDATE_MODE_STATUSES.contains(anchor.getStatus());
@@ -272,6 +303,305 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
                 lines.size(), result.succeeded(), result.failed().size());
         return new ManualShipmentResult(externalOrderId, boxId, mode,
                 lines.size(), result.succeeded(), result.failed(), resultStatus);
+    }
+
+    @Override
+    public Map<String, List<String>> readInvoicesByOrderId(MultipartFile file) {
+        // confirm() 첫 블록과 같은 규칙 — 같은 송장의 N행은 1장으로 접고 파일 순서를 지킨다(2609_40 D8).
+        Map<String, List<String>> invoicesByOrderId = new LinkedHashMap<>();
+        for (UploadRow row : parse(file)) {
+            List<String> invoices = invoicesByOrderId.computeIfAbsent(row.orderId(), k -> new ArrayList<>());
+            if (!invoices.contains(row.invoiceNumber())) {
+                invoices.add(row.invoiceNumber());
+            }
+        }
+        return invoicesByOrderId;
+    }
+
+    @Override
+    public ReservedInvoiceResult sendReservedInvoices(List<ReservedInvoice> invoices) {
+        List<Long> succeeded = new ArrayList<>();
+        Map<Long, String> failed = new LinkedHashMap<>();
+        if (invoices.isEmpty()) {
+            return new ReservedInvoiceResult(succeeded, failed);
+        }
+        Map<Long, ReservedInvoice> byShipmentId = new LinkedHashMap<>();
+        invoices.forEach(i -> byShipmentId.putIfAbsent(i.orderShipmentId(), i));
+        Map<Long, List<OrderLine>> linesByShipment = new LinkedHashMap<>();
+        for (OrderLine line : orderLineRepository.findWithAccountByOrderShipment_IdIn(byShipmentId.keySet())) {
+            linesByShipment.computeIfAbsent(line.getOrderShipment().getId(), k -> new ArrayList<>()).add(line);
+        }
+
+        // (계정, 택배사, 주문 안 순번) 묶음마다 1 POST. postInvoices 는 송장을 주문번호로 고른다 — 한 POST 에 같은 주문의
+        // 배송 묶음이 둘 들어가면 둘째 묶음이 첫 묶음 송장으로 나간다(되돌릴 수 없다). 주문 안 순번으로 갈라 막는다.
+        Map<String, List<Long>> shipmentIdsByGroup = new LinkedHashMap<>();
+        Map<String, MarketplaceAccount> accountByGroup = new LinkedHashMap<>();
+        Map<String, Integer> nthByOrderId = new HashMap<>();
+        for (Long shipmentId : byShipmentId.keySet()) {
+            List<OrderLine> lines = linesByShipment.get(shipmentId);
+            if (lines == null || lines.isEmpty()) {
+                failed.put(shipmentId, "주문 라인을 찾을 수 없습니다");
+                continue;
+            }
+            MarketplaceAccount account = lines.get(0).getOrder().getMarketplaceAccount();
+            ReservedInvoice reserved = byShipmentId.get(shipmentId);
+            int nth = nthByOrderId.merge(reserved.externalOrderId(), 1, Integer::sum);
+            String group = account.getId() + "|" + reserved.carrierCode() + "|" + nth;
+            accountByGroup.putIfAbsent(group, account);
+            shipmentIdsByGroup.computeIfAbsent(group, k -> new ArrayList<>()).add(shipmentId);
+        }
+
+        for (Map.Entry<String, List<Long>> entry : shipmentIdsByGroup.entrySet()) {
+            MarketplaceAccount account = accountByGroup.get(entry.getKey());
+            List<Long> shipmentIds = entry.getValue();
+            String carrierCode = byShipmentId.get(shipmentIds.get(0)).carrierCode();
+            List<OrderLine> groupLines = new ArrayList<>();
+            Map<String, String> invoiceByOrderId = new LinkedHashMap<>();
+            Map<String, Long> shipmentIdByBoxId = new LinkedHashMap<>();
+            for (Long shipmentId : shipmentIds) {
+                ReservedInvoice reserved = byShipmentId.get(shipmentId);
+                List<OrderLine> lines = linesByShipment.get(shipmentId);
+                groupLines.addAll(lines);
+                invoiceByOrderId.putIfAbsent(reserved.externalOrderId(), reserved.invoiceNumbers().get(0));
+                shipmentIdByBoxId.put(boxIdOf(lines.get(0)), shipmentId);
+            }
+            Map<String, List<OrderLine>> dbLinesByBoxId = new LinkedHashMap<>();
+            registerWriteBack(groupLines, dbLinesByBoxId);
+            try {
+                String path = coupangProperties.getInvoicesPath()
+                        .replace("{vendorId}", CoupangCredentials.of(account).getVendorId());
+                AccountResult result = postInvoices(account, toInvoiceLines(groupLines), invoiceByOrderId::get,
+                        carrierCode, path);
+                markDeparted(result.succeededBoxIds(), dbLinesByBoxId);
+                for (String boxId : result.succeededBoxIds()) {
+                    Long shipmentId = shipmentIdByBoxId.get(boxId);
+                    if (shipmentId != null) {
+                        succeeded.add(shipmentId);
+                    }
+                }
+                for (FailedBox box : result.failed()) {
+                    Long shipmentId = shipmentIdByBoxId.get(box.shipmentBoxId());
+                    if (shipmentId != null) {
+                        failed.put(shipmentId, box.resultCode() + ": " + box.message());
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("예약 송장 등록 계정 배치 실패: account={}", account.getId(), e);
+                shipmentIds.forEach(id -> failed.put(id, e.getMessage()));
+            }
+        }
+
+        // 🔴 실물 박스는 송장 등록이 성공한 뒤에 만든다(D22) — 저장된 택배사 코드로(D27), 규칙은 recordParcels 그대로(2609_40 D30 다중 묶음 가드 포함).
+        Set<String> recordedOrders = new HashSet<>();
+        for (Long shipmentId : succeeded) {
+            ReservedInvoice reserved = byShipmentId.get(shipmentId);
+            if (!recordedOrders.add(reserved.externalOrderId())) {
+                continue;
+            }
+            Map<Platform, String> carrierCodeCache = new EnumMap<>(Platform.class);
+            carrierCodeCache.put(Platform.COUPANG, reserved.carrierCode());
+            recordParcels(reserved.externalOrderId(), orderLineRepository.findByExternalOrderId(reserved.externalOrderId()),
+                    reserved.invoiceNumbers(), carrierCodeCache);
+        }
+        log.info("예약 송장 등록: shipments={} succeeded={} failed={}", byShipmentId.size(), succeeded.size(), failed.size());
+        return new ReservedInvoiceResult(succeeded, failed);
+    }
+
+    @Override
+    public ShipmentConfirmResult shipStoredInvoices(List<ReservedInvoice> invoices) {
+        Map<Long, ReservedInvoice> invoiceByShipmentId = new LinkedHashMap<>();
+        invoices.forEach(i -> invoiceByShipmentId.putIfAbsent(i.orderShipmentId(), i));
+        Map<String, List<OrderLine>> internalOrders = new LinkedHashMap<>();
+        if (!invoiceByShipmentId.isEmpty()) {
+            for (OrderLine line : orderLineRepository.findWithAccountByOrderShipment_IdIn(invoiceByShipmentId.keySet())) {
+                internalOrders.computeIfAbsent(line.getOrder().getExternalOrderId(), k -> new ArrayList<>()).add(line);
+            }
+        }
+        InternalShipOutcome outcome = internalOrders.isEmpty()
+                ? new InternalShipOutcome(0, List.of(), List.of())
+                : shipInternalOrders(internalOrders, invoiceByShipmentId);
+        log.info("[지금 발송] 저장된 송장: orders={} succeeded={} failed={} skipped={}",
+                internalOrders.size(), outcome.succeeded(), outcome.failed().size(), outcome.skipped().size());
+        return new ShipmentConfirmResult(internalOrders.size(), internalOrders.size(), List.of(),
+                outcome.succeeded(), outcome.failed(), outcome.skipped());
+    }
+
+    /** D27 · D29 — 결제완료(PAID) 라인의 배송 묶음에 내부 단계가 있으면 [지금 발송]이 발주처리부터 한다. */
+    private boolean hasInternalStage(List<OrderLine> lines) {
+        return lines.stream().anyMatch(l -> l.getStatus() == OrderStatus.PAID && l.getOrderShipment() != null
+                && l.getOrderShipment().getInternalStage() != null);
+    }
+
+    /**
+     * [지금 발송] 결과 파일 경로의 내부 단계 주문 (D27) — 택배사 = 지금 활성 택배사(기존 일괄 발송처리와 같다), 송장 = 파일.
+     * 택배사 코드가 없으면 발주처리도 하지 않는다 — 발주만 되고 송장이 못 가는 상태를 만들지 않는다.
+     */
+    private InternalShipOutcome shipInternalFromFile(Map<String, List<OrderLine>> internalOrders,
+                                                     Map<String, List<String>> invoicesByOrderId) {
+        String carrierCode;
+        try {
+            carrierCode = carrierCodeService.resolveDeliveryCompanyCode(Platform.COUPANG);
+        } catch (Exception e) {
+            List<FailedBox> failed = new ArrayList<>();
+            internalOrders.values().forEach(lines -> lines.stream().map(this::boxIdOf).filter(Objects::nonNull)
+                    .distinct().forEach(boxId -> failed.add(new FailedBox(boxId, "ERROR", e.getMessage()))));
+            return new InternalShipOutcome(0, failed, List.of());
+        }
+        Map<Long, ReservedInvoice> invoiceByShipmentId = new LinkedHashMap<>();
+        internalOrders.forEach((orderId, lines) -> lines.stream()
+                .filter(l -> l.getOrderShipment() != null && l.getOrderShipment().getId() != null)
+                .forEach(l -> invoiceByShipmentId.putIfAbsent(l.getOrderShipment().getId(),
+                        new ReservedInvoice(l.getOrderShipment().getId(), orderId, carrierCode,
+                                invoicesByOrderId.get(orderId)))));
+        return shipInternalOrders(internalOrders, invoiceByShipmentId);
+    }
+
+    /**
+     * [지금 발송] 중 「내부 상품준비중」·「발송대기중」 묶음이 있는 주문 (FEATURE_2609_75 / D27 · D18).
+     * 호출자 = {@link #shipInternalFromFile}(결과 파일) · {@link #shipStoredInvoices}(저장된 송장).
+     *
+     * <p>예약 실행과 같은 순서다 — ② 발주처리({@link OrderAcknowledgeService#acknowledgeForReservation}) →
+     * ③ 송장 등록({@link #sendReservedInvoices} — {@code shipment_parcel} 은 성공 뒤 기록, D22). 기다림만 없다.
+     * 보내는 묶음 = {@code invoiceByShipmentId} 에 송장이 있는 묶음뿐이다(발주처리도 그 묶음의 PAID 라인만).
+     * ②·③ 직전마다 {@link #sendableNow} 로 다시 판정해 상태가 바뀐 묶음은 요청에서 뺀다(D27 × D16 — ③ 직전은 DB 를 다시 읽는다).
+     * 발주처리에 실패한 박스에는 송장을 보내지 않는다. 송장 등록이 성공한 묶음만 내부 단계를 지우고 남은 예약 결과·보관 송장을
+     * 해제한다(실행기가 성공 묶음만 지우는 것과 같다). 예약이 실행 중(RUNNING)인 주문은 보내지 않고 실패(코드 RUNNING)로 알린다(D18).
+     * ⚠️ 여기서 던지면 안 된다 — 같은 요청의 다른 주문 결과가 사라진다. 실패는 전부 {@code FailedBox} 로 돌려준다.
+     */
+    private InternalShipOutcome shipInternalOrders(Map<String, List<OrderLine>> internalOrders,
+                                                   Map<Long, ReservedInvoice> invoiceByShipmentId) {
+        List<FailedBox> failed = new ArrayList<>();
+        List<SkippedOrder> skipped = new ArrayList<>();
+        List<Long> partial = new ArrayList<>();
+        Map<Long, OrderLine> anchorByShipmentId = new LinkedHashMap<>();
+        List<Long> ackLineIds = new ArrayList<>();
+        Set<String> ackBoxIds = new LinkedHashSet<>();
+        for (Map.Entry<String, List<OrderLine>> order : internalOrders.entrySet()) {
+            Map<Long, List<OrderLine>> linesByShipment = new LinkedHashMap<>();
+            for (OrderLine line : order.getValue()) {
+                if (line.getOrderShipment() != null && invoiceByShipmentId.containsKey(line.getOrderShipment().getId())) {
+                    linesByShipment.computeIfAbsent(line.getOrderShipment().getId(), k -> new ArrayList<>()).add(line);
+                }
+            }
+            try {
+                internalShipmentStageService.assertNotRunning(linesByShipment.keySet());
+            } catch (IllegalArgumentException e) {
+                linesByShipment.values().forEach(l -> failed.add(new FailedBox(boxIdOf(l.get(0)), "RUNNING", e.getMessage())));
+                continue;
+            }
+            // ② 직전 판정 — 상태가 바뀐 묶음은 발주처리·송장 등록 모두에서 뺀다.
+            for (Map.Entry<Long, List<OrderLine>> shipment : linesByShipment.entrySet()) {
+                if (!sendableNow(order.getKey(), shipment.getValue(), failed, skipped, partial)) {
+                    continue;
+                }
+                anchorByShipmentId.put(shipment.getKey(), shipment.getValue().get(0));
+                for (OrderLine line : shipment.getValue()) {
+                    if (line.getStatus() == OrderStatus.PAID && line.getOrderShipment().getInternalStage() != null) {
+                        ackLineIds.add(line.getId());
+                        ackBoxIds.add(boxIdOf(line));
+                    }
+                }
+            }
+        }
+
+        Set<String> ackFailedBoxIds = new HashSet<>();
+        if (!ackLineIds.isEmpty()) {
+            try {
+                ReservationAckResult ack = orderAcknowledgeService.acknowledgeForReservation(ackLineIds);
+                for (FailedBox box : ack.failed()) {
+                    ackFailedBoxIds.add(box.shipmentBoxId());
+                    failed.add(new FailedBox(box.shipmentBoxId(), box.resultCode(), "발주처리 실패: " + box.message()));
+                }
+                for (String boxId : ackBoxIds) {
+                    if (!ack.succeededBoxIds().contains(boxId) && ackFailedBoxIds.add(boxId)) {
+                        failed.add(new FailedBox(boxId, "ERROR", "발주처리 결과를 받지 못했습니다"));
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("[지금 발송] 발주처리 실패: lines={}", ackLineIds.size(), e);
+                for (String boxId : ackBoxIds) {
+                    ackFailedBoxIds.add(boxId);
+                    failed.add(new FailedBox(boxId, "ERROR", "발주처리 실패: " + e.getMessage()));
+                }
+            }
+        }
+
+        Map<Long, OrderLine> toInvoice = new LinkedHashMap<>();
+        anchorByShipmentId.forEach((shipmentId, anchor) -> {
+            if (!ackFailedBoxIds.contains(boxIdOf(anchor))) {
+                toInvoice.put(shipmentId, anchor);         // 발주처리 실패 묶음은 송장을 보내지 않는다
+            }
+        });
+        // ③ 직전 판정 — ② 가 로컬 상태를 바꿨으므로 DB 를 다시 읽는다.
+        Map<Long, List<OrderLine>> fresh = new LinkedHashMap<>();
+        if (!toInvoice.isEmpty()) {
+            for (OrderLine line : orderLineRepository.findWithAccountByOrderShipment_IdIn(toInvoice.keySet())) {
+                fresh.computeIfAbsent(line.getOrderShipment().getId(), k -> new ArrayList<>()).add(line);
+            }
+        }
+        List<ReservedInvoice> invoices = new ArrayList<>();
+        Map<Long, String> boxIdByShipmentId = new HashMap<>();
+        for (Map.Entry<Long, OrderLine> entry : toInvoice.entrySet()) {
+            ReservedInvoice invoice = invoiceByShipmentId.get(entry.getKey());
+            List<OrderLine> lines = fresh.getOrDefault(entry.getKey(), List.of());
+            if (lines.isEmpty()) {
+                failed.add(new FailedBox(boxIdOf(entry.getValue()), "ERROR", "주문 라인을 찾을 수 없습니다"));
+                continue;
+            }
+            if (!sendableNow(invoice.externalOrderId(), lines, failed, skipped, partial)) {
+                continue;
+            }
+            boxIdByShipmentId.put(entry.getKey(), boxIdOf(entry.getValue()));
+            invoices.add(invoice);
+        }
+        ReservedInvoiceResult sent = sendReservedInvoices(invoices);
+        sent.failedReasons().forEach((shipmentId, reason) ->
+                failed.add(new FailedBox(boxIdByShipmentId.get(shipmentId), "ERROR", reason)));
+        if (!sent.succeededShipmentIds().isEmpty()) {
+            try {
+                internalShipmentStageService.clearAfterShipNow(sent.succeededShipmentIds());
+            } catch (Exception e) {
+                log.warn("[지금 발송] 내부 단계·예약 해제 실패 (쿠팡 송장 등록은 성공): {}", e.getMessage());
+            }
+        }
+        if (!partial.isEmpty()) {
+            try {
+                internalShipmentStageService.releasePartialCancel(partial);
+            } catch (Exception e) {
+                log.warn("[지금 발송] 일부 취소 묶음 해제 실패: shipments={} {}", partial, e.getMessage());
+            }
+        }
+        log.info("[지금 발송] 내부 단계 주문: orders={} acknowledged={} invoiced={} failed={} skipped={} partial={}",
+                internalOrders.size(), ackLineIds.size(), sent.succeededShipmentIds().size(), failed.size(),
+                skipped.size(), partial.size());
+        return new InternalShipOutcome(sent.succeededShipmentIds().size(), failed, skipped);
+    }
+
+    /**
+     * [지금 발송] ②·③ 직전 판정 (FEATURE_2609_75 / D27 × D16) — 규칙은 {@link ShipmentLocalState#judge} 하나다. 보낼 묶음이면 true.
+     * 전량 취소·발송 이후 = {@code skipped} · 일부 수량 취소 = {@code partial}(뒤에서 해제) + {@code failed}(PARTIAL_CANCEL) ·
+     * 판정 불가 = {@code failed}. 쿠팡을 부르지 않는다.
+     */
+    private boolean sendableNow(String orderId, List<OrderLine> lines, List<FailedBox> failed,
+                                List<SkippedOrder> skipped, List<Long> partial) {
+        OrderLine first = lines.get(0);
+        switch (ShipmentLocalState.judge(lines)) {
+            case PAID, PREPARING -> {
+                return true;
+            }
+            case CANCELLED -> skipped.add(new SkippedOrder(orderId, OrderStatus.CANCELLED.name()));
+            case EXTERNAL -> skipped.add(new SkippedOrder(orderId, statusName(first)));
+            case PARTIALLY_CANCELLED -> {
+                partial.add(first.getOrderShipment().getId());
+                failed.add(new FailedBox(boxIdOf(first), "PARTIAL_CANCEL", ReservedShipmentExecutor.PARTIAL_CANCEL_MESSAGE));
+            }
+            default -> failed.add(new FailedBox(boxIdOf(first), "ERROR", "주문 상태를 확인할 수 없습니다"));
+        }
+        return false;
+    }
+
+    /** {@link #shipInternalOrders} 결과 — 송장 등록에 성공한 배송 묶음 수 · 실패 박스 · 상태가 바뀌어 뺀 주문(D27 × D16). */
+    private record InternalShipOutcome(int succeeded, List<FailedBox> failed, List<SkippedOrder> skipped) {
     }
 
     /**

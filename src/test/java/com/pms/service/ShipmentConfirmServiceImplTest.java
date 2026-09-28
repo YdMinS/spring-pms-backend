@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.InternalShipmentStage;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Order;
 import com.pms.domain.OrderLine;
@@ -18,6 +19,7 @@ import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.OrderUpserter;
+import com.pms.service.reservation.InternalShipmentStageService;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -25,6 +27,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
@@ -45,6 +48,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -82,6 +86,10 @@ class ShipmentConfirmServiceImplTest {
     private OrderUpserter orderUpserter;
     @Mock
     private ShipmentParcelRecorder shipmentParcelRecorder;
+    @Mock
+    private OrderAcknowledgeService orderAcknowledgeService;
+    @Mock
+    private InternalShipmentStageService internalShipmentStageService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private ShipmentConfirmServiceImpl service;
@@ -94,7 +102,7 @@ class ShipmentConfirmServiceImplTest {
         service = new ShipmentConfirmServiceImpl(
                 coupangApiClient, coupangProperties, orderLineRepository, coupangOrderLineRepository,
                 marketplaceAccountRepository, carrierCodeService, objectMapper, orderUpserter,
-                shipmentParcelRecorder);
+                shipmentParcelRecorder, orderAcknowledgeService, internalShipmentStageService);
         // vendorItemId 는 core 가 아니라 쿠팡 거울에 있다(2609_26 / 04 §3-3) — 배치 조회를 그대로 흉내낸다.
         lenient().when(coupangOrderLineRepository.findByOrderLine_IdIn(anyList()))
                 .thenAnswer(invocation -> {
@@ -648,6 +656,158 @@ class ShipmentConfirmServiceImplTest {
         assertThatThrownBy(() -> service.confirmManual(new ManualShipmentRequest(1L, "CJGLS", "123456789")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("주문 라인");
+        verify(coupangApiClient, never()).post(anyString(), anyString(), any());
+    }
+
+    @Test
+    void readInvoicesByOrderId_dedupesInFileOrder() throws Exception {
+        MockMultipartFile file = xlsx(new Object[][]{
+                {"4000019469460", "111"}, {"4000019469460", "111"}, {"4000019469460", "222"}});
+
+        Map<String, List<String>> parsed = service.readInvoicesByOrderId(file);
+
+        assertThat(parsed).containsOnlyKeys("4000019469460");
+        assertThat(parsed.get("4000019469460")).containsExactly("111", "222");
+        verify(coupangApiClient, never()).post(anyString(), anyString(), any());
+    }
+
+    @Test
+    void sendReservedInvoices_usesStoredCarrierAndRecordsParcelAfterSuccess() throws Exception {
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        OrderLine base = line(account, "302012345678", "4000019469460", "3823839899");
+        OrderShipment shipment = base.getOrderShipment().toBuilder().id(55L).build();
+        OrderLine l1 = base.toBuilder().orderShipment(shipment).build();   // 같은 id — 거울 행(mirrors)은 base 가 이미 넣었다
+        given(orderLineRepository.findWithAccountByOrderShipment_IdIn(any())).willReturn(List.of(l1));
+        given(orderLineRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(l1));
+        given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
+        given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302012345678"));
+
+        ReservedInvoiceResult result = service.sendReservedInvoices(List.of(
+                new ReservedInvoice(55L, "4000019469460", "HANJIN", List.of("111", "222"))));
+
+        assertThat(result.succeededShipmentIds()).containsExactly(55L);
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient).post(anyString(), body.capture(), any());
+        assertThat(body.getValue()).contains("\"deliveryCompanyCode\":\"HANJIN\"").contains("\"invoiceNumber\":\"111\"");
+        verify(carrierCodeService, never()).resolveDeliveryCompanyCode(any());
+        verify(shipmentParcelRecorder).record(shipment, "111", "HANJIN", null);
+        verify(shipmentParcelRecorder).record(shipment, "222", "HANJIN", null);
+    }
+
+    @Test
+    void confirm_acknowledgesInternalStageOrderBeforeInvoice() throws Exception {
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        OrderLine base = line(account, "302012345678", "4000019469460", "3823839899", OrderStatus.PAID);
+        OrderShipment shipment = base.getOrderShipment().toBuilder().id(55L)
+                .internalStage(InternalShipmentStage.AWAITING_SHIPMENT).build();
+        OrderLine internal = base.toBuilder().orderShipment(shipment).build();
+        given(orderLineRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(internal));
+        given(carrierCodeService.resolveDeliveryCompanyCode(Platform.COUPANG)).willReturn("CJGLS");
+        given(orderAcknowledgeService.acknowledgeForReservation(List.of(3823839899L)))
+                .willReturn(new ReservationAckResult(List.of("302012345678"), List.of()));
+        given(orderLineRepository.findWithAccountByOrderShipment_IdIn(any())).willReturn(List.of(internal));
+        given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
+        given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302012345678"));
+
+        ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{"4000019469460", "111"}}));
+
+        InOrder order = inOrder(orderAcknowledgeService, coupangApiClient);           // D27 — 발주처리 → 송장 등록
+        order.verify(orderAcknowledgeService).acknowledgeForReservation(List.of(3823839899L));
+        order.verify(coupangApiClient).post(anyString(), anyString(), any());
+        verify(internalShipmentStageService).clearAfterShipNow(List.of(55L));
+        verify(shipmentParcelRecorder).record(shipment, "111", "CJGLS", null);       // 성공 뒤 기록(D22)
+        assertThat(result.succeeded()).isEqualTo(1);
+        assertThat(result.matchedOrders()).isEqualTo(1);
+        assertThat(result.failed()).isEmpty();
+    }
+
+    @Test
+    void shipStoredInvoices_acknowledgesThenSendsStoredCarrier() throws Exception {
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        OrderLine base = line(account, "302012345678", "4000019469460", "3823839899", OrderStatus.PAID);
+        OrderShipment shipment = base.getOrderShipment().toBuilder().id(55L)
+                .internalStage(InternalShipmentStage.INTERNAL_PREPARING).build();
+        OrderLine internal = base.toBuilder().orderShipment(shipment).build();
+        given(orderLineRepository.findWithAccountByOrderShipment_IdIn(any())).willReturn(List.of(internal));
+        given(orderLineRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(internal));
+        given(orderAcknowledgeService.acknowledgeForReservation(List.of(3823839899L)))
+                .willReturn(new ReservationAckResult(List.of("302012345678"), List.of()));
+        given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
+        given(coupangApiClient.post(anyString(), anyString(), any())).willReturn(responseAllSuccess("302012345678"));
+
+        ShipmentConfirmResult result = service.shipStoredInvoices(List.of(
+                new ReservedInvoice(55L, "4000019469460", "HANJIN", List.of("777"))));
+
+        InOrder order = inOrder(orderAcknowledgeService, coupangApiClient);           // D18 · D27 — 발주처리 → 송장 등록
+        order.verify(orderAcknowledgeService).acknowledgeForReservation(List.of(3823839899L));
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        order.verify(coupangApiClient).post(anyString(), body.capture(), any());
+        assertThat(body.getValue()).contains("\"deliveryCompanyCode\":\"HANJIN\"").contains("\"invoiceNumber\":\"777\"");
+        verify(carrierCodeService, never()).resolveDeliveryCompanyCode(any());       // 저장된 택배사 코드 그대로
+        verify(internalShipmentStageService).clearAfterShipNow(List.of(55L));
+        verify(shipmentParcelRecorder).record(shipment, "777", "HANJIN", null);       // 성공 뒤 기록(D22)
+        assertThat(result.succeeded()).isEqualTo(1);
+        assertThat(result.failed()).isEmpty();
+    }
+
+    @Test
+    void sendReservedInvoices_sendsEachBoxOwnInvoiceWhenOrderHasTwoBoxes() throws Exception {
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        OrderLine base1 = line(account, "302012345678", "4000019469460", "3823839899");
+        OrderLine base2 = line(account, "302012345679", "4000019469460", "3823839900");
+        OrderLine l1 = base1.toBuilder().orderShipment(base1.getOrderShipment().toBuilder().id(55L).build()).build();
+        OrderLine l2 = base2.toBuilder().orderShipment(base2.getOrderShipment().toBuilder().id(56L).build()).build();
+        given(orderLineRepository.findWithAccountByOrderShipment_IdIn(any())).willReturn(List.of(l1, l2));
+        given(orderLineRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(l1, l2));
+        given(coupangProperties.getInvoicesPath()).willReturn(INVOICES_PATH);
+        given(coupangApiClient.post(anyString(), anyString(), any()))
+                .willReturn(responseAllSuccess("302012345678"), responseAllSuccess("302012345679"));
+
+        ReservedInvoiceResult result = service.sendReservedInvoices(List.of(
+                new ReservedInvoice(55L, "4000019469460", "HANJIN", List.of("111")),
+                new ReservedInvoice(56L, "4000019469460", "HANJIN", List.of("222"))));
+
+        // 같은 주문의 배송 묶음 둘 = POST 둘 — 한 POST 에 묶이면 둘째 묶음이 첫 묶음 송장(111)으로 나간다.
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient, times(2)).post(anyString(), body.capture(), any());
+        assertThat(body.getAllValues().get(0)).contains("\"invoiceNumber\":\"111\"").doesNotContain("\"invoiceNumber\":\"222\"");
+        assertThat(body.getAllValues().get(1)).contains("\"invoiceNumber\":\"222\"").doesNotContain("\"invoiceNumber\":\"111\"");
+        assertThat(result.succeededShipmentIds()).containsExactly(55L, 56L);
+    }
+
+    @Test
+    void confirm_releasesPartiallyCancelledInternalShipmentWithoutSending() throws Exception {
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        OrderLine base = line(account, "302012345678", "4000019469460", "3823839899", OrderStatus.PAID);
+        OrderShipment shipment = base.getOrderShipment().toBuilder().id(55L)
+                .internalStage(InternalShipmentStage.AWAITING_SHIPMENT).build();
+        OrderLine partial = base.toBuilder().orderShipment(shipment).orderQty(2).cancelQty(1).build();
+        given(orderLineRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(partial));
+        given(carrierCodeService.resolveDeliveryCompanyCode(Platform.COUPANG)).willReturn("CJGLS");
+
+        ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{"4000019469460", "111"}}));
+
+        verify(orderAcknowledgeService, never()).acknowledgeForReservation(anyList());   // D27 × D16 — ② 직전 판정
+        verify(coupangApiClient, never()).post(anyString(), anyString(), any());
+        verify(internalShipmentStageService).releasePartialCancel(List.of(55L));          // D17 — RELEASED + 「내부 상품준비중」
+        verify(shipmentParcelRecorder, never()).record(any(), any(), any(), any());
+        assertThat(result.succeeded()).isZero();
+        assertThat(result.failed()).extracting(ShipmentConfirmResult.FailedBox::resultCode).containsExactly("PARTIAL_CANCEL");
+    }
+
+    @Test
+    void confirmManual_rejectsInternalStageShipment() {
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        OrderLine base = line(account, "302012345678", "4000019469460", "8001", OrderStatus.PAID);
+        OrderLine anchor = base.toBuilder().orderShipment(base.getOrderShipment().toBuilder()
+                .internalStage(InternalShipmentStage.INTERNAL_PREPARING).build()).build();
+        given(orderLineRepository.findWithAccountAndSellerById(1L)).willReturn(Optional.of(anchor));
+        given(orderLineRepository.findByExternalOrderId("4000019469460")).willReturn(List.of(anchor));
+
+        assertThatThrownBy(() -> service.confirmManual(new ManualShipmentRequest(1L, "CJGLS", "123456789")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(ShipmentConfirmServiceImpl.INTERNAL_STAGE_MANUAL_MESSAGE);    // D27 — 400
+        verify(shipmentParcelRecorder, never()).record(any(), any(), any(), any());
         verify(coupangApiClient, never()).post(anyString(), anyString(), any());
     }
 

@@ -17,6 +17,7 @@ import com.pms.repository.OrderLineRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangOrderStatus;
 import com.pms.service.coupang.OrderUpserter;
+import com.pms.service.reservation.InternalShipmentStageService;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -68,6 +69,8 @@ class ShipmentConfirmSkipRegressionTest {
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock private OrderUpserter orderUpserter;
     @Mock private ShipmentParcelRecorder shipmentParcelRecorder;
+    @Mock private OrderAcknowledgeService orderAcknowledgeService;
+    @Mock private InternalShipmentStageService internalShipmentStageService;
 
     private ShipmentConfirmServiceImpl service;
     private MarketplaceAccount account;
@@ -77,7 +80,7 @@ class ShipmentConfirmSkipRegressionTest {
         service = new ShipmentConfirmServiceImpl(
                 coupangApiClient, coupangProperties, orderLineRepository, coupangOrderLineRepository,
                 marketplaceAccountRepository, carrierCodeService, new ObjectMapper(), orderUpserter,
-                shipmentParcelRecorder);
+                shipmentParcelRecorder, orderAcknowledgeService, internalShipmentStageService);
 
         Seller seller = Seller.builder().id(1L).sellerName("셀러A").businessRegistration("123-45-67890").build();
         account = MarketplaceAccountFixture.coupangStubBuilder("A001", null)

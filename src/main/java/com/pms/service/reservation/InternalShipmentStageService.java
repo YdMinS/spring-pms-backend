@@ -27,4 +27,10 @@ public interface InternalShipmentStageService {
      * 호출자는 02 의 {@code ShipmentConfirmServiceImpl.shipInternalOrders} 하나다(파일 [지금 발송]·저장된 송장 [지금 발송] 둘 다 거기를 지난다).
      */
     void clearAfterShipNow(Collection<Long> orderShipmentIds);
+
+    /**
+     * [지금 발송]이 일부 수량 취소로 뺀 배송 묶음 (FEATURE_2609_75 / D27 × D17) — 남은 예약 결과(PENDING·FAILED)를 RELEASED 로 닫고
+     * 「내부 상품준비중」 으로 되돌린다. 보관 송장(STORED)도 RELEASED 로 닫는다(D18 — 일부 수량 취소는 송장을 버린다). 호출자는 02 의 {@code ShipmentConfirmServiceImpl.shipInternalOrders} 하나다.
+     */
+    void releasePartialCancel(Collection<Long> orderShipmentIds);
 }

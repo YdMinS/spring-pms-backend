@@ -113,6 +113,14 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
     @EntityGraph(attributePaths = {"order", "order.marketplaceAccount", "orderShipment"})
     List<OrderLine> findWithAccountByIdIn(List<Long> ids);
 
+    /**
+     * 배송 묶음 id 로 라인 조회 — 예약 발송 실행(FEATURE_2609_75)용. 트랜잭션 밖에서 계정·박스 id 를 읽으므로
+     * {@link #findWithAccountByIdIn} 과 같은 그래프다. ⚠️ {@code findByOrderShipment_IdIn} 은 orderShipment 를
+     * 로딩하지 않아 박스 id 를 읽으면 LazyInitializationException 이다 — 그쪽을 쓰지 말 것.
+     */
+    @EntityGraph(attributePaths = {"order", "order.marketplaceAccount", "orderShipment"})
+    List<OrderLine> findWithAccountByOrderShipment_IdIn(Collection<Long> orderShipmentIds);
+
     // ── 포장 콘솔 (FEATURE_2609_40 / 03) ──────────────────────────────────────
 
     /**

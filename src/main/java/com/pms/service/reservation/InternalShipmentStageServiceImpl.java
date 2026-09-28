@@ -41,6 +41,8 @@ public class InternalShipmentStageServiceImpl implements InternalShipmentStageSe
             "발주처리 버튼으로 쿠팡에 발주처리되어 예약을 해제했습니다";
     static final String RELEASED_BY_SHIP_NOW =
             "지금 발송으로 쿠팡에 송장이 등록되어 예약을 해제했습니다";
+    static final String RELEASED_BY_INTERNAL_RELEASE =
+            "내부 발주를 해제해 저장된 송장을 닫았습니다";
 
     private final OrderLineRepository orderLineRepository;
     private final OrderShipmentRepository orderShipmentRepository;
@@ -81,6 +83,30 @@ public class InternalShipmentStageServiceImpl implements InternalShipmentStageSe
     @Transactional
     public void clearAfterShipNow(Collection<Long> orderShipmentIds) {
         clearAndRelease(orderShipmentIds, RELEASED_BY_SHIP_NOW);
+    }
+
+    @Override
+    @Transactional
+    public void releasePartialCancel(Collection<Long> orderShipmentIds) {
+        if (orderShipmentIds.isEmpty()) {
+            return;
+        }
+        List<ReservedShipmentItem> open = reservedShipmentItemRepository.findByOrderShipment_IdInAndResultIn(
+                orderShipmentIds,
+                List.of(ReservedItemResult.PENDING, ReservedItemResult.FAILED, ReservedItemResult.STORED));
+        Set<Long> reservationIds = new LinkedHashSet<>();
+        for (ReservedShipmentItem item : open) {
+            reservedShipmentItemRepository.save(item.toBuilder()
+                    .result(ReservedItemResult.RELEASED)
+                    .failureReason(ReservedShipmentExecutor.PARTIAL_CANCEL_MESSAGE)
+                    .build());
+            if (item.getReservedShipment() != null) {        // STORED = no reservation (D18)
+                reservationIds.add(item.getReservedShipment().getId());
+            }
+        }
+        orderShipmentRepository.setInternalStage(orderShipmentIds, InternalShipmentStage.INTERNAL_PREPARING.name());
+        reservedShipmentSettler.settle(reservationIds);
+        log.info("일부 취소 해제([지금 발송]): shipments={} releasedItems={}", orderShipmentIds.size(), open.size());
     }
 
     /**
@@ -155,7 +181,7 @@ public class InternalShipmentStageServiceImpl implements InternalShipmentStageSe
 
         if (!targets.isEmpty()) {
             if (to == null) {
-                orderShipmentRepository.clearInternalStage(targets);
+                clearAndRelease(targets, RELEASED_BY_INTERNAL_RELEASE);   // D18 — E2 해제는 보관 송장(STORED)도 닫는다
             } else {
                 orderShipmentRepository.setInternalStage(targets, to.name());
             }

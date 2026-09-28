@@ -23,4 +23,12 @@ public interface OrderAcknowledgeService {
      * @throws IllegalArgumentException 유효한 라인이 하나도 없을 때(→ 400)
      */
     OrderAcknowledgeResult acknowledge(OrderAcknowledgeRequest request);
+
+    /**
+     * 발주처리 → 송장 등록 순서 경로의 ② (FEATURE_2609_75 / D6 · D27). {@link #acknowledge} 와 같은 분류·청크·write-back 을 타고,
+     * 화면 [발주처리] 경로의 「처리 중」 차단·예약 해제는 하지 않는다(호출자가 스스로 판정한다).
+     * 호출자는 둘이다 — {@code ReservedShipmentExecutor}(예약 실행 ②) · {@code ShipmentConfirmServiceImpl} 의 [지금 발송]
+     * 내부 단계 분기(D27). ❌ 주문 동기화·다른 스케줄에서 부르지 말 것.
+     */
+    ReservationAckResult acknowledgeForReservation(java.util.List<Long> orderLineIds);
 }
