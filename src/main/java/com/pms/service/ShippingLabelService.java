@@ -1,6 +1,7 @@
 package com.pms.service;
 
 import com.pms.dto.request.ShippingLabelExportRequest.ExportRow;
+import com.pms.dto.response.InternalLabelPreview;
 import com.pms.dto.response.ShippingLabelPreviewRow;
 
 import java.util.List;
@@ -44,6 +45,14 @@ public interface ShippingLabelService {
      * @throws IllegalStateException 쿠팡 조회/파싱 실패
      */
     List<ShippingLabelPreviewRow> previewRowsByOrder(Long orderItemId);
+
+    /**
+     * 「내부 상품준비중」 배송 묶음의 접수시트 행 (FEATURE_2609_75 / D26). 쿠팡 결제완료(ACCEPT) 목록을 조회해 거른다.
+     * 기존 {@link #previewRows}(INSTRUCT)와 별개 경로다(D25 — 그쪽은 무변경).
+     *
+     * @param sellerId null 이면 활성 전체 계정, 지정 시 해당 셀러의 활성 계정만
+     */
+    InternalLabelPreview previewInternalRows(Long sellerId);
 
     /**
      * 사용자가 편집한 export rows 를 택배사 접수 xlsx bytes 로 변환한다 (V2).

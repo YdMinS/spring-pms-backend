@@ -2,16 +2,21 @@ package com.pms.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
+import com.pms.domain.InternalShipmentStage;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Order;
 import com.pms.domain.OrderLine;
+import com.pms.domain.OrderShipment;
+import com.pms.domain.OrderStatus;
 import com.pms.domain.Platform;
 import com.pms.domain.Seller;
+import com.pms.dto.response.InternalLabelPreview;
 import com.pms.dto.response.ShippingLabelPreviewRow;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderLineRepository;
+import com.pms.repository.OrderShipmentRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.OrderUpserter;
 import org.apache.poi.ss.usermodel.Row;
@@ -25,6 +30,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.io.ByteArrayInputStream;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 
@@ -55,6 +62,8 @@ class ShippingLabelServiceImplTest {
     private OrderLineRepository orderLineRepository;
     @Mock
     private OrderUpserter orderUpserter;
+    @Mock
+    private OrderShipmentRepository orderShipmentRepository;
 
     private ShippingLabelServiceImpl service;
     private MarketplaceAccount coupangAccount;
@@ -71,7 +80,7 @@ class ShippingLabelServiceImplTest {
 
         service = new ShippingLabelServiceImpl(
                 coupangApiClient, props, marketplaceAccountRepository, new ObjectMapper(),
-                orderLineRepository, orderUpserter);
+                orderLineRepository, orderUpserter, orderShipmentRepository);
     }
 
     @Test
@@ -292,6 +301,64 @@ class ShippingLabelServiceImplTest {
                 .isInstanceOf(IllegalStateException.class);       // 빈 리스트로 감추지 않는다
     }
 
+    @Test
+    void previewInternalRows_keepsOnlyInternalBoxesFromAcceptList() {
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(coupangAccount));
+        given(orderShipmentRepository.findByInternalStageAndAccountWithLineStatus(
+                InternalShipmentStage.INTERNAL_PREPARING, 1L, OrderStatus.PAID))
+                .willReturn(List.of(internalShipment("302012345678", "4000019469460", 3)));
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(oneBoxThreeLines());
+
+        InternalLabelPreview preview = service.previewInternalRows(null);
+
+        assertThat(preview.rows()).hasSize(2);                       // cancelled line excluded by flattenBox
+        assertThat(preview.notAcceptedOrderIds()).isEmpty();
+        ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient).get(anyString(), query.capture(), any());
+        assertThat(query.getValue()).contains("status=ACCEPT");
+        verify(orderUpserter, never()).upsertBoxes(any(), any());
+    }
+
+    @Test
+    void previewInternalRows_reportsOrdersMissingFromAcceptList() {
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(coupangAccount));
+        given(orderShipmentRepository.findByInternalStageAndAccountWithLineStatus(
+                InternalShipmentStage.INTERNAL_PREPARING, 1L, OrderStatus.PAID))
+                .willReturn(List.of(internalShipment("999", "4000000009999", 3)));
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(oneBoxThreeLines());
+
+        InternalLabelPreview preview = service.previewInternalRows(null);
+
+        assertThat(preview.rows()).isEmpty();
+        assertThat(preview.notAcceptedOrderIds()).containsExactly("4000000009999");
+    }
+
+    @Test
+    void previewInternalRows_splitsWindowsOver31Days() {
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(coupangAccount));
+        given(orderShipmentRepository.findByInternalStageAndAccountWithLineStatus(
+                InternalShipmentStage.INTERNAL_PREPARING, 1L, OrderStatus.PAID))
+                .willReturn(List.of(internalShipment("302012345678", "4000019469460", 45)));
+        given(coupangApiClient.get(anyString(), anyString(), any())).willReturn(oneBoxThreeLines());
+
+        service.previewInternalRows(null);
+
+        // paid 45 days ago → from = today-46 → windows [today-46, today-16] + [today-15, today] = 2 calls
+        verify(coupangApiClient, times(2)).get(anyString(), anyString(), any());
+    }
+
+    @Test
+    void previewInternalRows_skipsCallWhenNoInternalShipment() {
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(coupangAccount));
+        given(orderShipmentRepository.findByInternalStageAndAccountWithLineStatus(
+                InternalShipmentStage.INTERNAL_PREPARING, 1L, OrderStatus.PAID)).willReturn(List.of());
+
+        InternalLabelPreview preview = service.previewInternalRows(null);
+
+        assertThat(preview.rows()).isEmpty();
+        verify(coupangApiClient, never()).get(anyString(), anyString(), any());
+    }
+
     /** 쿠팡 계정에 묶인 주문 라인 1건 스텁 (by-order 테스트 공통 given). */
     private void givenCoupangOrder() {
         OrderLine line = OrderLine.builder().id(1L)
@@ -344,5 +411,12 @@ class ShippingLabelServiceImplTest {
                 "orderItems":[{"vendorItemId":"I-%s","vendorItemName":"상품","shippingCount":1}]}
             ]}
             """.formatted(token, suffix, suffix, suffix);
+    }
+
+    private OrderShipment internalShipment(String boxId, String orderId, int paidDaysAgo) {
+        Order order = Order.builder().externalOrderId(orderId)
+                .orderedAt(LocalDate.now(ZoneId.of("Asia/Seoul")).minusDays(paidDaysAgo).atTime(10, 0)).build();
+        return OrderShipment.builder().id(77L).order(order).externalShipmentId(boxId)
+                .internalStage(InternalShipmentStage.INTERNAL_PREPARING).build();
     }
 }

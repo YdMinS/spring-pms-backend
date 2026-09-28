@@ -1,6 +1,7 @@
 package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
+import com.pms.dto.response.InternalLabelPreview;
 import com.pms.dto.response.ShippingLabelPreviewRow;
 import com.pms.service.ShippingLabelService;
 import org.junit.jupiter.api.Test;
@@ -137,6 +138,32 @@ public class ShippingLabelControllerTest extends BaseIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(exportBody(1)))
                 .andExpect(status().isForbidden());
+    }
+
+    // --- internal-stage preview ---
+
+    @Test
+    public void testPreviewInternalWithoutToken() throws Exception {
+        mockMvc.perform(get("/api/admin/shipping-labels/v2/preview/internal"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    public void testPreviewInternalWithUserToken() throws Exception {
+        mockMvc.perform(get("/api/admin/shipping-labels/v2/preview/internal")
+                .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    public void testPreviewInternalWithAdminTokenReturnsResult() throws Exception {
+        given(shippingLabelService.previewInternalRows(any()))
+                .willReturn(new InternalLabelPreview(List.of(), List.of("4000000009999")));
+
+        mockMvc.perform(get("/api/admin/shipping-labels/v2/preview/internal")
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.notAcceptedOrderIds[0]").value("4000000009999"));
     }
 
     /** 편집된 export 요청 바디 1행 (parcelQuantity 는 파라미터). */

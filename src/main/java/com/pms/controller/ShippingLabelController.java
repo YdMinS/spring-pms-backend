@@ -2,6 +2,7 @@ package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.ShippingLabelExportRequest;
+import com.pms.dto.response.InternalLabelPreview;
 import com.pms.dto.response.ShippingLabelPreviewRow;
 import com.pms.service.ShippingLabelService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -73,6 +74,21 @@ public class ShippingLabelController {
             @Parameter(description = "order_line PK (not the Coupang orderId)")
             Long orderItemId) {
         return ResponseEntity.ok(ResponseDTO.success(shippingLabelService.previewRowsByOrder(orderItemId)));
+    }
+
+    @GetMapping("/v2/preview/internal")
+    @Operation(summary = "Preview shipping label rows for internally acknowledged orders",
+            description = "Coupang ACCEPT orders filtered to boxes marked INTERNAL_PREPARING → editable rows JSON (ADMIN only)")
+    @SecurityRequirement(name = "bearerAuth")
+    @ApiResponse(responseCode = "200", description = "Rows + orders not found in the ACCEPT list")
+    @ApiResponse(responseCode = "401", description = "Authentication required")
+    @ApiResponse(responseCode = "403", description = "Permission denied (ADMIN role required)")
+    @ApiResponse(responseCode = "500", description = "Coupang ordersheets fetch/parse failed for every target account")
+    public ResponseEntity<ResponseDTO<InternalLabelPreview>> previewInternal(
+            @RequestParam(required = false)
+            @Parameter(description = "Seller ID filter (optional; all active accounts if omitted)")
+            Long sellerId) {
+        return ResponseEntity.ok(ResponseDTO.success(shippingLabelService.previewInternalRows(sellerId)));
     }
 
     @PostMapping("/v2/spreadsheet")
