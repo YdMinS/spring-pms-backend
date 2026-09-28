@@ -127,6 +127,67 @@ class InternalShipmentStageServiceImplTest {
         verify(reservedShipmentSettler).settle(Set.of());                                  // 예약 없음 — 닫을 예약 0건
     }
 
+    @Test
+    void releasePartialCancel_releasesOpenItemsAndReturnsToInternalPreparing() {
+        ReservedShipment reservation = ReservedShipment.builder().id(9L).status(ReservedShipmentStatus.SCHEDULED).build();
+        ReservedShipmentItem item = ReservedShipmentItem.builder().id(100L).reservedShipment(reservation)
+                .orderShipment(shipment(10L, InternalShipmentStage.AWAITING_SHIPMENT)).externalOrderId("O1")
+                .carrierCode("CJGLS").invoiceNumbers("111").progress(ReservedItemProgress.NONE)
+                .result(ReservedItemResult.PENDING).build();
+        given(reservedShipmentItemRepository.findByOrderShipment_IdInAndResultIn(anyCollection(), anyCollection()))
+                .willReturn(List.of(item));
+
+        service.releasePartialCancel(List.of(10L));
+
+        ArgumentCaptor<ReservedShipmentItem> saved = ArgumentCaptor.forClass(ReservedShipmentItem.class);
+        verify(reservedShipmentItemRepository).save(saved.capture());
+        assertThat(saved.getValue().getResult()).isEqualTo(ReservedItemResult.RELEASED);
+        assertThat(saved.getValue().getFailureReason()).isEqualTo(ReservedShipmentExecutor.PARTIAL_CANCEL_MESSAGE);
+        verify(orderShipmentRepository).setInternalStage(List.of(10L), "INTERNAL_PREPARING");   // D17 — 「내부 상품준비중」 복귀
+        verify(orderShipmentRepository, never()).clearInternalStage(anyCollection());
+        verify(reservedShipmentSettler).settle(Set.of(9L));
+    }
+
+    @Test
+    void releasePartialCancel_alsoDiscardsStoredInvoice() {
+        ReservedShipmentItem stored = ReservedShipmentItem.builder().id(102L)
+                .orderShipment(shipment(10L, InternalShipmentStage.INTERNAL_PREPARING)).externalOrderId("O1")
+                .carrierCode("CJGLS").invoiceNumbers("111").progress(ReservedItemProgress.NONE)
+                .result(ReservedItemResult.STORED).build();
+        given(reservedShipmentItemRepository.findByOrderShipment_IdInAndResultIn(anyCollection(), anyCollection()))
+                .willReturn(List.of(stored));
+
+        service.releasePartialCancel(List.of(10L));
+
+        ArgumentCaptor<ReservedShipmentItem> saved = ArgumentCaptor.forClass(ReservedShipmentItem.class);
+        verify(reservedShipmentItemRepository).save(saved.capture());
+        assertThat(saved.getValue().getResult()).isEqualTo(ReservedItemResult.RELEASED);   // D18 — 일부 수량 취소는 송장을 버린다
+        verify(reservedShipmentSettler).settle(Set.of());                                   // STORED 는 예약이 없다
+        verify(reservedShipmentItemRepository).findByOrderShipment_IdInAndResultIn(List.of(10L),
+                List.of(ReservedItemResult.PENDING, ReservedItemResult.FAILED, ReservedItemResult.STORED));
+    }
+
+    @Test
+    void releaseInternal_releasesStoredInvoice() {
+        OrderShipment internal = shipment(10L, InternalShipmentStage.INTERNAL_PREPARING);
+        given(orderLineRepository.findWithAccountByIdIn(anyList()))
+                .willReturn(List.of(line(1L, "O1", internal, OrderStatus.PAID, 0)));
+        ReservedShipmentItem stored = ReservedShipmentItem.builder().id(101L).orderShipment(internal).externalOrderId("O1")
+                .carrierCode("CJGLS").invoiceNumbers("111").progress(ReservedItemProgress.NONE)
+                .result(ReservedItemResult.STORED).build();
+        given(reservedShipmentItemRepository.findByOrderShipment_IdInAndResultIn(anyCollection(), anyCollection()))
+                .willReturn(List.of(stored));
+
+        service.releaseInternal(List.of(1L));
+
+        ArgumentCaptor<ReservedShipmentItem> saved = ArgumentCaptor.forClass(ReservedShipmentItem.class);
+        verify(reservedShipmentItemRepository).save(saved.capture());
+        assertThat(saved.getValue().getResult()).isEqualTo(ReservedItemResult.RELEASED);   // D18 — 해제한 주문의 송장은 무효
+        assertThat(saved.getValue().getFailureReason())
+                .isEqualTo(InternalShipmentStageServiceImpl.RELEASED_BY_INTERNAL_RELEASE);
+        verify(orderShipmentRepository).clearInternalStage(List.of(10L));
+    }
+
     private OrderShipment shipment(Long id, InternalShipmentStage stage) {
         return OrderShipment.builder().id(id).externalShipmentId("B" + id).internalStage(stage).build();
     }

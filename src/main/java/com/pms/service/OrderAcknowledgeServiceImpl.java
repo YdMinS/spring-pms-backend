@@ -75,6 +75,16 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
         return send(lines, true).result();
     }
 
+    @Override
+    public ReservationAckResult acknowledgeForReservation(List<Long> orderLineIds) {
+        List<OrderLine> lines = orderLineRepository.findWithAccountByIdIn(orderLineIds.stream().distinct().toList());
+        if (lines.isEmpty()) {
+            return new ReservationAckResult(List.of(), List.of());
+        }
+        Outcome outcome = send(lines, false);
+        return new ReservationAckResult(outcome.succeededBoxIds(), outcome.result().failed());
+    }
+
     /**
      * 라인 분류 → 계정·청크 전송 → PREPARING write-back.
      *

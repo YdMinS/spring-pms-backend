@@ -38,4 +38,25 @@ public interface ShipmentConfirmService {
      * @throws IllegalArgumentException 라인 없음 · 비-COUPANG · externalBoxId 없음 · 택배사 코드 미등록 (→ 400)
      */
     ManualShipmentResult confirmManual(ManualShipmentRequest request);
+
+    /**
+     * 택배사 결과 xlsx 를 읽기만 한다 — 주문번호 → 송장번호(파일 순서 · 중복 제거). 전송·저장 없음.
+     * [예약 발송](FEATURE_2609_75 / D27)이 {@link #confirm} 과 같은 파싱을 쓰기 위한 입구다.
+     *
+     * @throws IllegalArgumentException 빈 파일/파싱 실패(→ 400)
+     */
+    java.util.Map<String, java.util.List<String>> readInvoicesByOrderId(MultipartFile file);
+
+    /**
+     * 예약 실행 ③ — 저장된 택배사·송장으로 배송 묶음들을 쿠팡에 송장 등록한다(D27 — {@link #confirm} 과 같은 전송 헬퍼).
+     * 성공 묶음만 로컬 상태를 SHIPPED 로 쓰고 {@code shipment_parcel} 을 기록한다(D22).
+     */
+    ReservedInvoiceResult sendReservedInvoices(java.util.List<ReservedInvoice> invoices);
+
+    /**
+     * 저장된 송장으로 [지금 발송](FEATURE_2609_75 / D18 · D27) — 결과 파일 없이 내부 단계 배송 묶음을 발주처리 → 송장 등록.
+     * {@link #confirm} 의 내부 단계 분기와 <b>같은 코드</b>({@code shipInternalOrders})를 지난다.
+     * 결과의 totalRows·matchedOrders = 주문 수, unmatched·skipped = 빈 목록(호출자 {@code ReservedShipmentServiceImpl} 이 채운다).
+     */
+    ShipmentConfirmResult shipStoredInvoices(java.util.List<ReservedInvoice> invoices);
 }
