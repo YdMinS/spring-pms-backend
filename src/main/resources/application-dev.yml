@@ -48,7 +48,8 @@ server:
     max-http-post-size: 20971520
     max-swallow-size: 20971520
 
-# 🔴 Every marketplace-calling schedule is OFF on dev ("-" = Spring's disabled-cron marker).
+# 🔴 Every marketplace-calling schedule is OFF on dev ("-" = Spring's disabled-cron marker) — except the
+#    reserved-shipment runner below (FEATURE_2609_75 / D21): it only runs reservations a user made in the dev DB.
 #
 # Dev and prod run side by side on the same host and the dev DB holds the SAME Coupang vendor
 # (A00611826). The outbound rate limiter (CoupangCallBudget) and the 429 cooldown circuit
@@ -63,6 +64,9 @@ oclyx:
   order-sync:
     quick-cron: "-"
     full-cron: "-"
+  # FEATURE_2609_75 / D21 — ON on dev on purpose: dev verification = reserve a few minutes ahead and let this run.
+  reserved-shipment:
+    cron: "0 * * * * *"
   settlement:
     revenue-sync-cron: "-"
     payout-sync-cron: "-"

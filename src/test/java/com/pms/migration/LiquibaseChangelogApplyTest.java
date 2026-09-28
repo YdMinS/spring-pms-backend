@@ -1039,4 +1039,17 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID = '099-release-deleted-product-barcode'",
                 Integer.class)).isEqualTo(1);
     }
+
+    @Test
+    void reservedShipmentTablesApplied() {
+        // changeset 101 (FEATURE_2609_75): 새 칸 1 + 새 테이블 3.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM order_shipment WHERE internal_stage IS NOT NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM reserved_shipment", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM reserved_shipment_item", Integer.class)).isZero();
+        // D28 · D30 — 결과 행마다 실행 시각 칸.
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM reserved_shipment_item WHERE last_run_at IS NOT NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tenant_order_setting", Integer.class)).isZero();
+    }
 }

@@ -3,8 +3,12 @@ package com.pms.service.coupang;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.security.TenantContext;
 import com.pms.service.coupang.OrderSyncFacade.OrderSyncResult;
+import com.pms.service.reservation.ReservedShipmentExecutor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
+import org.springframework.core.env.Environment;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -37,6 +41,8 @@ public class OrderSyncScheduler {
 
     private final OrderSyncFacade orderSyncFacade;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
+    private final ReservedShipmentExecutor reservedShipmentExecutor;
+    private final Environment environment;
 
     /** 15분 티어 = 활성 주문 + 취소 보정 + 반품/교환 + 문의(D2). 계정당 6~7왕복. */
     @Scheduled(cron = "${oclyx.order-sync.quick-cron:0 0/15 * * * *}", zone = "Asia/Seoul")
@@ -54,6 +60,24 @@ public class OrderSyncScheduler {
     @Scheduled(cron = "${oclyx.order-sync.full-cron:0 0 3 * * *}", zone = "Asia/Seoul")
     public void syncReconcile() {
         runForEachTenant(OrderSyncPreset.RECONCILE);
+    }
+
+    /**
+     * 예약 발송 = 1분마다 기한이 된 예약 실행 (FEATURE_2609_75 / D3 · D16). dev 도 켠다(D21 🔁 — dev 검증 = 몇 분 뒤로 예약).
+     * ⚠️ 스케줄 스레드는 1개다 — 15분 동기화가 돌고 있으면 그 뒤에 실행된다(PLAN §6-3).
+     */
+    @Scheduled(cron = "${oclyx.reserved-shipment.cron:0 * * * * *}", zone = "Asia/Seoul")
+    public void runReservedShipments() {
+        reservedShipmentExecutor.runDue();
+    }
+
+    /** 기동 직후 1회 — 서버가 꺼져 있던 동안 지난 예약을 바로 실행한다(D15). cron 을 "-" 로 끈 환경에서는 돌지 않는다. */
+    @EventListener(ApplicationReadyEvent.class)
+    public void recoverReservedShipments() {
+        if ("-".equals(environment.getProperty("oclyx.reserved-shipment.cron", "0 * * * * *"))) {
+            return;
+        }
+        reservedShipmentExecutor.recoverOnStartup();
     }
 
     private void runForEachTenant(OrderSyncPreset preset) {

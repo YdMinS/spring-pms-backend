@@ -43,6 +43,8 @@ public class OrderItemResponse {
     private String status;              // 중립 상태 (PAID·PREPARING·SHIPPED·DELIVERING·DELIVERED·CANCELLED)
     private String platformStatus;      // 플랫폼 원문 (쿠팡 ACCEPT 등) — 거울 행이 없으면 null
     private boolean cancelled;          // 전량 취소 여부 (취소했는데 상품준비중 오표시 방지)
+    // 내부 단계 (FEATURE_2609_75 / D9) — INTERNAL_PREPARING · AWAITING_SHIPMENT · null. status 와 별개다.
+    private String internalStage;
     private LocalDateTime paidAt;       // = orders.ordered_at
     // 주문 시점 금액 스냅샷 (PLAN D9·D10). 과거분은 백필률만큼만 채워지므로 nullable 이다.
     private BigDecimal unitPrice;
