@@ -29,7 +29,7 @@ import java.util.List;
  * 송장 접수용 스프레드시트 컨트롤러 (ADMIN 전용, 생성 레그).
  *
  * preview(목록/단건, JSON) 로 편집용 행을 내려주고, 편집된 행을 받아 xlsx 로 변환한다.
- * 남는 경로 3개: GET /v2/preview · GET /v2/preview/by-order · POST /v2/spreadsheet.
+ * 경로 4개: GET /v2/preview · GET /v2/preview/by-order · GET /v2/preview/internal(FEATURE_2609_75, ACCEPT) · POST /v2/spreadsheet.
  * 편집 없이 즉시 xlsx 를 주던 V1(GET /spreadsheet)은 2026-09-02 제거됨(FEATURE_2609_04).
  */
 @RestController
