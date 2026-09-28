@@ -10,6 +10,7 @@ import java.util.List;
  * 송장 접수용 스프레드시트 생성 서비스 (생성 레그).
  *
  * 쿠팡 ordersheets(status=INSTRUCT)를 <b>온디맨드 조회</b>해 택배사 접수용 xlsx 로 내려준다.
+ * 「내부 상품준비중」 시트만 status=ACCEPT 로 조회한다({@link #previewInternalRows}, FEATURE_2609_75).
  *
  * <p>❌ 수령인 연락처·주소·배송메시지는 DB 에 저장하지 않는다 — xlsx 에만 담고 버린다.
  * (이름은 orders 에 저장됨, FEATURE_2609_06)
