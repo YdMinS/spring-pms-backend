@@ -3,6 +3,8 @@ package com.pms.service;
 import com.pms.domain.OrderLine;
 import com.pms.domain.Product;
 import com.pms.domain.ProductImage;
+import com.pms.domain.ProductPurchasePlace;
+import com.pms.domain.PurchasePlace;
 import com.pms.domain.ShoppingListItem;
 import com.pms.dto.request.MergeProductsRequest;
 import com.pms.dto.response.MergeProductsResponse;
@@ -14,6 +16,7 @@ import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.PriceChangeLogRepository;
 import com.pms.repository.ProductImageRepository;
+import com.pms.repository.ProductPurchasePlaceRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.ShipmentParcelItemRepository;
@@ -73,6 +76,7 @@ class ProductMergeServiceTest {
     @Mock private PriceChangeLogRepository priceChangeLogRepository;
     @Mock private ShoppingListItemRepository shoppingListItemRepository;
     @Mock private BoxRecipeRepository boxRecipeRepository;
+    @Mock private ProductPurchasePlaceRepository productPurchasePlaceRepository;
 
     // Not injected on purpose — see the class javadoc.
     @Mock private MasterProductComponentRepository masterProductComponentRepository;
@@ -120,8 +124,8 @@ class ProductMergeServiceTest {
     }
 
     private MergeProductsRequest.MergedFields noFields() {
-        return new MergeProductsRequest.MergedFields(null, null, null, null, null, null,
-                null, null, null, null, null, null);
+        return new MergeProductsRequest.MergedFields(null, null, null, null, null,
+                null, null, null, null, null, null, null, null);
     }
 
     private MergeProductsRequest request(MergeProductsRequest.MergedFields fields,
@@ -296,8 +300,8 @@ class ProductMergeServiceTest {
         givenSourceIsUnlinked();
         givenSnapshotIsWritten();
         MergeProductsRequest.MergedFields fields = new MergeProductsRequest.MergedFields(
-                "원더풀 피스타치오 1kg", null, "014113950374", null, null, null,
-                null, null, null, null, null, null);
+                "원더풀 피스타치오 1kg", null, "014113950374", null, null,
+                null, null, null, null, null, null, null, null);
 
         service.merge(request(fields, noTransfers()));
 
@@ -387,7 +391,7 @@ class ProductMergeServiceTest {
         given(productImageRepository.saveAll(any())).willAnswer(invocation -> invocation.getArgument(0));
 
         MergeProductsRequest.MergedFields fields = new MergeProductsRequest.MergedFields(
-                null, null, null, null, null, null, null, null, null, null, null, 31L);
+                null, null, null, null, null, null, null, null, null, null, null, null, 31L);
         service.merge(request(fields,
                 new MergeProductsRequest.TransferOptions(false, false, false, true, false, false, false)));
 
@@ -408,7 +412,7 @@ class ProductMergeServiceTest {
                 .willReturn(Optional.of(image(31L, source, 0, "https://cdn/s0.jpg")));
 
         MergeProductsRequest.MergedFields fields = new MergeProductsRequest.MergedFields(
-                null, null, null, null, null, null, null, null, null, null, null, 31L);
+                null, null, null, null, null, null, null, null, null, null, null, null, 31L);
 
         assertThatThrownBy(() -> service.merge(request(fields, noTransfers())))
                 .isInstanceOf(BusinessException.class)
@@ -429,7 +433,7 @@ class ProductMergeServiceTest {
                 Product.builder().id(777L).productName("다른 피스타치오").active(true).build()));
 
         MergeProductsRequest.MergedFields fields = new MergeProductsRequest.MergedFields(
-                null, null, "014113950374", null, null, null, null, null, null, null, null, null);
+                null, null, "014113950374", null, null, null, null, null, null, null, null, null, null);
 
         assertThatThrownBy(() -> service.merge(request(fields, allTransfersOn(true))))
                 .isInstanceOf(BusinessException.class)
@@ -462,6 +466,32 @@ class ProductMergeServiceTest {
                 .hasMessageContaining("이미 삭제된 물품");
 
         verifyNoInteractions(snapshotWriter);
+    }
+
+    // ---- purchase places (FEATURE_2609_76 / D16) ---------------------------------------------------
+
+    @Test
+    @DisplayName("Purchase places are never picked — the target gains the places only the source had")
+    void testMergeAddsSourceOnlyPurchasePlacesToTarget() {
+        givenBothProductsExist();
+        givenSourceIsUnlinked();
+        givenSnapshotIsWritten();
+        PurchasePlace emart = PurchasePlace.builder().id(1L).name("이마트").sortOrder(0).build();
+        PurchasePlace noBrand = PurchasePlace.builder().id(3L).name("노브랜드").sortOrder(2).build();
+        given(productPurchasePlaceRepository.findWithPlaceByProductIdIn(List.of(TARGET_ID, SOURCE_ID)))
+                .willReturn(List.of(
+                        ProductPurchasePlace.builder().id(100L).product(target).purchasePlace(emart).build(),
+                        ProductPurchasePlace.builder().id(200L).product(source).purchasePlace(emart).build(),
+                        ProductPurchasePlace.builder().id(201L).product(source).purchasePlace(noBrand).build()));
+
+        service.merge(request(noFields(), noTransfers()));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ProductPurchasePlace>> captor = ArgumentCaptor.forClass(List.class);
+        verify(productPurchasePlaceRepository).saveAll(captor.capture());
+        assertThat(captor.getValue()).hasSize(1);                               // 이마트 is already on the target
+        assertThat(captor.getValue().get(0).getProduct().getId()).isEqualTo(TARGET_ID);
+        assertThat(captor.getValue().get(0).getPurchasePlace().getId()).isEqualTo(3L);
     }
 
     // ---- delete ------------------------------------------------------------------------------------

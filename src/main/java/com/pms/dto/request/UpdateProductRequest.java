@@ -9,6 +9,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 
 @Getter
@@ -34,9 +35,13 @@ public class UpdateProductRequest {
     @Builder.Default
     private Optional<String> productName = Optional.empty();
 
-    @Schema(description = "Store name", example = "Best Buy")
+    /**
+     * Purchase places (FEATURE_2609_76). Absent/null = keep; {@code []} = clear; a list = replace with exactly
+     * these ids.
+     */
+    @Schema(description = "Purchase place ids (replaces the whole set)", example = "[1, 3]")
     @Builder.Default
-    private Optional<String> store = Optional.empty();
+    private Optional<List<Long>> purchasePlaceIds = Optional.empty();
 
     @Schema(description = "Unit of net content (KG, G, L, ML)", example = "KG")
     @Builder.Default
@@ -57,6 +62,20 @@ public class UpdateProductRequest {
     @Schema(description = "Amount of product inside the package (mass or volume)", example = "170g")
     @Builder.Default
     private Optional<String> netContent = Optional.empty();
+
+    /**
+     * Piece count (D6 · D12). 🔴 The pair is replaced as a unit whenever {@link #countUnit} is sent: then an
+     * absent/null {@code countQuantity} means "no count". Clear both = {@code countUnit: ""} with
+     * {@code countQuantity: null}. When {@code countUnit} is absent, {@code countQuantity} alone updates the
+     * number and keeps the stored unit.
+     */
+    @Schema(description = "Piece count (whole number >= 1)", example = "30")
+    @Builder.Default
+    private Optional<BigDecimal> countQuantity = Optional.empty();
+
+    @Schema(description = "Piece count unit (개, 장, 매, 봉, 팩, 롤, 입); \"\" clears the count", example = "개")
+    @Builder.Default
+    private Optional<String> countUnit = Optional.empty();
 
     @Schema(description = "Product description")
     @Builder.Default

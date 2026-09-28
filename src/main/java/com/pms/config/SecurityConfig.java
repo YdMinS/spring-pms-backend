@@ -62,6 +62,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/admin/carriers").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/admin/carriers/**").authenticated()
                         .requestMatchers("/api/admin/carriers/**").hasRole("ADMIN")
+                        // Purchase places (FEATURE_2609_76 / D14): the list is read by every product form (web ·
+                        // mobile, any role); POST/PUT/DELETE fall through to the /api/admin/** ADMIN rules below.
+                        .requestMatchers(HttpMethod.GET, "/api/admin/purchase-places").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/admin/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.GET, "/api/admin/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PATCH, "/api/admin/**").hasRole("ADMIN")

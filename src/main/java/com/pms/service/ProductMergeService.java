@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.Product;
 import com.pms.domain.ProductImage;
+import com.pms.domain.ProductPurchasePlace;
 import com.pms.domain.ShoppingListItem;
 import com.pms.dto.request.MergeProductsRequest;
 import com.pms.dto.response.MergeProductsResponse;
@@ -12,6 +13,7 @@ import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.BoxRecipeRepository;
 import com.pms.repository.PriceChangeLogRepository;
 import com.pms.repository.ProductImageRepository;
+import com.pms.repository.ProductPurchasePlaceRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.ShipmentParcelItemRepository;
@@ -68,6 +70,7 @@ public class ProductMergeService {
     private final PriceChangeLogRepository priceChangeLogRepository;
     private final ShoppingListItemRepository shoppingListItemRepository;
     private final BoxRecipeRepository boxRecipeRepository;
+    private final ProductPurchasePlaceRepository productPurchasePlaceRepository;
 
     /**
      * Run one merge.
@@ -145,6 +148,8 @@ public class ProductMergeService {
         String representativeUrl = renumberGallery(targetId, sourceImageIds, representative);
 
         applyFields(target, fields, representativeUrl, transfer.appendMemo(), sourceId, sourceName, moved);
+
+        mergePurchasePlaces(target, sourceId);
 
         // Soft delete last, through the ordinary guarded path (01). If the guard fires here, a link was
         // missed and the whole transaction rolls back — there is deliberately no guard-free variant.
@@ -337,9 +342,6 @@ public class ProductMergeService {
         if (fields.barcodeId() != null) {
             builder.barcodeId(fields.barcodeId());
         }
-        if (fields.store() != null) {
-            builder.store(fields.store());
-        }
         if (fields.price() != null) {
             builder.price(fields.price());
         }
@@ -348,6 +350,12 @@ public class ProductMergeService {
         }
         if (fields.netContentUnit() != null) {
             builder.netContentUnit(fields.netContentUnit());
+        }
+        if (fields.countQuantity() != null) {
+            builder.countQuantity(fields.countQuantity());
+        }
+        if (fields.countUnit() != null) {
+            builder.countUnit(fields.countUnit());
         }
         if (fields.packageHeight() != null) {
             builder.packageHeight(fields.packageHeight());
@@ -370,6 +378,31 @@ public class ProductMergeService {
         builder.description(description);
 
         productRepository.save(builder.build());
+    }
+
+    /**
+     * Purchase places are never picked — the target keeps its own and gains every place only the source had
+     * (FEATURE_2609_76 / D16). The source's own links stay on it and are buried with its soft delete; a
+     * soft-deleted product does not count as "using" a place (D9).
+     */
+    private void mergePurchasePlaces(Product target, Long sourceId) {
+        List<ProductPurchasePlace> links =
+                productPurchasePlaceRepository.findWithPlaceByProductIdIn(List.of(target.getId(), sourceId));
+        Set<Long> targetPlaceIds = new LinkedHashSet<>();
+        for (ProductPurchasePlace link : links) {
+            if (link.getProduct().getId().equals(target.getId())) {
+                targetPlaceIds.add(link.getPurchasePlace().getId());
+            }
+        }
+        List<ProductPurchasePlace> added = new ArrayList<>();
+        for (ProductPurchasePlace link : links) {
+            if (link.getProduct().getId().equals(sourceId) && targetPlaceIds.add(link.getPurchasePlace().getId())) {
+                added.add(ProductPurchasePlace.builder().product(target).purchasePlace(link.getPurchasePlace()).build());
+            }
+        }
+        if (!added.isEmpty()) {
+            productPurchasePlaceRepository.saveAll(added);
+        }
     }
 
     /** One line appended to the target's description so the history's origin stays readable (PLAN D6-c). */
