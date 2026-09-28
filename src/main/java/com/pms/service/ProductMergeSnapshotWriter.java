@@ -28,7 +28,7 @@ import java.util.Map;
  *
  * <p>There is no rollback feature — this file is the evidence that makes an undo possible by hand. It is
  * written <b>before</b> a single row moves and holds: both products' current field values, the row ids of
- * the eight tables that reference a product, and the {@code box_recipe} rows about to be deleted.</p>
+ * the nine tables that reference a product, and the {@code box_recipe} rows about to be deleted.</p>
  *
  * <p>🔴 <b>A write failure fails the merge.</b> No evidence means no way back, so the exception propagates
  * and rolls the whole transaction back — it is never downgraded to a warning.</p>
@@ -48,7 +48,7 @@ public class ProductMergeSnapshotWriter {
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
     /**
-     * The eight tables carrying a {@code product_id} FK (PLAN, verified 2026-09-22 by
+     * The nine tables carrying a {@code product_id} FK (PLAN, verified 2026-09-22 by
      * {@code grep -l 'JoinColumn(name = "product_id"' domain/*.java}). Links are listed too even though the
      * merge never moves them — the snapshot records the state, not the plan.
      *
@@ -64,7 +64,10 @@ public class ProductMergeSnapshotWriter {
             "shipment_parcel_item",
             "product_image",
             "shopping_list_item",
-            "price_change_log");
+            "price_change_log",
+            // FEATURE_2609_76 / D16: the merge adds the source's places to the target, so the target's link row
+            // ids from BEFORE the merge are what tells an undo which rows to remove.
+            "product_purchase_place");
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -123,11 +126,12 @@ public class ProductMergeSnapshotWriter {
         fields.put("productName", product.getProductName());
         fields.put("brand", product.getBrand());
         fields.put("barcodeId", product.getBarcodeId());
-        fields.put("store", product.getStore());
         fields.put("price", product.getPrice() == null ? null : product.getPrice().toPlainString());
         fields.put("description", product.getDescription());
         fields.put("netContent", product.getNetContent());
         fields.put("netContentUnit", product.getNetContentUnit());
+        fields.put("countQuantity", product.getCountQuantity());
+        fields.put("countUnit", product.getCountUnit());
         fields.put("packageHeight", product.getPackageHeight());
         fields.put("packageLength", product.getPackageLength());
         fields.put("packageWidth", product.getPackageWidth());

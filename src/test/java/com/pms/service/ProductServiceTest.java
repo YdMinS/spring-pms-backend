@@ -2,13 +2,18 @@ package com.pms.service;
 
 import com.pms.domain.PriceChangeReason;
 import com.pms.domain.Product;
+import com.pms.domain.ProductPurchasePlace;
+import com.pms.domain.PurchasePlace;
 import com.pms.dto.request.CreateProductRequest;
 import com.pms.dto.request.UpdateProductRequest;
 import com.pms.dto.response.ProductResponse;
 import com.pms.dto.response.ProductUsageResponse;
+import com.pms.dto.response.PurchasePlaceRef;
 import com.pms.exception.ProductInUseException;
 import com.pms.fixture.ProductTestFixture;
+import com.pms.repository.ProductPurchasePlaceRepository;
 import com.pms.repository.ProductRepository;
+import com.pms.repository.PurchasePlaceRepository;
 import com.pms.service.price.PriceHistoryRecorder;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -45,6 +50,14 @@ public class ProductServiceTest {
 
     @Mock
     private ProductUsageService productUsageService;
+
+    // FEATURE_2609_76 — without these two mocks @InjectMocks passes null and every path that reads or writes
+    // purchase places NPEs. Unstubbed, they return empty lists = "no purchase places".
+    @Mock
+    private PurchasePlaceRepository purchasePlaceRepository;
+
+    @Mock
+    private ProductPurchasePlaceRepository productPurchasePlaceRepository;
 
     @InjectMocks
     private ProductServiceImpl productService;
@@ -94,7 +107,6 @@ public class ProductServiceTest {
         assertThat(response.getPrice()).isEqualTo(new BigDecimal("999.99"));
         assertThat(response.getActive()).isTrue();
         assertThat(response.getProductName()).isEqualTo("Galaxy S21");
-        assertThat(response.getStore()).isEqualTo("Best Buy");
         assertThat(response.getNetContentUnit()).isEqualTo("KG");
 
         // Verify repository.save() was called exactly once
@@ -293,7 +305,6 @@ public class ProductServiceTest {
         assertThat(response.getBrand()).isEqualTo(request.getBrand());
         assertThat(response.getPrice()).isEqualTo(request.getPrice());
         assertThat(response.getProductName()).isEqualTo(request.getProductName());
-        assertThat(response.getStore()).isEqualTo(request.getStore());
         assertThat(response.getNetContentUnit()).isEqualTo(request.getNetContentUnit());
         assertThat(response.getPackageHeight()).isEqualTo(request.getPackageHeight());
         assertThat(response.getPackageLength()).isEqualTo(request.getPackageLength());
@@ -1205,5 +1216,140 @@ public class ProductServiceTest {
         assertThat(captor.getAllValues().get(1).getBarcodeId()).isEqualTo("1234567890123");
         // A blank barcode never even asks the database whether it is taken
         verify(productRepository, never()).findAllByBarcodeId("");
+    }
+
+    // ==================== 구매처 · 개수 · 단위만 입력 (FEATURE_2609_76) ====================
+
+    private PurchasePlace place(Long id, String name, int sortOrder) {
+        return PurchasePlace.builder().id(id).name(name).sortOrder(sortOrder).build();
+    }
+
+    @Test
+    @DisplayName("Create links the chosen purchase places in list order and returns their names (D1 · D3)")
+    public void testCreateLinksPurchasePlacesInListOrder() {
+        when(purchasePlaceRepository.findScopedByIdIn(any()))
+                .thenReturn(java.util.List.of(place(3L, "노브랜드", 2), place(1L, "이마트", 0)));
+        when(productRepository.save(any(Product.class))).thenReturn(ProductTestFixture.createProduct(1L));
+
+        ProductResponse response = productService.create(CreateProductRequest.builder()
+                .productName("라면").purchasePlaceIds(java.util.List.of(3L, 1L, 3L)).build());
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.List<ProductPurchasePlace>> captor =
+                org.mockito.ArgumentCaptor.forClass(java.util.List.class);
+        verify(productPurchasePlaceRepository).saveAll(captor.capture());
+        assertThat(captor.getValue()).extracting(link -> link.getPurchasePlace().getId())
+                .containsExactly(1L, 3L);                                   // duplicate 3 collapsed, list order
+        assertThat(response.getPurchasePlaces()).extracting(PurchasePlaceRef::name)
+                .containsExactly("이마트", "노브랜드");
+    }
+
+    @Test
+    @DisplayName("An id that is not one of this tenant's purchase places is a 400 and saves nothing")
+    public void testCreateRejectsUnknownPurchasePlace() {
+        when(purchasePlaceRepository.findScopedByIdIn(any())).thenReturn(java.util.List.of(place(1L, "이마트", 0)));
+
+        assertThatThrownBy(() -> productService.create(CreateProductRequest.builder()
+                .productName("라면").purchasePlaceIds(java.util.List.of(1L, 99L)).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("없는 구매처가 있습니다: [99]");
+        verify(productRepository, never()).save(any(Product.class));
+    }
+
+    @Test
+    @DisplayName("Update replaces the set: removed links are deleted, new ones inserted, kept ones untouched")
+    public void testUpdateReplacesPurchasePlaces() {
+        Product existing = ProductTestFixture.createProduct(1L);
+        PurchasePlace emart = place(1L, "이마트", 0);
+        PurchasePlace costco = place(2L, "코스트코", 1);
+        PurchasePlace noBrand = place(3L, "노브랜드", 2);
+        ProductPurchasePlace emartLink = ProductPurchasePlace.builder().id(10L).product(existing).purchasePlace(emart).build();
+        ProductPurchasePlace costcoLink = ProductPurchasePlace.builder().id(11L).product(existing).purchasePlace(costco).build();
+        when(productRepository.findById(1L)).thenReturn(java.util.Optional.of(existing));
+        when(productRepository.save(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(purchasePlaceRepository.findScopedByIdIn(any())).thenReturn(java.util.List.of(costco, noBrand));
+        when(productPurchasePlaceRepository.findWithPlaceByProductIdIn(java.util.List.of(1L)))
+                .thenReturn(java.util.List.of(emartLink, costcoLink));
+
+        productService.updateProduct(1L, UpdateProductRequest.builder()
+                .purchasePlaceIds(java.util.Optional.of(java.util.List.of(2L, 3L))).build());
+
+        verify(productPurchasePlaceRepository).deleteAll(java.util.List.of(emartLink));
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.List<ProductPurchasePlace>> captor =
+                org.mockito.ArgumentCaptor.forClass(java.util.List.class);
+        verify(productPurchasePlaceRepository).saveAll(captor.capture());
+        assertThat(captor.getValue()).extracting(link -> link.getPurchasePlace().getId()).containsExactly(3L);
+    }
+
+    @Test
+    @DisplayName("Update without purchasePlaceIds leaves the links alone")
+    public void testUpdateWithoutPurchasePlaceIdsKeepsLinks() {
+        when(productRepository.findById(1L)).thenReturn(java.util.Optional.of(ProductTestFixture.createProduct(1L)));
+        when(productRepository.save(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        productService.updateProduct(1L, UpdateProductRequest.builder()
+                .brand(java.util.Optional.of("농심")).build());
+
+        verify(purchasePlaceRepository, never()).findScopedByIdIn(any());
+        verify(productPurchasePlaceRepository, never()).deleteAll(any());
+        verify(productPurchasePlaceRepository, never()).saveAll(any());
+    }
+
+    @Test
+    @DisplayName("A piece count with a known unit is stored as an integer (D6 · D12)")
+    public void testCreateStoresCount() {
+        when(productRepository.save(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        productService.create(CreateProductRequest.builder().productName("물티슈")
+                .countQuantity(new BigDecimal("30")).countUnit("매").build());
+
+        org.mockito.ArgumentCaptor<Product> captor = org.mockito.ArgumentCaptor.forClass(Product.class);
+        verify(productRepository).save(captor.capture());
+        assertThat(captor.getValue().getCountQuantity()).isEqualTo(30);
+        assertThat(captor.getValue().getCountUnit()).isEqualTo("매");
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource(delimiter = '|', value = {
+            "30  |    | countUnit is required when countQuantity is provided",
+            "    | 개 | countQuantity is required when countUnit is provided",
+            "0   | 개 | countQuantity must be a whole number of 1 or more",
+            "1.5 | 개 | countQuantity must be a whole number of 1 or more",
+            "30  | 박스 | countUnit must be one of: 개, 장, 매, 봉, 팩, 롤, 입"
+    })
+    @DisplayName("A broken piece count pair is a 400 and saves nothing (D6 · D12)")
+    public void testCreateRejectsBrokenCount(BigDecimal quantity, String unit, String message) {
+        assertThatThrownBy(() -> productService.create(CreateProductRequest.builder().productName("물티슈")
+                .countQuantity(quantity).countUnit(unit).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(message);
+        verify(productRepository, never()).save(any(Product.class));
+    }
+
+    @Test
+    @DisplayName("Sending countUnit \"\" with no countQuantity clears the stored count")
+    public void testUpdateClearsCountWhenUnitSentBlank() {
+        Product existing = ProductTestFixture.createProduct(1L).toBuilder().countQuantity(30).countUnit("매").build();
+        when(productRepository.findById(1L)).thenReturn(java.util.Optional.of(existing));
+        when(productRepository.save(any(Product.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        productService.updateProduct(1L, UpdateProductRequest.builder()
+                .countUnit(java.util.Optional.of("")).build());
+
+        org.mockito.ArgumentCaptor<Product> captor = org.mockito.ArgumentCaptor.forClass(Product.class);
+        verify(productRepository).save(captor.capture());
+        assertThat(captor.getValue().getCountQuantity()).isNull();
+        assertThat(captor.getValue().getCountUnit()).isNull();
+    }
+
+    @Test
+    @DisplayName("A net content unit with no amount is refused (D18)")
+    public void testCreateRejectsUnitWithoutNetContent() {
+        assertThatThrownBy(() -> productService.create(CreateProductRequest.builder().productName("우유")
+                .netContentUnit("ML").build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("netContent is required when netContentUnit is provided");
+        verify(productRepository, never()).save(any(Product.class));
     }
 }

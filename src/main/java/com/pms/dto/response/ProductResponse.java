@@ -9,6 +9,7 @@ import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Getter
 @NoArgsConstructor
@@ -32,8 +33,14 @@ public class ProductResponse {
     @Schema(description = "Product name", example = "Galaxy S21")
     private String productName;
 
-    @Schema(description = "Store name", example = "Best Buy")
-    private String store;
+    /**
+     * Purchase places in list order, with their CURRENT names (FEATURE_2609_76 / D3).
+     *
+     * <p>⚠️ nullable: {@link #of(Product)} does not fill it (no query there). Screens read null as "unknown",
+     * an empty list as "none".</p>
+     */
+    @Schema(description = "Purchase places (id + current name), in list order")
+    private List<PurchasePlaceRef> purchasePlaces;
 
     @Schema(description = "Unit of net content (KG, G, L, ML)", example = "KG")
     private String netContentUnit;
@@ -49,6 +56,12 @@ public class ProductResponse {
 
     @Schema(description = "Amount of product inside the package (mass or volume)", example = "170g")
     private String netContent;
+
+    @Schema(description = "Piece count", example = "30")
+    private Integer countQuantity;
+
+    @Schema(description = "Piece count unit (개, 장, 매, 봉, 팩, 롤, 입)", example = "개")
+    private String countUnit;
 
     @Schema(description = "Product description")
     private String description;
@@ -81,12 +94,13 @@ public class ProductResponse {
                 .brand(product.getBrand())
                 .price(product.getPrice())
                 .productName(product.getProductName())
-                .store(product.getStore())
                 .netContentUnit(product.getNetContentUnit())
                 .packageHeight(product.getPackageHeight())
                 .packageLength(product.getPackageLength())
                 .packageWidth(product.getPackageWidth())
                 .netContent(product.getNetContent())
+                .countQuantity(product.getCountQuantity())
+                .countUnit(product.getCountUnit())
                 .description(product.getDescription())
                 .imageUrl(product.getImageUrl())
                 .active(product.getActive())

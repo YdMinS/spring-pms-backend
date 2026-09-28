@@ -55,8 +55,9 @@ public class Product extends BaseEntity {
     @Column(name = "product_name", nullable = false, length = 500)
     private String productName;
 
-    @Column(name = "store", nullable = true, length = 255)
-    private String store;
+    // 🔴 The legacy `store` column (free text) is intentionally NOT mapped any more (FEATURE_2609_76 / D11):
+    // purchase places live in product_purchase_place (changeset 102). The column stays in the table, untouched,
+    // so a bad migration can be undone from it — dropping it is separate work. Do not re-add a field for it.
 
     // Unit of netContent. Mass (KG/G) or volume (L/ML) -- see netContent below.
     @Column(name = "net_content_unit", nullable = true, length = 255)
@@ -75,6 +76,16 @@ public class Product extends BaseEntity {
     // this is not "weight"/"netWeight" -- those are mass-only and cannot hold an ML value (changeset 046).
     @Column(name = "net_content", nullable = true, length = 255)
     private String netContent;
+
+    // Piece count inside the package (FEATURE_2609_76 / D6 · D12): a whole number >= 1 plus one of the fixed
+    // count units (개·장·매·봉·팩·롤·입). Both set or both null — ProductServiceImpl.validateCount.
+    // 🔴 Deliberately NOT folded into netContent/netContentUnit: the Coupang auto-fill reads that pair as
+    // "mass, otherwise volume", so a count unit there would be stamped as volume (D7).
+    @Column(name = "count_quantity")
+    private Integer countQuantity;
+
+    @Column(name = "count_unit", length = 10)
+    private String countUnit;
 
     @Column(name = "description", columnDefinition = "TEXT")
     private String description;

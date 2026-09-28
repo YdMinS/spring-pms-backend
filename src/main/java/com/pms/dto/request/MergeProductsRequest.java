@@ -52,11 +52,15 @@ public record MergeProductsRequest(
      * {@code Product.imageUrl} at it" — the rule {@code ProductImageService} already uses. If it names a
      * <b>source</b> image while {@code transfer.images()} is off, the request is a 400: that image is not
      * migrated, so it would be buried with the source and the representative would point at nothing.</p>
+     *
+     * <p>🔴 Purchase places are not a field here (FEATURE_2609_76 / D16): they are never picked — the merge
+     * always gives the target the union of both products' places.</p>
      */
     public record MergedFields(
-            String productName, String brand, String barcodeId, String store,
+            String productName, String brand, String barcodeId,
             BigDecimal price, String description,
             String netContent, String netContentUnit,
+            Integer countQuantity, String countUnit,
             String packageHeight, String packageLength, String packageWidth,
             Long representativeImageId
     ) {}

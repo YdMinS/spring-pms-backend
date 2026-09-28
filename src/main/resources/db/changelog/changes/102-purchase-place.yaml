@@ -1,0 +1,142 @@
+# Purchase places + piece count (FEATURE_2609_76 / D2 · D3 · D6 · D10 · D11 · D12 · D20).
+#   purchase_place         = the tenant's purchase place list (이마트·코스트코·노브랜드 + whatever the tenant adds).
+#   product_purchase_place = product 1 : N place links, by id — a rename shows on every product (D3).
+#   products.count_quantity / count_unit = piece count, separate from net_content on purpose (D7).
+#
+# 🔴 products.store is NOT dropped and NOT modified (D11). It keeps the old free-text value so a bad
+#    migration can be traced back; the app simply stops mapping it. Dropping it is separate work.
+# 🔴 102-2 copies store → links (D10):
+#      TRIM(store) = one of the three defaults → linked to that default place
+#      any other non-blank TRIM(store)         → added to that tenant's list (sort_order 3), then linked
+#      NULL / blank                            → no link ("구매처 없음")
+#      value with '/' (e.g. '노브랜드/이마트')  → split on '/', each piece TRIMmed and handled by the rules
+#                                                above (blank piece skipped) → one link per distinct piece.
+#                                                No place is ever named after the combined string (PLAN D10 보강).
+#    At most two pieces: the precondition HALTs if any store has two or more '/' (2026-09-28 data: one '/').
+#    Inactive (soft-deleted) products are migrated too — D10 has no activity filter. The list screen counts
+#    only active products (D9), so a place that only a deleted product used shows 0 and can be deleted.
+# ⚠️ The three default names are also PurchasePlace.DEFAULT_NAMES (Java). Change both or neither.
+# ⚠️ H2 constraint names are schema-global unique -> distinct prefixes (purchaseplace / ppp).
+# ⚠️ No boolean column -> the 006 BIT follow-up is not needed.
+databaseChangeLog:
+
+  - changeSet:
+      id: 102-1-purchase-place-tables
+      author: oclyx
+      comment: "FEATURE_2609_76: purchase_place list + product_purchase_place links."
+      changes:
+        - createTable:
+            tableName: purchase_place
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: name, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: sort_order, type: INT, constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_purchaseplace_tenant
+            baseTableName: purchase_place
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            constraintName: uq_purchaseplace_tenant_name
+            tableName: purchase_place
+            columnNames: tenant_id, name
+        - createTable:
+            tableName: product_purchase_place
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: product_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: purchase_place_id, type: BIGINT, constraints: { nullable: false } }
+        - addForeignKeyConstraint:
+            constraintName: fk_ppp_product
+            baseTableName: product_purchase_place
+            baseColumnNames: product_id
+            referencedTableName: products
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_ppp_place
+            baseTableName: product_purchase_place
+            baseColumnNames: purchase_place_id
+            referencedTableName: purchase_place
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            constraintName: uq_ppp_product_place
+            tableName: product_purchase_place
+            columnNames: product_id, purchase_place_id
+
+  - changeSet:
+      id: 102-2-purchase-place-backfill
+      author: oclyx
+      comment: "FEATURE_2609_76 / D10: defaults for every tenant, other store values added, products linked, 'a/b' split."
+      preConditions:
+        - onFail: HALT
+        - onFailMessage: >-
+            products.store 에 '/' 가 2개 이상인 값이 있다. 102-2 는 '/' 로 두 조각까지만 나눈다.
+            SELECT store, COUNT(*) FROM products WHERE store LIKE '%/%/%' GROUP BY store; 로 값을 찾아
+            그 값을 두 조각 이하로 고친 뒤 다시 배포한다.
+        - sqlCheck:
+            expectedResult: 0
+            sql: SELECT COUNT(*) FROM products WHERE store LIKE '%/%/%'
+      changes:
+        - sql:
+            sql: >-
+              INSERT INTO purchase_place (tenant_id, name, sort_order, created_date, modified_date)
+              SELECT t.id, '이마트', 0, NOW(), NOW() FROM tenant t
+        - sql:
+            sql: >-
+              INSERT INTO purchase_place (tenant_id, name, sort_order, created_date, modified_date)
+              SELECT t.id, '코스트코', 1, NOW(), NOW() FROM tenant t
+        - sql:
+            sql: >-
+              INSERT INTO purchase_place (tenant_id, name, sort_order, created_date, modified_date)
+              SELECT t.id, '노브랜드', 2, NOW(), NOW() FROM tenant t
+        - sql:
+            sql: >-
+              INSERT INTO purchase_place (tenant_id, name, sort_order, created_date, modified_date)
+              SELECT DISTINCT s.tenant_id, s.name, 3, NOW(), NOW()
+              FROM (
+                SELECT p.tenant_id AS tenant_id, TRIM(p.store) AS name
+                FROM products p WHERE p.store IS NOT NULL AND LOCATE('/', p.store) = 0
+                UNION ALL
+                SELECT p.tenant_id, TRIM(SUBSTRING(p.store, 1, LOCATE('/', p.store) - 1))
+                FROM products p WHERE LOCATE('/', p.store) > 0
+                UNION ALL
+                SELECT p.tenant_id, TRIM(SUBSTRING(p.store, LOCATE('/', p.store) + 1))
+                FROM products p WHERE LOCATE('/', p.store) > 0
+              ) s
+              WHERE s.name <> '' AND s.name NOT IN ('이마트', '코스트코', '노브랜드')
+        - sql:
+            sql: >-
+              INSERT INTO product_purchase_place (product_id, purchase_place_id)
+              SELECT DISTINCT s.product_id, pp.id
+              FROM (
+                SELECT p.id AS product_id, p.tenant_id AS tenant_id, TRIM(p.store) AS name
+                FROM products p WHERE p.store IS NOT NULL AND LOCATE('/', p.store) = 0
+                UNION ALL
+                SELECT p.id, p.tenant_id, TRIM(SUBSTRING(p.store, 1, LOCATE('/', p.store) - 1))
+                FROM products p WHERE LOCATE('/', p.store) > 0
+                UNION ALL
+                SELECT p.id, p.tenant_id, TRIM(SUBSTRING(p.store, LOCATE('/', p.store) + 1))
+                FROM products p WHERE LOCATE('/', p.store) > 0
+              ) s
+              JOIN purchase_place pp ON pp.tenant_id = s.tenant_id AND pp.name = s.name
+              WHERE s.name <> ''
+      rollback:
+        - sql:
+            sql: DELETE FROM product_purchase_place
+        - sql:
+            sql: DELETE FROM purchase_place
+
+  - changeSet:
+      id: 102-3-product-count-quantity
+      author: oclyx
+      comment: "FEATURE_2609_76 / D6 · D12: piece count + unit on products (both nullable)."
+      changes:
+        - addColumn:
+            tableName: products
+            columns:
+              - column: { name: count_quantity, type: INT }
+              - column: { name: count_unit, type: VARCHAR(10) }
