@@ -64,4 +64,14 @@ public class OrderShipment extends BaseEntity {
      */
     @Column(name = "tracking_available")
     private Boolean trackingAvailable;
+
+    /**
+     * 우리만 아는 진행 단계 (FEATURE_2609_75 / D1 · D28). null = 없음.
+     *
+     * <p>🔴 {@code updatable = false} — 엔티티 저장(주문 동기화의 {@code toBuilder()} 저장 포함)은 이 칸을 절대 쓰지 않는다.
+     * 바꾸는 길은 {@code OrderShipmentRepository.setInternalStage} / {@code clearInternalStage}(native UPDATE) 둘뿐이다.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "internal_stage", length = 30, updatable = false)
+    private InternalShipmentStage internalStage;
 }

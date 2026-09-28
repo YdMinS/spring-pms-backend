@@ -1,0 +1,115 @@
+# 내부 발주 + 예약 발송 (FEATURE_2609_75 / D1 · D28).
+# ① order_shipment.internal_stage — 우리만 아는 진행 단계. NULL = 없음 · INTERNAL_PREPARING · AWAITING_SHIPMENT.
+#    🔴 order_line.status(쿠팡 거울)와 다른 칸이다 — 주문 동기화는 이 칸을 읽지도 쓰지도 않는다(D1).
+# ② reserved_shipment — 예약 1건 = 실행 시각 1개(D5). execute_at · next_run_at · last_run_at 은 KST 벽시계(D4).
+# ③ reserved_shipment_item — 배송 묶음별 결과 + 저장된 택배사·송장 + 마지막으로 성공한 단계(D16 재시도용)
+#    + last_run_at = 그 행(주문)의 마지막 실행 시각(KST, D28 · D30 — 화면의 실행 시각은 이 칸이다).
+#    invoice_numbers = 결과 파일의 송장을 쉼표로 이은 값. 첫 번째가 쿠팡에 올리는 대표 송장(2609_40 D8).
+#    reserved_shipment_id NULL = 예약 없이 송장만 보관한 행(result STORED, D18 — 「내부 상품준비중」 주문의 송장).
+# ④ tenant_order_setting — 테넌트당 1행(UNIQUE tenant_id). reserved_shipment_time = 'HH:mm' KST(D12).
+# ⚠️ BOOLEAN 컬럼 없음 → MySQL BIT 후속 changeset 불필요. 백필 없음(기존 배송 묶음은 NULL = 없음).
+# ⚠️ H2 constraint names are schema-global unique → table-prefixed names.
+databaseChangeLog:
+
+  - changeSet:
+      id: 101-reserved-shipment
+      author: oclyx
+      comment: "FEATURE_2609_75: order_shipment.internal_stage + reserved_shipment + reserved_shipment_item + tenant_order_setting."
+      changes:
+        - addColumn:
+            tableName: order_shipment
+            columns:
+              - column:
+                  name: internal_stage
+                  type: VARCHAR(30)
+                  remarks: NULL(none) | INTERNAL_PREPARING | AWAITING_SHIPMENT — ours only, never written by order sync
+
+        - createTable:
+            tableName: reserved_shipment
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: execute_at, type: TIMESTAMP, constraints: { nullable: false } }
+              - column: { name: status, type: VARCHAR(20), constraints: { nullable: false } }
+              - column: { name: retry_count, type: INT, defaultValueNumeric: 0, constraints: { nullable: false } }
+              - column: { name: next_run_at, type: TIMESTAMP, constraints: { nullable: false } }
+              - column: { name: first_run_kind, type: VARCHAR(20) }
+              - column: { name: last_run_at, type: TIMESTAMP }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_reservedshipment_tenant
+            baseTableName: reserved_shipment
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - createIndex:
+            tableName: reserved_shipment
+            indexName: idx_reservedshipment_status_next
+            columns:
+              - column: { name: status }
+              - column: { name: next_run_at }
+
+        - createTable:
+            tableName: reserved_shipment_item
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: reserved_shipment_id, type: BIGINT }
+              - column: { name: order_shipment_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: external_order_id, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: carrier_code, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: invoice_numbers, type: VARCHAR(1000), constraints: { nullable: false } }
+              - column: { name: progress, type: VARCHAR(20), constraints: { nullable: false } }
+              - column: { name: result, type: VARCHAR(20), constraints: { nullable: false } }
+              - column: { name: failure_reason, type: VARCHAR(500) }
+              - column: { name: last_run_at, type: TIMESTAMP }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_reservedshipmentitem_tenant
+            baseTableName: reserved_shipment_item
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_reservedshipmentitem_reservation
+            baseTableName: reserved_shipment_item
+            baseColumnNames: reserved_shipment_id
+            referencedTableName: reserved_shipment
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_reservedshipmentitem_shipment
+            baseTableName: reserved_shipment_item
+            baseColumnNames: order_shipment_id
+            referencedTableName: order_shipment
+            referencedColumnNames: id
+        - createIndex:
+            tableName: reserved_shipment_item
+            indexName: idx_reservedshipmentitem_shipment
+            columns:
+              - column: { name: order_shipment_id }
+
+        - createTable:
+            tableName: tenant_order_setting
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: reserved_shipment_time, type: VARCHAR(5), constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_tenantordersetting_tenant
+            baseTableName: tenant_order_setting
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            constraintName: uq_tenant_order_setting_tenant
+            tableName: tenant_order_setting
+            columnNames: tenant_id
+      rollback:
+        - dropTable: { tableName: reserved_shipment_item }
+        - dropTable: { tableName: reserved_shipment }
+        - dropTable: { tableName: tenant_order_setting }
+        - dropColumn: { tableName: order_shipment, columnName: internal_stage }
