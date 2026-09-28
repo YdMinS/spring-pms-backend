@@ -200,3 +200,5 @@ databaseChangeLog:
       file: db/changelog/changes/100-normalize-blank-barcode.yaml
   - include:
       file: db/changelog/changes/098-product-barcode-unique.yaml
+  - include:
+      file: db/changelog/changes/101-reserved-shipment.yaml

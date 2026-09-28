@@ -2,6 +2,7 @@ package com.pms.service.coupang;
 
 import com.pms.config.CoupangProperties;
 import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.InternalShipmentStage;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Order;
 import com.pms.domain.OrderLine;
@@ -107,6 +108,61 @@ class OrderQueryServiceImplTest {
         assertThat(r.getReceiverName()).isEqualTo("김철수");
         assertThat(r.getPaidAt()).isEqualTo(LocalDateTime.of(2026, 8, 1, 9, 0));
         // raw 필드는 DTO에 존재하지 않음 → 직렬화/노출 불가 (목록 가벼움)
+    }
+
+    @Test
+    void list_mapsInternalStage() {
+        given(coupangProperties.getSyncDays()).willReturn(14);
+        OrderLine sample = sample();
+        OrderLine internal = sample.toBuilder()
+                .orderShipment(sample.getOrderShipment().toBuilder()
+                        .internalStage(InternalShipmentStage.AWAITING_SHIPMENT).build())
+                .build();
+        given(orderRepository.findRecentOrders(any(LocalDateTime.class))).willReturn(List.of(internal));
+        given(coupangOrderLineRepository.findByOrderLine_IdIn(anyList()))
+                .willReturn(List.of(mirror(internal, "ACCEPT")));
+
+        OrderItemResponse r = service.list(null, null, null).get(0);
+
+        assertThat(r.getInternalStage()).isEqualTo("AWAITING_SHIPMENT");
+        assertThat(r.getStatus()).isEqualTo("PAID");          // status 는 그대로다(D9)
+    }
+
+    @Test
+    void list_hidesInternalStageWhenNotPaid() {
+        given(coupangProperties.getSyncDays()).willReturn(14);
+        OrderLine sample = sample();
+        OrderLine acknowledgedInWing = sample.toBuilder()
+                .status(OrderStatus.PREPARING)
+                .orderShipment(sample.getOrderShipment().toBuilder()
+                        .internalStage(InternalShipmentStage.INTERNAL_PREPARING).build())
+                .build();
+        given(orderRepository.findRecentOrders(any(LocalDateTime.class))).willReturn(List.of(acknowledgedInWing));
+        given(coupangOrderLineRepository.findByOrderLine_IdIn(anyList()))
+                .willReturn(List.of(mirror(acknowledgedInWing, "INSTRUCT")));
+
+        OrderItemResponse r = service.list(null, null, null).get(0);
+
+        assertThat(r.getInternalStage()).isNull();            // D29 — PAID 가 아니면 내부 단계를 내려주지 않는다
+    }
+
+    @Test
+    void list_hidesInternalStageWhenFullyCancelled() {
+        given(coupangProperties.getSyncDays()).willReturn(14);
+        OrderLine sample = sample();
+        OrderLine cancelled = sample.toBuilder()
+                .cancelQty(sample.getOrderQty())
+                .orderShipment(sample.getOrderShipment().toBuilder()
+                        .internalStage(InternalShipmentStage.INTERNAL_PREPARING).build())
+                .build();
+        given(orderRepository.findRecentOrders(any(LocalDateTime.class))).willReturn(List.of(cancelled));
+        given(coupangOrderLineRepository.findByOrderLine_IdIn(anyList()))
+                .willReturn(List.of(mirror(cancelled, "ACCEPT")));
+
+        OrderItemResponse r = service.list(null, null, null).get(0);
+
+        assertThat(r.getStatus()).isEqualTo("CANCELLED");
+        assertThat(r.getInternalStage()).isNull();            // D29 — 저장 status 는 PAID 지만 표시용 상태가 CANCELLED
     }
 
     @Test

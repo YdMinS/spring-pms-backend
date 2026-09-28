@@ -13,11 +13,13 @@ import com.pms.service.ShipmentConfirmResult.FailedBox;
 import com.pms.service.ShipmentConfirmResult.SkippedOrder;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangCredentials;
+import com.pms.service.reservation.InternalShipmentStageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -35,7 +37,9 @@ import java.util.Set;
  *    같은 계정의 다음 청크와 다른 계정 배치는 계속 보낸다.
  * ⚠️ 이 서비스에 {@code @Transactional} 을 붙이면 안 된다 — 외부 HTTP 를 도는 경로다.
  *    {@code OrderLine} 조회는 {@code @EntityGraph} finder 로만 한다(open-in-view=false).
- * ⚠️ 발주처리는 되돌릴 수 없다 — 자동 호출 금지(D4). 호출자는 컨트롤러 하나뿐이다.
+ * ⚠️ 발주처리는 되돌릴 수 없다. 호출 경로는 셋뿐이다 — 컨트롤러(화면 [발주처리] 버튼) · <b>사용자가 만든 예약 발송의 실행</b>
+ *    (FEATURE_2609_75 / D6 — 2609_17 D4 부분 번복) · [지금 발송]의 내부 단계 분기(D27). 셋 다 사용자가 주문을 고른 경로다.
+ *    주문 동기화·다른 스케줄은 여전히 부르지 않는다.
  */
 @Slf4j
 @Service
@@ -59,6 +63,7 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
     private final CoupangProperties coupangProperties;
     private final OrderLineRepository orderLineRepository;
     private final ObjectMapper objectMapper;
+    private final InternalShipmentStageService internalShipmentStageService;
 
     @Override
     public OrderAcknowledgeResult acknowledge(OrderAcknowledgeRequest request) {
@@ -67,7 +72,16 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
         if (lines.isEmpty()) {
             throw new IllegalArgumentException("주문 라인을 찾을 수 없습니다");
         }
+        return send(lines, true).result();
+    }
 
+    /**
+     * 라인 분류 → 계정·청크 전송 → PREPARING write-back.
+     *
+     * @param manual true = 화면 버튼 경로. 처리 중인 예약 발송 묶음이 섞이면 아무것도 보내지 않고 400(D18),
+     *               성공 묶음의 내부 단계·예약 결과를 해제한다(D14). false = 예약 실행 경로(02).
+     */
+    private Outcome send(List<OrderLine> lines, boolean manual) {
         List<String> unsupported = new ArrayList<>();
         List<SkippedOrder> skipped = new ArrayList<>();
         // skipped·unsupported 는 주문번호 단위다 — 옵션 3줄짜리 주문이 결과에 3번 나오지 않게 한 번만 담는다.
@@ -103,6 +117,11 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
             linesByBoxId.computeIfAbsent(boxId, k -> new ArrayList<>()).add(line);
         }
 
+        if (manual) {
+            // 처리 중인 예약 발송 묶음이 섞였으면 한 건도 보내지 않는다(D18 「처리 중」).
+            internalShipmentStageService.assertNotRunning(shipmentIdsOf(linesByBoxId.keySet(), linesByBoxId));
+        }
+
         int targetBoxes = 0;
         int succeeded = 0;
         List<FailedBox> failed = new ArrayList<>();
@@ -115,7 +134,7 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
             for (int from = 0; from < boxIds.size(); from += CHUNK_SIZE) {
                 List<String> chunk = boxIds.subList(from, Math.min(from + CHUNK_SIZE, boxIds.size()));
                 try {
-                    AccountResult result = send(account, chunk);
+                    AccountResult result = sendChunk(account, chunk);
                     succeeded += result.succeeded();
                     succeededBoxIds.addAll(result.succeededBoxIds());
                     failed.addAll(result.failed());
@@ -130,16 +149,47 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
         }
 
         markInstructed(succeededBoxIds, linesByBoxId);
+        if (manual) {
+            releaseInternalStage(succeededBoxIds, linesByBoxId);
+        }
 
         log.info("발주처리 결과: lines={} boxes={} succeeded={} failed={} skipped={} unsupported={}",
                 lines.size(), targetBoxes, succeeded, failed.size(), skipped.size(), unsupported.size());
 
-        return new OrderAcknowledgeResult(
-                lines.size(), targetBoxes, succeeded, failed, skipped, unsupported);
+        return new Outcome(new OrderAcknowledgeResult(
+                lines.size(), targetBoxes, succeeded, failed, skipped, unsupported), List.copyOf(succeededBoxIds));
+    }
+
+    /** 박스 id → 그 박스 라인들의 배송 묶음 id. id 가 없는 묶음(저장 전)은 건너뛴다. */
+    private Set<Long> shipmentIdsOf(Collection<String> boxIds, Map<String, List<OrderLine>> linesByBoxId) {
+        Set<Long> shipmentIds = new LinkedHashSet<>();
+        for (String boxId : boxIds) {
+            for (OrderLine line : linesByBoxId.getOrDefault(boxId, List.of())) {
+                if (line.getOrderShipment() != null && line.getOrderShipment().getId() != null) {
+                    shipmentIds.add(line.getOrderShipment().getId());
+                }
+            }
+        }
+        return shipmentIds;
+    }
+
+    /**
+     * 수동 발주처리에 성공한 박스의 내부 단계·예약 결과를 해제한다(D14).
+     * ⚠️ 여기서 던지면 안 된다 — 쿠팡 전송은 이미 성공했다({@link #markInstructed} 와 같은 이유).
+     */
+    private void releaseInternalStage(List<String> succeededBoxIds, Map<String, List<OrderLine>> linesByBoxId) {
+        try {
+            Set<Long> shipmentIds = shipmentIdsOf(succeededBoxIds, linesByBoxId);
+            if (!shipmentIds.isEmpty()) {
+                internalShipmentStageService.clearAfterManualAcknowledge(shipmentIds);
+            }
+        } catch (Exception e) {
+            log.warn("발주처리 후 내부 단계·예약 해제 실패 (쿠팡 전송은 성공): {}", e.getMessage());
+        }
     }
 
     /** 박스 id 청크 1개를 발주처리 API 로 보내고 응답을 집계. */
-    private AccountResult send(MarketplaceAccount account, List<String> chunk) throws Exception {
+    private AccountResult sendChunk(MarketplaceAccount account, List<String> chunk) throws Exception {
         var cred = CoupangCredentials.of(account);
         String path = coupangProperties.getAcknowledgementPath()
                 .replace("{vendorId}", cred.getVendorId());
@@ -221,5 +271,9 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
 
     /** 청크 1개의 전송 결과. */
     private record AccountResult(int succeeded, List<String> succeededBoxIds, List<FailedBox> failed) {
+    }
+
+    /** {@link #send} 결과 — 화면 응답 + 성공 박스 id(예약 실행 경로가 쓴다, 02). */
+    private record Outcome(OrderAcknowledgeResult result, List<String> succeededBoxIds) {
     }
 }

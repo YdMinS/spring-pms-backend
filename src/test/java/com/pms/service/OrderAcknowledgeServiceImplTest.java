@@ -14,6 +14,7 @@ import com.pms.dto.request.OrderAcknowledgeRequest;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.OrderLineRepository;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.reservation.InternalShipmentStageService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -24,10 +25,12 @@ import org.springframework.web.client.RestClientException;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -55,6 +58,8 @@ class OrderAcknowledgeServiceImplTest {
     private CoupangProperties coupangProperties;
     @Mock
     private OrderLineRepository orderLineRepository;
+    @Mock
+    private InternalShipmentStageService internalShipmentStageService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private OrderAcknowledgeServiceImpl service;
@@ -62,7 +67,7 @@ class OrderAcknowledgeServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new OrderAcknowledgeServiceImpl(
-                coupangApiClient, coupangProperties, orderLineRepository, objectMapper);
+                coupangApiClient, coupangProperties, orderLineRepository, objectMapper, internalShipmentStageService);
     }
 
     @Test
@@ -243,6 +248,34 @@ class OrderAcknowledgeServiceImplTest {
                 .hasMessageContaining("주문 라인을 찾을 수 없습니다");
     }
 
+    @Test
+    void testManualAcknowledgeReleasesInternalStageOfSucceededBoxes() {
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        OrderLine line = lineWithShipmentId(account, 55L, "302012345678", "4000019469460", "1");
+        given(orderLineRepository.findWithAccountByIdIn(any())).willReturn(List.of(line));
+        given(coupangProperties.getAcknowledgementPath()).willReturn(ACK_PATH);
+        given(coupangApiClient.put(anyString(), anyString(), any())).willReturn(responseAllSuccess("302012345678"));
+
+        service.acknowledge(request(1L));
+
+        verify(internalShipmentStageService).assertNotRunning(Set.of(55L));
+        verify(internalShipmentStageService).clearAfterManualAcknowledge(Set.of(55L));
+    }
+
+    @Test
+    void testManualAcknowledgeSendsNothingWhenReservationRunning() {
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001");
+        OrderLine line = lineWithShipmentId(account, 55L, "302012345678", "4000019469460", "1");
+        given(orderLineRepository.findWithAccountByIdIn(any())).willReturn(List.of(line));
+        willThrow(new IllegalArgumentException("예약 발송이 처리 중인 주문이 있습니다. 처리가 끝난 뒤 다시 시도하세요"))
+                .given(internalShipmentStageService).assertNotRunning(anyCollection());
+
+        assertThatThrownBy(() -> service.acknowledge(request(1L)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("처리 중");
+        verify(coupangApiClient, never()).put(anyString(), anyString(), any());
+    }
+
     // ── 헬퍼 ──────────────────────────────────────────────────────────────
 
     private OrderAcknowledgeRequest request(Long... ids) {
@@ -267,6 +300,17 @@ class OrderAcknowledgeServiceImplTest {
         return OrderLine.builder()
                 .id(Long.parseLong(itemId)).order(order).orderShipment(shipment)
                 .orderQty(1).cancelQty(0).holdQty(0).status(status).build();
+    }
+
+    private OrderLine lineWithShipmentId(MarketplaceAccount account, Long shipmentId, String boxId,
+                                         String orderId, String itemId) {
+        Order order = Order.builder()
+                .marketplaceAccount(account).platform(account.getPlatform())
+                .externalOrderId(orderId).build();
+        OrderShipment shipment = OrderShipment.builder().id(shipmentId).order(order).externalShipmentId(boxId).build();
+        return OrderLine.builder()
+                .id(Long.parseLong(itemId)).order(order).orderShipment(shipment)
+                .orderQty(1).cancelQty(0).holdQty(0).status(OrderStatus.PAID).build();
     }
 
     private String responseAllSuccess(String... boxIds) {

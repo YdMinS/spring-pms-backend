@@ -114,6 +114,10 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 .status(effective != null ? effective.name() : null)
                 .platformStatus(mirror != null ? mirror.getPlatformStatus() : null)
                 .cancelled(line.isFullyCancelled())
+                // D29 — 표시용 상태가 PAID 인 라인에서만(전량 취소는 저장 status 가 PAID 로 남는다). 읽을 때 거른다 — 칸은 지우지 않는다(D1).
+                .internalStage(effective == OrderStatus.PAID && line.getOrderShipment() != null
+                        && line.getOrderShipment().getInternalStage() != null
+                        ? line.getOrderShipment().getInternalStage().name() : null)
                 .paidAt(order.getOrderedAt())
                 .unitPrice(line.getUnitPrice())
                 .lineAmount(line.getLineAmount())
