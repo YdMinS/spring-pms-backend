@@ -3,14 +3,19 @@ package com.pms.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
+import com.pms.domain.InternalShipmentStage;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderLine;
+import com.pms.domain.OrderShipment;
+import com.pms.domain.OrderStatus;
 import com.pms.domain.Platform;
 import com.pms.dto.request.ShippingLabelExportRequest.ExportRow;
+import com.pms.dto.response.InternalLabelPreview;
 import com.pms.dto.response.ShippingLabelPreviewRow;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderLineRepository;
+import com.pms.repository.OrderShipmentRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangCredentials;
 import com.pms.service.coupang.OrderUpserter;
@@ -23,10 +28,16 @@ import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * {@link ShippingLabelService} 구현 — 쿠팡 ordersheets(INSTRUCT) 조회 → 행 펼침 → xlsx.
@@ -53,6 +64,9 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
     /** 택배수량(박스·라벨 수) 기본값 — 라인당 1박스. 추후 사용자 조정 가능하게 확장 예정. */
     private static final int DEFAULT_PARCEL_QUANTITY = 1;
 
+    /** 내부 시트 조회 창 폭 — to − from ≤ 30일(= 31일 창). instruct-days 30 이 실측 통과한 폭과 같다(D26). */
+    private static final int MAX_WINDOW_DAYS = 30;
+
     private static final String[] HEADERS = {
             "받는사람 이름", "전화번호", "우편번호", "주소", "상품명", "택배수량",
             "내품수량", "주문번호", "배송메시지", "관리코드", "판매자", "플랫폼"
@@ -64,6 +78,7 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
     private final ObjectMapper objectMapper;
     private final OrderLineRepository orderLineRepository;
     private final OrderUpserter orderUpserter;
+    private final OrderShipmentRepository orderShipmentRepository;
 
     public List<ShippingLabelRow> collectRows(Long sellerId) {
         List<MarketplaceAccount> accounts = (sellerId == null)
@@ -139,6 +154,96 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
             throw new IllegalStateException("쿠팡 발주서 단건 조회 실패", e);
         }
         return rows.stream().map(ShippingLabelPreviewRow::from).toList();
+    }
+
+    @Override
+    public InternalLabelPreview previewInternalRows(Long sellerId) {
+        List<MarketplaceAccount> accounts = (sellerId == null)
+                ? marketplaceAccountRepository.findByIsActiveTrue()
+                : marketplaceAccountRepository.findBySeller_IdAndIsActiveTrue(sellerId);
+
+        List<ShippingLabelRow> rows = new ArrayList<>();
+        Set<String> notAccepted = new LinkedHashSet<>();
+        int targetAccounts = 0;
+        int failedAccounts = 0;
+        for (MarketplaceAccount account : accounts) {
+            if (!Platform.COUPANG.equals(account.getPlatform())) {
+                continue;
+            }
+            List<OrderShipment> internal = orderShipmentRepository.findByInternalStageAndAccountWithLineStatus(
+                    InternalShipmentStage.INTERNAL_PREPARING, account.getId(), OrderStatus.PAID);   // D29
+            if (internal.isEmpty()) {
+                continue;                                  // no target → no Coupang call for this account
+            }
+            targetAccounts++;
+            try {
+                Set<String> found = collectInternalAccountRows(account, internal, rows);
+                for (OrderShipment shipment : internal) {
+                    if (!found.contains(shipment.getExternalShipmentId())) {
+                        notAccepted.add(shipment.getOrder().getExternalOrderId());
+                    }
+                }
+            } catch (Exception e) {
+                failedAccounts++;
+                log.warn("내부 접수시트 계정 조회 실패: account={}", account.getId(), e);
+            }
+        }
+        if (rows.isEmpty() && targetAccounts > 0 && failedAccounts == targetAccounts) {
+            throw new IllegalStateException("쿠팡 ordersheets 조회 실패 — 대상 계정 전체 오류");
+        }
+        return new InternalLabelPreview(rows.stream().map(ShippingLabelPreviewRow::from).toList(),
+                List.copyOf(notAccepted));
+    }
+
+    /**
+     * 결제완료(ACCEPT) 목록을 31일 창으로 나눠 끝까지 조회하며 대상 배송 묶음만 행으로 펼친다(D26).
+     *
+     * @return 목록에서 찾은 대상 shipmentBoxId
+     */
+    private Set<String> collectInternalAccountRows(MarketplaceAccount account, List<OrderShipment> internal,
+                                                   List<ShippingLabelRow> rows) {
+        Set<String> targetBoxIds = new HashSet<>();
+        internal.forEach(s -> targetBoxIds.add(s.getExternalShipmentId()));
+        LocalDate end = LocalDate.now(KST);
+        LocalDate oldest = internal.stream()
+                .map(s -> s.getOrder().getOrderedAt())
+                .filter(Objects::nonNull)
+                .map(LocalDateTime::toLocalDate)
+                .min(Comparator.naturalOrder())
+                .orElse(end);
+        LocalDate from = oldest.minusDays(1);
+        String path = coupangProperties.getOrdersheetsPath()
+                .replace("{vendorId}", CoupangCredentials.of(account).getVendorId());
+
+        Set<String> found = new HashSet<>();
+        while (!from.isAfter(end)) {
+            LocalDate to = from.plusDays(MAX_WINDOW_DAYS).isAfter(end) ? end : from.plusDays(MAX_WINDOW_DAYS);
+            String baseQuery = "createdAtFrom=" + from.format(DATE) + KST_OFFSET
+                    + "&createdAtTo=" + to.format(DATE) + KST_OFFSET
+                    + "&status=ACCEPT&maxPerPage=" + MAX_PER_PAGE;
+            String nextToken = null;
+            int pages = 0;
+            do {
+                String query = (nextToken == null || nextToken.isBlank())
+                        ? baseQuery
+                        : baseQuery + "&nextToken=" + nextToken;
+                JsonNode parsed = readTree(coupangApiClient.get(path, query, account));
+                pages++;
+                for (JsonNode box : parsed.path("data")) {
+                    String boxId = box.path("shipmentBoxId").asText("");
+                    if (targetBoxIds.contains(boxId) && found.add(boxId)) {
+                        flattenBox(account, box, rows);
+                    }
+                }
+                String prev = nextToken;
+                nextToken = parsed.path("nextToken").asText("");
+                if (nextToken.equals(prev) || pages >= MAX_PAGES) {
+                    break;
+                }
+            } while (!nextToken.isBlank());
+            from = to.plusDays(1);
+        }
+        return found;
     }
 
     /**
