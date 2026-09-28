@@ -202,3 +202,5 @@ databaseChangeLog:
       file: db/changelog/changes/098-product-barcode-unique.yaml
   - include:
       file: db/changelog/changes/101-reserved-shipment.yaml
+  - include:
+      file: db/changelog/changes/102-purchase-place.yaml

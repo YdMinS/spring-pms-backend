@@ -1052,4 +1052,28 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM reserved_shipment_item WHERE last_run_at IS NOT NULL", Integer.class)).isZero();
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tenant_order_setting", Integer.class)).isZero();
     }
+
+    /**
+     * changeset 102: purchase places + piece count (FEATURE_2609_76).
+     *
+     * <p>🔴 Empty database → 102-2 links nothing, but it still seeds the three defaults for every existing tenant
+     * (here tenant 1 from 002). Moving real store values is covered by {@link PurchasePlaceMigrationTest}.</p>
+     */
+    @Test
+    void purchasePlaceApplied() {
+        assertThat(jdbcTemplate.queryForList(
+                "SELECT name FROM purchase_place WHERE tenant_id = 1 ORDER BY sort_order", String.class))
+                .containsExactly("이마트", "코스트코", "노브랜드");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_purchase_place", Integer.class)).isZero();
+        for (String column : new String[]{"COUNT_QUANTITY", "COUNT_UNIT", "STORE"}) {
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+                            + "WHERE TABLE_NAME = 'PRODUCTS' AND COLUMN_NAME = ?", String.class, column))
+                    .as("products.%s nullable", column)
+                    .isEqualTo("YES");
+        }
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID LIKE '102-%'", Integer.class)).isEqualTo(3);
+    }
 }

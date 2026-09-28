@@ -2,14 +2,19 @@ package com.pms.service;
 
 import com.pms.domain.PriceChangeReason;
 import com.pms.domain.Product;
+import com.pms.domain.ProductPurchasePlace;
+import com.pms.domain.PurchasePlace;
 import com.pms.dto.request.CreateProductRequest;
 import com.pms.dto.request.UpdateProductRequest;
 import com.pms.dto.response.ProductResponse;
 import com.pms.dto.response.ProductUsageResponse;
+import com.pms.dto.response.PurchasePlaceRef;
 import com.pms.exception.BusinessException;
 import com.pms.exception.ProductInUseException;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.ProductPurchasePlaceRepository;
 import com.pms.repository.ProductRepository;
+import com.pms.repository.PurchasePlaceRepository;
 import com.pms.service.price.PriceHistoryRecorder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,8 +27,17 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * ProductServiceImpl - Product service implementation
@@ -32,7 +46,7 @@ import java.util.Map;
  * - create(CreateProductRequest request): Creates new product
  * - validatePrice(BigDecimal price): Validates price > 0
  * - validateNetContentUnit(String, String): Validates netContentUnit in [KG, G, L, ML]
- * - mapToResponse(Product product, Integer channelCount): Maps Product entity to ProductResponse
+ * - mapToResponse(Product product, Integer channelCount, List<PurchasePlaceRef> purchasePlaces): Maps Product entity to ProductResponse
  *
  * Other CRUD methods (getProduct, getAllProducts, updateProduct, deleteProduct)
  * will be added in subsequent phases (2-2, 2-3, 2-4, 2-5) following TDD pattern
@@ -45,7 +59,14 @@ public class ProductServiceImpl implements ProductService {
     private final ProductRepository productRepository;
     private final PriceHistoryRecorder priceHistoryRecorder;
     private final ProductUsageService productUsageService;
+    private final PurchasePlaceRepository purchasePlaceRepository;
+    private final ProductPurchasePlaceRepository productPurchasePlaceRepository;
     private static final String[] VALID_NET_CONTENT_UNITS = {"KG", "G", "L", "ML"};
+    /**
+     * Fixed piece-count units (FEATURE_2609_76 / D12), in display order. 🔴 The web ({@code COUNT_UNITS} in
+     * {@code domain/entities/Product.ts}) and mobile ({@code kCountUnits}) lists are the same seven, same order.
+     */
+    static final List<String> VALID_COUNT_UNITS = List.of("개", "장", "매", "봉", "팩", "롤", "입");
     private static final int DEFAULT_PAGE_SIZE = 20;
 
     @Override
@@ -56,6 +77,9 @@ public class ProductServiceImpl implements ProductService {
             validatePrice(request.getPrice());
         }
         validateNetContentUnit(request.getNetContentUnit(), request.getNetContent());
+        String countUnit = blankToNull(request.getCountUnit());
+        Integer countQuantity = validateCount(request.getCountQuantity(), countUnit);
+        List<PurchasePlace> places = resolvePurchasePlaces(request.getPurchasePlaceIds());
 
         String barcodeId = normalizeBarcode(request.getBarcodeId());
         assertBarcodeFree(barcodeId, null);
@@ -66,19 +90,24 @@ public class ProductServiceImpl implements ProductService {
                 .brand(request.getBrand())
                 .price(request.getPrice())
                 .productName(request.getProductName())
-                .store(request.getStore())
                 .netContentUnit(request.getNetContentUnit())
                 .packageHeight(request.getPackageHeight())
                 .packageLength(request.getPackageLength())
                 .packageWidth(request.getPackageWidth())
                 .netContent(request.getNetContent())
+                .countQuantity(countQuantity)
+                .countUnit(countUnit)
                 .description(request.getDescription())
                 .active(true)
                 .build();
 
         Product saved = productRepository.save(product);
+        // A new product has no links yet — insert, nothing to compare against.
+        if (!places.isEmpty()) {
+            productPurchasePlaceRepository.saveAll(linksOf(saved, places));
+        }
         // 갓 만든 물품은 아직 어떤 마스터에도 안 붙었다 — 조회 없이 0.
-        return mapToResponse(saved, 0);
+        return mapToResponse(saved, 0, toRefs(places));
     }
 
     @Override
@@ -92,7 +121,7 @@ public class ProductServiceImpl implements ProductService {
 
         // 단건도 같은 값을 채운다 — 같은 DTO 를 쓰는 상세가 목록과 다른 말을 하면(null) 화면이 「-」 로
         // 표시하게 되어 "연결이 없다"와 구분이 안 된다. 물품 1개라 두 쿼리로 끝난다.
-        return mapToResponse(product, channelCountOf(product.getId()));
+        return mapToResponse(product, channelCountOf(product.getId()), purchasePlacesOf(product.getId()));
     }
 
     /** 단건 경로의 채널 수 — 목록과 같은 배치 헬퍼를 id 하나로 쓴다(정의가 갈라지지 않게). */
@@ -121,12 +150,15 @@ public class ProductServiceImpl implements ProductService {
 
         // 🔴 채널 수는 **페이지의 물품 id 로 한 번에** 모은다(쿼리 2개 고정) — 매핑 안에서 물품마다
         // 세면 한 페이지가 40 쿼리가 된다. 마스터 목록(110)의 커버 오버레이와 같은 모양이다.
-        Map<Long, Integer> channelCounts = productUsageService.countChannelsByProduct(
-                productPage.getContent().stream().map(Product::getId).toList());
+        List<Long> pageIds = productPage.getContent().stream().map(Product::getId).toList();
+        Map<Long, Integer> channelCounts = productUsageService.countChannelsByProduct(pageIds);
+        // 🔴 구매처도 같은 이유로 페이지 단위 한 번이다(FEATURE_2609_76).
+        Map<Long, List<PurchasePlaceRef>> placesByProduct = purchasePlacesByProduct(pageIds);
 
         // Convert to response
         return productPage.map(product ->
-                mapToResponse(product, channelCounts.getOrDefault(product.getId(), 0)));
+                mapToResponse(product, channelCounts.getOrDefault(product.getId(), 0),
+                        placesByProduct.getOrDefault(product.getId(), List.of())));
     }
 
     /**
@@ -170,6 +202,20 @@ public class ProductServiceImpl implements ProductService {
         String finalNetContent = request.getNetContent().orElse(product.getNetContent());
         validateNetContentUnit(finalUnit, finalNetContent);
 
+        // 🔴 Sending countUnit replaces the whole count pair (UpdateProductRequest.countQuantity javadoc):
+        // that is the only way a client can clear the number, because a JSON null reaches us as "not sent".
+        String finalCountUnit = request.getCountUnit().isPresent()
+                ? blankToNull(request.getCountUnit().get())
+                : product.getCountUnit();
+        BigDecimal requestedCount = request.getCountUnit().isPresent()
+                ? request.getCountQuantity().orElse(null)
+                : request.getCountQuantity().orElse(
+                        product.getCountQuantity() == null ? null : BigDecimal.valueOf(product.getCountQuantity()));
+        Integer finalCountQuantity = validateCount(requestedCount, finalCountUnit);
+
+        // Absent = keep the current set; a list (even empty) = replace with exactly these.
+        Optional<List<PurchasePlace>> newPlaces = request.getPurchasePlaceIds().map(this::resolvePurchasePlaces);
+
         // ⚠️ Only checked when the request actually carried a barcode. An edit that never mentions it must
         // not fail on a duplicate somebody else created earlier — otherwise a legacy clash would freeze
         // every other field of both products. `id` is excluded, so resending one's own code is a no-op.
@@ -185,22 +231,24 @@ public class ProductServiceImpl implements ProductService {
                 .brand(request.getBrand().orElse(product.getBrand()))
                 .price(request.getPrice().orElse(product.getPrice()))
                 .productName(request.getProductName().orElse(product.getProductName()))
-                .store(request.getStore().orElse(product.getStore()))
                 .netContentUnit(request.getNetContentUnit().orElse(product.getNetContentUnit()))
                 .packageHeight(request.getPackageHeight().orElse(product.getPackageHeight()))
                 .packageLength(request.getPackageLength().orElse(product.getPackageLength()))
                 .packageWidth(request.getPackageWidth().orElse(product.getPackageWidth()))
                 .netContent(request.getNetContent().orElse(product.getNetContent()))
+                .countQuantity(finalCountQuantity)
+                .countUnit(finalCountUnit)
                 .description(request.getDescription().orElse(product.getDescription()))
                 .build();
 
         // Save updated product
         Product saved = productRepository.save(updated);
+        newPlaces.ifPresent(places -> replacePurchasePlaces(saved, places));
         // ⚠️ Only when `price` was actually sent: Optional.empty() = field omitted, and an edit that
         // never mentions the price is not a price change (the recorder also drops equal values).
         request.getPrice().ifPresent(newPrice -> priceHistoryRecorder.recordProductCost(
                 saved, oldPrice, newPrice, PriceChangeReason.PRODUCT_EDIT, null));
-        return mapToResponse(saved, channelCountOf(saved.getId()));
+        return mapToResponse(saved, channelCountOf(saved.getId()), purchasePlacesOf(saved.getId()));
     }
 
     /**
@@ -274,11 +322,16 @@ public class ProductServiceImpl implements ProductService {
      * @throws IllegalArgumentException if validation fails
      */
     private void validateNetContentUnit(String netContentUnit, String netContent) {
+        boolean hasContent = netContent != null && !netContent.trim().isEmpty();
+        boolean hasUnit = netContentUnit != null && !netContentUnit.trim().isEmpty();
         // If netContent is provided, netContentUnit is required
-        if (netContent != null && !netContent.trim().isEmpty()) {
-            if (netContentUnit == null || netContentUnit.trim().isEmpty()) {
-                throw new IllegalArgumentException("netContentUnit is required when netContent is provided");
-            }
+        if (hasContent && !hasUnit) {
+            throw new IllegalArgumentException("netContentUnit is required when netContent is provided");
+        }
+        // ...and the reverse (FEATURE_2609_76 / D18): a unit with no amount is refused too. Rows saved that way
+        // before D18 are left as they are and get this message on their next edit.
+        if (hasUnit && !hasContent) {
+            throw new IllegalArgumentException("netContent is required when netContentUnit is provided");
         }
 
         // If netContentUnit is provided, validate it
@@ -297,14 +350,129 @@ public class ProductServiceImpl implements ProductService {
     }
 
     /**
+     * Validate the piece count pair (FEATURE_2609_76 / D6 · D12) and return the number to store.
+     *
+     * <p>Both empty is fine (count is optional). Otherwise both are required, the number must be a whole number
+     * of 1 or more, and the unit one of {@link #VALID_COUNT_UNITS}.</p>
+     *
+     * @param countQuantity requested number, {@code null} = none
+     * @param countUnit     requested unit, already blank-to-null
+     * @return the number as an Integer, or {@code null} when there is no count
+     * @throws IllegalArgumentException when the pair breaks one of the rules above
+     */
+    private Integer validateCount(BigDecimal countQuantity, String countUnit) {
+        if (countQuantity == null && countUnit == null) {
+            return null;
+        }
+        if (countQuantity == null) {
+            throw new IllegalArgumentException("countQuantity is required when countUnit is provided");
+        }
+        if (countUnit == null) {
+            throw new IllegalArgumentException("countUnit is required when countQuantity is provided");
+        }
+        if (countQuantity.signum() <= 0 || countQuantity.stripTrailingZeros().scale() > 0
+                || countQuantity.compareTo(BigDecimal.valueOf(Integer.MAX_VALUE)) > 0) {
+            throw new IllegalArgumentException("countQuantity must be a whole number of 1 or more");
+        }
+        if (!VALID_COUNT_UNITS.contains(countUnit)) {
+            throw new IllegalArgumentException("countUnit must be one of: " + String.join(", ", VALID_COUNT_UNITS));
+        }
+        return countQuantity.intValueExact();
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.trim().isEmpty() ? null : value.trim();
+    }
+
+    /**
+     * Ids → the tenant's purchase places, in list order (FEATURE_2609_76 / D1 · D3). Duplicates collapse.
+     *
+     * @throws IllegalArgumentException when an id is not one of this tenant's places (400)
+     */
+    private List<PurchasePlace> resolvePurchasePlaces(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        Set<Long> wanted = new LinkedHashSet<>(ids);
+        List<PurchasePlace> found = purchasePlaceRepository.findScopedByIdIn(wanted);
+        Set<Long> foundIds = found.stream().map(PurchasePlace::getId).collect(Collectors.toSet());
+        List<Long> missing = wanted.stream().filter(id -> !foundIds.contains(id)).toList();
+        if (!missing.isEmpty()) {
+            throw new IllegalArgumentException("없는 구매처가 있습니다: " + missing);
+        }
+        return found.stream()
+                .sorted(Comparator.comparing(PurchasePlace::getSortOrder).thenComparing(PurchasePlace::getId))
+                .toList();
+    }
+
+    /**
+     * Make the product's links exactly {@code places} — delete the ones not wanted, insert the missing ones.
+     * Existing links that stay are not touched, so the unique key never sees the same pair twice.
+     */
+    private void replacePurchasePlaces(Product product, List<PurchasePlace> places) {
+        Set<Long> wanted = places.stream().map(PurchasePlace::getId).collect(Collectors.toSet());
+        List<ProductPurchasePlace> current =
+                productPurchasePlaceRepository.findWithPlaceByProductIdIn(List.of(product.getId()));
+        Set<Long> kept = new HashSet<>();
+        List<ProductPurchasePlace> stale = new ArrayList<>();
+        for (ProductPurchasePlace link : current) {
+            Long placeId = link.getPurchasePlace().getId();
+            if (wanted.contains(placeId)) {
+                kept.add(placeId);
+            } else {
+                stale.add(link);
+            }
+        }
+        if (!stale.isEmpty()) {
+            productPurchasePlaceRepository.deleteAll(stale);
+        }
+        List<ProductPurchasePlace> added =
+                linksOf(product, places.stream().filter(place -> !kept.contains(place.getId())).toList());
+        if (!added.isEmpty()) {
+            productPurchasePlaceRepository.saveAll(added);
+        }
+    }
+
+    private static List<ProductPurchasePlace> linksOf(Product product, List<PurchasePlace> places) {
+        return places.stream()
+                .map(place -> ProductPurchasePlace.builder().product(product).purchasePlace(place).build())
+                .toList();
+    }
+
+    private static List<PurchasePlaceRef> toRefs(List<PurchasePlace> places) {
+        return places.stream().map(place -> new PurchasePlaceRef(place.getId(), place.getName())).toList();
+    }
+
+    /** One product's places — the single-product path of {@link #purchasePlacesByProduct}. */
+    private List<PurchasePlaceRef> purchasePlacesOf(Long productId) {
+        return purchasePlacesByProduct(List.of(productId)).getOrDefault(productId, List.of());
+    }
+
+    /** product id → its places in list order, in ONE query for the whole page. */
+    private Map<Long, List<PurchasePlaceRef>> purchasePlacesByProduct(Collection<Long> productIds) {
+        if (productIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, List<PurchasePlaceRef>> result = new HashMap<>();
+        for (ProductPurchasePlace link : productPurchasePlaceRepository.findWithPlaceByProductIdIn(productIds)) {
+            PurchasePlace place = link.getPurchasePlace();
+            result.computeIfAbsent(link.getProduct().getId(), key -> new ArrayList<>())
+                    .add(new PurchasePlaceRef(place.getId(), place.getName()));
+        }
+        return result;
+    }
+
+    /**
      * Map Product entity to ProductResponse DTO
      *
      * @param product the product entity to map
      * @param channelCount 연결된 판매채널 수 (2026-09-23). {@code null} 이면 응답에서도 null —
      *                     화면은 그것을 「-」(모름) 로 읽고 0(연결 없음) 과 구분한다
+     * @param purchasePlaces 구매처(목록 순서, 현재 이름) — FEATURE_2609_76
      * @return ProductResponse DTO
      */
-    private ProductResponse mapToResponse(Product product, Integer channelCount) {
+    private ProductResponse mapToResponse(Product product, Integer channelCount,
+                                          List<PurchasePlaceRef> purchasePlaces) {
         return ProductResponse.builder()
                 .channelCount(channelCount)
                 .id(product.getId())
@@ -312,12 +480,14 @@ public class ProductServiceImpl implements ProductService {
                 .brand(product.getBrand())
                 .price(product.getPrice())
                 .productName(product.getProductName())
-                .store(product.getStore())
+                .purchasePlaces(purchasePlaces)
                 .netContentUnit(product.getNetContentUnit())
                 .packageHeight(product.getPackageHeight())
                 .packageLength(product.getPackageLength())
                 .packageWidth(product.getPackageWidth())
                 .netContent(product.getNetContent())
+                .countQuantity(product.getCountQuantity())
+                .countUnit(product.getCountUnit())
                 .description(product.getDescription())
                 .imageUrl(product.getImageUrl())
                 .active(product.getActive())
