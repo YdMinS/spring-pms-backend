@@ -39,7 +39,6 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -56,7 +55,10 @@ import java.util.stream.Collectors;
  * ⚠️ 단 {@code ChannelAddServiceImpl} 의 {@code REQUIRES_NEW}(배치가 셀마다 독립 커밋을 해야 해서 있는 것)는
  * 복제하지 않았다 — 가져오기는 단건이라 격리할 형제 트랜잭션이 없다.</p>
  *
- * <p>🔴 자동생성만은 {@link MasterFromChannelServiceImpl} 과 <b>같은 방식</b>이다(2609_47/D2): 셀·옵션·BOM 을
+ * <p>🔁 2609_79 / UX D70: 판매상품을 붙이는 처리는 이 서비스 한 곳이다 — 「새 마스터」 도 3단 페이지가 마스터를
+ * 만든 뒤 이 서비스로 붙인다(옛 {@code MasterFromChannelServiceImpl} 저장 경로는 없어졌다).</p>
+ *
+ * <p>🔴 자동생성(2609_47/D2): 셀·옵션·BOM 을
  * 먼저 커밋하고 <b>트랜잭션 밖에서</b> 자동생성을 돌린다. 사진이 하나도 없는 물품이면 자동생성이 400 을 던지는데,
  * 같은 트랜잭션 안에서 부르면 그 실패가 셀까지 되돌려 "쿠팡 ID 를 넣었는데 아무것도 안 생긴다" 가 된다.
  * 사진은 나중에 채우고 [재생성] 하면 된다.</p>
@@ -74,12 +76,6 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
     static final String CATEGORY_WARNING =
             "정확한 카테고리 매핑이 안되어 마스터 프로덕트의 카테고리가 적용되었습니다. "
                     + "채널에 반영될 때까지 카테고리별 수수료 차이로 인한 마진 오차가 발생할 수 있습니다.";
-
-    /**
-     * {@link ListingChannel#fetchProduct} 를 실제로 구현한 플랫폼. ⚠️ 어댑터 기본 구현의
-     * {@code UnsupportedOperationException} 은 전역 핸들러가 없어 500 이 되므로 여기서 400 으로 막는다.
-     */
-    private static final Set<Platform> SUPPORTED_PLATFORMS = Set.of(Platform.COUPANG);
 
     private final MasterProductRepository masterProductRepository;
     private final MasterProductComponentRepository masterProductComponentRepository;
@@ -145,8 +141,7 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
     // ------------------------------------------------------------------ commit
 
     /**
-     * 셀·옵션·BOM 을 만든 뒤(원자적) <b>커밋된 다음</b> 자동생성을 돌린다 — {@link MasterFromChannelServiceImpl}
-     * 과 같은 방식(2609_47/D1·D2).
+     * 셀·옵션·BOM 을 만든 뒤(원자적) <b>커밋된 다음</b> 자동생성을 돌린다(2609_47/D1·D2).
      *
      * <p>클래스에 {@code @Transactional(readOnly = true)} 가 걸려 있으므로 {@code NOT_SUPPORTED} 로 명시해
      * 읽기 전용 트랜잭션이 이 진입점을 감싸지 않게 한다 — 그래야 {@link #importInTransaction} 이 자기 트랜잭션을
@@ -337,9 +332,7 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
      * 다 채운 뒤에 실패하면 안 되기 때문에 커밋도 같은 순서로 다시 돈다.
      */
     private ImportContext validate(Long masterProductId, Long sellerId, Platform platform, String platformProductId) {
-        if (!SUPPORTED_PLATFORMS.contains(platform)) {
-            throw new IllegalArgumentException(platform + " 가져오기 미지원");
-        }
+        MarketProductAccess.requireSupported(platform);
 
         MasterProduct master = masterProductRepository.findScopedById(masterProductId)
                 .orElseThrow(() -> new ResourceNotFoundException("MasterProduct", masterProductId));
@@ -366,16 +359,9 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
             throw new IllegalArgumentException(platform + " 카테고리 매핑 미설정");
         }
 
-        Seller seller = sellerRepository.findById(sellerId)
-                .orElseThrow(() -> new ResourceNotFoundException("Seller", sellerId));
-        // Mirrors ListingRegistrationServiceImpl.resolveAccount, but keyed by (seller, platform) — this feature
-        // has no cell yet to read them from.
-        MarketplaceAccount account = marketplaceAccountRepository
-                .findBySeller_IdAndPlatform(sellerId, platform)
-                .orElseThrow(() -> new ResourceNotFoundException("MarketplaceAccount", sellerId));
-        if (Boolean.FALSE.equals(account.getIsActive())) {
-            throw new IllegalArgumentException("비활성 계정");
-        }
+        // Keyed by (seller, platform) — this feature has no cell yet to read them from. (UX D47: shared rule)
+        MarketProductAccess.SellerAccount sellerAccount = MarketProductAccess.requireActiveAccount(
+                sellerId, platform, sellerRepository, marketplaceAccountRepository);
 
         // 🔴 2609_22/D18 부분 번복(온보딩, 2026-09-19): 편입 경로에서 "계정당 상품페이지 1개" 가드를 없앤다.
         // 같은 물건을 쿠팡 페이지 여러 개로 파는 것은 정상 판매 방식이고(실측 139건), 편입은 "쿠팡에 이미
@@ -386,31 +372,21 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
         // 2609_63/D5: 그 셀이 아직 <b>마스터에 붙어 있으면</b> 예전처럼 막고, 연결이 끊긴 셀이면 그 행을 재사용한다.
         ProductListing existing = productListingRepository.findByPlatformProductId(platformProductId).orElse(null);
         DetachedCellPolicy.requireReusable(existing, platform, sellerId);
-        return new ImportContext(master, seller, account, components, existing);
+        return new ImportContext(master, sellerAccount.seller(), sellerAccount.account(), components, existing);
     }
 
-    /** 마켓 조회 1회 + 응답 자체에 대한 검증(Step 2 의 7~8). */
+    /** 마켓 조회 1회 + 응답 자체에 대한 검증(Step 2 의 7~8) — 규칙은 {@link MarketProductAccess#fetchPriced}. */
     private ImportedProduct fetchProduct(ImportContext ctx, String platformProductId) {
-        ImportedProduct fetched = resolver.resolve(ctx.account().getPlatform())
-                .fetchProduct(platformProductId, ctx.account());
-        if (fetched.options().isEmpty()) {
-            throw new IllegalArgumentException("옵션 없는 쿠팡 상품입니다");
-        }
-        for (ImportedProduct.Option option : fetched.options()) {
-            // A cell option without a price cannot be margin-checked, and NOT NULL would reject it anyway.
-            if (option.salePrice() == null || option.salePrice().compareTo(BigDecimal.ZERO) == 0) {
-                throw new IllegalArgumentException("판매가 없는 옵션: " + option.itemName());
-            }
-        }
-        return fetched;
+        return MarketProductAccess.fetchPriced(
+                resolver.resolve(ctx.account().getPlatform()), platformProductId, ctx.account());
     }
 
     /**
      * 재사용 셀의 기존 옵션 행을 spec 에 붙인다(2609_63/D6). 매칭 축은 {@link #matchOptions} 와 같다:
      * {@code vendorItemId} → 옵션명.
      *
-     * <p>🔴 규칙은 {@link MasterFromChannelServiceImpl#matchExistingOptions} 와 같아야 한다
-     * (2609_66/D5 — 인자 타입이 달라 복제했다). 한쪽만 고치지 말 것.</p>
+     * <p>🔁 2609_79 / UX D70: 복제본이던 {@code MasterFromChannelServiceImpl#matchExistingOptions} 는 저장 경로와
+     * 함께 없어졌다 — 이 규칙은 여기 한 곳이다.</p>
      *
      * <p>⚠️ 같은 이름이 둘 이상이면 첫 행만 후보가 된다 — 나머지는 호출부의 잔여 처리로 비활성된다.</p>
      *
@@ -527,6 +503,11 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
     /**
      * D10: 입력된 구성이 기존 마스터 옵션의 BOM 과 <b>완전히 같으면</b> 그 옵션을 쓰고, 아니면 새로 만든다.
      * "연결이냐 신규냐"를 사용자가 고르지 않고 구성이 결정한다.
+     *
+     * <p>🔁 2609_79 / UX D80: 구성이 같은 마스터 옵션이 둘 이상이면 <b>이름까지 같은 것</b>을 먼저 쓴다
+     * ({@code spec.masterOptionName}). 그래야 「새 마스터」 의 마켓 옵션이 같은 이름의 마스터 옵션에 하나씩
+     * 붙는다. 다른 채널의 같은 이름·수량 옵션은 같은 마스터 옵션 하나에 붙고, 채널 옵션명은 채널마다 남는다
+     * (셀 옵션명 = 마켓 itemName, MANUAL_OVERRIDE).</p>
      */
     private MasterProductOption resolveMasterOption(MasterProduct master,
                                                     ListingImportRequest.OptionSpec spec,
@@ -536,6 +517,13 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
                 ListingImportRequest.Component::getProductId,
                 ListingImportRequest.Component::getQuantity,
                 (first, dup) -> dup, LinkedHashMap::new));
+        // UX D80: same composition AND same name first — the name decides between equal-quantity options.
+        for (KnownOption candidate : known) {
+            if (candidate.vector().equals(vector)
+                    && candidate.option().getName().equals(spec.getMasterOptionName())) {
+                return candidate.option();
+            }
+        }
         for (KnownOption candidate : known) {
             if (candidate.vector().equals(vector)) {
                 return candidate.option();      // reuse; two cell options may legitimately share one master option

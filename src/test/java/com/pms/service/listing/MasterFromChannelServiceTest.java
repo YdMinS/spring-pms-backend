@@ -2,45 +2,25 @@ package com.pms.service.listing;
 
 import com.pms.domain.Category;
 import com.pms.domain.CategoryMapping;
-import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
-import com.pms.domain.MasterProductOption;
 import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
-import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
-import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
-import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterFromChannelPreviewRequest;
-import com.pms.dto.request.MasterFromChannelRequest;
-import com.pms.dto.request.MasterOptionRequest;
-import com.pms.dto.request.MasterProductRequest;
-import com.pms.dto.response.ListingMasterCreateResponse;
 import com.pms.dto.response.MasterFromChannelPreviewResponse;
-import com.pms.dto.response.MasterProductResponse;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.MarketplaceAccountRepository;
-import com.pms.repository.MasterProductOptionRepository;
-import com.pms.repository.MasterProductRepository;
 import com.pms.repository.PlatformCategoryRepository;
-import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
-import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
-import com.pms.service.CategoryMetaService;
-import com.pms.service.ListingAssetService;
-import com.pms.service.MasterProductService;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -50,21 +30,14 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
-import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /**
- * 마켓 상품으로 마스터 만들기(FEATURE_2609_45 / 01). 미리보기는 <b>저장 0회</b>로 옵션·카테고리·속성만 만들고,
- * 커밋은 마켓을 다시 읽어 마스터·옵션·셀을 한 번에 만든다.
- *
- * <p>가장 중요한 회귀 셋: ① 옵션마다 다른 속성은 <b>그 마스터 옵션</b>에 실린다(D4-1) ② 마스터 옵션에 재고를
- * 넣지 않는다(D3-1, 상한 오염) ③ 커밋 뒤 자동생성을 돌리되 그 실패가 마스터·셀을 되돌리지 않는다
- * (2609_47/D1·D2 — 2609_45/D5 "얕은 생성" 번복).</p>
+ * 「마켓 상품으로 시작」 미리보기(FEATURE_2609_45 / 01 → 2609_79). 미리보기는 <b>저장 0회</b>로 옵션·카테고리·
+ * 속성만 만든다. 🔁 2609_79 / UX D70: 저장(마스터 + 셀 한 번에 만들기)은 없어졌다 — 그 테스트도 함께 지웠다.
  */
 @ExtendWith(MockitoExtension.class)
 class MasterFromChannelServiceTest {
@@ -72,41 +45,19 @@ class MasterFromChannelServiceTest {
     @Mock private SellerRepository sellerRepository;
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock private ProductListingRepository productListingRepository;
-    @Mock private ProductListingOptionRepository productListingOptionRepository;
-    @Mock private ProductRepository productRepository;
-    @Mock private MasterProductRepository masterProductRepository;
-    @Mock private MasterProductOptionRepository masterProductOptionRepository;
     @Mock private PlatformCategoryRepository platformCategoryRepository;
     @Mock private CategoryMappingRepository categoryMappingRepository;
     @Mock private ListingChannelResolver resolver;
-    @Mock private MasterProductService masterProductService;
-    @Mock private CategoryMetaService categoryMetaService;
     @Mock private ListingChannel channel;
-    @Mock private ListingAssetService listingAssetService;
     @InjectMocks private MasterFromChannelServiceImpl service;
 
-    @BeforeEach
-    void wireSelf() {
-        // @InjectMocks 는 테스트 대상과 같은 타입의 필드를 건너뛴다 → self 가 null 로 남아 create() 가 NPE 로 죽는다.
-        // 단위 테스트에는 프록시가 없으므로 자기 자신을 넣는다(create → createInTransaction 이 그대로 실행된다.
-        // 트랜잭션 경계는 통합 테스트가 본다).
-        ReflectionTestUtils.setField(service, "self", service);
-    }
-
     private static final Long SELLER_ID = 7L;
-    private static final Long MASTER_ID = 55L;
     private static final Long CATEGORY_ID = 3L;
-    private static final Long PRODUCT_A = 100L;
-    private static final Long PRODUCT_B = 200L;
     private static final Platform PLATFORM = Platform.COUPANG;
     private static final String PRODUCT_ID = "222333444";
     private static final String COUPANG_CATEGORY = "73170";
 
     // ---- fixtures ----
-
-    private Product product(Long id) {
-        return Product.builder().id(id).brand("노브랜드").productName("상품" + id).build();
-    }
 
     private ImportedProduct.Option marketOption(String name, String vendorItemId, String salePrice,
                                                 Map<String, String> attributes) {
@@ -134,24 +85,13 @@ class MasterFromChannelServiceTest {
                 .sellerId(SELLER_ID).platform(PLATFORM.name()).platformProductId(PRODUCT_ID).build();
     }
 
-    private MasterFromChannelRequest.OptionSpec spec(String itemName, String platformOptionId,
-                                                     int qtyA, Integer qtyB) {
-        List<MasterFromChannelRequest.Component> components = qtyB == null
-                ? List.of(MasterFromChannelRequest.Component.builder()
-                        .productId(PRODUCT_A).quantity(qtyA).build())
-                : List.of(
-                        MasterFromChannelRequest.Component.builder().productId(PRODUCT_A).quantity(qtyA).build(),
-                        MasterFromChannelRequest.Component.builder().productId(PRODUCT_B).quantity(qtyB).build());
-        return MasterFromChannelRequest.OptionSpec.builder()
-                .itemName(itemName).platformOptionId(platformOptionId).components(components).build();
-    }
-
-    private MasterFromChannelRequest createRequest(List<Long> componentIds,
-                                                   MasterFromChannelRequest.OptionSpec... specs) {
-        return MasterFromChannelRequest.builder()
-                .sellerId(SELLER_ID).platform(PLATFORM.name()).platformProductId(PRODUCT_ID)
-                .masterName("노브랜드 생수 2L").categoryId(CATEGORY_ID)
-                .componentProductIds(componentIds).options(List.of(specs)).build();
+    private ProductListing existingCell(Long id, MasterProduct linkedMaster, Long sellerId) {
+        return ProductListing.builder()
+                .id(id).platform(PLATFORM).platformProductId(PRODUCT_ID)
+                .name("예전 이름").status(ListingStatus.SELLING)
+                .seller(Seller.builder().id(sellerId).build())
+                .masterProduct(linkedMaster)
+                .build();
     }
 
     // ---- stub helpers (kept granular: a guard test must not stub what it never reaches) ----
@@ -180,35 +120,6 @@ class MasterFromChannelServiceTest {
                         .id(60L).platform(PLATFORM)
                         .category(Category.builder().id(CATEGORY_ID).name("생수").build())
                         .platformCategory(platformCategory).build()));
-    }
-
-    /** 마스터 생성 + 셀 저장이 id 를 돌려주도록. */
-    private void givenCreationSucceeds(String... masterOptionNames) {
-        given(masterProductService.createMasterProduct(any()))
-                .willReturn(MasterProductResponse.builder().id(MASTER_ID).build());
-        given(masterProductRepository.findScopedById(MASTER_ID))
-                .willReturn(Optional.of(MasterProduct.builder().id(MASTER_ID).name("노브랜드 생수 2L").build()));
-        List<MasterProductOption> options = new java.util.ArrayList<>();
-        long id = 300L;
-        for (String name : masterOptionNames) {
-            options.add(MasterProductOption.builder().id(id++).name(name).build());
-        }
-        given(masterProductOptionRepository.findByMasterProductId(MASTER_ID)).willReturn(options);
-        given(productListingRepository.save(any())).willAnswer(inv ->
-                ((ProductListing) inv.getArgument(0)).toBuilder().id(50L).build());
-        given(productListingOptionRepository.save(any())).willAnswer(inv ->
-                ((ProductListingOption) inv.getArgument(0)).toBuilder().id(60L).build());
-    }
-
-    private void givenComponents(Long... productIds) {
-        given(productRepository.findAllById(any()))
-                .willReturn(java.util.Arrays.stream(productIds).map(this::product).toList());
-    }
-
-    private void verifyNothingSaved() {
-        verify(productListingRepository, never()).save(any());
-        verify(productListingOptionRepository, never()).save(any());
-        verify(masterProductService, never()).createMasterProduct(any());
     }
 
     // ---- preview ----
@@ -241,19 +152,7 @@ class MasterFromChannelServiceTest {
         assertThat(response.getThumbnailImages()).containsExactly("https://cdn/rep.jpg");
         assertThat(response.getDetailImages()).containsExactly("https://cdn/detail.jpg");
         // 🔴 미리보기는 아무것도 쓰지 않는다.
-        verifyNothingSaved();
-    }
-
-    /** 2609_47: 미리보기는 자동생성을 건드리지 않는다(쓰기 0회의 일부). */
-    @Test
-    void preview_doesNotTouchAssets() {
-        givenAccount();
-        givenMarket(twoOptionProduct());
-        givenCategoryResolved();
-
-        service.preview(previewRequest());
-
-        verify(listingAssetService, never()).regenerate(anyLong());
+        verify(productListingRepository, never()).save(any());
     }
 
     @Test
@@ -307,291 +206,7 @@ class MasterFromChannelServiceTest {
         verify(channel, never()).fetchProduct(any(), any());
     }
 
-    // ---- create ----
-
-    @Test
-    void create_buildsMasterWithMarketOptionNames() {
-        givenAccount();
-        givenMarket(twoOptionProduct());
-        givenComponents(PRODUCT_A, PRODUCT_B);
-        givenCreationSucceeds("6입", "12입");
-
-        ListingMasterCreateResponse response = service.create(createRequest(
-                List.of(PRODUCT_A, PRODUCT_B), spec("6입", "8123", 6, 1), spec("12입", "8124", 12, 2)));
-
-        ArgumentCaptor<MasterProductRequest> captor = ArgumentCaptor.forClass(MasterProductRequest.class);
-        verify(masterProductService).createMasterProduct(captor.capture());
-        MasterProductRequest created = captor.getValue();
-        assertThat(created.getName()).isEqualTo("노브랜드 생수 2L");
-        assertThat(created.getComponentProductIds()).containsExactly(PRODUCT_A, PRODUCT_B);
-        assertThat(created.getOptions()).extracting(MasterOptionRequest::getName)
-                .containsExactly("6입", "12입");     // 마스터 옵션명 = 쿠팡 itemName
-        assertThat(created.getOptions().get(0).getItems())
-                .extracting(MasterOptionRequest.OptionItem::getProductId,
-                        MasterOptionRequest.OptionItem::getQuantity)
-                .containsExactly(org.assertj.core.api.Assertions.tuple(PRODUCT_A, 6),
-                        org.assertj.core.api.Assertions.tuple(PRODUCT_B, 1));
-        // 🔴 D3-1: 마스터 옵션 재고는 비운다 — 채널 재고의 상한이라 한 채널의 값(85)에 다른 채널이 갇힌다.
-        assertThat(created.getOptions()).allSatisfy(o -> assertThat(o.getStockQuantity()).isNull());
-        // 2609_47/D6: 요청이 비웠으면 null — 기존과 동일하다.
-        assertThat(created.getDefaultDeliveryId()).isNull();
-        assertThat(created.getDefaultPackageId()).isNull();
-
-        verify(masterProductService).setCategory(eq(MASTER_ID), any(MasterCategoryRequest.class));
-        assertThat(response.getMasterProductId()).isEqualTo(MASTER_ID);
-        assertThat(response.getProductListingId()).isEqualTo(50L);
-        assertThat(response.getOptionCount()).isEqualTo(2);
-        assertThat(response.getStatus()).isEqualTo(ListingStatus.SELLING);
-    }
-
-    /** 2609_47/D1: 셀이 만들어진 뒤 자동생성을 정확히 한 번 돌린다. */
-    @Test
-    void create_generatesAssetsAfterCommit() {
-        givenAccount();
-        givenMarket(marketProduct(marketOption("6입", "8123", "12900", Map.of())));
-        givenComponents(PRODUCT_A);
-        givenCreationSucceeds("6입");
-
-        ListingMasterCreateResponse response =
-                service.create(createRequest(List.of(PRODUCT_A), spec("6입", "8123", 6, null)));
-
-        verify(listingAssetService).regenerate(50L);
-        assertThat(response.getAssetsGenerated()).isTrue();
-    }
-
-    /** 🔴 D2 회귀 가드: 자동생성이 실패해도 예외가 새지 않고 마스터·셀은 남는다. */
-    @Test
-    void create_assetFailureKeepsMasterAndCell() {
-        givenAccount();
-        givenMarket(marketProduct(marketOption("6입", "8123", "12900", Map.of())));
-        givenComponents(PRODUCT_A);
-        givenCreationSucceeds("6입");
-        willThrow(new IllegalArgumentException("상품 이미지를 불러올 수 없습니다"))
-                .given(listingAssetService).regenerate(50L);
-
-        ListingMasterCreateResponse response =
-                service.create(createRequest(List.of(PRODUCT_A), spec("6입", "8123", 6, null)));
-
-        assertThat(response.getAssetsGenerated()).isFalse();
-        assertThat(response.getMasterProductId()).isEqualTo(MASTER_ID);
-        assertThat(response.getProductListingId()).isEqualTo(50L);
-    }
-
-    /** 2609_47/D6: 생성 화면이 고른 기본 택배·상자를 마스터 생성에 그대로 얹는다. */
-    @Test
-    void create_passesDefaultDeliveryAndPackage() {
-        givenAccount();
-        givenMarket(marketProduct(marketOption("6입", "8123", "12900", Map.of())));
-        givenComponents(PRODUCT_A);
-        givenCreationSucceeds("6입");
-
-        service.create(MasterFromChannelRequest.builder()
-                .sellerId(SELLER_ID).platform(PLATFORM.name()).platformProductId(PRODUCT_ID)
-                .masterName("노브랜드 생수 2L").categoryId(CATEGORY_ID)
-                .componentProductIds(List.of(PRODUCT_A))
-                .options(List.of(spec("6입", "8123", 6, null)))
-                .defaultDeliveryId(11L).defaultPackageId(22L)
-                .build());
-
-        ArgumentCaptor<MasterProductRequest> captor = ArgumentCaptor.forClass(MasterProductRequest.class);
-        verify(masterProductService).createMasterProduct(captor.capture());
-        assertThat(captor.getValue().getDefaultDeliveryId()).isEqualTo(11L);
-        assertThat(captor.getValue().getDefaultPackageId()).isEqualTo(22L);
-    }
-
-    @Test
-    void create_storesCommonAttributesOnMaster() {
-        givenAccount();
-        givenMarket(twoOptionProduct());
-        givenComponents(PRODUCT_A);
-        givenCreationSucceeds("6입", "12입");
-
-        service.create(createRequest(List.of(PRODUCT_A), spec("6입", "8123", 6, null),
-                spec("12입", "8124", 12, null)));
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<Map<String, String>> attributes = ArgumentCaptor.forClass(Map.class);
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<Map<String, String>> notices = ArgumentCaptor.forClass(Map.class);
-        ArgumentCaptor<String> group = ArgumentCaptor.forClass(String.class);
-        verify(categoryMetaService).updateCategoryAttributes(eq(MASTER_ID), attributes.capture(),
-                notices.capture(), group.capture());
-        // 전 옵션이 같은 값을 갖는 키만 마스터로 간다.
-        assertThat(attributes.getValue()).containsExactly(Map.entry("개당 중량", "36.9"));
-        assertThat(notices.getValue()).containsEntry("제품명", "상품 상세페이지 참조");
-        assertThat(group.getValue()).isEqualTo("가공식품");
-    }
-
-    /** 🔴 D4-1 의 회귀 가드: 옵션마다 다른 속성이 그 마스터 옵션에 실려야 한다. */
-    @Test
-    void create_storesDifferingAttributesOnEachOption() {
-        givenAccount();
-        givenMarket(twoOptionProduct());
-        givenComponents(PRODUCT_A);
-        givenCreationSucceeds("6입", "12입");
-
-        service.create(createRequest(List.of(PRODUCT_A), spec("6입", "8123", 6, null),
-                spec("12입", "8124", 12, null)));
-
-        ArgumentCaptor<MasterProductRequest> captor = ArgumentCaptor.forClass(MasterProductRequest.class);
-        verify(masterProductService).createMasterProduct(captor.capture());
-        List<MasterOptionRequest> options = captor.getValue().getOptions();
-        assertThat(options.get(0).getCategoryAttributes()).containsExactly(Map.entry("수량", "6"));
-        assertThat(options.get(1).getCategoryAttributes()).containsExactly(Map.entry("수량", "12"));
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<Map<String, String>> masterAttributes = ArgumentCaptor.forClass(Map.class);
-        verify(categoryMetaService).updateCategoryAttributes(eq(MASTER_ID), masterAttributes.capture(),
-                any(), any());
-        // 마스터 공통 맵에는 "수량" 이 없다 — items[0] 값을 전 옵션에 공통 적용하면 6개입 수량이 12개입으로 나간다.
-        assertThat(masterAttributes.getValue()).doesNotContainKey("수량");
-    }
-
-    @Test
-    void create_optionMismatch_throws400() {
-        givenAccount();
-        givenMarket(twoOptionProduct());
-
-        assertThatThrownBy(() -> service.create(createRequest(List.of(PRODUCT_A),
-                spec("6입", "8123", 6, null))))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("쿠팡 옵션이 변경되었습니다");
-        verify(masterProductService, never()).createMasterProduct(any());
-    }
-
-    @Test
-    void create_missingComponentQuantity_throws400() {
-        givenAccount();
-        givenMarket(marketProduct(marketOption("6입", "8123", "12900", Map.of())));
-        givenComponents(PRODUCT_A, PRODUCT_B);
-
-        // 구성상품은 A·B 인데 옵션 수량은 A 만 채웠다(D6).
-        assertThatThrownBy(() -> service.create(createRequest(List.of(PRODUCT_A, PRODUCT_B),
-                spec("6입", "8123", 6, null))))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("6입")
-                .hasMessageContaining("상품" + PRODUCT_B);
-        verify(masterProductService, never()).createMasterProduct(any());
-    }
-
-    @Test
-    void create_linksCellOptionToMasterOption() {
-        givenAccount();
-        givenMarket(marketProduct(marketOption("6입", "8123", "12900", Map.of())));
-        givenComponents(PRODUCT_A);
-        givenCreationSucceeds("6입");
-
-        service.create(createRequest(List.of(PRODUCT_A), spec("6입", "8123", 6, null)));
-
-        ArgumentCaptor<ProductListingOption> captor = ArgumentCaptor.forClass(ProductListingOption.class);
-        verify(productListingOptionRepository).save(captor.capture());
-        ProductListingOption saved = captor.getValue();
-        assertThat(saved.getMasterProductOption()).isNotNull();
-        assertThat(saved.getMasterProductOption().getName()).isEqualTo("6입");
-        assertThat(saved.getOptionName()).isEqualTo("6입");
-        assertThat(saved.getOptionNameSource()).isEqualTo(GeneratedContentSource.MANUAL_OVERRIDE);
-        assertThat(saved.getPriceSource()).isEqualTo(GeneratedContentSource.MANUAL_OVERRIDE);
-        assertThat(saved.getSellingPrice()).isEqualByComparingTo("12900");
-        assertThat(saved.getStockQuantity()).isEqualTo(85);     // 쿠팡 재고는 셀 옵션에만 들어간다
-        assertThat(saved.getPlatformOptionId()).isEqualTo("8123");
-        // 셀 레벨 속성·고시는 넣지 않는다 — 마스터 카테고리 = 쿠팡 카테고리라 마스터 값이 곧 정답이다.
-        assertThat(saved.getCategoryAttributes()).isNull();
-        assertThat(saved.getCategoryNotices()).isNull();
-    }
-
-    @Test
-    void create_cellCarriesMarketTagsAndStatus() {
-        givenAccount();
-        givenMarket(marketProduct(marketOption("6입", "8123", "12900", Map.of())));
-        givenComponents(PRODUCT_A);
-        givenCreationSucceeds("6입");
-
-        service.create(createRequest(List.of(PRODUCT_A), spec("6입", "8123", 6, null)));
-
-        ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
-        verify(productListingRepository).save(captor.capture());
-        ProductListing cell = captor.getValue();
-        assertThat(cell.getPlatformProductId()).isEqualTo(PRODUCT_ID);
-        assertThat(cell.getPlatformCategoryCode()).isEqualTo(COUPANG_CATEGORY);
-        assertThat(cell.getStatus()).isEqualTo(ListingStatus.SELLING);
-        assertThat(cell.isNeedsMarketSync()).isFalse();
-        // 신규 마스터는 태그가 비어 차집합이 항상 원본과 같다 — 쿠팡 태그를 그대로 넣는다.
-        assertThat(cell.getTags()).containsExactly("생수", "2L");
-    }
-
-    // D. 🔴 2609_45/D2-1: 역조회가 실패(또는 다른 카테고리로 해석)해 사용자가 **다른** 표준 카테고리를 고른
-    //    경우, 그 셀은 쿠팡 코드를 갖고 있으므로 02 의 해석에서 자기 카테고리로 살아난다 → 셀 옵션 메타를
-    //    채워야 한다(안 채우면 [수정 요청]이 필수 속성 없이 나간다).
-    @Test
-    void create_userPickedDifferentCategory_fillsCellOptionMeta() {
-        givenAccount();
-        givenMarket(marketProduct(marketOption("6입", "8123", "12900", Map.of("수량", "6"))));
-        givenComponents(PRODUCT_A);
-        givenCreationSucceeds("6입");
-        // 쿠팡 카테고리는 다른 표준 카테고리(999)로 해석되고, 그 카테고리에는 수수료가 있다(D11 통과).
-        PlatformCategory platformCategory = PlatformCategory.builder()
-                .id(50L).platform(PLATFORM).code(COUPANG_CATEGORY).name("생수")
-                .commissionRate(new BigDecimal("0.11")).build();
-        given(platformCategoryRepository.findByPlatformAndCode(PLATFORM, COUPANG_CATEGORY))
-                .willReturn(Optional.of(platformCategory));
-        given(categoryMappingRepository.findByPlatformCategoryId(50L))
-                .willReturn(Optional.of(CategoryMapping.builder()
-                        .id(60L).platform(PLATFORM)
-                        .category(Category.builder().id(999L).name("다른 카테고리").build())
-                        .platformCategory(platformCategory).build()));
-
-        service.create(createRequest(List.of(PRODUCT_A), spec("6입", "8123", 6, null)));
-
-        ArgumentCaptor<ProductListingOption> optionCaptor = ArgumentCaptor.forClass(ProductListingOption.class);
-        verify(productListingOptionRepository).save(optionCaptor.capture());
-        assertThat(optionCaptor.getValue().getCategoryAttributes()).containsEntry("수량", "6");
-        assertThat(optionCaptor.getValue().getCategoryNotices()).containsEntry("제품명", "상품 상세페이지 참조");
-
-        ArgumentCaptor<ProductListing> cellCaptor = ArgumentCaptor.forClass(ProductListing.class);
-        verify(productListingRepository).save(cellCaptor.capture());
-        assertThat(cellCaptor.getValue().getCategoryNoticeGroup()).isEqualTo("가공식품");
-    }
-
-    // ---- 2609_66: 떼어낸 셀 재사용 ----
-
-    private ProductListing existingCell(Long id, MasterProduct linkedMaster, Long sellerId) {
-        return ProductListing.builder()
-                .id(id).platform(PLATFORM).platformProductId(PRODUCT_ID)
-                .name("예전 이름").status(ListingStatus.SELLING)
-                .seller(Seller.builder().id(sellerId).build())
-                .masterProduct(linkedMaster)
-                .build();
-    }
-
-    private ProductListingOption existingOption(Long id, ProductListing cell, String name, String vendorItemId) {
-        return ProductListingOption.builder()
-                .id(id).productListing(cell).optionName(name).platformOptionId(vendorItemId)
-                .sellingPrice(new BigDecimal("9900")).active(true)
-                .build();
-    }
-
-    /**
-     * 재사용 전용 셋업. 🔴 {@code givenCreationSucceeds} 를 쓰면 안 된다 — 그건 save 가 <b>새 id 50L·60L 을
-     * 붙여</b> 돌려주므로 id 보존을 단언할 수 없다.
-     */
-    private void givenReuseReady(ProductListing detached, List<ProductListingOption> detachedOptions) {
-        givenAccount();
-        given(productListingRepository.findByPlatformProductId(PRODUCT_ID)).willReturn(Optional.of(detached));
-        given(channel.fetchProduct(eq(PRODUCT_ID), any())).willReturn(marketProduct(
-                marketOption("6입", "8123", "12900", Map.of())));
-        given(masterProductService.createMasterProduct(any()))
-                .willReturn(MasterProductResponse.builder().id(MASTER_ID).build());
-        given(masterProductRepository.findScopedById(MASTER_ID))
-                .willReturn(Optional.of(MasterProduct.builder().id(MASTER_ID).name("새 마스터").build()));
-        given(masterProductOptionRepository.findByMasterProductId(MASTER_ID))
-                .willReturn(List.of(MasterProductOption.builder().id(300L).name("6입").build()));
-        // 🔴 재사용 경로는 id 가 곧 단언 대상이라 save 가 인자를 그대로 돌려준다.
-        given(productListingRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
-        given(productListingOptionRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
-        given(productListingOptionRepository.findByProductListingId(41L)).willReturn(detachedOptions);
-    }
-
-    /** 2609_66/D6: 떼어낸 셀이 있으면 미리보기가 저장 <b>전에</b> 재사용을 알린다. */
+    /** 2609_66/D6: 떼어낸 셀이 있으면 미리보기가 재사용을 알린다. */
     @Test
     void preview_detachedListing_flagsReuse() {
         givenAccount();
@@ -602,54 +217,34 @@ class MasterFromChannelServiceTest {
         MasterFromChannelPreviewResponse response = service.preview(previewRequest());
 
         assertThat(response.isReusesExistingListing()).isTrue();
-        verifyNothingSaved();
-    }
-
-    /**
-     * 🔴 2609_66/D2·D3·D4: 떼어낸 셀·옵션 행을 <b>그대로</b> 다시 쓰고(id 보존), 마켓에서 사라진 옵션은 지우지
-     * 않고 비활성으로 내리며, 재사용 옵션의 BOM 만 지운 자리에 <b>새 구성</b>을 쓴다(= 이 기능의 존재 이유).
-     */
-    @Test
-    void create_detachedListing_reusesCellAndOptionRows() {
-        ProductListing detached = existingCell(41L, null, SELLER_ID);
-        ProductListingOption kept = existingOption(71L, detached, "6입", "8123");
-        ProductListingOption gone = existingOption(72L, detached, "12입", "8124");   // 마켓에서 사라진 옵션
-        givenReuseReady(detached, List.of(kept, gone));
-        givenComponents(PRODUCT_A);
-
-        service.create(createRequest(List.of(PRODUCT_A), spec("6입", "8123", 6, null)));
-
-        ArgumentCaptor<ProductListing> cellCaptor = ArgumentCaptor.forClass(ProductListing.class);
-        verify(productListingRepository).save(cellCaptor.capture());
-        assertThat(cellCaptor.getValue().getId()).isEqualTo(41L);                       // 재사용 = UPDATE
-        assertThat(cellCaptor.getValue().getMasterProduct().getId()).isEqualTo(MASTER_ID);
-
-        ArgumentCaptor<ProductListingOption> optionCaptor = ArgumentCaptor.forClass(ProductListingOption.class);
-        verify(productListingOptionRepository, times(2)).save(optionCaptor.capture());
-        ProductListingOption reused = optionCaptor.getAllValues().get(0);
-        assertThat(reused.getId()).isEqualTo(71L);                                     // 옵션 행도 그대로
-        assertThat(reused.getMasterProductOption().getId()).isEqualTo(300L);           // D4: 해제 때 비었던 FK
-        assertThat(reused.getActive()).isTrue();
-        // 🔴 마켓에서 사라진 옵션은 지우지 않고 비활성으로 내린다(주문·정산·가격이력 FK).
-        ProductListingOption leftover = optionCaptor.getAllValues().get(1);
-        assertThat(leftover.getId()).isEqualTo(72L);
-        assertThat(leftover.getActive()).isFalse();
-        // 🔴 2609_71: 구성품 사본은 없다 — 재사용 옵션이 새 마스터 옵션(300)을 가리키게 된 위 FK 가
-        //    곧 「잘못 매핑된 셀을 바로잡는다」의 전부다.
+        verify(productListingRepository, never()).save(any());
     }
 
     /** 남의 판매자 셀은 재사용 대상이 아니다 — 마켓 조회 <b>전에</b> 막힌다. */
     @Test
-    void create_listingOfAnotherSeller_throws400() {
+    void preview_listingOfAnotherSeller_throws400() {
         givenAccount();
         given(productListingRepository.findByPlatformProductId(PRODUCT_ID))
                 .willReturn(Optional.of(existingCell(41L, null, 999L)));
 
-        assertThatThrownBy(() -> service.create(createRequest(
-                List.of(PRODUCT_A), spec("6입", "8123", 6, null))))
+        assertThatThrownBy(() -> service.preview(previewRequest()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("다른 판매자의 판매상품입니다");
-        verifyNothingSaved();
+        verify(channel, never()).fetchProduct(any(), any());
+    }
+
+    /** UX D47: 계정 판정은 공용 규칙({@link MarketProductAccess}) — 비활성 계정은 마켓 조회 전에 400. */
+    @Test
+    void preview_inactiveAccount_throws400() {
+        given(resolver.resolve(PLATFORM)).willReturn(channel);
+        given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(Seller.builder().id(SELLER_ID).build()));
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(SELLER_ID, PLATFORM))
+                .willReturn(Optional.of(MarketplaceAccount.builder()
+                        .id(9L).platform(PLATFORM).isActive(false).build()));
+
+        assertThatThrownBy(() -> service.preview(previewRequest()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("비활성 계정");
         verify(channel, never()).fetchProduct(any(), any());
     }
 }

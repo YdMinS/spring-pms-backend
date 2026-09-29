@@ -52,6 +52,22 @@ public interface MasterProductComponentRepository extends JpaRepository<MasterPr
     void deleteByMasterProductId(Long masterProductId);
 
     /**
+     * Masters that contain <b>at least one</b> of {@code productIds} (2609_79 / UX D74·D79).
+     *
+     * <p>⚠️ Not tenant-scoped (this entity has no {@code @TenantId}); the caller resolves the ids through the
+     * tenant-filtered {@code MasterProductRepository#findScopedByIdIn}.</p>
+     */
+    @Query("select distinct c.masterProduct.id from MasterProductComponent c where c.product.id in :productIds")
+    List<Long> findMasterIdsContainingAny(@Param("productIds") Collection<Long> productIds);
+
+    /**
+     * Every component row of these masters with its product loaded (2609_79 — one query instead of one per
+     * master; {@code product} is LAZY and {@code open-in-view=false}).
+     */
+    @EntityGraph(attributePaths = "product")
+    List<MasterProductComponent> findWithProductByMasterProductIdIn(Collection<Long> masterProductIds);
+
+    /**
      * Masters that contain <b>every</b> product in {@code productIds} (superset match, order-independent).
      *
      * <p>Step 1 of the exact-set lookup: {@code group by ... having count(distinct product) = size} keeps

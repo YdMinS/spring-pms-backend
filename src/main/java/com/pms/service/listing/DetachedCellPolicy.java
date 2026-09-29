@@ -5,7 +5,7 @@ import com.pms.domain.ProductListing;
 
 /**
  * 같은 마켓 상품의 <b>기존 셀을 재사용해도 되는가</b>(FEATURE_2609_66 / D1). 편입(
- * {@link CoupangListingImportServiceImpl})과 마스터 생성({@link MasterFromChannelServiceImpl})이 공유하는
+ * {@link CoupangListingImportServiceImpl})과 「마켓 상품으로 시작」 미리보기({@link MasterFromChannelServiceImpl})가 공유하는
  * 유일한 판정이다 — 두 경로가 갈라지면 "편입은 되는데 생성은 안 되는" 상태가 다시 생긴다(2609_63 의 실제 사고).
  *
  * <p>🔴 메시지 3종을 바꾸지 말 것 — 프론트가 substring 으로 판정해 조치 안내를 덧붙인다
