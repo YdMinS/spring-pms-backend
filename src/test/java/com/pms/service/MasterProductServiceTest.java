@@ -819,6 +819,44 @@ class MasterProductServiceTest {
         assertThat(captor.getValue()).containsExactly(1L, 2L);
     }
 
+    // ------------------------------------------------------------- any-component masters (2609_79 / UX D74)
+
+    @Test
+    void findByAnyComponent_partialOverlap_returnsMastersWithWholeCombination() {
+        MasterProduct single = MasterProduct.builder().id(9L).name("생수 단품").active(true).build();
+        MasterProduct set = MasterProduct.builder().id(4L).name("생수+녹차").active(true).build();
+        given(componentRepository.findMasterIdsContainingAny(any())).willReturn(List.of(9L, 4L));
+        given(masterProductRepository.findScopedByIdIn(any())).willReturn(List.of(single, set));
+        given(componentRepository.findWithProductByMasterProductIdIn(any())).willReturn(List.of(
+                MasterProductComponent.builder().id(31L).masterProduct(set).product(product(2L, "녹차")).build(),
+                MasterProductComponent.builder().id(30L).masterProduct(set).product(product(1L, "생수")).build(),
+                MasterProductComponent.builder().id(40L).masterProduct(single).product(product(1L, "생수")).build()));
+
+        var found = service.findByAnyComponent(List.of(1L));
+
+        // id 오름차순 · 마스터마다 구성상품 조합 전체(구성 행 id 순).
+        assertThat(found).extracting(m -> m.getId()).containsExactly(4L, 9L);
+        assertThat(found.get(0).getComponents()).extracting(c -> c.getProductName())
+                .containsExactly("생수", "녹차");
+        assertThat(found.get(1).getComponents()).extracting(c -> c.getProductId()).containsExactly(1L);
+    }
+
+    @Test
+    void findByAnyComponent_otherTenantOnly_returnsEmptyWithoutLoadingComponents() {
+        given(componentRepository.findMasterIdsContainingAny(any())).willReturn(List.of(9L));
+        given(masterProductRepository.findScopedByIdIn(any())).willReturn(List.of());
+
+        assertThat(service.findByAnyComponent(List.of(1L))).isEmpty();
+        verify(componentRepository, never()).findWithProductByMasterProductIdIn(any());
+    }
+
+    @Test
+    void findByAnyComponent_emptyRequest_returnsEmptyWithoutQuerying() {
+        assertThat(service.findByAnyComponent(List.of())).isEmpty();
+        assertThat(service.findByAnyComponent(null)).isEmpty();
+        verify(componentRepository, never()).findMasterIdsContainingAny(any());
+    }
+
     // ------------------------------------------------------------- option coverage validation
 
     @Test

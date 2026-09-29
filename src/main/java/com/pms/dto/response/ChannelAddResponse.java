@@ -35,8 +35,7 @@ public class ChannelAddResponse {
 
     /**
      * 가져오기(2609_22) 경로에서 셀이 커밋된 <b>뒤</b> 돌린 자동생성의 성공 여부. 실패해도 셀은 남으므로
-     * (사진 없는 물품 등) 화면은 이 값으로 "사진을 채운 뒤 [재생성]이 필요한가"를 가른다 —
-     * {@link ListingMasterCreateResponse#getAssetsGenerated()} 와 같은 뜻이다.
+     * (사진 없는 물품 등) 화면은 이 값으로 "사진을 채운 뒤 [재생성]이 필요한가"를 가른다.
      * 채널추가 경로에서는 언제나 {@code null} 이다(자동생성이 같은 트랜잭션 안에 있다).
      */
     @Schema(description = "Whether the cell's assets were generated (import only); null for channel-add",

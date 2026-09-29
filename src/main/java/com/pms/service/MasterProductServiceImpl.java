@@ -32,6 +32,7 @@ import com.pms.dto.response.ListingOptionsResponse;
 import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterChannelOptionsResponse;
 import com.pms.dto.response.MasterOptionResponse;
+import com.pms.dto.response.MasterProductByAnyComponentResponse;
 import com.pms.dto.response.MasterProductByComponentsResponse;
 import com.pms.dto.response.MasterProductResponse;
 import com.pms.exception.ValidationException;
@@ -609,6 +610,43 @@ public class MasterProductServiceImpl implements MasterProductService {
                         .id(m.getId())
                         .name(m.getName())
                         .optionCount(optionCounts.getOrDefault(m.getId(), 0L).intValue())
+                        .build())
+                .toList();
+    }
+
+    @Override
+    public List<MasterProductByAnyComponentResponse> findByAnyComponent(List<Long> productIds) {
+        Set<Long> wanted = normaliseComponentIds(productIds);
+        if (wanted.isEmpty()) {
+            return List.of();
+        }
+        List<Long> candidateIds = componentRepository.findMasterIdsContainingAny(wanted);
+        if (candidateIds.isEmpty()) {
+            return List.of();
+        }
+        // Tenant boundary: the component table has no @TenantId — resolve the ids through the scoped finder.
+        List<MasterProduct> masters = masterProductRepository.findScopedByIdIn(candidateIds);
+        if (masters.isEmpty()) {
+            return List.of();
+        }
+        // N+1 guard: one query for every master's components, products fetched in the same query.
+        Map<Long, List<MasterProductComponent>> componentsByMaster = componentRepository
+                .findWithProductByMasterProductIdIn(masters.stream().map(MasterProduct::getId).toList()).stream()
+                .sorted(Comparator.comparing(MasterProductComponent::getId))
+                .collect(Collectors.groupingBy(c -> c.getMasterProduct().getId(), LinkedHashMap::new,
+                        Collectors.toList()));
+
+        return masters.stream()
+                .sorted(Comparator.comparing(MasterProduct::getId))
+                .map(m -> MasterProductByAnyComponentResponse.builder()
+                        .id(m.getId())
+                        .name(m.getName())
+                        .components(componentsByMaster.getOrDefault(m.getId(), List.of()).stream()
+                                .map(c -> MasterProductByAnyComponentResponse.Component.builder()
+                                        .productId(c.getProduct().getId())
+                                        .productName(c.getProduct().getProductName())
+                                        .build())
+                                .toList())
                         .build())
                 .toList();
     }

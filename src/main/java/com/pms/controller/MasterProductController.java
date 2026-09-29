@@ -7,7 +7,6 @@ import com.pms.dto.request.ImportProductImagesRequest;
 import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterCompositionRequest;
 import com.pms.dto.request.MasterFromChannelPreviewRequest;
-import com.pms.dto.request.MasterFromChannelRequest;
 import com.pms.dto.request.MasterOptionRequest;
 import com.pms.dto.request.MasterProductQuery;
 import com.pms.dto.request.MasterProductRequest;
@@ -21,12 +20,12 @@ import com.pms.dto.request.TagsRequest;
 import com.pms.dto.response.ApplyOptionNamesResponse;
 import com.pms.dto.response.CategoryMetaResponse;
 import com.pms.dto.response.ChannelSyncPreviewResponse;
-import com.pms.dto.response.ListingMasterCreateResponse;
 import com.pms.dto.response.ListingMatrixResponse;
 import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterChannelOptionsResponse;
 import com.pms.dto.response.MasterFromChannelPreviewResponse;
 import com.pms.dto.response.MasterOptionResponse;
+import com.pms.dto.response.MasterProductByAnyComponentResponse;
 import com.pms.dto.response.MasterProductByComponentsResponse;
 import com.pms.dto.response.MasterProductImageResponse;
 import com.pms.dto.response.MasterProductResponse;
@@ -101,6 +100,20 @@ public class MasterProductController {
         return ResponseEntity.ok(ResponseDTO.success(masterProductService.findByComponents(productIds)));
     }
 
+    /**
+     * 「마켓 상품으로 시작」 의 후보 마스터(2609_79 / UX D74·D79): 고른 물품이 <b>하나라도</b> 들어간 마스터 전부 +
+     * 그 마스터의 구성상품 조합. {@code /by-components}(정확히 같은 조합)와 다른 질문이다.
+     */
+    @GetMapping("/by-any-component")
+    @Operation(summary = "Find master products that contain at least one of the given products",
+            description = "고른 물품 중 **하나라도** 구성상품으로 들어간 마스터를 전부 돌려준다(부분 겹침 포함). "
+                    + "마스터마다 구성상품 조합(물품 id·이름)을 함께 싣는다. id 오름차순, 없으면 빈 배열.")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<List<MasterProductByAnyComponentResponse>>> findByAnyComponent(
+            @RequestParam("productIds") List<Long> productIds) {
+        return ResponseEntity.ok(ResponseDTO.success(masterProductService.findByAnyComponent(productIds)));
+    }
+
     @GetMapping("/{id}")
     @Operation(summary = "Get master product by ID")
     @SecurityRequirement(name = "bearerAuth")
@@ -152,16 +165,6 @@ public class MasterProductController {
             @Valid @RequestBody MasterFromChannelPreviewRequest request) {
         // 200, not 201 — nothing is created here.
         return ResponseEntity.ok(ResponseDTO.success(masterFromChannelService.preview(request)));
-    }
-
-    @PostMapping("/from-channel")
-    @Operation(summary = "Create a master product (+ options + channel cell) from a marketplace product",
-            description = "쿠팡에 없는 정보(마스터 이름·구성상품·옵션별 수량·표준 카테고리)만 받고, 가격·재고·"
-                    + "옵션 식별자·상태·태그는 커밋 시 마켓을 다시 조회해 서버가 확정한다.")
-    @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<ResponseDTO<ListingMasterCreateResponse>> createMasterFromChannel(
-            @Valid @RequestBody MasterFromChannelRequest request) {
-        return ResponseEntity.ok(ResponseDTO.success(masterFromChannelService.create(request)));
     }
 
     @PatchMapping("/{id}")

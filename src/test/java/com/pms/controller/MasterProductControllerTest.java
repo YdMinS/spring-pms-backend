@@ -430,6 +430,42 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.length()").value(0));
     }
 
+    // ------------------------------------------------------------- any-component masters (2609_79 / UX D74)
+
+    @Test
+    void byAnyComponent_noToken_returns401() throws Exception {
+        mockMvc.perform(get(PATH + "/by-any-component").param("productIds", String.valueOf(productId1)))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void byAnyComponent_userToken_returns403() throws Exception {
+        mockMvc.perform(get(PATH + "/by-any-component").param("productIds", String.valueOf(productId1))
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void byAnyComponent_subset_returnsMasterWithWholeCombination() throws Exception {
+        // {product1} alone is only a PART of the seeded master {product1, product2} — still returned (D74).
+        mockMvc.perform(get(PATH + "/by-any-component").param("productIds", String.valueOf(productId1))
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].id").value(masterId))
+                .andExpect(jsonPath("$.data[0].name").value("마스터A"))
+                .andExpect(jsonPath("$.data[0].components.length()").value(2));
+    }
+
+    @Test
+    void byAnyComponent_unusedProduct_returnsEmpty() throws Exception {
+        mockMvc.perform(get(PATH + "/by-any-component").param("productIds", String.valueOf(productId3))
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(0));
+    }
+
     @Test
     void createMasterProduct_sameComponentSet_returns400() throws Exception {
         String body = "{\"name\":\"중복마스터\",\"componentProductIds\":[" + productId1 + "," + productId2 + "],"

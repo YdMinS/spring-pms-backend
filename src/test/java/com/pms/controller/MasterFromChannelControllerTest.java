@@ -4,14 +4,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.domain.Category;
 import com.pms.domain.CategoryMapping;
 import com.pms.domain.Platform;
-import com.pms.domain.ProductListingOption;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.Product;
 import com.pms.domain.Role;
 import com.pms.domain.Seller;
 import com.pms.domain.User;
 import com.pms.dto.request.MasterFromChannelPreviewRequest;
-import com.pms.dto.request.MasterFromChannelRequest;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.CategoryRepository;
@@ -31,7 +29,6 @@ import com.pms.repository.SellerRepository;
 import com.pms.repository.UserRepository;
 import com.pms.security.TenantContext;
 import com.pms.repository.PriceChangeLogRepository;
-import com.pms.service.ImageStorageService;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.listing.category.CoupangCategoryMeta;
 import org.junit.jupiter.api.AfterEach;
@@ -42,20 +39,12 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
-import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
-import javax.imageio.ImageIO;
-import java.awt.Color;
-import java.awt.Graphics2D;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
-import java.util.List;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
@@ -64,8 +53,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * 마켓 상품으로 마스터 만들기 엔드포인트 2개(FEATURE_2609_45 / 01): 권한(401/403) + 미리보기·생성 happy path
- * + 요청 검증.
+ * 「마켓 상품으로 시작」 미리보기 엔드포인트(FEATURE_2609_45 / 01 → 2609_79): 권한(401/403) + 미리보기 happy path.
+ * 🔁 2609_79 / UX D70: 생성 엔드포인트({@code POST /from-channel})는 없어졌다.
  *
  * <p>⚠️ 의도적으로 {@code @Transactional} 이 아니다 — 형제 엔드포인트({@code ListingImportControllerTest})와
  * 같은 이유다. {@link CoupangApiClient} 는 목이라 라이브 호출이 없다(이 기능은 읽기 GET 2회뿐이다).</p>
@@ -96,7 +85,6 @@ class MasterFromChannelControllerTest {
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
     @Autowired private GeneratedProductDataRepository generatedProductDataRepository;
     @Autowired private PriceChangeLogRepository priceChangeLogRepository;
-    @Autowired private ImageStorageService imageStorageService;
 
     @MockBean private CoupangApiClient coupangApiClient;
 
@@ -129,8 +117,6 @@ class MasterFromChannelControllerTest {
     private String adminToken;
     private String userToken;
     private Long sellerId;
-    private Long productId;
-    private Long categoryId;
 
     @BeforeEach
     void seed() throws Exception {
@@ -144,14 +130,12 @@ class MasterFromChannelControllerTest {
         Seller seller = sellerRepository.save(Seller.builder()
                 .sellerName("행복상회").businessRegistration("111-22-33333").build());
         sellerId = seller.getId();
-        Product product = productRepository.save(Product.builder()
+        productRepository.save(Product.builder()
                 .productName("운동화").brand("나이키")
                 .price(new BigDecimal("1500")).imageUrl("products/p.jpg").active(true).build());
-        productId = product.getId();
 
         // 표준 카테고리 + 쿠팡 매핑: D2 역조회(코드 → 표준 카테고리)와 setCategory 의 매핑 가드를 함께 만족한다.
         Category category = categoryRepository.save(Category.builder().name("신발").build());
-        categoryId = category.getId();
         PlatformCategory platformCategory = platformCategoryRepository.save(PlatformCategory.builder()
                 .platform(Platform.COUPANG).code("cat-1").name("운동화")
                 .commissionRate(new BigDecimal("0.10")).build());
@@ -159,14 +143,14 @@ class MasterFromChannelControllerTest {
                 .category(category).platform(Platform.COUPANG).platformCategoryId("cat-1")
                 .platformCategory(platformCategory).build());
 
-        // 이 기능은 계정을 (판매자, 플랫폼)으로 해석한다 — 아직 셀이 없다.
+        // 이 기능은 계정을 (판매자, 플랫폼)으로 찾는다 — 아직 셀이 없다.
         MarketplaceAccountFixture.saveCredential(credentialRepository,
                 marketplaceAccountRepository.save(MarketplaceAccountFixture.coupangCoreBuilder()
                         .seller(seller).platform(Platform.COUPANG).accountAlias("메인")
                         .isActive(true).build()),
                 "V1", "wing-user");
 
-        // ⚠️ 읽기 전용: GET 만 스텁한다(상품 조회 + 단위 해석용 카테고리 메타).
+        // ⚠️ 읽기 전용: GET 만 스텁한다(상품 조회 + 단위 확인용 카테고리 메타).
         given(coupangApiClient.get(anyString(), anyString(), any())).willAnswer(invocation -> {
             String path = invocation.getArgument(0);
             return path.contains("category-related-metas")
@@ -181,7 +165,6 @@ class MasterFromChannelControllerTest {
     void cleanup() {
         TenantContext.set(1L);
         refreshTokenRepository.deleteAll();
-        // 2609_47: 생성 직후 자동생성이 산출물·가격이력을 남길 수 있다 — 셀보다 먼저 지운다(FK).
         priceChangeLogRepository.deleteAll();
         generatedProductDataRepository.deleteAll();
         productListingOptionRepository.deleteAll();
@@ -215,29 +198,8 @@ class MasterFromChannelControllerTest {
                 .sellerId(sellerId).platform("COUPANG").platformProductId(PRODUCT_ID).build());
     }
 
-    private MasterFromChannelRequest.OptionSpec spec(String itemName, String platformOptionId, int quantity) {
-        return MasterFromChannelRequest.OptionSpec.builder()
-                .itemName(itemName).platformOptionId(platformOptionId)
-                .components(List.of(MasterFromChannelRequest.Component.builder()
-                        .productId(productId).quantity(quantity).build()))
-                .build();
-    }
-
-    private String createBody() throws Exception {
-        return objectMapper.writeValueAsString(MasterFromChannelRequest.builder()
-                .sellerId(sellerId).platform("COUPANG").platformProductId(PRODUCT_ID)
-                .masterName("운동화 마스터").categoryId(categoryId)
-                .componentProductIds(List.of(productId))
-                .options(List.of(spec("6입", "8123", 6), spec("12입", "8124", 12)))
-                .build());
-    }
-
     private String previewPath() {
         return BASE + "/from-channel/preview";
-    }
-
-    private String createPath() {
-        return BASE + "/from-channel";
     }
 
     // ---- happy path ----
@@ -261,104 +223,12 @@ class MasterFromChannelControllerTest {
                 .andExpect(jsonPath("$.data.noticeGroup").value("가공식품"));
     }
 
-    @Test
-    void testCreate200() throws Exception {
-        mockMvc.perform(post(createPath())
-                        .header("Authorization", "Bearer " + adminToken)
-                        .contentType("application/json").content(createBody()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.masterProductId").isNumber())
-                .andExpect(jsonPath("$.data.productListingId").isNumber())
-                .andExpect(jsonPath("$.data.optionCount").value(2))
-                // 이미 마켓에서 팔리는 상품이다 — DRAFT 가 아니다.
-                .andExpect(jsonPath("$.data.status").value("SELLING"))
-                // 2609_47/D4: 자동생성 성공 여부가 응답에 실린다.
-                .andExpect(jsonPath("$.data.assetsGenerated").exists());
-    }
-
-    /**
-     * 🔴 2609_47/D2: 사진이 하나도 없어 자동생성이 실패해도 마스터·셀은 남는다(400 이 아니다).
-     * 픽스처의 구성상품 이미지는 디스크에 없으므로 썸네일 단계에서 실패한다.
-     */
-    @Test
-    void testCreateWithoutPhotoStillCreatesMaster() throws Exception {
-        mockMvc.perform(post(createPath())
-                        .header("Authorization", "Bearer " + adminToken)
-                        .contentType("application/json").content(createBody()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.assetsGenerated").value(false))
-                .andExpect(jsonPath("$.data.masterProductId").isNumber())
-                .andExpect(jsonPath("$.data.productListingId").isNumber());
-    }
-
-    /**
-     * 🔴 2609_47/D5 회귀 가드: 자동생성이 <b>실제로 돌아도</b>(assetsGenerated=true) 저장된 옵션 판매가는
-     * 쿠팡 실가 그대로다 — 우리 마진 계산가로 덮이지 않는다. 단위 테스트로는 못 잡는다(거기선 자동생성이
-     * 가짜 객체라 ③판매가 단계에 도달조차 하지 않는다).
-     */
-    @Test
-    void testCreateKeepsMarketPricesAfterAssetGeneration() throws Exception {
-        seedLoadableProductImage();
-
-        String response = mockMvc.perform(post(createPath())
-                        .header("Authorization", "Bearer " + adminToken)
-                        .contentType("application/json").content(createBody()))
-                .andExpect(status().isOk())
-                // 먼저 자동생성이 성공했는지 단언한다 — false 면 ③판매가 단계에 닿지도 못한 채
-                // "판매가가 그대로"라 통과하는 가짜 그물이 된다.
-                .andExpect(jsonPath("$.data.assetsGenerated").value(true))
-                .andReturn().getResponse().getContentAsString();
-
-        Long listingId = objectMapper.readTree(response).get("data").get("productListingId").asLong();
-        List<ProductListingOption> options =
-                productListingOptionRepository.findByProductListingId(listingId);
-        assertThat(options).hasSize(2);
-        assertThat(options).filteredOn(o -> o.getOptionName().equals("6입"))
-                .allSatisfy(o -> assertThat(o.getSellingPrice()).isEqualByComparingTo("12900"));
-        assertThat(options).filteredOn(o -> o.getOptionName().equals("12입"))
-                .allSatisfy(o -> assertThat(o.getSellingPrice()).isEqualByComparingTo("23900"));
-    }
-
-    /** 첫 구성상품에 실제로 로드되는 이미지를 심는다(테스트 프로파일 저장소 = 로컬 디스크). */
-    private void seedLoadableProductImage() throws Exception {
-        BufferedImage image = new BufferedImage(60, 60, BufferedImage.TYPE_INT_RGB);
-        Graphics2D g = image.createGraphics();
-        g.setColor(Color.WHITE);
-        g.fillRect(0, 0, 60, 60);
-        g.dispose();
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        ImageIO.write(image, "jpg", out);
-
-        String storedPath = imageStorageService.uploadImage(
-                new MockMultipartFile("file", "p.jpg", "image/jpeg", out.toByteArray()), productId);
-        Product product = productRepository.findById(productId).orElseThrow();
-        productRepository.save(product.toBuilder().imageUrl(storedPath).build());
-    }
-
-    // ---- request validation ----
-
-    @Test
-    void testCreateMissingPlatformProductId400() throws Exception {
-        String body = objectMapper.writeValueAsString(MasterFromChannelRequest.builder()
-                .sellerId(sellerId).platform("COUPANG")
-                .masterName("운동화 마스터").categoryId(categoryId)
-                .componentProductIds(List.of(productId))
-                .options(List.of(spec("6입", "8123", 6)))
-                .build());
-
-        mockMvc.perform(post(createPath())
-                        .header("Authorization", "Bearer " + adminToken)
-                        .contentType("application/json").content(body))
-                .andExpect(status().isBadRequest());
-    }
-
     // ---- authority (MUST-KEEP) ----
 
     @Test
-    void testCreateUnauthorized401() throws Exception {
-        mockMvc.perform(post(createPath())
-                        .contentType("application/json").content(createBody()))
+    void testPreviewUnauthorized401() throws Exception {
+        mockMvc.perform(post(previewPath())
+                        .contentType("application/json").content(previewBody()))
                 .andExpect(status().isUnauthorized());
     }
 
