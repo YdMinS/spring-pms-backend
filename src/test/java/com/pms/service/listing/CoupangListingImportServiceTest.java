@@ -329,6 +329,33 @@ class CoupangListingImportServiceTest {
         assertThat(captor.getValue().getMasterProductOption().getId()).isEqualTo(10L);
     }
 
+    /**
+     * 🔁 2609_79 / UX D80: 구성 수량이 같은 마스터 옵션이 둘이면 <b>이름이 같은 쪽</b>에 붙는다 — 두 마켓 옵션이
+     * 첫 옵션 하나로 몰리지 않는다(「새 마스터」 는 옵션명 = 마켓 옵션명으로 만든다).
+     */
+    @Test
+    void testImportPrefersSameNameWhenBomMatchesTwoOptions() {
+        MasterProductOption red = masterOption(10L, "빨강 1개");
+        MasterProductOption blue = masterOption(11L, "파랑 1개");
+        givenImportReady(marketProduct(marketOption("빨강 1개", "8123", "12900"),
+                        marketOption("파랑 1개", "8124", "12900")), List.of(red, blue),
+                List.of(MasterProductOptionItem.builder().option(red).product(product(PRODUCT_A)).quantity(1).build(),
+                        MasterProductOptionItem.builder().option(red).product(product(PRODUCT_B)).quantity(1).build(),
+                        MasterProductOptionItem.builder().option(blue).product(product(PRODUCT_A)).quantity(1).build(),
+                        MasterProductOptionItem.builder().option(blue).product(product(PRODUCT_B)).quantity(1).build()));
+
+        service.importListing(MASTER_ID, importRequest(spec("빨강 1개", "8123", 1, 1), spec("파랑 1개", "8124", 1, 1)));
+
+        verify(masterProductOptionRepository, never()).save(any());
+        ArgumentCaptor<ProductListingOption> captor = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository, times(2)).save(captor.capture());
+        assertThat(captor.getAllValues()).extracting(o -> o.getMasterProductOption().getId())
+                .containsExactly(10L, 11L);
+        // 채널 옵션명은 마켓 이름 그대로(채널마다 개별 유지).
+        assertThat(captor.getAllValues()).extracting(ProductListingOption::getOptionName)
+                .containsExactly("빨강 1개", "파랑 1개");
+    }
+
     @Test
     void testImportCreatesMasterOptionWhenBomDiffers() {
         MasterProductOption existing = masterOption(10L, "1세트");

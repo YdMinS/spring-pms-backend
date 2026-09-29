@@ -33,7 +33,7 @@ import java.util.List;
  *
  * <p>🔴 해제 때 <b>자동생성물·태그·배송 override·옵션의 가격/재고/마켓 식별자/승인상태/active 를 건드리지
  * 않는다.</b> 구성품은 2609_71 이후 마스터 옵션이 갖는다 — 해제로 FK 가 null 이 되면 그 옵션은 채널 전용이
- * 되어 구성품을 알 수 없는 상태가 된다. 다시 붙이는 창구는 쿠팡 상품 ID 편입({@code MasterFromChannelService})
+ * 되어 구성품을 알 수 없는 상태가 된다. 다시 붙이는 창구는 쿠팡 상품 ID 편입({@code CoupangListingImportService})
  * 이다.</p>
  *
  * <p>⚠️ {@code MasterProductServiceImpl} 에 넣지 않는다 — 그 클래스는 이미 1300줄이 넘는다.</p>

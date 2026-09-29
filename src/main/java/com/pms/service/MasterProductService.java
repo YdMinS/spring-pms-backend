@@ -115,6 +115,15 @@ public interface MasterProductService {
     List<com.pms.dto.response.MasterProductByComponentsResponse> findByComponents(List<Long> productIds);
 
     /**
+     * Masters that contain <b>at least one</b> of {@code productIds} (2609_79 / UX D74·D79) — partial overlap
+     * included, each with its full component combination (product id + name).
+     *
+     * @param productIds product ids (null/empty → empty result; deduped)
+     * @return tenant-scoped masters ordered by id; components ordered by component row id
+     */
+    List<com.pms.dto.response.MasterProductByAnyComponentResponse> findByAnyComponent(List<Long> productIds);
+
+    /**
      * Create a master + its options atomically.
      *
      * <p>⚠️ Rejects (400) a component set that an existing master already uses — see

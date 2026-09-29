@@ -37,7 +37,7 @@ import java.util.Map;
  * for referenced entities (Category, CarrierRate, Package).
  *
  * 🔴 2609_71/D7: 셀을 직접 만드는 경로는 없다 — 판매상품은 마스터를 통해서만 생긴다
- * (ChannelAddServiceImpl · CoupangListingImportServiceImpl · MasterFromChannelServiceImpl).
+ * (ChannelAddServiceImpl · CoupangListingImportServiceImpl — 2609_79 부터 이 둘뿐).
  * 이 서비스의 update 는 마스터 미연결 셀의 이름·마켓 상품 ID·옵션 행만 고치며 구성품은 다루지 않는다.
  *
  * Transaction Management:

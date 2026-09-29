@@ -301,6 +301,32 @@ class ListingImportControllerTest {
     }
 
     /**
+     * 🔴 2609_79 / UX D70 회귀 가드(옛 {@code MasterFromChannelControllerTest#testCreateKeepsMarketPricesAfterAssetGeneration}
+     * 를 옮겨 왔다 — 「새 마스터」 도 이제 이 경로로 판매상품을 붙인다): 자동생성이 <b>실제로 돌아도</b>
+     * 저장된 옵션 판매가는 쿠팡 실가 그대로다 — 우리 마진 계산가로 덮이지 않는다.
+     */
+    @Test
+    void testImportKeepsMarketPriceAfterAssetGeneration() throws Exception {
+        String response = mockMvc.perform(post(importPath())
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content(importBody()))
+                .andExpect(status().isOk())
+                // 먼저 자동생성 성공을 단언한다 — false 면 판매가 단계에 닿지도 못한 채 통과하는 가짜 그물이 된다.
+                .andExpect(jsonPath("$.data.assetsGenerated").value(true))
+                .andReturn().getResponse().getContentAsString();
+
+        Long listingId = objectMapper.readTree(response).get("data").get("productListingId").asLong();
+        TenantContext.set(1L);
+        try {
+            assertThat(productListingOptionRepository.findByProductListingId(listingId))
+                    .singleElement()
+                    .satisfies(o -> assertThat(o.getSellingPrice()).isEqualByComparingTo("12900"));
+        } finally {
+            TenantContext.clear();
+        }
+    }
+
+    /**
      * 🔴 회귀 가드: 물품에 사진이 없으면 자동생성이 400 을 던진다. 그 실패가 셀·옵션·BOM 까지 되돌리면
      * "쿠팡 ID 를 넣었는데 아무것도 안 생긴다" 가 된다 — 사진은 나중에 채우고 [재생성] 하면 된다.
      * {@link com.pms.service.listing.MasterFromChannelServiceImpl} 과 같은 방식(2609_47/D2).
