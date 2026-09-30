@@ -100,6 +100,13 @@ public class TemplateElement {
     /** Any element: border width in px drawn around the region box. Null or &lt;= 0 → no border. */
     private Integer borderWidth;
 
+    /**
+     * Image, product-photo base layer only (FEATURE_2609_81): {@link ProcessingPreset} id applied to the
+     * product photo before rendering. Read from the FIRST {@code bind=productImage} element only
+     * ({@code ThumbnailPresetResolver}); ignored on every other element. Null → no processing.
+     */
+    private Long processingPresetId;
+
     @Getter
     @Builder
     @NoArgsConstructor

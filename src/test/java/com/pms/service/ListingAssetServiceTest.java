@@ -4,6 +4,7 @@ import com.pms.domain.DetailBlock;
 import com.pms.domain.DetailTemplate;
 import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.GeneratedProductData;
+import com.pms.domain.ImageOp;
 import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductImage;
@@ -66,6 +67,9 @@ class ListingAssetServiceTest {
     @Mock private ChannelTemplateResolver channelTemplateResolver;
     @Mock private ProductImageUrlResolver productImageUrlResolver;
     @Mock private ThumbnailRenderer thumbnailRenderer;
+    @Mock private ThumbnailPresetResolver thumbnailPresetResolver;
+    @Mock private ImageProcessor imageProcessor;
+    @Mock private ImageDecodeSupport imageDecodeSupport;
     @Mock private ProductImageLoader productImageLoader;
     @Mock private ImageStorageService imageStorageService;
     @Mock private ImageValidator imageValidator;
@@ -135,6 +139,8 @@ class ListingAssetServiceTest {
 
         service.regenerateAssets(cell);
 
+        // D21: no preset → the photo is not flattened (transparency kept).
+        verify(imageDecodeSupport, never()).flattenOnWhite(any());
         // Base photo: master override taken, BOM product image NOT loaded.
         verify(productImageLoader).loadUrl("https://cdn/override.jpg");
         verify(productImageLoader, never()).load(any());
@@ -358,6 +364,38 @@ class ListingAssetServiceTest {
     }
 
     @Test
+    void regenerateAssets_productImagePreset_processesPhotoBeforeRender() {
+        // 2609_81/D8·D21: the base photo alone is flattened + processed; the renderer receives the result.
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터")
+                .sourceImageUrl("https://cdn/override.jpg").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀")
+                .masterProduct(master).build();
+        List<ImageOp> ops = List.of(ImageOp.builder().type("overlay").assetStorageKey("wm.png").build());
+
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+        given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.of(
+                List.of(new CellBomResolver.Line(1L, product(), 1))));
+        given(productImageLoader.loadUrl("https://cdn/override.jpg")).willReturn(new byte[]{9});
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID)).willReturn(Optional.empty());
+        commonRenderStubs();
+        given(thumbnailPresetResolver.productImageOps(any())).willReturn(ops);
+        given(imageDecodeSupport.flattenOnWhite(any())).willReturn(new byte[]{8});
+        given(imageProcessor.process(any(), eq(ops))).willReturn(new byte[]{7});
+
+        service.regenerateAssets(cell);
+
+        // D21: flattened onto white first, then the preset runs on the flattened photo.
+        verify(imageDecodeSupport).flattenOnWhite(org.mockito.AdditionalMatchers.aryEq(new byte[]{9}));
+        verify(imageProcessor).process(org.mockito.AdditionalMatchers.aryEq(new byte[]{8}), eq(ops));
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, byte[]>> images = ArgumentCaptor.forClass(Map.class);
+        verify(thumbnailRenderer).render(any(), any(), images.capture());
+        assertThat(images.getValue().get("productImage")).isEqualTo(new byte[]{7});
+        // D12: only the finished thumbnail is uploaded — no intermediate processed photo.
+        verify(imageStorageService, times(1)).uploadBytes(any(), anyString(), anyString(), anyString());
+    }
+
+    @Test
     void overrideThumbnail_notYetGenerated_throws404() {
         ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀").build();
         given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
@@ -389,6 +427,7 @@ class ListingAssetServiceTest {
 
         // Thumbnail override preserved: renderer + upload NOT called, url kept.
         verify(thumbnailRenderer, never()).render(any(), any(), any());
+        verify(thumbnailPresetResolver, never()).productImageOps(any()); // 2609_81/D11
         verify(imageStorageService, never()).uploadBytes(any(), anyString(), anyString(), anyString());
         verify(productImageLoader, never()).load(any());
         ArgumentCaptor<GeneratedProductData> captor = ArgumentCaptor.forClass(GeneratedProductData.class);

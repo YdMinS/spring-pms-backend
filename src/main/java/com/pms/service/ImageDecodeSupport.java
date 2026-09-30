@@ -6,10 +6,12 @@ import com.drew.metadata.exif.ExifIFD0Directory;
 import org.springframework.stereotype.Component;
 
 import javax.imageio.ImageIO;
+import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 
 /**
@@ -55,6 +57,38 @@ public class ImageDecodeSupport {
             throw new IllegalArgumentException("Unsupported/undecodable " + what + " bytes");
         }
         return applyOrientation(decoded, readOrientation(bytes));
+    }
+
+    /**
+     * FEATURE_2609_81 D21·D22: before a thumbnail preset is applied, a product photo with an alpha channel is
+     * painted onto white. {@code ImageProcessor} would otherwise turn transparent pixels black. No alpha →
+     * the input bytes are returned as-is. With alpha → a same-size white {@code TYPE_INT_RGB} canvas with the
+     * (upright, see {@link #decode}) photo drawn on it, encoded as PNG — lossless, because the caller's
+     * {@code process} re-encodes to JPEG, and without an Orientation tag, so it is never rotated twice.
+     *
+     * <p>Call only when a preset is actually applied (no preset → keep transparency).</p>
+     */
+    public byte[] flattenOnWhite(byte[] bytes) {
+        BufferedImage img = decode(bytes, "product image");
+        if (!img.getColorModel().hasAlpha()) {
+            return bytes;
+        }
+        BufferedImage canvas = new BufferedImage(img.getWidth(), img.getHeight(), BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = canvas.createGraphics();
+        try {
+            g.setColor(Color.WHITE);
+            g.fillRect(0, 0, canvas.getWidth(), canvas.getHeight());
+            g.drawImage(img, 0, 0, null);
+        } finally {
+            g.dispose();
+        }
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try {
+            ImageIO.write(canvas, "png", out);
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to encode flattened PNG", e);
+        }
+        return out.toByteArray();
     }
 
     /** EXIF Orientation 1..8; absent / out of range / unreadable → 1. */

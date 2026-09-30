@@ -3,6 +3,8 @@ package com.pms.service;
 import org.junit.jupiter.api.Test;
 
 import javax.imageio.ImageIO;
+import java.awt.Color;
+import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -70,5 +72,30 @@ class ImageDecodeSupportTest {
         assertThatThrownBy(() -> support.decode(new byte[]{1, 2, 3}, "base image"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("base image");
+    }
+
+    @Test
+    void flattenOnWhite_transparentPng_becomesWhite_keepsOpaquePixels() throws Exception {
+        // FEATURE_2609_81 D21·D22: left half transparent, right half opaque red.
+        BufferedImage argb = new BufferedImage(20, 20, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = argb.createGraphics();
+        g.setColor(Color.RED);
+        g.fillRect(10, 0, 10, 20);
+        g.dispose();
+        ByteArrayOutputStream png = new ByteArrayOutputStream();
+        ImageIO.write(argb, "png", png);
+
+        BufferedImage out = ImageIO.read(new ByteArrayInputStream(support.flattenOnWhite(png.toByteArray())));
+
+        assertThat(out.getColorModel().hasAlpha()).isFalse();
+        assertThat(out.getRGB(5, 10) & 0xFFFFFF).as("transparent → white").isEqualTo(0xFFFFFF);
+        assertThat(isRed(out, 15, 10)).as("opaque pixels unchanged").isTrue();
+    }
+
+    @Test
+    void flattenOnWhite_noAlpha_returnsInputBytes() throws Exception {
+        byte[] jpeg = leftRedRightBlueJpeg(40, 20, 1);
+
+        assertThat(support.flattenOnWhite(jpeg)).isSameAs(jpeg);
     }
 }
