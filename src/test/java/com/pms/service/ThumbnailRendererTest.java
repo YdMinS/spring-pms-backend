@@ -49,6 +49,10 @@ class ThumbnailRendererTest {
     @Spy
     private ImageCompositeSupport imageCompositeSupport = new ImageCompositeSupport();
 
+    // Real decoder (spy) — FEATURE_2609_81 read-time EXIF Orientation fix.
+    @Spy
+    private ImageDecodeSupport imageDecodeSupport = new ImageDecodeSupport();
+
     @InjectMocks
     private ThumbnailRenderer renderer;
 
@@ -329,6 +333,24 @@ class ThumbnailRendererTest {
 
         assertThat(jpeg).isNotEmpty();
         verify(imageStorageService).getBytes("badge.png");
+    }
+
+    @Test
+    void render_exifOrientation6ProductImage_drawnUpright() throws Exception {
+        // FEATURE_2609_81: stored 40×20 (red left / blue right) + orientation 6 → upright 20×40 (red top).
+        // contain-fit into 200×200 → 100×200 at x∈[50,150). Without the fix: 200×100, red left / blue right.
+        ThumbnailTemplate template = ThumbnailTemplate.builder()
+                .canvasWidth(200)
+                .canvasHeight(200)
+                .backgroundMode(BackgroundMode.WHITE)
+                .elements(List.of(productImageElement(0, 0, 200, 200)))
+                .build();
+
+        BufferedImage out = ImageIO.read(new ByteArrayInputStream(renderer.render(
+                template, Map.of(), Map.of("productImage", ExifTestImages.leftRedRightBlueJpeg(40, 20, 6)))));
+
+        assertThat(ExifTestImages.isRed(out, 140, 60)).as("upper right = red").isTrue();
+        assertThat(ExifTestImages.isBlue(out, 60, 140)).as("lower left = blue").isTrue();
     }
 
     private TemplateElement productImageElement(int x, int y, int w, int h) {
