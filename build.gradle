@@ -57,6 +57,9 @@ dependencies {
     implementation "com.google.zxing:core:${zxingVersion}"
     implementation "com.google.zxing:javase:${zxingVersion}"
 
+    // EXIF Orientation read at decode time (FEATURE_2609_81)
+    implementation 'com.drewnoakes:metadata-extractor:2.19.0'
+
     // Test
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.mockito:mockito-core'

@@ -16,7 +16,6 @@ import java.awt.*;
 import java.awt.font.TextLayout;
 import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.List;
@@ -46,6 +45,7 @@ public class ThumbnailRenderer {
     private final FontRegistry fontRegistry;
     private final ImageStorageService imageStorageService;
     private final ImageCompositeSupport imageCompositeSupport;
+    private final ImageDecodeSupport imageDecodeSupport;
 
     public byte[] render(ThumbnailTemplate template,
                          Map<String, String> textBindings,
@@ -346,16 +346,9 @@ public class ThumbnailRenderer {
         }
     }
 
+    /** Decode with EXIF Orientation applied (FEATURE_2609_81) — see {@link ImageDecodeSupport}. */
     private BufferedImage decode(byte[] bytes, String what) {
-        try {
-            BufferedImage img = ImageIO.read(new ByteArrayInputStream(bytes));
-            if (img == null) {
-                throw new IllegalArgumentException("Unsupported/undecodable " + what + " bytes");
-            }
-            return img;
-        } catch (IOException e) {
-            throw new IllegalArgumentException("Failed to decode " + what, e);
-        }
+        return imageDecodeSupport.decode(bytes, what);
     }
 
     private byte[] toJpeg(BufferedImage image) {

@@ -13,7 +13,6 @@ import javax.imageio.stream.ImageOutputStream;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -49,6 +48,7 @@ public class ImageProcessor {
     private final ImageStorageService imageStorageService;
     private final ImageCompositeSupport imageCompositeSupport;
     private final ImageColorAdjustSupport imageColorAdjustSupport;
+    private final ImageDecodeSupport imageDecodeSupport;
 
     /**
      * Apply {@code ops} in order onto {@code baseBytes}, returning JPEG bytes. Empty/null ops → the base is
@@ -143,16 +143,9 @@ public class ImageProcessor {
         imageCompositeSupport.drawOverlay(g, overlay, x, y, drawW, drawH, opacity);
     }
 
+    /** Decode with EXIF Orientation applied (FEATURE_2609_81) — see {@link ImageDecodeSupport}. */
     private BufferedImage decode(byte[] bytes, String what) {
-        try {
-            BufferedImage img = ImageIO.read(new ByteArrayInputStream(bytes));
-            if (img == null) {
-                throw new IllegalArgumentException("Unsupported/undecodable " + what + " bytes");
-            }
-            return img;
-        } catch (IOException e) {
-            throw new IllegalArgumentException("Failed to decode " + what, e);
-        }
+        return imageDecodeSupport.decode(bytes, what);
     }
 
     /** Mirror of {@code ThumbnailRenderer.toJpeg} (quality 0.9). */
