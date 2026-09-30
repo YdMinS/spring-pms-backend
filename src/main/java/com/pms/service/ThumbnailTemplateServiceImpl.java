@@ -1,6 +1,7 @@
 package com.pms.service;
 
 import com.pms.domain.BackgroundMode;
+import com.pms.domain.ImageOp;
 import com.pms.domain.TemplateElement;
 import com.pms.domain.TemplateField;
 import com.pms.domain.ThumbnailTemplate;
@@ -44,6 +45,10 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
 
     private final ThumbnailTemplateRepository templateRepository;
     private final ThumbnailRenderer renderer;
+    /** Product-photo preset (2609_81) — the preview shows the same processing as generation. */
+    private final ThumbnailPresetResolver thumbnailPresetResolver;
+    private final ImageProcessor imageProcessor;
+    private final ImageDecodeSupport imageDecodeSupport;
 
     @Override
     @Transactional
@@ -208,6 +213,13 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
             });
         }
         Map<String, byte[]> imageBindings = placeholderImageBindings(template);
+        // 2609_81: the gray placeholder gets the same product-photo preset as a real generation.
+        List<ImageOp> ops = thumbnailPresetResolver.productImageOps(template);
+        byte[] placeholderPhoto = imageBindings.get("productImage");
+        if (!ops.isEmpty() && placeholderPhoto != null) {
+            imageBindings.put("productImage",
+                    imageProcessor.process(imageDecodeSupport.flattenOnWhite(placeholderPhoto), ops));
+        }
         return renderer.render(template, textBindings, imageBindings);
     }
 

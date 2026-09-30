@@ -3,6 +3,7 @@ package com.pms.service;
 import com.pms.domain.DetailTemplate;
 import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.GeneratedProductData;
+import com.pms.domain.ImageOp;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.PriceChangeReason;
@@ -80,6 +81,10 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     private final ChannelTemplateResolver channelTemplateResolver;
     private final ProductImageUrlResolver productImageUrlResolver;
     private final ThumbnailRenderer thumbnailRenderer;
+    /** Product-photo preset of the thumbnail template (2609_81). */
+    private final ThumbnailPresetResolver thumbnailPresetResolver;
+    private final ImageProcessor imageProcessor;
+    private final ImageDecodeSupport imageDecodeSupport;
     private final ProductImageLoader productImageLoader;
     private final ImageStorageService imageStorageService;
     private final ImageValidator imageValidator;
@@ -338,7 +343,13 @@ public class ListingAssetServiceImpl implements ListingAssetService {
             // Channel template override (21): account's assigned thumbnail template ?? tenant default.
             ThumbnailTemplate template = channelTemplateResolver.resolveThumbnail(cell);
             Map<String, String> textBindings = buildTextBindings(template, cell);
-            byte[] jpeg = thumbnailRenderer.render(template, textBindings, Map.of("productImage", baseImage));
+            // 2609_81: only the product photo is processed with the base layer's preset, in memory only
+            // (no intermediate upload); a transparent photo is flattened onto white first (D21).
+            // GRADIENT_AUTO then samples the processed photo.
+            List<ImageOp> ops = thumbnailPresetResolver.productImageOps(template);
+            byte[] productImage = ops.isEmpty() ? baseImage
+                    : imageProcessor.process(imageDecodeSupport.flattenOnWhite(baseImage), ops);
+            byte[] jpeg = thumbnailRenderer.render(template, textBindings, Map.of("productImage", productImage));
             thumbnailUrl = imageStorageService.uploadBytes(
                     jpeg, STORAGE_CATEGORY,
                     "listing_" + cell.getId() + "_" + System.currentTimeMillis() + ".jpg", "image/jpeg");

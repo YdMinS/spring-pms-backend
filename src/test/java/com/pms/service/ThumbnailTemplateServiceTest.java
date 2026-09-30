@@ -1,8 +1,11 @@
 package com.pms.service;
 
 import com.pms.domain.BackgroundMode;
+import com.pms.domain.ImageOp;
+import com.pms.domain.TemplateElement;
 import com.pms.domain.TemplateField;
 import com.pms.domain.ThumbnailTemplate;
+import com.pms.dto.request.ThumbnailPreviewRequest;
 import com.pms.dto.request.ThumbnailTemplateRequest;
 import com.pms.dto.response.ThumbnailTemplateResponse;
 import com.pms.repository.ThumbnailTemplateRepository;
@@ -14,11 +17,13 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -33,6 +38,9 @@ class ThumbnailTemplateServiceTest {
 
     @Mock private ThumbnailTemplateRepository templateRepository;
     @Mock private ThumbnailRenderer renderer;
+    @Mock private ThumbnailPresetResolver thumbnailPresetResolver;
+    @Mock private ImageProcessor imageProcessor;
+    @Mock private ImageDecodeSupport imageDecodeSupport;
 
     @InjectMocks private ThumbnailTemplateServiceImpl service;
 
@@ -147,5 +155,29 @@ class ThumbnailTemplateServiceTest {
         verify(templateRepository).save(captor.capture());
         assertThat(captor.getValue().getFields()).extracting(TemplateField::getKey)
                 .containsExactly("brandName"); // not overwritten with an empty list
+    }
+
+    @Test
+    void preview_productImagePreset_processesPlaceholderBeforeRender() {
+        // 2609_81/D15: the preview burns the same product-photo preset onto the gray placeholder.
+        List<ImageOp> ops = List.of(ImageOp.builder().type("overlay").assetStorageKey("wm.png").build());
+        ThumbnailTemplate template = ThumbnailTemplate.builder()
+                .id(1L).name("A").canvasWidth(400).canvasHeight(400)
+                .elements(List.of(TemplateElement.builder().type("image").bind("productImage")
+                        .region(TemplateElement.Region.builder().x(0).y(0).w(400).h(400).build())
+                        .processingPresetId(5L).build()))
+                .active(true).isDefault(false).build();
+        given(templateRepository.findById(1L)).willReturn(Optional.of(template));
+        given(thumbnailPresetResolver.productImageOps(template)).willReturn(ops);
+        given(imageDecodeSupport.flattenOnWhite(any())).willReturn(new byte[]{8});
+        given(imageProcessor.process(org.mockito.AdditionalMatchers.aryEq(new byte[]{8}), eq(ops))).willReturn(new byte[]{7});
+        given(renderer.render(any(), any(), any())).willReturn(new byte[]{1});
+
+        service.preview(ThumbnailPreviewRequest.builder().templateId(1L).build());
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, byte[]>> images = ArgumentCaptor.forClass(Map.class);
+        verify(renderer).render(any(), any(), images.capture());
+        assertThat(images.getValue().get("productImage")).isEqualTo(new byte[]{7});
     }
 }
