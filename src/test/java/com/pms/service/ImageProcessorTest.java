@@ -32,7 +32,8 @@ class ImageProcessorTest {
 
     /** Build against the injected mock (constructed per test — @Mock is set before each test method). */
     private ImageProcessor build() {
-        return new ImageProcessor(imageStorageService, new ImageCompositeSupport(), new ImageColorAdjustSupport());
+        return new ImageProcessor(imageStorageService, new ImageCompositeSupport(), new ImageColorAdjustSupport(),
+                new ImageDecodeSupport());
     }
 
     private static final int SIZE = 200;
@@ -197,6 +198,17 @@ class ImageProcessorTest {
         BufferedImage out = decode(build().process(solid(SIZE, SIZE, MID_GREY), List.of(first, second)));
 
         assertChannels(out, 100, 100, 192, 192, 192);
+    }
+
+    @Test
+    void exifOrientation6Base_isRotatedUpright() throws Exception {
+        // FEATURE_2609_81: 40×20 stored sideways (orientation 6) → 20×40 upright, red on top.
+        BufferedImage out = decode(build().process(ExifTestImages.leftRedRightBlueJpeg(40, 20, 6), List.of()));
+
+        assertThat(out.getWidth()).isEqualTo(20);
+        assertThat(out.getHeight()).isEqualTo(40);
+        assertThat(ExifTestImages.isRed(out, 10, 5)).isTrue();
+        assertThat(ExifTestImages.isBlue(out, 10, 35)).isTrue();
     }
 
     // ---- helpers ----
