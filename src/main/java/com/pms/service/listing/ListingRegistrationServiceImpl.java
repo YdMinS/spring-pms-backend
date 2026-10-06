@@ -11,6 +11,7 @@ import com.pms.dto.response.ListingRegisterResponse;
 import com.pms.dto.response.ListingStatusResponse;
 import com.pms.dto.response.ListingSyncResponse;
 import com.pms.dto.response.MarketOptionResponse;
+import com.pms.exception.BusinessException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
@@ -19,13 +20,17 @@ import com.pms.repository.ProductListingRepository;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.HttpClientErrorException;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -43,6 +48,10 @@ import java.util.stream.Collectors;
 public class ListingRegistrationServiceImpl implements ListingRegistrationService {
 
     private static final Logger log = LoggerFactory.getLogger(ListingRegistrationServiceImpl.class);
+
+    /** Coupang answers 400 with this text while it is still processing a registration or an edit. */
+    private static final String COUPANG_PROCESSING_MARKER = "등록 또는 수정되고 있습니다";
+    private static final Pattern COUPANG_MESSAGE = Pattern.compile("\"message\"\\s*:\\s*\"([^\"]*)\"");
 
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
@@ -169,6 +178,21 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
                 .build();
     }
 
+    /**
+     * The product is still being processed on the market right after a registration or an edit: a "try again
+     * shortly" answer, not a server fault. Returns a 409 carrying Coupang's own wording so the screen shows it
+     * instead of "Internal server error" (and the global handler logs one WARN line, no stack trace).
+     * Any other 400 is returned unchanged.
+     */
+    private static RuntimeException marketBusyOrSame(HttpClientErrorException.BadRequest e) {
+        String body = e.getResponseBodyAsString();
+        if (!body.contains(COUPANG_PROCESSING_MARKER)) {
+            return e;
+        }
+        Matcher matcher = COUPANG_MESSAGE.matcher(body);
+        return new BusinessException(matcher.find() ? matcher.group(1) : body, HttpStatus.CONFLICT);
+    }
+
     private Refreshed refresh(Long listingId) {
         ProductListing cell = productListingRepository.findScopedById(listingId)
                 .orElseThrow(() -> new ResourceNotFoundException("ProductListing", listingId));
@@ -178,7 +202,12 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
 
         MarketplaceAccount acct = resolveAccount(cell);
         ListingChannel adapter = resolver.resolve(cell.getPlatform());
-        FetchResult result = adapter.fetchStatus(cell, acct);
+        FetchResult result;
+        try {
+            result = adapter.fetchStatus(cell, acct);
+        } catch (HttpClientErrorException.BadRequest e) {
+            throw marketBusyOrSame(e);
+        }
 
         productListingRepository.save(cell.toBuilder().status(result.status()).build());
 
