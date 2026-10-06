@@ -12,6 +12,7 @@ import com.pms.dto.response.ListingRegisterResponse;
 import com.pms.dto.response.ListingStatusResponse;
 import com.pms.dto.response.ListingSyncResponse;
 import com.pms.dto.response.MarketOptionResponse;
+import com.pms.exception.BusinessException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.GeneratedProductDataRepository;
@@ -25,8 +26,12 @@ import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.HttpClientErrorException;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
 
@@ -278,6 +283,39 @@ class ListingRegistrationServiceTest {
         ArgumentCaptor<ProductListing> cellCaptor = ArgumentCaptor.forClass(ProductListing.class);
         verify(productListingRepository).save(cellCaptor.capture());
         assertThat(cellCaptor.getValue().getStatus()).isEqualTo(ListingStatus.SELLING);
+    }
+
+    // fetchStatus while Coupang is still processing the product: 409 with Coupang's wording, nothing saved.
+    @Test
+    void fetchStatus_coupangStillProcessing_returnsConflictWithCoupangMessage() {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.SUBMITTED, "SP-1")));
+        stubAccountAndAdapter();
+        given(adapter.fetchStatus(any(), any())).willThrow(badRequest(
+                "{\"code\":\"DEFAULT\",\"message\":\"상품 정보가 등록 또는 수정되고 있습니다. 잠시 후 다시 조회해 주시기 바랍니다. [9766698430]\"}"));
+
+        assertThatThrownBy(() -> service.fetchStatus(CELL_ID))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("상품 정보가 등록 또는 수정되고 있습니다. 잠시 후 다시 조회해 주시기 바랍니다. [9766698430]")
+                .satisfies(e -> assertThat(((BusinessException) e).getStatus()).isEqualTo(HttpStatus.CONFLICT));
+        verify(productListingRepository, never()).save(any());
+    }
+
+    // fetchStatus with any other Coupang 400: rethrown unchanged.
+    @Test
+    void fetchStatus_otherCoupangBadRequest_rethrownUnchanged() {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.SUBMITTED, "SP-1")));
+        stubAccountAndAdapter();
+        HttpClientErrorException other = badRequest("{\"code\":\"ERROR\",\"message\":\"잘못된 요청\"}");
+        given(adapter.fetchStatus(any(), any())).willThrow(other);
+
+        assertThatThrownBy(() -> service.fetchStatus(CELL_ID)).isSameAs(other);
+    }
+
+    private static HttpClientErrorException badRequest(String body) {
+        return HttpClientErrorException.create(HttpStatus.BAD_REQUEST, "Bad Request", new HttpHeaders(),
+                body.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
     }
 
     // (d) fetchStatus REJECTED: status saved, options untouched.
