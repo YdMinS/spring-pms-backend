@@ -25,6 +25,18 @@ public interface CategoryMappingRepository extends JpaRepository<CategoryMapping
     boolean existsByCategoryIdAndPlatform(Long categoryId, Platform platform);
 
     /**
+     * Whether the standard category has at least one platform mapping, on any platform (FEATURE_2610_05 / D29).
+     * A master may only pick a leaf for which this is true.
+     */
+    boolean existsByCategoryId(Long categoryId);
+
+    /**
+     * Number of platform mappings of the standard category (FEATURE_2610_05 / D33). {@code 1} means the mapping
+     * about to be deleted is the last one.
+     */
+    long countByCategoryId(Long categoryId);
+
+    /**
      * Reverse lookup of a leaf mirror by its {@link com.pms.domain.PlatformCategory} FK (FEATURE_2608_06 / 53).
      *
      * <p>Rename-safe: the 53 import re-runs use this to detect an already-created oclyx mirror leaf even after

@@ -79,4 +79,14 @@ public interface MasterProductRepository extends JpaRepository<MasterProduct, Lo
             + "or exists (select o.id from ProductListingOption o "
             + "           where o.productListing.masterProduct = m and o.platformOptionId = :keyword)")
     Page<MasterProduct> searchPage(@Param("keyword") String keyword, Pageable pageable);
+
+    /**
+     * Number of masters of <b>every tenant</b> whose standard category is {@code categoryId} (FEATURE_2610_05 / D33).
+     *
+     * <p>Native on purpose: {@code category} has no tenant column, so one standard category can be used by masters
+     * of several tenants. A JPQL query gets the {@code @TenantId} filter and would miss the other tenants' masters —
+     * the last-mapping guard must see them all.</p>
+     */
+    @Query(value = "SELECT COUNT(*) FROM master_product WHERE category_id = :categoryId", nativeQuery = true)
+    long countAllTenantsByCategoryId(@Param("categoryId") Long categoryId);
 }

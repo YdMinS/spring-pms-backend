@@ -2,8 +2,13 @@ package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.Category;
+import com.pms.domain.MasterProduct;
+import com.pms.domain.Platform;
+import com.pms.domain.PlatformCategory;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.CategoryRepository;
+import com.pms.repository.MasterProductRepository;
+import com.pms.repository.PlatformCategoryRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,12 +29,19 @@ class CategoryMappingControllerTest extends BaseIntegrationTest {
 
     @Autowired private CategoryRepository categoryRepository;
     @Autowired private CategoryMappingRepository categoryMappingRepository;
+    @Autowired private MasterProductRepository masterProductRepository;
+    @Autowired private PlatformCategoryRepository platformCategoryRepository;
 
+    private Category category;
     private Long categoryId;
 
     @BeforeEach
     void seedCategory() {
-        categoryId = categoryRepository.save(Category.builder().name("신발").build()).getId();
+        category = categoryRepository.save(Category.builder().name("신발").build());
+        categoryId = category.getId();
+        // 2610_05/D38: body()'s code "101" must exist in the platform category list for the upsert to save.
+        platformCategoryRepository.save(PlatformCategory.builder()
+                .platform(Platform.COUPANG).code("101").name("경로").build());
     }
 
     private String path() {
@@ -97,5 +109,38 @@ class CategoryMappingControllerTest extends BaseIntegrationTest {
 
         mockMvc.perform(delete(path() + "/COUPANG").header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isNotFound());
+    }
+
+    // ---- 2610_05/D33: last mapping of a category a master uses → 400, mapping kept ----
+
+    @Test
+    void deleteMapping_lastMappingOfCategoryUsedByMaster_returns400() throws Exception {
+        masterProductRepository.save(MasterProduct.builder().name("신발 마스터").active(true).category(category).build());
+        mockMvc.perform(put(path()).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(body()))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(delete(path() + "/COUPANG").header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("이 카테고리를 쓰는 마스터가 있어 마지막 연결은 지울 수 없습니다."));
+
+        mockMvc.perform(get(path()).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1));
+    }
+
+    // ---- 2610_05/D38: a code missing from the platform category list → 400, nothing saved ----
+
+    @Test
+    void putMapping_codeNotInPlatformCategoryList_returns400() throws Exception {
+        mockMvc.perform(put(path()).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"platform\":\"COUPANG\",\"platformCategoryId\":\"999\",\"platformCategoryName\":\"경로\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("쿠팡 카테고리 목록에 없는 코드입니다."));
+
+        mockMvc.perform(get(path()).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(0));
     }
 }

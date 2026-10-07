@@ -11,6 +11,9 @@ import jakarta.validation.constraints.NotBlank;
  * - platform: Optional (standard categories carry no platform; codes are owned by CategoryMapping)
  * - platformCategoryId: Optional (see platform)
  * - parentId: Optional (null = top-level category)
+ * - mapping: Required — the platform category saved together with the new category in one transaction
+ *   (FEATURE_2610_05 / D32). Missing, or a blank platform / platformCategoryId → 400
+ *   「플랫폼 카테고리를 함께 선택해야 합니다.」 (checked in CategoryServiceImpl, not by bean validation).
  */
 public record CreateCategoryRequest(
     @Schema(description = "Category name", example = "Electronics", maxLength = 100)
@@ -24,5 +27,8 @@ public record CreateCategoryRequest(
     String platformCategoryId,
 
     @Schema(description = "Parent category ID (optional, null for top-level)", example = "1")
-    Long parentId
+    Long parentId,
+
+    @Schema(description = "Platform category saved with the new category (required, FEATURE_2610_05 / D32)")
+    CategoryMappingRequest mapping
 ) {}
