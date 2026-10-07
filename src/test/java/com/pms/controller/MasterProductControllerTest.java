@@ -117,10 +117,10 @@ class MasterProductControllerTest extends BaseIntegrationTest {
         Category category = categoryRepository.save(Category.builder()
                 .name("신발").platform(Platform.COUPANG).platformCategoryId("cat-1").build());
         categoryId = category.getId();
-        // 52: setCategory now requires the standard category to be a leaf AND mapped to Coupang, and
-        // resolvePlatformCategoryCode reads the mapping's linked PlatformCategory FK (owns code + commission).
-        // The category above has no children (leaf); add the Coupang mapping + platform category so both the
-        // happy-path setCategory and the category-meta resolution succeed.
+        // setCategory requires the standard category to be a leaf with at least one platform mapping
+        // (2610_05/D29), and resolvePlatformCategoryCode reads the mapping's linked PlatformCategory FK (owns
+        // code + commission). The category above has no children (leaf); add the Coupang mapping + platform
+        // category so both the happy-path setCategory and the category-meta resolution succeed.
         PlatformCategory platformCategory = platformCategoryRepository.save(PlatformCategory.builder()
                 .platform(Platform.COUPANG).code("cat-1").name("운동화")
                 .commissionRate(new java.math.BigDecimal("0.10")).build());
@@ -676,6 +676,21 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.categoryId").value(categoryId));
+    }
+
+    @Test
+    void setCategory_leafMappedToNaverOnly_adminToken_returns200() throws Exception {
+        // 2610_05/D29: a mapping on any platform is enough — no Coupang mapping needed.
+        Category naverOnly = categoryRepository.save(Category.builder().name("네이버전용").build());
+        categoryMappingRepository.save(CategoryMapping.builder()
+                .category(naverOnly).platform(Platform.NAVER).platformCategoryId("50000803").build());
+
+        mockMvc.perform(put(PATH + "/" + masterId + "/category")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"categoryId\":" + naverOnly.getId() + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.categoryId").value(naverOnly.getId()));
     }
 
     @Test
