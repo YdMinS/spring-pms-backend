@@ -767,9 +767,14 @@ public class CoupangListingAdapter implements ListingChannel {
                 .collect(Collectors.toMap(CategoryNotice::key, CategoryNotice::groupName, (a, b) -> a));
         // 96 ④: attribute name → 기본 단위. Coupang has no unit field — the value itself must carry it
         // ("200ml"). Built once, outside the items loop.
+        // 2026-10-07: the unit actually accepted (sendUnit) — basicUnit unless the category does not list it.
         Map<String, String> unitByAttr = schema.attributes().stream()
-                .filter(a -> a.basicUnit() != null)
-                .collect(Collectors.toMap(CategoryAttribute::name, CategoryAttribute::basicUnit, (a, b) -> a));
+                .filter(a -> a.sendUnit() != null)
+                .collect(Collectors.toMap(CategoryAttribute::name, CategoryAttribute::sendUnit, (a, b) -> a));
+        // 총 수량 is derived (개당 수량 × 수량). Approved tea listings carry none, so send it only where the
+        // category makes it MANDATORY.
+        boolean grandTotalRequired = schema.attributes().stream()
+                .anyMatch(a -> GRAND_TOTAL_QUANTITY.equals(a.name()) && a.required());
 
         // 63: bundleType = product-level SINGLE (single composition) / AB (mixed composition). Determined once
         // (loop-invariant local boolean, no N+1) by the master's component count. AB forbids attributes entirely.
@@ -838,6 +843,10 @@ public class CoupangListingAdapter implements ListingChannel {
             if (!bundle) {
                 Map<String, String> attrs = withConsistentGrandTotal(
                         mergedAttributes(masterAttributes, mo, option));
+                if (!grandTotalRequired && attrs.containsKey(GRAND_TOTAL_QUANTITY)) {
+                    attrs = new LinkedHashMap<>(attrs);
+                    attrs.remove(GRAND_TOTAL_QUANTITY);
+                }
                 if (!attrs.isEmpty()) {
                     item.put("attributes", toAttributes(attrs, unitByAttr));
                 }

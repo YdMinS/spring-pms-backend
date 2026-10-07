@@ -56,6 +56,11 @@ class CoupangCategoryMetaTest {
                 .extracting(CategoryAttribute::name, CategoryAttribute::basicUnit)
                 // "없음" is a literal string in the response — it must normalize to null.
                 .contains(tuple("최소 중량", "g"), tuple("식품 프리미엄", null), tuple("동물종류", null));
+        // usableUnits[] is parsed (blank list when the attribute has no unit).
+        assertThat(schema.attributes()).filteredOn(a -> a.name().equals("최소 중량"))
+                .singleElement()
+                .extracting(CategoryAttribute::usableUnits).asList()
+                .containsExactly("g", "kg", "mg");
         // ⑤: groupNumber 파싱 — 실응답의 "1" 은 그대로, 그룹 없음 리터럴 "NONE" 은 null 로 정규화.
         assertThat(schema.attributes())
                 .extracting(CategoryAttribute::name, CategoryAttribute::groupNumber)

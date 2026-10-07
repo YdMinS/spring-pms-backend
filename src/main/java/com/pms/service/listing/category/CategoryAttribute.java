@@ -17,7 +17,29 @@ import java.util.List;
  *                    그룹 없음은 쿠팡이 리터럴 {@code "NONE"} 으로 주며 여기서는 null 로 정규화한다.
  */
 public record CategoryAttribute(String name, boolean required, String inputType, List<String> options,
-                                String basicUnit, String groupNumber) {
+                                String basicUnit, String groupNumber, List<String> usableUnits) {
+
+    /** Callers without the unit list (tests · legacy) — {@code usableUnits = []} (= basicUnit is accepted). */
+    public CategoryAttribute(String name, boolean required, String inputType, List<String> options,
+                             String basicUnit, String groupNumber) {
+        this(name, required, inputType, options, basicUnit, groupNumber, List.of());
+    }
+
+    /**
+     * The unit to append to a bare number when sending. Usually {@code basicUnit}, but some categories list a
+     * 기본 단위 that is not among their {@code usableUnits} (tea 개당 수량: basic {@code 개}, accepted {@code 개입}/EA —
+     * 2026-10-07, "유효하지 않은 구매 옵션 값 혹은 단위가 존재합니다"). Then the first usable unit is sent instead.
+     */
+    public String sendUnit() {
+        if (basicUnit == null) {
+            return null;
+        }
+        if (usableUnits == null || usableUnits.isEmpty() || usableUnits.contains(basicUnit)) {
+            return basicUnit;
+        }
+        return usableUnits.get(0);
+    }
+
 
     /** 그룹 정보가 없는 호출부(테스트·레거시)를 위한 편의 생성자 — {@code groupNumber = null}. */
     public CategoryAttribute(String name, boolean required, String inputType, List<String> options,

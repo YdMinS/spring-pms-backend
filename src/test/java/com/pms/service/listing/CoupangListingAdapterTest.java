@@ -217,6 +217,52 @@ class CoupangListingAdapterTest {
                 .containsEntry("총 수량", "24");
     }
 
+    // 2026-10-07 tea category: 개당 수량 basic unit 개 is not among usableUnits (개입/EA) → send 개입;
+    // optional 총 수량 is not sent at all.
+    @Test
+    void register_usesAcceptedUnitAndDropsOptionalGrandTotal() throws Exception {
+        MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨").build();
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
+                .masterProduct(master).build();
+        MasterProductOption mo = MasterProductOption.builder().id(5L).name("2")
+                .categoryAttributes(new java.util.LinkedHashMap<>(Map.of(
+                        "수량", "2", "총 수량", "2", "개당 수량", "12", "최소 중량", "1.3g"))).build();
+        ProductListingOption opt = ProductListingOption.builder().id(1L).optionName("2")
+                .masterProductOption(mo).sellingPrice(new BigDecimal("6000")).active(true).build();
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(opt));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of(mo));
+        GeneratedProductData gen = GeneratedProductData.builder()
+                .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(List.of(
+                new CategoryAttribute("개당 수량", true, "NUMBER", List.of(), "개", null, List.of("개입", "EA")),
+                new CategoryAttribute("수량", true, "NUMBER", List.of(), "개", null, List.of("개")),
+                new CategoryAttribute("총 수량", false, "NUMBER", List.of(), "개", null, List.of("개")),
+                new CategoryAttribute("최소 중량", true, "NUMBER", List.of(), "g", "1", List.of("g", "kg"))),
+                List.of()));
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell, gen, acct());
+
+        Map<String, String> sent = new java.util.HashMap<>();
+        for (JsonNode a : objectMapper.readTree(payload.getValue()).path("items").get(0).path("attributes")) {
+            sent.put(a.path("attributeTypeName").asText(), a.path("attributeValueName").asText());
+        }
+        assertThat(sent).containsEntry("개당 수량", "12개입").containsEntry("수량", "2개")
+                .containsEntry("최소 중량", "1.3g").doesNotContainKey("총 수량");
+    }
+
+    @Test
+    void categoryAttribute_sendUnit_fallsBackToFirstUsableUnit() {
+        assertThat(new CategoryAttribute("개당 수량", true, "NUMBER", List.of(), "개", null, List.of("개입", "EA"))
+                .sendUnit()).isEqualTo("개입");
+        assertThat(new CategoryAttribute("최소 중량", true, "NUMBER", List.of(), "g", null, List.of("g", "kg"))
+                .sendUnit()).isEqualTo("g");
+        assertThat(new CategoryAttribute("수량", true, "NUMBER", List.of(), "개").sendUnit()).isEqualTo("개");
+        assertThat(new CategoryAttribute("동물종류", false, "TEXT", List.of(), null).sendUnit()).isNull();
+    }
+
     // A rejected register (no data) must echo the per-item attributes we sent — Coupang names no field.
     @Test
     void register_rejected_messageListsSentAttributes() {
