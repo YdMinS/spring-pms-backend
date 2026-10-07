@@ -102,7 +102,8 @@ public class CoupangCategoryMeta implements CategoryMetaAdapter {
                             !options.isEmpty()),
                     options,
                     basicUnit(attr.path("basicUnit").asText(null)),
-                    groupNumber(attr.path("groupNumber").asText(null))));
+                    groupNumber(attr.path("groupNumber").asText(null)),
+                    usableUnits(attr.path("usableUnits"))));
         }
         return attributes;
     }
@@ -119,6 +120,18 @@ public class CoupangCategoryMeta implements CategoryMetaAdapter {
     }
 
     /** Coupang writes the literal string {@code "없음"} when an attribute has no unit — normalize it to null. */
+    /** {@code usableUnits[]} — the units Coupang accepts for this attribute (blank entries dropped). */
+    private static List<String> usableUnits(JsonNode node) {
+        List<String> units = new ArrayList<>();
+        for (JsonNode unit : node) {
+            String value = unit.asText(null);
+            if (value != null && !value.isBlank()) {
+                units.add(value.trim());
+            }
+        }
+        return units;
+    }
+
     private String basicUnit(String raw) {
         if (raw == null || raw.isBlank() || "없음".equals(raw)) {
             return null;
