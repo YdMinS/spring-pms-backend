@@ -76,6 +76,6 @@ public class PlatformCategory extends BaseEntity {
      * runtime a mapped node with {@code null} commission means the category was not seeded properly (→ 400),
      * never a silent fallback.
      */
-    @Column(name = "commission_rate", precision = 5, scale = 2)
+    @Column(name = "commission_rate", precision = 5, scale = 4)
     private BigDecimal commissionRate;
 }

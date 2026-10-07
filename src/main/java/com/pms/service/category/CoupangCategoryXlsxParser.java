@@ -34,9 +34,8 @@ import java.util.regex.Pattern;
  * whole catalog (tens of thousands of rows) switch to the XSSF SAX / streaming reader. Hidden sheets are ignored.</p>
  *
  * <p>The fee is converted percent → fraction ({@code 10.6} → {@code 0.106}) so it matches the fraction unit
- * {@code PriceCalculator} subtracts ({@code 1 − commission − margin}). Note: {@code PlatformCategory.commissionRate}
- * is DECIMAL(5,2), so the stored value rounds (0.106 → 0.11) — a known precision caveat flagged in 52 for
- * re-review; the parser keeps full precision, the column scale rounds on persist.</p>
+ * {@code PriceCalculator} subtracts ({@code 1 − commission − margin}). {@code PlatformCategory.commissionRate}
+ * is DECIMAL(5,4) (FEATURE_2610_06 / D17), so the stored value keeps it (0.106 → 0.1060).</p>
  */
 @Component
 public class CoupangCategoryXlsxParser {

@@ -1076,4 +1076,23 @@ class LiquibaseChangelogApplyTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID LIKE '102-%'", Integer.class)).isEqualTo(3);
     }
+
+    /**
+     * changeset 103 (FEATURE_2610_06 / D17): platform_category.commission_rate is DECIMAL(5,4), so a fractional
+     * percent (10.6% = 0.106) is stored without rounding to a whole percent.
+     */
+    @Test
+    void platformCategoryCommissionRateScaleIsFour() {
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT NUMERIC_PRECISION FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE TABLE_NAME = 'PLATFORM_CATEGORY' AND COLUMN_NAME = 'COMMISSION_RATE'",
+                Integer.class)).isEqualTo(5);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT NUMERIC_SCALE FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE TABLE_NAME = 'PLATFORM_CATEGORY' AND COLUMN_NAME = 'COMMISSION_RATE'",
+                Integer.class)).isEqualTo(4);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID = '103-platform-category-commission-scale'",
+                Integer.class)).isEqualTo(1);
+    }
 }

@@ -33,28 +33,28 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * {@link CommissionFeedbackService} 구현 (FEATURE_2609_30 / 06 · PLAN D16).
+ * {@link CommissionFeedbackService} implementation (FEATURE_2609_30 / 06 · PLAN D16).
  *
- * <p><b>필수 규칙 ① 수수료 기준의 출처는 한 곳이다</b> —
- * {@code MasterChannelConfigService.resolvePlatformCategory(cell).getCommissionRate()}. {@code PriceCalculator}
- * (판매가 역산)와 {@code SettlementDiffAnalyzer}(대사 라벨)가 쓰는 바로 그 경로다. 다른 데서 수수료를 꺼내면
- * 판매가 추천·대사·이 제안이 서로 다른 기준으로 말하게 된다.
+ * <p><b>Rule 1: one source for the commission basis</b> —
+ * {@code MasterChannelConfigService.resolvePlatformCategory(cell).getCommissionRate()}. It is the exact path
+ * {@code PriceCalculator} (selling-price reverse calculation) and {@code SettlementDiffAnalyzer} (reconciliation
+ * label) use. Reading the commission anywhere else makes the price suggestion, the reconciliation and this
+ * proposal speak from different bases.
  *
- * <p><b>필수 규칙 ② 실측은 가중평균이다</b> — {@code Σ(수수료+부가세) ÷ Σ판매금액}. 라인별 비율을 단순
- * 평균하면 1,000원짜리 한 건이 100만원짜리와 같은 무게를 갖는다.
+ * <p><b>Rule 2: the measured rate is a weighted average</b> — {@code Σ(fee + VAT) ÷ Σ sale amount}. A plain
+ * average of per-line ratios gives a 1,000-won line the same weight as a 1,000,000-won line.
  *
- * <p><b>필수 규칙 ③ 비교 기준을 맞춘다</b> — 실측은 부가세 포함인데 기준표는 부가세 별도라, 그냥 빼면
- * 부가세 10%가 통째로 "수수료율 차이"로 잡혀 모든 카테고리가 제안 목록에 오른다. 기준표 값에
- * {@code × (1 + feeVatRate)} 를 얹어 비교하고, 저장할 때 {@code ÷ (1 + feeVatRate)} 로 되돌린다.
+ * <p><b>Rule 3: compare on the same basis</b> — the measured rate includes VAT while the table rate excludes it,
+ * so a plain subtraction books the whole 10% VAT as a "commission gap" and puts every category on the list. The
+ * table rate is compared after {@code × (1 + feeVatRate)} and stored back after {@code ÷ (1 + feeVatRate)}.
  *
- * <p>🔴 <b>이 클래스는 셀 판매가를 건드리지 않는다.</b> 판매가를 쓸 수 있는 어떤 의존성도 갖지 않는 것이
- * 그 보증이다({@code CommissionFeedbackServiceImplTest.applyDoesNotTouchSellingPrice}). 기존 가격 반영은
- * 원가/가격 반영({@code /api/admin/cost/propagation}) 이 소유한다 — 판매가는 사용자가 트리거할 때만
- * 움직인다(PLAN 2609_28 D4).
+ * <p>🔴 <b>This class never touches a cell's selling price.</b> The guarantee is that it holds no dependency
+ * that can write one ({@code CommissionFeedbackServiceImplTest.applyDoesNotTouchSellingPrice}). Repricing is
+ * owned by cost/price propagation ({@code /api/admin/cost/propagation}) — selling prices move only when the
+ * user triggers it (PLAN 2609_28 D4).
  *
- * <p>⚠️ 저장 해상도는 {@code platform_category.commission_rate = DECIMAL(5,2)} 라 <b>1%p</b> 다. 실측
- * 10.6%는 0.11 로 저장된다(기존 카테고리 임포트도 같은 반올림을 겪는다). 응답은 반올림 전 실측을 함께
- * 내려 사용자가 이 차이를 볼 수 있게 한다.
+ * <p>⚠️ Stored resolution: {@code platform_category.commission_rate = DECIMAL(5,4)} (FEATURE_2610_06 / D17), the
+ * same 4 decimal places as the measured rate. A measured 10.6% is stored as 0.1060 — no whole-percent rounding.
  */
 @Slf4j
 @Service
@@ -64,21 +64,22 @@ public class CommissionFeedbackServiceImpl implements CommissionFeedbackService 
     /** 표본이 이보다 적으면 제안이 아니라 소음이다. */
     private static final int DEFAULT_MIN_SAMPLES = 5;
 
-    /** 0.1%p 미만 차이로 사람을 부르지 않는다(반올림 수준). */
+    /** A gap under 0.1%p is noise, not a correction — it does not call a person. */
     private static final BigDecimal GAP_THRESHOLD = new BigDecimal("0.001");
 
     /**
-     * 낙관적 검증 허용치 0.5%p. 화면을 열어둔 사이 실측이 이보다 더 움직였으면 사용자가 본 값이 아니다.
-     * ⚠️ 저장 반올림(최대 0.5%p) 자체는 이 문턱을 넘지 않는다 — 초과일 때만 거절한다.
+     * Optimistic-check tolerance 0.5%p. If the measured rate moved more than this while the screen was open, it
+     * is not the value the user saw.
+     * ⚠️ Storage rounding (at most 0.005%p at scale 4) never reaches this threshold — only a larger move is rejected.
      */
     private static final BigDecimal STALE_TOLERANCE = new BigDecimal("0.005");
 
     /** 기간을 안 주면 최근 3개월 — 수수료율은 표본이 쌓여야 의미가 생긴다. */
     private static final int DEFAULT_MONTHS = 3;
 
-    /** 비율 표시 자리수. 저장은 {@link #STORED_SCALE} 로 다시 줄어든다. */
+    /** Scale of the response ratios. Stored rates use {@link #STORED_SCALE} (4 since FEATURE_2610_06 / D17). */
     private static final int RATIO_SCALE = 4;
-    private static final int STORED_SCALE = 2;
+    private static final int STORED_SCALE = 4;
 
     private static final String NOTICE =
             "판매가는 아직 그대로입니다 — 영향받는 셀 %d개의 판매가 반영은 [원가/가격 반영]"
