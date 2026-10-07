@@ -1,0 +1,24 @@
+# Widen platform_category.commission_rate DECIMAL(5,2) -> DECIMAL(5,4) (FEATURE_2610_06 / D17 · D20).
+# The column holds a fraction (10.6% = 0.106). At scale 2 every non-integer percent was rounded
+# (0.106 -> 0.11); scale 4 keeps 0.1060 — the same scale as commission_rate.rate and margin_policy.margin_rate.
+# 032 is NOT edited: it is already applied on dev/prod.
+# Existing values are only re-typed (0.11 -> 0.1100). The Coupang values are corrected by the operator
+# re-importing the 16 Coupang category files (docs/deployment/COUPANG_CATEGORY_IMPORT_RUNBOOK.md), not here.
+# The column is nullable and carries no default, so MySQL MODIFY drops nothing that must be restored (085 pattern).
+# No boolean column -> the 006 BIT follow-up is not needed.
+databaseChangeLog:
+
+  - changeSet:
+      id: 103-platform-category-commission-scale
+      author: oclyx
+      comment: "FEATURE_2610_06: platform_category.commission_rate DECIMAL(5,2) -> DECIMAL(5,4)."
+      changes:
+        - modifyDataType:
+            tableName: platform_category
+            columnName: commission_rate
+            newDataType: "DECIMAL(5,4)"
+      rollback:
+        - modifyDataType:
+            tableName: platform_category
+            columnName: commission_rate
+            newDataType: "DECIMAL(5,2)"

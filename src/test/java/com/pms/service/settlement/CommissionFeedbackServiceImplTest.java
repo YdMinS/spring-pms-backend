@@ -145,7 +145,7 @@ class CommissionFeedbackServiceImplTest {
             assertThat(view.platformCategoryId()).isEqualTo(11L);
             assertThat(view.currentRate()).isNull();
             assertThat(view.gap()).isNull();
-            assertThat(view.suggestedRate()).isEqualByComparingTo("0.11");
+            assertThat(view.suggestedRate()).isEqualByComparingTo("0.106");
         });
     }
 
@@ -177,7 +177,7 @@ class CommissionFeedbackServiceImplTest {
             assertThat(row.getTargetType()).isEqualTo(PriceTargetType.PLATFORM_COMMISSION);
             assertThat(row.getReason()).isEqualTo(PriceChangeReason.SETTLEMENT_FEEDBACK);
             assertThat(row.getOldPrice()).isEqualByComparingTo("0.05");
-            assertThat(row.getNewPrice()).isEqualByComparingTo("0.11");
+            assertThat(row.getNewPrice()).isEqualByComparingTo("0.106");
         });
     }
 

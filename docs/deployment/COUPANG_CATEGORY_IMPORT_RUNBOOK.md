@@ -7,7 +7,8 @@
 - 트리거: `POST /api/admin/category-import/coupang` (multipart `file`), ADMIN 전용. 파일(대분류) 1개당 1회 호출.
 - 멱등: 재실행 = PlatformCategory 갱신(수수료·이름) + 신규 leaf 만 oclyx 미러/매핑 추가. 기존 oclyx 큐레이션(사용자 이름수정 포함, FK 역조회로 판정) 보존. **재호출 안전.**
 - 비파괴: 파괴적 재시드 아님(순수 upsert). 별도 게이트/확인 플래그 없음.
-- 수수료 단위: 파일 col B 는 % (예 10.6) → **분수 0.106 으로 저장**(PriceCalculator `1−commission−margin` 단위). ⚠️ `commission_rate` 는 DECIMAL(5,2) 라 0.106 → **0.11 로 반올림 저장**(52 이월 정밀도 이슈).
+- 수수료 단위: 파일 col B 는 % (예 10.6) → **분수 0.106 으로 저장**(PriceCalculator `1−commission−margin` 단위). `commission_rate` 는 DECIMAL(5,4)(changeset 103, FEATURE_2610_06) 라 0.106 → **0.1060 그대로 저장**.
+- ⚠️ 재실행은 기존 leaf 의 수수료를 파일 값으로 덮어쓴다 — 정산 수수료 제안 [확정 반영]으로 고친 값도 파일 값으로 돌아간다(FEATURE_2610_06 D20).
 
 ## ⚠️ 실데이터 fix (반드시 이 버전 이상 배포)
 실 쿠팡 파일 시도에서 잡힌 **3 버그** — **이 fix 포함본을 배포해야 16파일 전체가 들어간다**:
