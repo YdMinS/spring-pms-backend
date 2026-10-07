@@ -142,12 +142,18 @@ public class CoupangListingAdapter implements ListingChannel {
 
     @Override
     public String register(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct) {
-        String payload = writeJson(buildPayload(cell, gen, acct));
+        Map<String, Object> body = buildPayload(cell, gen, acct);
+        String payload = writeJson(body);
         String raw = client.post(SELLER_PRODUCTS, payload, acct);
         // Response data = sellerProductId (number or string) → return as String.
         JsonNode data = readJson(raw).path("data");
         if (data.isMissingNode() || data.isNull()) {
-            throw new IllegalStateException("쿠팡 상품등록 응답에 data(sellerProductId) 없음: " + raw);
+            // Coupang's rejection names no field (errorItems is null), so echo the option attributes we sent —
+            // without them "유효하지 않은 구매 옵션 값 혹은 단위" cannot be traced to a value.
+            String sent = describeItemAttributes(body);
+            log.warn("[COUPANG-ADAPTER] register rejected listing={} sent attributes: {}", cell.getId(), sent);
+            throw new IllegalStateException("쿠팡 상품등록 응답에 data(sellerProductId) 없음: " + raw
+                    + " | 보낸 옵션 속성: " + sent);
         }
         return data.asText();
     }
@@ -979,6 +985,34 @@ public class CoupangListingAdapter implements ListingChannel {
      * Value를 단위와 함께 입력 (예시 "200ml")"; WING's number+dropdown UI simply concatenates before sending.
      * A live account rejected our numbers-only payload with "유효하지 않은 구매 옵션 값 혹은 단위가 존재합니다".</p>
      */
+    /**
+     * One-line summary of each item's attributes as sent ({@code itemName: name=value, ...}), for diagnosing a
+     * rejected register. Product data only — no buyer or account fields are read.
+     */
+    @SuppressWarnings("unchecked")
+    static String describeItemAttributes(Map<String, Object> payload) {
+        Object items = payload.get("items");
+        if (!(items instanceof List<?> list) || list.isEmpty()) {
+            return "(items 없음)";
+        }
+        List<String> parts = new ArrayList<>();
+        for (Object o : list) {
+            if (!(o instanceof Map<?, ?> item)) {
+                continue;
+            }
+            List<String> pairs = new ArrayList<>();
+            if (item.get("attributes") instanceof List<?> attrs) {
+                for (Object a : attrs) {
+                    if (a instanceof Map<?, ?> attr) {
+                        pairs.add(attr.get("attributeTypeName") + "=" + attr.get("attributeValueName"));
+                    }
+                }
+            }
+            parts.add(item.get("itemName") + ": " + (pairs.isEmpty() ? "(속성 없음)" : String.join(", ", pairs)));
+        }
+        return String.join(" / ", parts);
+    }
+
     private static List<Map<String, Object>> toAttributes(Map<String, String> values,
                                                           Map<String, String> unitByAttr) {
         List<Map<String, Object>> attributes = new ArrayList<>();
