@@ -16,6 +16,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 
@@ -40,6 +41,7 @@ class CategoryImportServiceTest {
     @Autowired private PlatformCategoryRepository platformCategoryRepository;
     @Autowired private CategoryRepository categoryRepository;
     @Autowired private CategoryMappingRepository categoryMappingRepository;
+    @Autowired private TestEntityManager entityManager;
 
     private CategoryImportServiceImpl service;
 
@@ -136,6 +138,18 @@ class CategoryImportServiceTest {
         assertThat(r.getMappingsCreated()).isEqualTo(1);
         assertThat(r.getSkipped()).isEqualTo(2);
         assertThat(platformCategoryRepository.findByPlatformAndCode(Platform.COUPANG, "58648")).isPresent();
+    }
+
+    @Test
+    void import_storesFractionalCommissionWithFourDecimals() throws IOException {
+        service.importCoupang(baseFixture("10.6"));
+        // Force a database round trip — the first-level cache would hand back the unrounded 0.106 either way.
+        entityManager.flush();
+        entityManager.clear();
+
+        // FEATURE_2610_06 / D17: DECIMAL(5,4) keeps 0.1060 (DECIMAL(5,2) rounded it to 0.11).
+        assertThat(platformCategoryRepository.findByPlatformAndCode(Platform.COUPANG, "58646")
+                .orElseThrow().getCommissionRate()).isEqualByComparingTo(new BigDecimal("0.106"));
     }
 
     /** In-memory data-sheet xlsx: header rows 1-3 dummy, leaf rows from row 5. */

@@ -433,7 +433,7 @@ class SettlementControllerTest extends BaseIntegrationTest {
                 // 실측 11.66% vs 기준 5.5%(부가세 포함 기준으로 맞춘 값)
                 .andExpect(jsonPath("$.data.suggestions[0].measuredRatio").value(0.1166))
                 .andExpect(jsonPath("$.data.suggestions[0].currentRatio").value(0.055))
-                .andExpect(jsonPath("$.data.suggestions[0].suggestedRate").value(0.11));
+                .andExpect(jsonPath("$.data.suggestions[0].suggestedRate").value(0.106));
     }
 
     @Test
@@ -450,7 +450,7 @@ class SettlementControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.affectedListings").value(1));
 
         assertThat(platformCategoryRepository.findById(platformCategoryId).orElseThrow()
-                .getCommissionRate()).isEqualByComparingTo("0.11");
+                .getCommissionRate()).isEqualByComparingTo("0.106");
         // 🔴 판매가는 그대로다 — 반영은 원가/가격 반영이 소유한다(PLAN 2609_28 D4).
         assertThat(productListingOptionRepository.findAll().get(0).getSellingPrice())
                 .isEqualByComparingTo(before);
