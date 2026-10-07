@@ -202,6 +202,21 @@ class CoupangListingAdapterTest {
         assertThat(itemB.path("attributes").get(0).path("attributeValueName").asText()).isEqualTo("국내산");
     }
 
+    // 총 수량 must equal 개당 수량 × 수량; a stored 총 수량 equal to 수량 (old screens) is recomputed at send time.
+    @Test
+    void withConsistentGrandTotal_recomputesFromPerUnitTimesQuantity() {
+        Map<String, String> sent = CoupangListingAdapter.withConsistentGrandTotal(new java.util.LinkedHashMap<>(
+                Map.of("수량", "2", "총 수량", "2", "개당 수량", "12", "최소 중량", "1.3g")));
+        assertThat(sent).containsEntry("총 수량", "24").containsEntry("수량", "2").containsEntry("개당 수량", "12");
+        // No 총 수량 → nothing added; non-count input → sent unchanged.
+        assertThat(CoupangListingAdapter.withConsistentGrandTotal(Map.of("수량", "2", "개당 수량", "12")))
+                .doesNotContainKey("총 수량");
+        assertThat(CoupangListingAdapter.withConsistentGrandTotal(Map.of("수량", "2", "총 수량", "2", "개당 수량", "약 12")))
+                .containsEntry("총 수량", "2");
+        assertThat(CoupangListingAdapter.withConsistentGrandTotal(Map.of("수량", "2개", "총 수량", "2개", "개당 수량", "12개")))
+                .containsEntry("총 수량", "24");
+    }
+
     // A rejected register (no data) must echo the per-item attributes we sent — Coupang names no field.
     @Test
     void register_rejected_messageListsSentAttributes() {
