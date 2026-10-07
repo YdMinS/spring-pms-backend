@@ -836,7 +836,8 @@ public class CoupangListingAdapter implements ListingChannel {
             // 63: AB forbids attributes ("혼합 구성 상품 등록할 때, 속성 입력할 수 없습니다") → skip the whole block for AB.
             // SINGLE keeps per-item merged category attributes (47/59). notices are NOT forbidden → unchanged below.
             if (!bundle) {
-                Map<String, String> attrs = mergedAttributes(masterAttributes, mo, option);
+                Map<String, String> attrs = withConsistentGrandTotal(
+                        mergedAttributes(masterAttributes, mo, option));
                 if (!attrs.isEmpty()) {
                     item.put("attributes", toAttributes(attrs, unitByAttr));
                 }
@@ -1011,6 +1012,40 @@ public class CoupangListingAdapter implements ListingChannel {
             parts.add(item.get("itemName") + ": " + (pairs.isEmpty() ? "(속성 없음)" : String.join(", ", pairs)));
         }
         return String.join(" / ", parts);
+    }
+
+    private static final String PER_UNIT_QUANTITY = "개당 수량";
+    private static final String QUANTITY = "수량";
+    private static final String GRAND_TOTAL_QUANTITY = "총 수량";
+    private static final Pattern COUNT_VALUE = Pattern.compile("^(\\d+)\\s*(개)?$");
+
+    /**
+     * Coupang ties three purchase-option attributes together: 총 수량 = 개당 수량 × 수량 (12개입 × 2 → 24).
+     * Earlier screens stored 총 수량 as the item-quantity sum (= 수량), which Coupang rejects with
+     * "유효하지 않은 구매 옵션 값 혹은 단위가 존재합니다" (2026-10-07, master 1899). Recompute it at send time so
+     * already-stored options go out right without a data fix. Only rewrites an existing 총 수량 whose two inputs are
+     * plain counts; anything else is sent unchanged. The stored value is never mutated.
+     */
+    static Map<String, String> withConsistentGrandTotal(Map<String, String> attrs) {
+        if (!attrs.containsKey(GRAND_TOTAL_QUANTITY)) {
+            return attrs;
+        }
+        Long perUnit = countOf(attrs.get(PER_UNIT_QUANTITY));
+        Long quantity = countOf(attrs.get(QUANTITY));
+        if (perUnit == null || quantity == null) {
+            return attrs;
+        }
+        Map<String, String> fixed = new LinkedHashMap<>(attrs);
+        fixed.put(GRAND_TOTAL_QUANTITY, String.valueOf(perUnit * quantity));
+        return fixed;
+    }
+
+    private static Long countOf(String value) {
+        if (value == null) {
+            return null;
+        }
+        java.util.regex.Matcher m = COUNT_VALUE.matcher(value.trim());
+        return m.matches() ? Long.valueOf(m.group(1)) : null;
     }
 
     private static List<Map<String, Object>> toAttributes(Map<String, String> values,
