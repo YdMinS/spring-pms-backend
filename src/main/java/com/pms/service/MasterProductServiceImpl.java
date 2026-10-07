@@ -1237,12 +1237,13 @@ public class MasterProductServiceImpl implements MasterProductService {
         MasterProduct master = requireScopedMaster(masterId);
         Category category = categoryRepository.findById(request.getCategoryId())
                 .orElseThrow(() -> new ResourceNotFoundException("Category", request.getCategoryId()));
-        // A master may only pick a selectable leaf that is mapped to Coupang (FEATURE_2608_06 / 52).
+        // A master may only pick a selectable leaf that has at least one platform mapping, on any platform
+        // (FEATURE_2610_05 / D29 — was "mapped to Coupang", FEATURE_2608_06 / 52).
         if (categoryRepository.existsByParentId(request.getCategoryId())) {
             throw new IllegalArgumentException("세부(leaf) 카테고리만 지정할 수 있습니다.");
         }
-        if (!categoryMappingRepository.existsByCategoryIdAndPlatform(request.getCategoryId(), Platform.COUPANG)) {
-            throw new IllegalArgumentException("쿠팡 카테고리 매핑이 없습니다.");
+        if (!categoryMappingRepository.existsByCategoryId(request.getCategoryId())) {
+            throw new IllegalArgumentException("연결된 플랫폼 카테고리가 없습니다.");
         }
         masterProductRepository.save(master.toBuilder().category(category).build());
         return toCategoryResponse(category);
