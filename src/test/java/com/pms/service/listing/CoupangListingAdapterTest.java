@@ -202,6 +202,31 @@ class CoupangListingAdapterTest {
         assertThat(itemB.path("attributes").get(0).path("attributeValueName").asText()).isEqualTo("국내산");
     }
 
+    // A rejected register (no data) must echo the per-item attributes we sent — Coupang names no field.
+    @Test
+    void register_rejected_messageListsSentAttributes() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨").build();
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
+                .masterProduct(master).build();
+        MasterProductOption mo = MasterProductOption.builder().id(5L).name("A")
+                .categoryAttributes(Map.of("최소 중량", "11.33g")).build();
+        ProductListingOption opt = ProductListingOption.builder().id(1L).optionName("A")
+                .masterProductOption(mo).sellingPrice(new BigDecimal("6000")).active(true).build();
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(opt));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of(mo));
+        GeneratedProductData gen = GeneratedProductData.builder()
+                .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(List.of(), List.of()));
+        given(client.post(anyString(), anyString(), any())).willReturn(
+                "{\"code\":\"ERROR\",\"message\":\"유효하지 않은 구매 옵션 값 혹은 단위가 존재합니다.\",\"data\":null}");
+
+        assertThatThrownBy(() -> adapter.register(cell, gen, acct()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("보낸 옵션 속성:")
+                .hasMessageContaining("최소 중량=11.33g");
+    }
+
     // 61: a notice detail with no group mapping (unknown/legacy key) is skipped — the item carries no notices.
     @Test
     void register_noticeWithoutGroupMapping_isSkipped() throws Exception {
