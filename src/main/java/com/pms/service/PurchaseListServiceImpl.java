@@ -167,8 +167,8 @@ public class PurchaseListServiceImpl implements PurchaseListService {
         Map<Long, List<PurchaseRecord>> recordsByProduct = purchaseRecordRepository
                 .findByProduct_IdIn(productIds).stream()
                 .collect(Collectors.groupingBy(r -> r.getProduct().getId()));
-        Map<Long, String> productNames = productRepository.findAllById(productIds).stream()
-                .collect(Collectors.toMap(Product::getId, Product::getProductName));
+        Map<Long, Product> products = productRepository.findAllById(productIds).stream()
+                .collect(Collectors.toMap(Product::getId, p -> p));
         Map<Long, ChannelLabel> channels = channelLabels(items);
 
         // product 단위 그룹화 (입력 순서 보존).
@@ -186,8 +186,15 @@ public class PurchaseListServiceImpl implements PurchaseListService {
 
             List<PurchaseLine> lines = lineItems.stream().map(li -> toLine(li, channels)).toList();
 
+            Product product = products.get(productId);
             PurchaseProductGroup group = new PurchaseProductGroup(
-                    productId, productNames.get(productId), needed, purchased, needed - purchased, lines);
+                    productId,
+                    product != null ? product.getProductName() : null,
+                    product != null ? product.getBrand() : null,
+                    needed,
+                    purchased,
+                    needed - purchased,
+                    lines);
             if (keep.test(group, records)) {
                 groups.add(group);
             }
