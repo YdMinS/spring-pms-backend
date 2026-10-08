@@ -236,6 +236,23 @@ class PurchaseListServiceTest {
     }
 
     @Test
+    void testGroupCarriesProductBrand() {
+        Product a = Product.builder().id(PRODUCT_ID).productName("A").brand("모모").build();
+        ShoppingListItem sli = ShoppingListItem.builder()
+                .id(1L).orderLine(null).product(a).autoQty(0).manualQty(2).build();
+
+        given(shoppingListItemRepository.findAll()).willReturn(List.of(sli));
+        given(purchaseRecordRepository.findByProduct_IdIn(List.of(PRODUCT_ID))).willReturn(List.of());
+        stubLookups(List.of(a), List.of());
+        given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of());
+
+        PurchaseProductGroup group = service.getList().items().get(0);
+
+        assertThat(group.productName()).isEqualTo("A");
+        assertThat(group.brand()).isEqualTo("모모");
+    }
+
+    @Test
     void getList_잔여0이면그룹제외() {
         Product a = product(PRODUCT_ID, "A");
         ShoppingListItem sli = ShoppingListItem.builder()

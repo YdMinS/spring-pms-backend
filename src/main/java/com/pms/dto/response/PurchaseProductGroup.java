@@ -10,10 +10,13 @@ import java.util.List;
  *
  * <p>구매목록 탭은 remainingQty &gt; 0, 완료 탭은 remainingQty &lt;= 0 인 그룹만 담는다 — 응답 타입은 같다.
  * lines 는 그 product 에 기여한 모든 라인(주문 + 수동).
+ *
+ * <p>brand 는 물품의 브랜드(없으면 null) — 매장에서 같은 이름의 다른 브랜드를 집지 않게 카드에 같이 보여준다.
  */
 public record PurchaseProductGroup(
         Long productId,
         String productName,
+        String brand,
         int neededQty,
         int purchasedQty,
         int remainingQty,

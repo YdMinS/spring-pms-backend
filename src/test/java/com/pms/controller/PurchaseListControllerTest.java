@@ -88,7 +88,7 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
                 .isActive(true).build());
 
         Product product = productRepository.save(Product.builder()
-                .productName("양말A").build());
+                .productName("양말A").brand("모모").build());
         productId = product.getId();
         // 2609_71: 구성품은 마스터를 타고 읽힌다 — 실제 셀처럼 마스터 옵션에 연결한다(2609_22/D1).
         MasterProduct master = masterProductRepository.save(MasterProduct.builder()
@@ -149,6 +149,7 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
         mockMvc.perform(post(PATH + "/extract").header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items[0].productName").value("양말A"))
+                .andExpect(jsonPath("$.data.items[0].brand").value("모모"))
                 .andExpect(jsonPath("$.data.items[0].neededQty").value(6))     // 3 × 2
                 .andExpect(jsonPath("$.data.items[0].remainingQty").value(6))
                 .andExpect(jsonPath("$.data.items[0].lines[0].sellerName").value("테스트셀러"))
