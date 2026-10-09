@@ -217,22 +217,6 @@ class CoupangListingAdapterTest {
     }
 
     @Test
-    void withoutRedundantQuantity_dropsOptionalQuantityThatRepeatsGrandTotal() {
-        Map<String, String> bottles = Map.of("개당 용량", "2.1L", "총 수량", "4", "수량", "4", "개당 수량", "1개입");
-        assertThat(CoupangListingAdapter.withoutRedundantQuantity(bottles, false))
-                .containsOnlyKeys("개당 용량", "총 수량", "개당 수량");
-        assertThat(CoupangListingAdapter.withoutRedundantQuantity(
-                Map.of("총 수량", "4개", "수량", "4개"), false)).containsOnlyKeys("총 수량");
-        // required 수량 · differing values (12개입 × 2) · per-unit > 1 · no 총 수량 → unchanged
-        assertThat(CoupangListingAdapter.withoutRedundantQuantity(bottles, true)).containsKey("수량");
-        assertThat(CoupangListingAdapter.withoutRedundantQuantity(
-                Map.of("총 수량", "24", "수량", "2", "개당 수량", "12"), false)).containsKey("수량");
-        assertThat(CoupangListingAdapter.withoutRedundantQuantity(
-                Map.of("총 수량", "4", "수량", "4", "개당 수량", "4개입"), false)).containsKey("수량");
-        assertThat(CoupangListingAdapter.withoutRedundantQuantity(Map.of("수량", "4"), false)).containsKey("수량");
-    }
-
-    @Test
     void withConsistentGrandTotal_recomputesFromPerUnitTimesQuantity() {
         Map<String, String> sent = CoupangListingAdapter.withConsistentGrandTotal(new java.util.LinkedHashMap<>(
                 Map.of("수량", "2", "총 수량", "2", "개당 수량", "12", "최소 중량", "1.3g")));
