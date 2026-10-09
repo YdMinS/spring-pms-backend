@@ -204,6 +204,19 @@ class CoupangListingAdapterTest {
 
     // 총 수량 must equal 개당 수량 × 수량; a stored 총 수량 equal to 수량 (old screens) is recomputed at send time.
     @Test
+    void withUsableUnitCase_matchesListedUnitIgnoringCase() {
+        List<String> volume = List.of("L", "ml");
+        assertThat(CoupangListingAdapter.withUsableUnitCase("2.1l", volume)).isEqualTo("2.1L");
+        assertThat(CoupangListingAdapter.withUsableUnitCase("500ML", volume)).isEqualTo("500ml");
+        assertThat(CoupangListingAdapter.withUsableUnitCase("500ml", volume)).isEqualTo("500ml");
+        // no case-insensitive match / bare number / no list → unchanged
+        assertThat(CoupangListingAdapter.withUsableUnitCase("2cc", volume)).isEqualTo("2cc");
+        assertThat(CoupangListingAdapter.withUsableUnitCase("4", volume)).isEqualTo("4");
+        assertThat(CoupangListingAdapter.withUsableUnitCase("2.1l", List.of())).isEqualTo("2.1l");
+        assertThat(CoupangListingAdapter.withUsableUnitCase("비건", List.of("개"))).isEqualTo("비건");
+    }
+
+    @Test
     void withConsistentGrandTotal_recomputesFromPerUnitTimesQuantity() {
         Map<String, String> sent = CoupangListingAdapter.withConsistentGrandTotal(new java.util.LinkedHashMap<>(
                 Map.of("수량", "2", "총 수량", "2", "개당 수량", "12", "최소 중량", "1.3g")));
