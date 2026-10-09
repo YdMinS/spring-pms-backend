@@ -771,6 +771,11 @@ public class CoupangListingAdapter implements ListingChannel {
         Map<String, String> unitByAttr = schema.attributes().stream()
                 .filter(a -> a.sendUnit() != null)
                 .collect(Collectors.toMap(CategoryAttribute::name, CategoryAttribute::sendUnit, (a, b) -> a));
+        // Attribute name → units Coupang accepts. A value that already carries a unit is matched against this
+        // list ignoring case (2026-10-09: 개당 용량 "2.1l" rejected — the category lists only "L"/"ml").
+        Map<String, List<String>> usableByAttr = schema.attributes().stream()
+                .filter(a -> a.usableUnits() != null && !a.usableUnits().isEmpty())
+                .collect(Collectors.toMap(CategoryAttribute::name, CategoryAttribute::usableUnits, (a, b) -> a));
         // 총 수량 is derived (개당 수량 × 수량). Approved tea listings carry none, so send it only where the
         // category makes it MANDATORY.
         boolean grandTotalRequired = schema.attributes().stream()
@@ -848,7 +853,7 @@ public class CoupangListingAdapter implements ListingChannel {
                     attrs.remove(GRAND_TOTAL_QUANTITY);
                 }
                 if (!attrs.isEmpty()) {
-                    item.put("attributes", toAttributes(attrs, unitByAttr));
+                    item.put("attributes", toAttributes(attrs, unitByAttr, usableByAttr));
                 }
             }
             Map<String, String> notices = mergedNotices(masterNotices, mo, option);
@@ -1058,15 +1063,44 @@ public class CoupangListingAdapter implements ListingChannel {
     }
 
     private static List<Map<String, Object>> toAttributes(Map<String, String> values,
-                                                          Map<String, String> unitByAttr) {
+                                                          Map<String, String> unitByAttr,
+                                                          Map<String, List<String>> usableByAttr) {
         List<Map<String, Object>> attributes = new ArrayList<>();
         for (Map.Entry<String, String> entry : values.entrySet()) {
             Map<String, Object> attribute = new LinkedHashMap<>();
             attribute.put("attributeTypeName", entry.getKey());
-            attribute.put("attributeValueName", withUnit(entry.getKey(), entry.getValue(), unitByAttr));
+            attribute.put("attributeValueName", withUsableUnitCase(
+                    withUnit(entry.getKey(), entry.getValue(), unitByAttr), usableByAttr.get(entry.getKey())));
             attributes.add(attribute);
         }
         return attributes;
+    }
+
+    /**
+     * Rewrites the unit suffix of {@code "number + unit"} to the spelling Coupang lists in {@code usableUnits} when
+     * they differ only by case ({@code "2.1l"} → {@code "2.1L"}). Coupang rejects the whole register with
+     * "유효하지 않은 구매 옵션 값 혹은 단위가 존재합니다" for a unit that is not in the list (2026-10-09, 개당 용량).
+     * A suffix that matches no usable unit, a bare number, or an attribute without a unit list is returned unchanged.
+     * The stored value is never mutated.
+     */
+    static String withUsableUnitCase(String value, List<String> usableUnits) {
+        if (value == null || usableUnits == null || usableUnits.isEmpty()) {
+            return value;
+        }
+        var matcher = NUMBER_WITH_SUFFIX.matcher(value.trim());
+        if (!matcher.matches()) {
+            return value;
+        }
+        String suffix = matcher.group(2).trim();
+        if (usableUnits.contains(suffix)) {
+            return value;
+        }
+        for (String unit : usableUnits) {
+            if (unit.equalsIgnoreCase(suffix)) {
+                return matcher.group(1) + unit;
+            }
+        }
+        return value;
     }
 
     /**
