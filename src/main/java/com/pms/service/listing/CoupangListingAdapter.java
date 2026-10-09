@@ -264,7 +264,8 @@ public class CoupangListingAdapter implements ListingChannel {
                 thumbnailImages(data),
                 detailImages(data),
                 options,
-                asTextOrNull(data, "statusName"));
+                asTextOrNull(data, "statusName"),
+                asTextOrNull(data, "displayProductName"));
     }
 
     /**

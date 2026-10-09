@@ -905,6 +905,20 @@ class CoupangListingAdapterTest {
      * 순서는 응답 순서(= 대표 순서·설명 흐름) 그대로다.
      */
     @Test
+    void fetchProduct_readsDisplayProductNameSeparatelyFromRegistrationName() {
+        given(client.get(anyString(), eq(""), any())).willReturn(
+                "{\"code\":\"SUCCESS\",\"data\":{\"statusName\":\"승인완료\","
+                        + "\"sellerProductName\":\"등록상품명\",\"displayProductName\":\"노출상품명\","
+                        + "\"items\":[{\"itemName\":\"6입\",\"vendorItemId\":8123,\"salePrice\":12900}]}}");
+
+        ImportedProduct product = adapter.fetchProduct("222333444", acct());
+
+        assertThat(product.productName()).isEqualTo("등록상품명");
+        assertThat(product.displayProductName()).isEqualTo("노출상품명");
+        assertThat(product.displayName()).isEqualTo("노출상품명");
+    }
+
+    @Test
     void fetchProduct_splitsThumbnailAndDetailImages() {
         given(client.get(anyString(), eq(""), any())).willReturn(
                 "{\"code\":\"SUCCESS\",\"data\":{\"statusName\":\"승인완료\",\"items\":["

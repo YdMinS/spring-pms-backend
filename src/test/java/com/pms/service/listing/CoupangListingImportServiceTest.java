@@ -435,6 +435,38 @@ class CoupangListingImportServiceTest {
     }
 
     @Test
+    void testImportStoresMarketDisplayNameAsDisplayName() {
+        MasterProductOption existing = masterOption(10L, "1세트");
+        ImportedProduct market = new ImportedProduct("노브랜드 생수 2L 6입", null, COUPANG_CATEGORY,
+                ListingStatus.SELLING, List.of(), null, List.of(), List.of(),
+                List.of(marketOption("6입", "8123", "12900")), null, "생수 2L 6병 묶음");
+        givenImportReady(market, List.of(existing),
+                List.of(MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_A)).quantity(6).build(),
+                        MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_B)).quantity(1).build()));
+
+        service.importListing(MASTER_ID, importRequest(spec("6입", "8123", 6, 1)));
+
+        ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(captor.capture());
+        // 노출상품명 = the market's displayProductName, never its 등록상품명 (2026-10-09 swap)
+        assertThat(captor.getValue().getName()).isEqualTo("생수 2L 6병 묶음");
+    }
+
+    @Test
+    void testImportFallsBackToRegistrationNameWhenMarketHasNoDisplayName() {
+        MasterProductOption existing = masterOption(10L, "1세트");
+        givenImportReady(marketProduct(marketOption("6입", "8123", "12900")), List.of(existing),
+                List.of(MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_A)).quantity(6).build(),
+                        MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_B)).quantity(1).build()));
+
+        service.importListing(MASTER_ID, importRequest(spec("6입", "8123", 6, 1)));
+
+        ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(captor.capture());
+        assertThat(captor.getValue().getName()).isEqualTo("노브랜드 생수 2L 6입");
+    }
+
+    @Test
     void testImportRejectsMissingComponent() {
         givenMaster();
         givenForwardMapping(true);

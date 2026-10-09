@@ -221,9 +221,10 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
                 // 2609_45/D12: the group of THAT category. null when the master's category is in force —
                 // leaving a stale group would filter the notices of a schema this cell no longer uses.
                 .categoryNoticeGroup(keepsOwnCategory ? fetched.noticeGroup() : null)
-                // The market name is display data; a missing one would violate NOT NULL, so fall back.
-                .name(fetched.productName() == null || fetched.productName().isBlank()
-                        ? ctx.master().getName() : fetched.productName())
+                // 노출상품명 = the market's displayProductName (등록상품명 when absent) — never the 등록상품명 first,
+                // or the next push swaps the two names. A missing one would violate NOT NULL, so fall back.
+                .name(fetched.displayName() == null || fetched.displayName().isBlank()
+                        ? ctx.master().getName() : fetched.displayName())
                 // D19: the product is already live on the market — take its status, and it is not pending sync.
                 .status(fetched.status())
                 .needsMarketSync(false)
