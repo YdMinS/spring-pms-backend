@@ -781,8 +781,6 @@ public class CoupangListingAdapter implements ListingChannel {
         // category makes it MANDATORY.
         boolean grandTotalRequired = schema.attributes().stream()
                 .anyMatch(a -> GRAND_TOTAL_QUANTITY.equals(a.name()) && a.required());
-        boolean quantityRequired = schema.attributes().stream()
-                .anyMatch(a -> QUANTITY.equals(a.name()) && a.required());
 
         // 63: bundleType = product-level SINGLE (single composition) / AB (mixed composition). Determined once
         // (loop-invariant local boolean, no N+1) by the master's component count. AB forbids attributes entirely.
@@ -855,7 +853,6 @@ public class CoupangListingAdapter implements ListingChannel {
                     attrs = new LinkedHashMap<>(attrs);
                     attrs.remove(GRAND_TOTAL_QUANTITY);
                 }
-                attrs = withoutRedundantQuantity(attrs, quantityRequired);
                 if (!attrs.isEmpty()) {
                     item.put("attributes", toAttributes(attrs, unitByAttr, usableByAttr));
                 }
@@ -1056,35 +1053,6 @@ public class CoupangListingAdapter implements ListingChannel {
         Map<String, String> fixed = new LinkedHashMap<>(attrs);
         fixed.put(GRAND_TOTAL_QUANTITY, String.valueOf(perUnit * quantity));
         return fixed;
-    }
-
-    private static final Pattern LEADING_COUNT = Pattern.compile("^(\\d+)\\D*$");
-
-    /**
-     * Coupang joins every EXPOSED attribute into the option label on the sales page (커피 58795: 개당 용량 · 총 수량 ·
-     * 수량). With 개당 수량 absent or 1, 수량 equals 총 수량 and the label reads "2.1L x 4개 x 4개" (2026-10-09) — so an
-     * OPTIONAL 수량 that only repeats 총 수량 is not sent. Kept when the category requires it, when 총 수량 is not sent,
-     * or when the two differ (12개입 × 2 → 총 24 · 수량 2). The stored value is never mutated.
-     */
-    static Map<String, String> withoutRedundantQuantity(Map<String, String> attrs, boolean quantityRequired) {
-        if (quantityRequired || !attrs.containsKey(QUANTITY) || !attrs.containsKey(GRAND_TOTAL_QUANTITY)) {
-            return attrs;
-        }
-        String perUnitValue = attrs.get(PER_UNIT_QUANTITY);
-        if (perUnitValue != null && !perUnitValue.isBlank()) {
-            java.util.regex.Matcher m = LEADING_COUNT.matcher(perUnitValue.trim());
-            if (!m.matches() || Long.parseLong(m.group(1)) != 1L) {
-                return attrs;
-            }
-        }
-        Long quantity = countOf(attrs.get(QUANTITY));
-        Long total = countOf(attrs.get(GRAND_TOTAL_QUANTITY));
-        if (quantity == null || !quantity.equals(total)) {
-            return attrs;
-        }
-        Map<String, String> trimmed = new LinkedHashMap<>(attrs);
-        trimmed.remove(QUANTITY);
-        return trimmed;
     }
 
     private static Long countOf(String value) {
