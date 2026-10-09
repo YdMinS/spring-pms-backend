@@ -33,10 +33,30 @@ import java.util.Map;
  *                     그대로. 원본에 가까운 제품 사진은 여기 있다. never null, empty when absent
  * @param options      marketplace options; never null, empty when absent
  * @param statusName marketplace status as the market wrote it (Coupang {@code statusName}, 예 "부분승인완료"); null when absent
+ * @param displayProductName marketplace 노출상품명 (Coupang {@code displayProductName}); null when absent.
+ *                     🔴 {@code productName} is the 등록상품명 — use {@link #displayName()} for our 노출상품명.
  */
 public record ImportedProduct(String productName, String brand, String categoryCode, ListingStatus status,
                               List<String> tags, String noticeGroup, List<String> thumbnailImages,
-                              List<String> detailImages, List<Option> options, String statusName) {
+                              List<String> detailImages, List<Option> options, String statusName,
+                              String displayProductName) {
+
+    /** 2026-10-09 이전의 10인자 형태 — {@code displayProductName = null}. */
+    public ImportedProduct(String productName, String brand, String categoryCode, ListingStatus status,
+                           List<String> tags, String noticeGroup, List<String> thumbnailImages,
+                           List<String> detailImages, List<Option> options, String statusName) {
+        this(productName, brand, categoryCode, status, tags, noticeGroup, thumbnailImages, detailImages,
+                options, statusName, null);
+    }
+
+    /**
+     * The name for our 노출상품명 ({@code ProductListing.name}): the market's {@code displayProductName}, or the
+     * 등록상품명 when the market has none. Storing the 등록상품명 there (as import used to) swapped the two names on
+     * the next push — the 등록상품명 went out as {@code displayProductName} (2026-10-09).
+     */
+    public String displayName() {
+        return displayProductName != null && !displayProductName.isBlank() ? displayProductName : productName;
+    }
 
     /** 2609_74 이전의 9인자 형태를 쓰는 호출부(테스트·레거시)를 위한 편의 생성자 — {@code statusName = null}. */
     public ImportedProduct(String productName, String brand, String categoryCode, ListingStatus status,
