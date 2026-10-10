@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -142,5 +143,34 @@ class CategoryMappingControllerTest extends BaseIntegrationTest {
         mockMvc.perform(get(path()).header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(0));
+    }
+
+    // ---- FEATURE_2610_10 / D21 ③ ④: an 11st leaf from the imported list saves; a missing code names 11st ----
+
+    @Test
+    void putMapping_elevenstLeafInList_returns200AndLinksPlatformCategory() throws Exception {
+        PlatformCategory elevenstLeaf = platformCategoryRepository.save(PlatformCategory.builder()
+                .platform(Platform.ELEVENST).code("1017898").name("스마트워치").build());
+
+        mockMvc.perform(put(path()).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"platform\":\"ELEVENST\",\"platformCategoryId\":\"1017898\","
+                                + "\"platformCategoryName\":\"스마트기기 > 스마트워치\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.platform").value("ELEVENST"))
+                .andExpect(jsonPath("$.data.platformCategoryId").value("1017898"));
+
+        assertThat(categoryMappingRepository.findByCategoryIdAndPlatform(categoryId, Platform.ELEVENST)
+                .orElseThrow().getPlatformCategory().getId()).isEqualTo(elevenstLeaf.getId());
+    }
+
+    @Test
+    void putMapping_elevenstCodeNotInList_returns400WithElevenstText() throws Exception {
+        mockMvc.perform(put(path()).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"platform\":\"ELEVENST\",\"platformCategoryId\":\"999\","
+                                + "\"platformCategoryName\":\"경로\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("11번가 카테고리 목록에 없는 코드입니다."));
     }
 }

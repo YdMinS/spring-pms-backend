@@ -60,6 +60,9 @@ dependencies {
     // EXIF Orientation read at decode time (FEATURE_2609_81)
     implementation 'com.drewnoakes:metadata-extractor:2.19.0'
 
+    // 11st fee notice HTML (browser-saved page) parsing (FEATURE_2610_10 / D33)
+    implementation 'org.jsoup:jsoup:1.23.2'
+
     // Test
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.mockito:mockito-core'

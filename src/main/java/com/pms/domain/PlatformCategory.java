@@ -20,9 +20,10 @@ import java.math.BigDecimal;
  * {@code toBuilder}.</p>
  *
  * <p>⚠️ Only <b>leaf</b> nodes carry a {@code code} (the mall code) and a commission; intermediate nodes are
- * path segments created by the 53 import with {@code code = null} and (optionally) {@code commissionRate =
- * null}. The unique index (platform, code) tolerates multiple NULL codes on both MySQL and H2 (MODE=MySQL),
- * so intermediate nodes coexist fine (no partial-unique / app-level fallback needed).</p>
+ * path segments created by the imports (Coupang 53 · 11st FEATURE_2610_10) with {@code code = null} and
+ * (optionally) {@code commissionRate = null}. The unique index (platform, code) tolerates multiple NULL codes on
+ * both MySQL and H2 (MODE=MySQL), so intermediate nodes coexist fine (no partial-unique / app-level fallback
+ * needed).</p>
  *
  * @see CategoryMapping for the standard → platform-category FK link
  * @see com.pms.repository.PlatformCategoryRepository

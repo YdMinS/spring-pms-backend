@@ -31,7 +31,8 @@ package com.pms.domain;
  */
 public enum Platform {
     COUPANG,
-    NAVER;
+    NAVER,
+    ELEVENST;
 
     /**
      * API 경계에서 문자열을 받을 때만 쓴다. 알 수 없는 값은 400.
