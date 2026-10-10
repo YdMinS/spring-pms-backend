@@ -11,7 +11,8 @@ import java.util.stream.Collectors;
 /**
  * Resolves the {@link CategoryLookup} adapter for a platform (FEATURE_2608_06 / 45). Mirrors
  * {@code ListingChannelResolver}: Spring injects every {@link CategoryLookup} bean; {@link #resolve} matches on
- * {@link CategoryLookup#platform()}. Currently only COUPANG; the NAVER adapter joins later with no change here.
+ * {@link CategoryLookup#platform()}. Currently COUPANG and ELEVENST; the NAVER adapter joins later with no change
+ * here.
  */
 @Component
 public class CategoryLookupResolver {

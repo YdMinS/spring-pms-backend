@@ -142,6 +142,40 @@ class CategoryLookupControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isBadRequest());
     }
 
+    // ---- FEATURE_2610_10 / D23: 11st reads the imported list, no account needed ----
+
+    @Test
+    void tree_elevenstWithoutAccount_returnsImportedNodesAndDrillsById() throws Exception {
+        PlatformCategory root = platformCategoryRepository.save(PlatformCategory.builder()
+                .platform(Platform.ELEVENST).name("스마트기기").build());
+        platformCategoryRepository.save(PlatformCategory.builder()
+                .platform(Platform.ELEVENST).code("1017898").name("스마트워치").parent(root).build());
+
+        mockMvc.perform(get("/api/admin/category-lookup/ELEVENST/tree")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].platformCategoryId").value("id:" + root.getId()))
+                .andExpect(jsonPath("$.data[0].leaf").value(false));
+
+        mockMvc.perform(get("/api/admin/category-lookup/ELEVENST/tree")
+                        .param("parentCode", "id:" + root.getId())
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].platformCategoryId").value("1017898"))
+                .andExpect(jsonPath("$.data[0].name").value("스마트워치"))
+                .andExpect(jsonPath("$.data[0].leaf").value(true));
+    }
+
+    @Test
+    void predict_elevenst_returns400() throws Exception {
+        mockMvc.perform(get("/api/admin/category-lookup/ELEVENST/predict")
+                        .param("productName", "여성 반팔티")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("11번가는 상품명 추천을 지원하지 않습니다."));
+    }
+
     // ---- blank productName → 400 ----
 
     @Test

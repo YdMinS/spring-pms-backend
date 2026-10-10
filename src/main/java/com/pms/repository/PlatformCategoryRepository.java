@@ -24,4 +24,7 @@ public interface PlatformCategoryRepository extends JpaRepository<PlatformCatego
 
     /** Intermediate-node upsert key for the 53 import (declared here, consumed there). */
     Optional<PlatformCategory> findByPlatformAndParentAndName(Platform platform, PlatformCategory parent, String name);
+
+    /** Every node of one platform's tree — the 11st tree / fee imports match in memory (FEATURE_2610_10). */
+    List<PlatformCategory> findByPlatform(Platform platform);
 }
