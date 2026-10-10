@@ -21,8 +21,8 @@ public class RestClientConfig {
      * Timeouts must not be set in CoupangApiClientImpl's constructor: CoupangApiClientTest binds
      * MockRestServiceServer to the builder before constructing the client, so a constructor-side
      * requestFactory(...) would overwrite the mock factory and break that test.
-     * The Coupang client is currently the only RestClient consumer; any future one inherits these
-     * timeouts by design (no unbounded external call).
+     * Consumers: the Coupang client and the 11st category client (FEATURE_2610_10); any future one inherits
+     * these timeouts by design (no unbounded external call).
      *
      * ⚠️ The factory type is named explicitly instead of letting {@code ClientHttpRequestFactories.get(settings)}
      * pick one. That fallback probes Apache -> Jetty -> OkHttp -> Simple, and none of the first three are on

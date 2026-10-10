@@ -4,6 +4,7 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.service.listing.category.CategoryLookup;
 import com.pms.service.listing.category.CategoryLookupResolver;
 import com.pms.service.listing.category.CategoryNode;
 import com.pms.service.listing.category.CategorySuggestion;
@@ -16,7 +17,8 @@ import java.util.List;
 
 /**
  * {@link CategoryLookupService} implementation (FEATURE_2608_06 / 45). Delegation-only layer: resolve the
- * account, then call the resolved {@code CategoryLookup} adapter.
+ * {@code CategoryLookup} adapter, resolve the account only when the adapter requires one (11st does not —
+ * FEATURE_2610_10 / D23), then call the adapter.
  */
 @Service
 @RequiredArgsConstructor
@@ -28,8 +30,9 @@ public class CategoryLookupServiceImpl implements CategoryLookupService {
 
     @Override
     public List<CategoryNode> browse(Platform platform, String parentCode, Long sellerId) {
-        MarketplaceAccount account = resolveAccount(platform, sellerId);
-        return resolver.resolve(platform).browse(account, parentCode);
+        CategoryLookup lookup = resolver.resolve(platform);
+        MarketplaceAccount account = lookup.requiresAccount() ? resolveAccount(platform, sellerId) : null;
+        return lookup.browse(account, parentCode);
     }
 
     @Override
@@ -37,8 +40,9 @@ public class CategoryLookupServiceImpl implements CategoryLookupService {
         if (!StringUtils.hasText(productName)) {
             throw new IllegalArgumentException("productName 필수");
         }
-        MarketplaceAccount account = resolveAccount(platform, sellerId);
-        return resolver.resolve(platform).predict(account, productName);
+        CategoryLookup lookup = resolver.resolve(platform);
+        MarketplaceAccount account = lookup.requiresAccount() ? resolveAccount(platform, sellerId) : null;
+        return lookup.predict(account, productName);
     }
 
     /**
