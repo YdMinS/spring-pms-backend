@@ -2,8 +2,10 @@ package com.pms.service;
 
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
+import com.pms.domain.PlatformCategory;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.PlatformCategoryRepository;
 import com.pms.service.listing.category.CategoryLookup;
 import com.pms.service.listing.category.CategoryLookupResolver;
 import com.pms.service.listing.category.CategoryNode;
@@ -13,12 +15,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
 
 /**
  * {@link CategoryLookupService} implementation (FEATURE_2608_06 / 45). Delegation-only layer: resolve the
  * {@code CategoryLookup} adapter, resolve the account only when the adapter requires one (11st does not —
- * FEATURE_2610_10 / D23), then call the adapter.
+ * FEATURE_2610_10 / D23), then call the adapter. Name search reads {@code platform_category} directly.
  */
 @Service
 @RequiredArgsConstructor
@@ -27,6 +31,7 @@ public class CategoryLookupServiceImpl implements CategoryLookupService {
 
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final CategoryLookupResolver resolver;
+    private final PlatformCategoryRepository platformCategoryRepository;
 
     @Override
     public List<CategoryNode> browse(Platform platform, String parentCode, Long sellerId) {
@@ -43,6 +48,27 @@ public class CategoryLookupServiceImpl implements CategoryLookupService {
         CategoryLookup lookup = resolver.resolve(platform);
         MarketplaceAccount account = lookup.requiresAccount() ? resolveAccount(platform, sellerId) : null;
         return lookup.predict(account, productName);
+    }
+
+    @Override
+    public List<CategorySuggestion> search(Platform platform, String keyword) {
+        if (!StringUtils.hasText(keyword)) {
+            throw new IllegalArgumentException("검색어를 입력하세요.");
+        }
+        return platformCategoryRepository
+                .findTop50ByPlatformAndCodeIsNotNullAndNameContainingOrderByNameAsc(platform, keyword.trim())
+                .stream()
+                .map(pc -> new CategorySuggestion(pc.getCode(), pc.getName(), namePathOf(pc)))
+                .toList();
+    }
+
+    /** Root → leaf names joined with " > " (parents are lazy; the read-only transaction keeps them loadable). */
+    private static String namePathOf(PlatformCategory leaf) {
+        Deque<String> names = new ArrayDeque<>();
+        for (PlatformCategory node = leaf; node != null; node = node.getParent()) {
+            names.addFirst(node.getName());
+        }
+        return String.join(" > ", names);
     }
 
     /**

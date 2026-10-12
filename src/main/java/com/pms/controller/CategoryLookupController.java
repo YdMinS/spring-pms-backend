@@ -17,7 +17,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 /**
- * Category lookup endpoints (FEATURE_2608_06 / 45): tree drill-down + product-name prediction, so the mapping
+ * Category lookup endpoints (FEATURE_2608_06 / 45): tree drill-down + product-name prediction + name search, so the mapping
  * screen (F1) obtains platform codes without hand-typing. ADMIN-only via the global {@code GET /api/admin/**}
  * rule (SecurityConfig) — no per-method {@code @PreAuthorize}. Lookup only (mapping persistence = 44).
  */
@@ -55,6 +55,19 @@ public class CategoryLookupController {
                         .map(CategorySuggestionResponse::from)
                         .toList();
         return ResponseEntity.ok(ResponseDTO.success(suggestions));
+    }
+
+    @GetMapping("/{platform}/search")
+    @Operation(summary = "Search imported leaf categories by name (up to 50, with name path; no account needed)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<List<CategorySuggestionResponse>>> search(
+            @PathVariable String platform,
+            @RequestParam String keyword) {
+        List<CategorySuggestionResponse> results =
+                categoryLookupService.search(Platform.from(platform), keyword).stream()
+                        .map(CategorySuggestionResponse::from)
+                        .toList();
+        return ResponseEntity.ok(ResponseDTO.success(results));
     }
 
     @GetMapping("/{platform}/meta")

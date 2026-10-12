@@ -37,4 +37,14 @@ public interface CategoryLookupService {
      * @return 0~N candidates
      */
     List<CategorySuggestion> predict(Platform platform, String productName, Long sellerId);
+
+    /**
+     * Search the imported platform categories by name (the picker search box). Reads {@code platform_category}
+     * only — no marketplace call and no account, for every platform.
+     *
+     * @param platform platform key (e.g. "COUPANG")
+     * @param keyword  part of a leaf category name (blank → 400)
+     * @return up to 50 leaf categories with their full name path, ordered by name
+     */
+    List<CategorySuggestion> search(Platform platform, String keyword);
 }
