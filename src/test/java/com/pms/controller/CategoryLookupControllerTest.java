@@ -31,7 +31,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Category lookup endpoints (FEATURE_2608_06 / 45): authority (401/403/200) + tree/predict happy paths, no
+ * Category lookup endpoints (FEATURE_2608_06 / 45): authority (401/403/200) + tree/predict/search happy paths, no
  * active account 400 (no sellerId), and blank productName 400. {@link CoupangApiClient} is mocked (no live
  * HTTP) — the real adapter/resolver/service still run.
  */
@@ -174,6 +174,45 @@ class CategoryLookupControllerTest extends BaseIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("11번가는 상품명 추천을 지원하지 않습니다."));
+    }
+
+    // ---- name search: imported leaves only, path joined, no account needed ----
+
+    @Test
+    void search_userToken_returns403() throws Exception {
+        mockMvc.perform(get("/api/admin/category-lookup/ELEVENST/search")
+                        .param("keyword", "테이블")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void search_adminToken_returnsMatchingLeavesWithPathOnlyForThatPlatform() throws Exception {
+        PlatformCategory root = platformCategoryRepository.save(PlatformCategory.builder()
+                .platform(Platform.ELEVENST).name("가구").build());
+        PlatformCategory mid = platformCategoryRepository.save(PlatformCategory.builder()
+                .platform(Platform.ELEVENST).name("거실테이블").parent(root).build());
+        platformCategoryRepository.save(PlatformCategory.builder()
+                .platform(Platform.ELEVENST).code("1001").name("사이드테이블").parent(mid).build());
+        platformCategoryRepository.save(PlatformCategory.builder()
+                .platform(Platform.COUPANG).code("2001").name("사이드테이블").build());
+
+        mockMvc.perform(get("/api/admin/category-lookup/ELEVENST/search")
+                        .param("keyword", "테이블")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].platformCategoryId").value("1001"))
+                .andExpect(jsonPath("$.data[0].name").value("사이드테이블"))
+                .andExpect(jsonPath("$.data[0].namePath").value("가구 > 거실테이블 > 사이드테이블"));
+    }
+
+    @Test
+    void search_blankKeyword_returns400() throws Exception {
+        mockMvc.perform(get("/api/admin/category-lookup/COUPANG/search")
+                        .param("keyword", " ")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest());
     }
 
     // ---- blank productName → 400 ----
