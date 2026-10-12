@@ -27,4 +27,8 @@ public interface PlatformCategoryRepository extends JpaRepository<PlatformCatego
 
     /** Every node of one platform's tree — the 11st tree / fee imports match in memory (FEATURE_2610_10). */
     List<PlatformCategory> findByPlatform(Platform platform);
+
+    /** Leaf rows (code present) whose name contains the keyword — the picker name search, capped at 50. */
+    List<PlatformCategory> findTop50ByPlatformAndCodeIsNotNullAndNameContainingOrderByNameAsc(
+            Platform platform, String keyword);
 }
