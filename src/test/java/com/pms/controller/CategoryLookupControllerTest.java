@@ -264,6 +264,17 @@ class CategoryLookupControllerTest extends BaseIntegrationTest {
     }
 
     @Test
+    void meta_platformCategoryCodeWithoutCategoryId_adminToken_returns200() throws Exception {
+        // FEATURE_2610_12 / D45: the add screen's 「개별 지정」 tab reads the picked code, no category id.
+        seedActiveCoupangAccount();
+        mockMvc.perform(get("/api/admin/category-lookup/COUPANG/meta")
+                        .param("platformCategoryCode", "cat-9")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.attributes").isEmpty());
+    }
+
+    @Test
     void meta_missingCategoryId_returns400() throws Exception {
         mockMvc.perform(get("/api/admin/category-lookup/COUPANG/meta")
                         .header("Authorization", "Bearer " + adminToken))

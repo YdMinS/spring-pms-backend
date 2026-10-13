@@ -92,9 +92,11 @@ public class MasterProduct extends BaseEntity {
 
     /**
      * Single standard category for this master (FEATURE_2608_06 / 44). Nullable (transitional / unset). The
-     * commission lookup uses this category's id; the per-platform marketplace code is resolved from
-     * {@link CategoryMapping} (standard × platform). Replaces the old {@code MasterProductCategory}
-     * (master × platform) — the master now picks one standard category, not one per platform.
+     * commission lookup uses this category's id; the per-platform marketplace code is resolved from the master's
+     * own platform category ({@link MasterPlatformCategory}, FEATURE_2610_12 / D41) or else {@link CategoryMapping}
+     * (standard × platform). Replaces the old {@code MasterProductCategory} (master × platform) — the master picks
+     * one standard category; a per-platform category of its own is the optional 「개별 지정」 row. Changing this
+     * category deletes those rows (D42).
      */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "category_id", nullable = true)

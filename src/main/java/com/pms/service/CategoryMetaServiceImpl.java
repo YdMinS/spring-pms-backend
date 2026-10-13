@@ -1,6 +1,5 @@
 package com.pms.service;
 
-import com.pms.domain.Category;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.Platform;
@@ -33,22 +32,26 @@ public class CategoryMetaServiceImpl implements CategoryMetaService {
 
     @Override
     public CategoryMetaSchema getSchema(Long categoryId, Platform platform) {
-        // Schema is (platform × category)-dependent, not master-dependent — resolve the code from the category
-        // id directly. Missing category / missing mapping → 400.
+        // This path has a standard category id and no master — resolve the code from the category id
+        // directly (no own platform category here, FEATURE_2610_12). Missing category / missing mapping → 400.
         String code = masterChannelConfigService.resolvePlatformCategoryCode(categoryId, platform);
+        return getSchemaByPlatformCategoryCode(code, platform);
+    }
+
+    @Override
+    public CategoryMetaSchema getSchemaByPlatformCategoryCode(String platformCategoryCode, Platform platform) {
         MarketplaceAccount account = resolveAccount(platform);
-        return metaResolver.resolve(platform).getMeta(account, code);   // empty schema allowed
+        return metaResolver.resolve(platform).getMeta(account, platformCategoryCode);   // empty schema allowed
     }
 
     @Override
     public CategoryMetaResponse getMeta(Long masterId, Platform platform) {
         MasterProduct master = requireScopedMaster(masterId);
-        Category standard = master.getCategory();
-        if (standard == null) {
-            throw new IllegalArgumentException("표준 카테고리 미설정");
-        }
-        // Reuse the category-scoped schema lookup, then layer the master's stored values on top.
-        CategoryMetaSchema schema = getSchema(standard.getId(), platform);
+        // FEATURE_2610_12 / D45: the master resolution — its own platform category wins, else the standard
+        // category mapping (no standard category → 400 「표준 카테고리 미설정」 from the resolver). Then the
+        // master's stored values are layered on top.
+        String code = masterChannelConfigService.resolvePlatformCategoryCode(master, platform);
+        CategoryMetaSchema schema = getSchemaByPlatformCategoryCode(code, platform);
 
         return CategoryMetaResponse.builder()
                 .attributes(schema.attributes())

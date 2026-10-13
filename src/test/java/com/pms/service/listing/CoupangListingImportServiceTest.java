@@ -20,8 +20,10 @@ import com.pms.dto.request.ListingImportPreviewRequest;
 import com.pms.dto.request.ListingImportRequest;
 import com.pms.dto.response.ChannelAddResponse;
 import com.pms.dto.response.ListingImportPreviewResponse;
+import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.MasterPlatformCategoryRepository;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
@@ -76,6 +78,7 @@ class CoupangListingImportServiceTest {
     @Mock private SellerRepository sellerRepository;
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock private CategoryMappingRepository categoryMappingRepository;
+    @Mock private MasterPlatformCategoryRepository masterPlatformCategoryRepository;
     @Mock private PlatformCategoryRepository platformCategoryRepository;
     @Mock private ListingChannelResolver resolver;
     @Mock private MasterOptionChannelSync masterOptionChannelSync;
@@ -273,6 +276,20 @@ class CoupangListingImportServiceTest {
         assertThatThrownBy(() -> service.preview(MASTER_ID, previewRequest()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("카테고리 매핑 미설정");
+        verifyNothingSaved();
+    }
+
+    @Test
+    void testPreviewMasterOwnPlatformCategoryPassesTheForwardGuard() {
+        // FEATURE_2610_12 / D41: an own platform category is a forward category too — the preview gets past
+        // the category guard and stops at the next one (no seller stubbed → 404).
+        givenMaster();
+        givenForwardMapping(false);
+        given(masterPlatformCategoryRepository.existsByMasterProductIdAndPlatform(MASTER_ID, PLATFORM))
+                .willReturn(true);
+
+        assertThatThrownBy(() -> service.preview(MASTER_ID, previewRequest()))
+                .isInstanceOf(ResourceNotFoundException.class);
         verifyNothingSaved();
     }
 

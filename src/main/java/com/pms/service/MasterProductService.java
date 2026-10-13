@@ -208,14 +208,14 @@ public interface MasterProductService {
      */
     ApplyOptionNamesResponse applyMasterOptionNames(Long masterId);
 
-    /** Set the master's single standard category (FEATURE_2608_06 / 44). 404 if master/category absent. */
+    /**
+     * Set the master's single standard category (FEATURE_2608_06 / 44). 404 if master/category absent. A
+     * different category id deletes the master's own platform categories (FEATURE_2610_12 / D42 · D53).
+     */
     MasterCategoryResponse setCategory(Long masterId, MasterCategoryRequest request);
 
     /** Get the master's standard category (both fields null if unset). */
     MasterCategoryResponse getCategory(Long masterId);
-
-    /** Clear the master's standard category (idempotent; sets it to null). */
-    void clearCategory(Long masterId);
 
     /**
      * Upload a base-image override (FEATURE_2608_06 / 3b-2): validates + stores the file and sets

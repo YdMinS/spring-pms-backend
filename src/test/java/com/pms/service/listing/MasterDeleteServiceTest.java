@@ -10,6 +10,7 @@ import com.pms.domain.ProductListing;
 import com.pms.exception.BusinessException;
 import com.pms.exception.MasterProductInUseException;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.MasterPlatformCategoryRepository;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductImageRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
@@ -55,6 +56,7 @@ class MasterDeleteServiceTest {
     @Mock private MasterProductOptionRepository optionRepository;
     @Mock private MasterProductOptionItemRepository optionItemRepository;
     @Mock private MasterProductImageRepository imageRepository;
+    @Mock private MasterPlatformCategoryRepository masterPlatformCategoryRepository;
     @Mock private MasterProductImageService masterProductImageService;
     @Mock private ChannelLinkService channelLinkService;
     @InjectMocks private MasterDeleteServiceImpl service;
@@ -93,11 +95,13 @@ class MasterDeleteServiceTest {
         service.deleteMaster(MASTER_ID);
 
         InOrder order = inOrder(optionItemRepository, optionRepository, componentRepository,
-                masterProductImageService, masterProductRepository);
+                masterPlatformCategoryRepository, masterProductImageService, masterProductRepository);
         order.verify(optionItemRepository).deleteByOptionId(10L);
         order.verify(optionItemRepository).deleteByOptionId(11L);
         order.verify(optionRepository).deleteAll(any());
         order.verify(componentRepository).deleteByMasterProductId(MASTER_ID);
+        // FEATURE_2610_12: the own platform categories FK-reference the master.
+        order.verify(masterPlatformCategoryRepository).deleteByMasterProductId(MASTER_ID);
         order.verify(masterProductImageService).removeFromPool(MASTER_ID, 20L);
         order.verify(masterProductRepository).delete(any(MasterProduct.class));
     }

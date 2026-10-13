@@ -19,6 +19,7 @@ import com.pms.dto.response.ListingImportPreviewResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.MasterPlatformCategoryRepository;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
@@ -87,6 +88,7 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
     private final SellerRepository sellerRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final CategoryMappingRepository categoryMappingRepository;
+    private final MasterPlatformCategoryRepository masterPlatformCategoryRepository;
     private final PlatformCategoryRepository platformCategoryRepository;
     private final ListingChannelResolver resolver;
     private final MasterOptionChannelSync masterOptionChannelSync;
@@ -350,13 +352,15 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
         if (master.getCategory() == null) {
             throw new IllegalArgumentException("표준 카테고리 미설정");
         }
-        // 🔴 The FORWARD mapping (master.category → CategoryMapping(platform) → PlatformCategory) is what the
-        // payload and the price engine actually use, and it is a different lookup from the D14 reverse one.
+        // 🔴 The FORWARD lookup (the master's own platform category, FEATURE_2610_12 / D41, else
+        // master.category → CategoryMapping(platform) → PlatformCategory) is what the payload and the price
+        // engine actually use, and it is a different lookup from the D14 reverse one.
         // Importing without it would still "succeed" (recalculateOptionPrices skips MANUAL_OVERRIDE options, so
         // PriceCalculator is never called) and then blow up later on margin display / [재생성] / [수정 요청].
         // Block the quietly-broken cell here instead. Reverse mismatch (D14) only warns; a missing forward
         // mapping blocks — do not merge the two.
-        if (!categoryMappingRepository.existsByCategoryIdAndPlatform(master.getCategory().getId(), platform)) {
+        if (!categoryMappingRepository.existsByCategoryIdAndPlatform(master.getCategory().getId(), platform)
+                && !masterPlatformCategoryRepository.existsByMasterProductIdAndPlatform(masterProductId, platform)) {
             throw new IllegalArgumentException(platform + " 카테고리 매핑 미설정");
         }
 

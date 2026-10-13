@@ -14,6 +14,7 @@ import com.pms.dto.response.ChannelAddResponse;
 import com.pms.exception.DuplicateChannelException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CategoryMappingRepository;
+import com.pms.repository.MasterPlatformCategoryRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -58,6 +59,7 @@ public class ChannelAddServiceImpl implements ChannelAddService {
     private final ProductListingOptionRepository productListingOptionRepository;
     private final SellerRepository sellerRepository;
     private final CategoryMappingRepository categoryMappingRepository;
+    private final MasterPlatformCategoryRepository masterPlatformCategoryRepository;
     private final ListingAssetService listingAssetService;
 
     /**
@@ -94,14 +96,16 @@ public class ChannelAddServiceImpl implements ChannelAddService {
                 .orElseThrow(() -> new ResourceNotFoundException("Seller", request.getSellerId()));
 
         // Category/delivery/box are derived from the master (13). Standard category = master.category (44), and
-        // the platform code is resolved from CategoryMapping — pre-validate both before creating the cell so an
-        // un-mappable channel is blocked (SSOT §4). delivery/box are checked by the reused regenerate seam. The
-        // cell's own category/delivery/package columns stay null (deprecated).
+        // the platform code is resolved from the master's own platform category (FEATURE_2610_12 / D41) or else
+        // CategoryMapping — pre-validate both before creating the cell so an un-mappable channel is blocked
+        // (SSOT §4). delivery/box are checked by the reused regenerate seam. The cell's own
+        // category/delivery/package columns stay null (deprecated).
         if (master.getCategory() == null) {
             throw new IllegalArgumentException("표준 카테고리 미설정");
         }
         if (!categoryMappingRepository.existsByCategoryIdAndPlatform(
-                master.getCategory().getId(), platform)) {
+                master.getCategory().getId(), platform)
+                && !masterPlatformCategoryRepository.existsByMasterProductIdAndPlatform(masterProductId, platform)) {
             throw new IllegalArgumentException(platform + " 카테고리 매핑 미설정");
         }
 

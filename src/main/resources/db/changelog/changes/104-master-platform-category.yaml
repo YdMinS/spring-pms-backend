@@ -1,0 +1,40 @@
+# Per-master platform category (「개별 지정」, FEATURE_2610_12 / D40 · D53).
+#   master_platform_category = (master × platform) → platform_category row, at most one row per pair.
+# No row = the master follows its standard category's category_mapping (D40). Read order = the cell's own
+# category → this row → the standard category mapping (D41).
+# No tenant column: the row is reached only through a tenant-scoped master (MasterImageZoneAssignment pattern).
+# ⚠️ H2 constraint names are schema-global unique -> prefix mplatcat (uq_mpc is master_product_component).
+# ⚠️ No boolean column -> the 006 BIT follow-up is not needed.
+databaseChangeLog:
+
+  - changeSet:
+      id: 104-master-platform-category
+      author: oclyx
+      comment: "FEATURE_2610_12: master_platform_category (master, platform) -> platform_category."
+      changes:
+        - createTable:
+            tableName: master_platform_category
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: master_product_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: platform, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: platform_category_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: platform_category_name, type: VARCHAR(255) }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_mplatcat_master
+            baseTableName: master_platform_category
+            baseColumnNames: master_product_id
+            referencedTableName: master_product
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_mplatcat_platcat
+            baseTableName: master_platform_category
+            baseColumnNames: platform_category_id
+            referencedTableName: platform_category
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            constraintName: uq_mplatcat_master_platform
+            tableName: master_platform_category
+            columnNames: master_product_id, platform
