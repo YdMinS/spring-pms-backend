@@ -26,14 +26,26 @@ public interface CategoryMetaService {
     /**
      * The (platform × category) meta <b>schema</b> only (no values), keyed by a category id — so the master
      * <i>add</i> screen can fetch the schema before a master (and thus a masterId) exists (FEATURE_2608_06 / 57).
-     * The schema is category-dependent, not master-dependent; the master version reuses this. An empty schema
-     * is a normal 200.
+     * This and the master version both end in {@link #getSchemaByPlatformCategoryCode}; the master version
+     * resolves the code through the master (its own platform category first, FEATURE_2610_12 / D45). An empty
+     * schema is a normal 200.
      *
      * @param categoryId standard category id (400 if absent or it has no mapping for the platform)
      * @param platform   platform key (e.g. "COUPANG")
      * @return the schema (possibly empty)
      */
     CategoryMetaSchema getSchema(Long categoryId, Platform platform);
+
+    /**
+     * The meta schema for a marketplace category code picked directly (FEATURE_2610_12 / D45) — the master
+     * <i>add</i> screen reads the platform tab it set to 「개별 지정」 with this instead of the standard category id.
+     * An empty schema is a normal 200; 400 「활성 계정 없음」 when the platform has no active account.
+     *
+     * @param platformCategoryCode marketplace category code (the picker's {@code platformCategoryId})
+     * @param platform             platform key (e.g. "COUPANG")
+     * @return the schema (possibly empty)
+     */
+    CategoryMetaSchema getSchemaByPlatformCategoryCode(String platformCategoryCode, Platform platform);
 
     /**
      * Store the master-level attribute + notice values ({@code toBuilder} save). Does NOT trigger

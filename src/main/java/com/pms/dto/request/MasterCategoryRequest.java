@@ -9,7 +9,8 @@ import lombok.NoArgsConstructor;
 
 /**
  * Master standard-category set request (FEATURE_2608_06 / 44): assign the master's single standard category.
- * The per-platform marketplace code is resolved from {@link com.pms.domain.CategoryMapping}, not here.
+ * The per-platform marketplace code is resolved from the master's own platform category (FEATURE_2610_12) or else
+ * {@link com.pms.domain.CategoryMapping}, not here.
  */
 @Getter
 @NoArgsConstructor

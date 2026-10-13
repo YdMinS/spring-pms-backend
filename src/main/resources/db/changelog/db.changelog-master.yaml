@@ -206,3 +206,5 @@ databaseChangeLog:
       file: db/changelog/changes/102-purchase-place.yaml
   - include:
       file: db/changelog/changes/103-platform-category-commission-scale.yaml
+  - include:
+      file: db/changelog/changes/104-master-platform-category.yaml

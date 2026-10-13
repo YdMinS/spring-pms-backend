@@ -3,6 +3,7 @@ package com.pms.service;
 import com.pms.domain.BoxKind;
 import com.pms.domain.CarrierRate;
 import com.pms.domain.Category;
+import com.pms.domain.MasterPlatformCategory;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.Package;
@@ -11,6 +12,7 @@ import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.CategoryRepository;
+import com.pms.repository.MasterPlatformCategoryRepository;
 import com.pms.repository.PlatformCategoryRepository;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -32,6 +34,7 @@ public class MasterChannelConfigServiceImpl implements MasterChannelConfigServic
     private final CategoryMappingRepository categoryMappingRepository;
     private final CategoryRepository categoryRepository;
     private final PlatformCategoryRepository platformCategoryRepository;
+    private final MasterPlatformCategoryRepository masterPlatformCategoryRepository;
 
     @Override
     public Category resolveStandardCategory(ProductListing cell) {
@@ -108,8 +111,22 @@ public class MasterChannelConfigServiceImpl implements MasterChannelConfigServic
         return resolvePlatformCategory(standard, platform).getCode();
     }
 
-    /** Master-arg overload: pulls the master's single standard category and delegates to the core. */
+    /**
+     * Master-arg overload (FEATURE_2610_12 / D41 ②): the master's own platform category for this platform
+     * (「개별 지정」, {@code master_platform_category}) wins; without one it pulls the master's single standard
+     * category and delegates to the core. The cell-arg path reaches this twice — the fallback
+     * ({@link #masterCategory}) and the D10-1 comparison in {@link #resolveChannelCategory} — so price,
+     * settlement, sales, the adapter payload and the matrix follow the own row with no change of their own.
+     * ⚠️ LAZY row.platformCategory — callers run inside a @Transactional boundary.
+     */
     private PlatformCategory resolvePlatformCategory(MasterProduct master, Platform platform) {
+        if (master != null && master.getId() != null) {
+            Optional<MasterPlatformCategory> own =
+                    masterPlatformCategoryRepository.findByMasterProductIdAndPlatform(master.getId(), platform);
+            if (own.isPresent()) {
+                return own.get().getPlatformCategory();
+            }
+        }
         return resolvePlatformCategory(master == null ? null : master.getCategory(), platform);
     }
 

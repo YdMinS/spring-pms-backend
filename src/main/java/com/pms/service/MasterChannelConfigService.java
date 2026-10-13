@@ -18,7 +18,9 @@ import com.pms.domain.ProductListing;
  * <p>Resolution rules:</p>
  * <ul>
  *   <li>standard category = the master's single {@code category} (commission lookup)</li>
- *   <li>platform code = the standard category's {@code CategoryMapping} for the cell's platform (adapter)</li>
+ *   <li>platform code = the cell's own category (2609_45) ?? the master's own platform category
+ *       ({@code master_platform_category}, FEATURE_2610_12 / D41) ?? the standard category's
+ *       {@code CategoryMapping} for the cell's platform (adapter)</li>
  *   <li>delivery = option override ?? master default delivery</li>
  *   <li>box      = option override ?? master default package</li>
  * </ul>
@@ -67,10 +69,11 @@ public interface MasterChannelConfigService {
     /**
      * Marketplace category node ({@link PlatformCategory}) that owns the mall code + commission for this cell
      * (FEATURE_2608_06 / 52). Since 2609_45/D10 this is {@code resolveChannelCategory(cell).category()} — the
-     * channel's own category when it has one, else the standard category's
-     * {@link com.pms.domain.CategoryMapping} for {@code cell.platform} → its linked {@code platformCategory} FK.
-     * 400 when the master is used and the standard category is unset, there is no mapping for that platform,
-     * or the mapping is not yet linked to a PlatformCategory.
+     * channel's own category when it has one, else the master's own platform category for {@code cell.platform}
+     * (FEATURE_2610_12 / D41), else the standard category's {@link com.pms.domain.CategoryMapping} for
+     * {@code cell.platform} → its linked {@code platformCategory} FK.
+     * 400 when the master is used without an own platform category and the standard category is unset, there is
+     * no mapping for that platform, or the mapping is not yet linked to a PlatformCategory.
      */
     PlatformCategory resolvePlatformCategory(ProductListing cell);
 
@@ -82,9 +85,10 @@ public interface MasterChannelConfigService {
 
     /**
      * Platform marketplace code for a (master × platform), for callers that hold the master directly (e.g.
-     * the category-meta endpoint, which has master id + platform but no cell). 400 if the master has no
-     * standard category or that category has no mapping for the platform. Same logic as
-     * {@link #resolvePlatformCategoryCode(ProductListing)}.
+     * the category-meta endpoint, which has master id + platform but no cell). The master's own platform
+     * category wins (FEATURE_2610_12 / D41 · D45); without one, 400 if the master has no standard category or
+     * that category has no mapping for the platform. Same logic as
+     * {@link #resolvePlatformCategoryCode(ProductListing)} minus the cell's own category.
      */
     String resolvePlatformCategoryCode(MasterProduct master, Platform platform);
 

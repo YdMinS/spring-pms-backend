@@ -3,6 +3,7 @@ package com.pms.service;
 import com.pms.domain.CarrierRate;
 import com.pms.domain.Category;
 import com.pms.domain.CategoryMapping;
+import com.pms.domain.MasterPlatformCategory;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.Package;
@@ -11,6 +12,7 @@ import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.CategoryRepository;
+import com.pms.repository.MasterPlatformCategoryRepository;
 import com.pms.repository.PlatformCategoryRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -37,6 +39,7 @@ class MasterChannelConfigServiceTest {
     @Mock private CategoryMappingRepository categoryMappingRepository;
     @Mock private CategoryRepository categoryRepository;
     @Mock private PlatformCategoryRepository platformCategoryRepository;
+    @Mock private MasterPlatformCategoryRepository masterPlatformCategoryRepository;
     @InjectMocks private MasterChannelConfigServiceImpl service;
 
     private CarrierRate carrier(String cost) {
@@ -177,6 +180,49 @@ class MasterChannelConfigServiceTest {
         MasterProduct master = MasterProduct.builder().id(9L).category(category).build();
 
         assertThat(service.resolveStandardCategory(cell(master, "73170")).getId()).isEqualTo(5L);
+    }
+
+    // ---- FEATURE_2610_12 / D41 · D46: the master's own platform category ----
+
+    private void givenMasterOwnRow(String code) {
+        given(masterPlatformCategoryRepository.findByMasterProductIdAndPlatform(9L, Platform.COUPANG))
+                .willReturn(Optional.of(MasterPlatformCategory.builder().platform(Platform.COUPANG)
+                        .platformCategory(platformCategory(40L, code, "0.08")).build()));
+    }
+
+    @Test
+    void resolvePlatformCategory_masterOwnRow_winsOverTheStandardMapping() {
+        Category category = Category.builder().id(5L).name("즉석밥").build();
+        MasterProduct master = MasterProduct.builder().id(9L).category(category).build();
+        givenMasterOwnRow("80000");
+
+        assertThat(service.resolvePlatformCategoryCode(cell(master))).isEqualTo("80000");
+        assertThat(service.resolvePlatformCategoryCode(master, Platform.COUPANG)).isEqualTo("80000");
+    }
+
+    @Test
+    void resolveChannelCategory_cellOwnCategory_stillBeatsTheMasterOwnRow() {
+        // D46: the cell's own category (2609_45) wins, and `own` is judged against the master's own row.
+        MasterProduct master = MasterProduct.builder().id(9L).category(Category.builder().id(5L).build()).build();
+        givenMasterOwnRow("80000");
+        given(platformCategoryRepository.findByPlatformAndCode(Platform.COUPANG, "73170"))
+                .willReturn(Optional.of(platformCategory(30L, "73170", "0.11")));
+
+        var resolved = service.resolveChannelCategory(cell(master, "73170"));
+
+        assertThat(resolved.category().getCode()).isEqualTo("73170");
+        assertThat(resolved.own()).isTrue();
+    }
+
+    @Test
+    void resolveChannelCategory_cellCodeEqualsMasterOwnRow_isNotOwn() {
+        // D46 follow-up: a cell whose code equals the new own row is no longer "its own category".
+        MasterProduct master = MasterProduct.builder().id(9L).category(Category.builder().id(5L).build()).build();
+        givenMasterOwnRow("80000");
+        given(platformCategoryRepository.findByPlatformAndCode(Platform.COUPANG, "80000"))
+                .willReturn(Optional.of(platformCategory(40L, "80000", "0.08")));
+
+        assertThat(service.resolveChannelCategory(cell(master, "80000")).own()).isFalse();
     }
 
     // ---- standard category ----

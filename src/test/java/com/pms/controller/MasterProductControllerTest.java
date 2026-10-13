@@ -701,21 +701,96 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
-    @Test
-    void clearCategory_adminToken_returns204_thenGetIsNull() throws Exception {
-        mockMvc.perform(put(PATH + "/" + masterId + "/category")
-                        .header("Authorization", "Bearer " + adminToken)
-                        .contentType(MediaType.APPLICATION_JSON).content(categoryBody()))
-                .andExpect(status().isOk());
+    // ------------------------------------------------------------- own platform category (2610_12 / D40)
 
-        mockMvc.perform(delete(PATH + "/" + masterId + "/category")
+    private String ownCategoryBody(String code) {
+        return "{\"platform\":\"COUPANG\",\"platformCategoryId\":\"" + code
+                + "\",\"platformCategoryName\":\"신발>슬리퍼\"}";
+    }
+
+    private void seedCoupangPlatformCategory(String code) {
+        platformCategoryRepository.save(PlatformCategory.builder()
+                .platform(Platform.COUPANG).code(code).name("슬리퍼")
+                .commissionRate(new BigDecimal("0.08")).build());
+    }
+
+    @Test
+    void platformCategories_noToken_returns401() throws Exception {
+        mockMvc.perform(get(PATH + "/" + masterId + "/platform-categories"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void platformCategories_userToken_returns403() throws Exception {
+        mockMvc.perform(put(PATH + "/" + masterId + "/platform-categories")
+                        .header("Authorization", "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(ownCategoryBody("cat-2")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void platformCategories_put_get_matrixFollows_delete_adminToken() throws Exception {
+        seedCoupangPlatformCategory("cat-2");
+
+        mockMvc.perform(put(PATH + "/" + masterId + "/platform-categories")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(ownCategoryBody("cat-2")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.platform").value("COUPANG"))
+                .andExpect(jsonPath("$.data.platformCategoryId").value("cat-2"))
+                .andExpect(jsonPath("$.data.platformCategoryName").value("신발>슬리퍼"));
+
+        mockMvc.perform(get(PATH + "/" + masterId + "/platform-categories")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1));
+
+        // D41 ②: the seeded Coupang cell (no own cell category) now resolves to the master's own row.
+        mockMvc.perform(get(PATH + "/" + masterId + "/matrix")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rows[?(@.platform=='COUPANG')].cell.categoryCode").value("cat-2"));
+
+        mockMvc.perform(delete(PATH + "/" + masterId + "/platform-categories/COUPANG")
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isNoContent());
 
-        mockMvc.perform(get(PATH + "/" + masterId + "/category")
+        mockMvc.perform(get(PATH + "/" + masterId + "/platform-categories")
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.categoryId").doesNotExist());
+                .andExpect(jsonPath("$.data.length()").value(0));
+    }
+
+    @Test
+    void platformCategories_putCodeNotInList_returns400() throws Exception {
+        mockMvc.perform(put(PATH + "/" + masterId + "/platform-categories")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(ownCategoryBody("no-such-code")))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void platformCategories_setAnotherCategory_dropsTheOwnRows() throws Exception {
+        // D42: a different standard category → the own rows are gone.
+        seedCoupangPlatformCategory("cat-2");
+        mockMvc.perform(put(PATH + "/" + masterId + "/platform-categories")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(ownCategoryBody("cat-2")))
+                .andExpect(status().isOk());
+        Category other = categoryRepository.save(Category.builder().name("가방").build());
+        categoryMappingRepository.save(CategoryMapping.builder()
+                .category(other).platform(Platform.NAVER).platformCategoryId("50000803").build());
+
+        mockMvc.perform(put(PATH + "/" + masterId + "/category")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"categoryId\":" + other.getId() + "}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get(PATH + "/" + masterId + "/platform-categories")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(0));
     }
 
     // ------------------------------------------------------------- tags (33)

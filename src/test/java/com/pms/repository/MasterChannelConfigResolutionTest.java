@@ -5,6 +5,7 @@ import com.pms.domain.Carrier;
 import com.pms.domain.CarrierRate;
 import com.pms.domain.Category;
 import com.pms.domain.CategoryMapping;
+import com.pms.domain.MasterPlatformCategory;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.Package;
 import com.pms.domain.Platform;
@@ -38,11 +39,12 @@ class MasterChannelConfigResolutionTest {
     @Autowired private CategoryMappingRepository categoryMappingRepository;
     @Autowired private CategoryRepository categoryRepository;
     @Autowired private PlatformCategoryRepository platformCategoryRepository;
+    @Autowired private MasterPlatformCategoryRepository masterPlatformCategoryRepository;
     @Autowired private TestEntityManager em;
 
     private MasterChannelConfigServiceImpl service() {
-        return new MasterChannelConfigServiceImpl(
-                categoryMappingRepository, categoryRepository, platformCategoryRepository);
+        return new MasterChannelConfigServiceImpl(categoryMappingRepository, categoryRepository,
+                platformCategoryRepository, masterPlatformCategoryRepository);
     }
 
     private Long persistMasterWithConfig() {
@@ -83,5 +85,26 @@ class MasterChannelConfigResolutionTest {
         assertThat(service().resolvePlatformCategoryCode(cell)).isEqualTo("cat-1");
         assertThat(service().resolveDelivery(cell, null).getCost()).isEqualByComparingTo("2500");
         assertThat(service().resolvePackage(cell, null).getCost()).isEqualByComparingTo("500");
+    }
+
+    @Test
+    void resolvesTheMasterOwnPlatformCategoryThroughThePersistenceChain() {
+        // FEATURE_2610_12 / D41 ②: the master's own row (LAZY platformCategory) beats the standard mapping.
+        Long masterId = persistMasterWithConfig();
+        MasterProduct master = em.find(MasterProduct.class, masterId);
+        PlatformCategory own = em.persist(PlatformCategory.builder()
+                .platform(Platform.COUPANG).code("cat-2").name("슬리퍼")
+                .commissionRate(new BigDecimal("0.08")).build());
+        em.persist(MasterPlatformCategory.builder()
+                .masterProduct(master).platform(Platform.COUPANG).platformCategory(own)
+                .platformCategoryName("신발>슬리퍼").build());
+        em.flush();
+        em.clear();
+
+        ProductListing cell = ProductListing.builder().platform(Platform.COUPANG)
+                .masterProduct(em.find(MasterProduct.class, masterId)).build();
+
+        assertThat(service().resolvePlatformCategoryCode(cell)).isEqualTo("cat-2");
+        assertThat(service().resolvePlatformCategory(cell).getCommissionRate()).isEqualByComparingTo("0.08");
     }
 }
