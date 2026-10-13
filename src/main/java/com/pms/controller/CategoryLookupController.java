@@ -70,14 +70,28 @@ public class CategoryLookupController {
         return ResponseEntity.ok(ResponseDTO.success(results));
     }
 
+    /**
+     * FEATURE_2610_12 / D45: {@code platformCategoryCode} (a 「개별 지정」 pick on the master add screen) wins
+     * over {@code categoryId}; without it the standard category id is required (400 「카테고리 없음」).
+     */
     @GetMapping("/{platform}/meta")
-    @Operation(summary = "Category meta schema (required attributes + notices) by category id; empty allowed")
+    @Operation(summary = "Category meta schema (required attributes + notices) by category id or platform "
+            + "category code; empty allowed")
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<CategoryMetaSchemaResponse>> meta(
             @PathVariable String platform,
-            @RequestParam Long categoryId) {
+            @RequestParam(required = false) Long categoryId,
+            @RequestParam(required = false) String platformCategoryCode) {
+        Platform target = Platform.from(platform);
+        if (platformCategoryCode != null && !platformCategoryCode.isBlank()) {
+            return ResponseEntity.ok(ResponseDTO.success(CategoryMetaSchemaResponse.from(
+                    categoryMetaService.getSchemaByPlatformCategoryCode(platformCategoryCode.trim(), target))));
+        }
+        if (categoryId == null) {
+            throw new IllegalArgumentException("카테고리 없음");
+        }
         CategoryMetaSchemaResponse schema =
-                CategoryMetaSchemaResponse.from(categoryMetaService.getSchema(categoryId, Platform.from(platform)));
+                CategoryMetaSchemaResponse.from(categoryMetaService.getSchema(categoryId, target));
         return ResponseEntity.ok(ResponseDTO.success(schema));
     }
 }

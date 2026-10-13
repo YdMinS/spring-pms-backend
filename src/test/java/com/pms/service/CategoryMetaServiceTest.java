@@ -65,7 +65,7 @@ class CategoryMetaServiceTest {
     void getMeta_returnsSchemaAndCurrentValues() {
         given(masterProductRepository.findScopedById(MASTER_ID))
                 .willReturn(Optional.of(master(Map.of("원산지", "국내산"))));
-        given(masterChannelConfigService.resolvePlatformCategoryCode(CATEGORY_ID, Platform.COUPANG))
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any(MasterProduct.class), eq(Platform.COUPANG)))
                 .willReturn("1001");
         given(marketplaceAccountRepository.findFirstByPlatformAndIsActiveTrue(Platform.COUPANG))
                 .willReturn(Optional.of(account()));
@@ -93,7 +93,7 @@ class CategoryMetaServiceTest {
     @Test
     void getMeta_missingMapping_throws400() {
         given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master(Map.of())));
-        given(masterChannelConfigService.resolvePlatformCategoryCode(CATEGORY_ID, Platform.COUPANG))
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any(MasterProduct.class), eq(Platform.COUPANG)))
                 .willThrow(new IllegalArgumentException("COUPANG 카테고리 매핑 미설정"));
 
         assertThatThrownBy(() -> service.getMeta(MASTER_ID, Platform.COUPANG))
@@ -103,7 +103,7 @@ class CategoryMetaServiceTest {
     @Test
     void getMeta_emptySchema_returns200WithEmptyLists() {
         given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master(null)));
-        given(masterChannelConfigService.resolvePlatformCategoryCode(CATEGORY_ID, Platform.NAVER))
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any(MasterProduct.class), eq(Platform.NAVER)))
                 .willReturn("N1");
         given(marketplaceAccountRepository.findFirstByPlatformAndIsActiveTrue(Platform.NAVER))
                 .willReturn(Optional.of(account()));
@@ -169,6 +169,19 @@ class CategoryMetaServiceTest {
     }
 
     @Test
+    void getSchemaByPlatformCategoryCode_readsThePickedCodeWithoutAMapping() {
+        // FEATURE_2610_12 / D45: the add screen's 「개별 지정」 tab — the code is used as is, no category id.
+        given(marketplaceAccountRepository.findFirstByPlatformAndIsActiveTrue(Platform.COUPANG))
+                .willReturn(Optional.of(account()));
+        given(metaResolver.resolve(Platform.COUPANG)).willReturn(metaAdapter);
+        CategoryMetaSchema schema = new CategoryMetaSchema(List.of(), List.of());
+        given(metaAdapter.getMeta(any(), eq("80000"))).willReturn(schema);
+
+        assertThat(service.getSchemaByPlatformCategoryCode("80000", Platform.COUPANG)).isSameAs(schema);
+        verify(masterChannelConfigService, never()).resolvePlatformCategoryCode(any(Long.class), any());
+    }
+
+    @Test
     void updateCategoryAttributes_savesValues_noRegeneration() {
         given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master(null)));
         Map<String, String> attributes = Map.of("원산지", "국내산");
@@ -201,7 +214,7 @@ class CategoryMetaServiceTest {
     void getMeta_returnsStoredNoticeGroup() {
         given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(
                 master(null).toBuilder().categoryNoticeGroup("가공식품").build()));
-        given(masterChannelConfigService.resolvePlatformCategoryCode(CATEGORY_ID, Platform.COUPANG))
+        given(masterChannelConfigService.resolvePlatformCategoryCode(any(MasterProduct.class), eq(Platform.COUPANG)))
                 .willReturn("1001");
         given(marketplaceAccountRepository.findFirstByPlatformAndIsActiveTrue(Platform.COUPANG))
                 .willReturn(Optional.of(account()));

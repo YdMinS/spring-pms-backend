@@ -11,6 +11,7 @@ import com.pms.domain.Seller;
 import com.pms.dto.request.ChannelAddRequest;
 import com.pms.exception.DuplicateChannelException;
 import com.pms.repository.CategoryMappingRepository;
+import com.pms.repository.MasterPlatformCategoryRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -49,6 +50,7 @@ class ChannelAddServiceTest {
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private SellerRepository sellerRepository;
     @Mock private CategoryMappingRepository categoryMappingRepository;
+    @Mock private MasterPlatformCategoryRepository masterPlatformCategoryRepository;
     @Mock private ListingAssetService listingAssetService;
     @InjectMocks private ChannelAddServiceImpl service;
 
@@ -173,6 +175,28 @@ class ChannelAddServiceTest {
 
         verify(productListingRepository, never()).save(any());
         verify(listingAssetService, never()).regenerateAssets(any());
+    }
+
+    @Test
+    void addChannel_noMappingButMasterOwnPlatformCategory_createsTheCell() {
+        // FEATURE_2610_12 / D41: the master's own platform category counts as "the platform has a category".
+        given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master()));
+        given(productListingRepository.existsByMasterProductIdAndSellerIdAndPlatform(MASTER_ID, SELLER_ID, Platform.COUPANG))
+                .willReturn(false);
+        given(masterProductOptionRepository.findByMasterProductId(MASTER_ID))
+                .willReturn(List.of(masterOption(10L, "1세트")));
+        given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(Seller.builder().id(SELLER_ID).build()));
+        given(categoryMappingRepository.existsByCategoryIdAndPlatform(CATEGORY_ID, Platform.COUPANG)).willReturn(false);
+        given(masterPlatformCategoryRepository.existsByMasterProductIdAndPlatform(MASTER_ID, Platform.COUPANG))
+                .willReturn(true);
+        given(productListingRepository.save(any())).willAnswer(inv ->
+                ((ProductListing) inv.getArgument(0)).toBuilder().id(50L).build());
+        given(productListingOptionRepository.save(any())).willAnswer(inv ->
+                ((ProductListingOption) inv.getArgument(0)).toBuilder().id(60L).build());
+
+        service.addChannel(MASTER_ID, request());
+
+        verify(productListingRepository).save(any(ProductListing.class));
     }
 
     @Test

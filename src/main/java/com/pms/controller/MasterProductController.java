@@ -8,6 +8,7 @@ import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterCompositionRequest;
 import com.pms.dto.request.MasterFromChannelPreviewRequest;
 import com.pms.dto.request.MasterOptionRequest;
+import com.pms.dto.request.MasterPlatformCategoryRequest;
 import com.pms.dto.request.MasterProductQuery;
 import com.pms.dto.request.MasterProductRequest;
 import com.pms.dto.request.MasterProductUpdateRequest;
@@ -25,12 +26,14 @@ import com.pms.dto.response.MasterCategoryResponse;
 import com.pms.dto.response.MasterChannelOptionsResponse;
 import com.pms.dto.response.MasterFromChannelPreviewResponse;
 import com.pms.dto.response.MasterOptionResponse;
+import com.pms.dto.response.MasterPlatformCategoryResponse;
 import com.pms.dto.response.MasterProductByAnyComponentResponse;
 import com.pms.dto.response.MasterProductByComponentsResponse;
 import com.pms.dto.response.MasterProductImageResponse;
 import com.pms.dto.response.MasterProductResponse;
 import com.pms.dto.response.ShippingForceApplyResponse;
 import com.pms.service.CategoryMetaService;
+import com.pms.service.MasterPlatformCategoryService;
 import com.pms.service.MasterProductImageService;
 import com.pms.service.MasterProductService;
 import com.pms.service.listing.MasterDeleteService;
@@ -65,6 +68,7 @@ public class MasterProductController {
     private final MasterProductService masterProductService;
     private final MasterProductImageService masterProductImageService;
     private final CategoryMetaService categoryMetaService;
+    private final MasterPlatformCategoryService masterPlatformCategoryService;
     private final MasterFromChannelService masterFromChannelService;
     private final MasterDeleteService masterDeleteService;
     /** 2609_64/D12: asset regeneration is triggered here, after the composition save has committed. */
@@ -299,11 +303,29 @@ public class MasterProductController {
         return ResponseEntity.ok(ResponseDTO.success(masterProductService.getCategory(id)));
     }
 
-    @DeleteMapping("/{id}/category")
-    @Operation(summary = "Clear the master's standard category")
+    // ---------------------------------------------------------------- own platform category (2610_12 / D40)
+
+    @GetMapping("/{id}/platform-categories")
+    @Operation(summary = "List the master's own platform categories (개별 지정, one per platform)")
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<Void> clearCategory(@PathVariable Long id) {
-        masterProductService.clearCategory(id);
+    public ResponseEntity<ResponseDTO<List<MasterPlatformCategoryResponse>>> getPlatformCategories(
+            @PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(masterPlatformCategoryService.getAll(id)));
+    }
+
+    @PutMapping("/{id}/platform-categories")
+    @Operation(summary = "Upsert the master's own platform category for a platform")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<MasterPlatformCategoryResponse>> upsertPlatformCategory(
+            @PathVariable Long id, @Valid @RequestBody MasterPlatformCategoryRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(masterPlatformCategoryService.upsert(id, request)));
+    }
+
+    @DeleteMapping("/{id}/platform-categories/{platform}")
+    @Operation(summary = "Delete the master's own platform category (back to the standard category)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<Void> deletePlatformCategory(@PathVariable Long id, @PathVariable String platform) {
+        masterPlatformCategoryService.delete(id, Platform.from(platform));
         return ResponseEntity.noContent().build();
     }
 

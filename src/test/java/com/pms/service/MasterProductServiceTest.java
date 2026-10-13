@@ -38,6 +38,7 @@ import com.pms.repository.CategoryRepository;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
+import com.pms.repository.MasterPlatformCategoryRepository;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
@@ -100,6 +101,7 @@ class MasterProductServiceTest {
     @Mock private ProductRepository productRepository;
     @Mock private CategoryRepository categoryRepository;
     @Mock private CategoryMappingRepository categoryMappingRepository;
+    @Mock private MasterPlatformCategoryRepository masterPlatformCategoryRepository;
     @Mock private CarrierRateRepository carrierRateRepository;
     @Mock private PackageRepository packageRepository;
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
@@ -1057,6 +1059,40 @@ class MasterProductServiceTest {
         ArgumentCaptor<MasterProduct> captor = ArgumentCaptor.forClass(MasterProduct.class);
         verify(masterProductRepository).save(captor.capture());
         assertThat(captor.getValue().getCategory().getId()).isEqualTo(3L);   // master now points to the category
+    }
+
+    @Test
+    void setCategory_differentCategory_deletesTheOwnPlatformCategories() {
+        // FEATURE_2610_12 / D42: a new standard category → the master follows its mappings again.
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true)
+                .category(Category.builder().id(2L).name("운동화").build()).build();
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(categoryRepository.findById(3L))
+                .willReturn(Optional.of(Category.builder().id(3L).name("신발").build()));
+        given(categoryRepository.existsByParentId(3L)).willReturn(false);
+        given(categoryMappingRepository.existsByCategoryId(3L)).willReturn(true);
+        given(masterProductRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+
+        service.setCategory(1L, MasterCategoryRequest.builder().categoryId(3L).build());
+
+        verify(masterPlatformCategoryRepository).deleteByMasterProductId(1L);
+    }
+
+    @Test
+    void setCategory_sameCategory_keepsTheOwnPlatformCategories() {
+        // D53: only a real change of the category id deletes them.
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true)
+                .category(Category.builder().id(3L).name("신발").build()).build();
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(categoryRepository.findById(3L))
+                .willReturn(Optional.of(Category.builder().id(3L).name("신발").build()));
+        given(categoryRepository.existsByParentId(3L)).willReturn(false);
+        given(categoryMappingRepository.existsByCategoryId(3L)).willReturn(true);
+        given(masterProductRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+
+        service.setCategory(1L, MasterCategoryRequest.builder().categoryId(3L).build());
+
+        verify(masterPlatformCategoryRepository, never()).deleteByMasterProductId(any());
     }
 
     @Test

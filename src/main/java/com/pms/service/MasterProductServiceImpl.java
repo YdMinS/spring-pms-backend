@@ -43,6 +43,7 @@ import com.pms.repository.CategoryRepository;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
+import com.pms.repository.MasterPlatformCategoryRepository;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
@@ -105,6 +106,7 @@ public class MasterProductServiceImpl implements MasterProductService {
     private final ProductRepository productRepository;
     private final CategoryRepository categoryRepository;
     private final CategoryMappingRepository categoryMappingRepository;
+    private final MasterPlatformCategoryRepository masterPlatformCategoryRepository;
     private final CarrierRateRepository carrierRateRepository;
     private final PackageRepository packageRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
@@ -1245,6 +1247,12 @@ public class MasterProductServiceImpl implements MasterProductService {
         if (!categoryMappingRepository.existsByCategoryId(request.getCategoryId())) {
             throw new IllegalArgumentException("연결된 플랫폼 카테고리가 없습니다.");
         }
+        // FEATURE_2610_12 / D42 · D53: a different standard category drops every own platform category of the
+        // master — it follows the new category's mappings. Re-picking the same id keeps them.
+        Long currentId = master.getCategory() == null ? null : master.getCategory().getId();
+        if (!category.getId().equals(currentId)) {
+            masterPlatformCategoryRepository.deleteByMasterProductId(masterId);
+        }
         masterProductRepository.save(master.toBuilder().category(category).build());
         return toCategoryResponse(category);
     }
@@ -1253,13 +1261,6 @@ public class MasterProductServiceImpl implements MasterProductService {
     public MasterCategoryResponse getCategory(Long masterId) {
         MasterProduct master = requireScopedMaster(masterId);
         return toCategoryResponse(master.getCategory());
-    }
-
-    @Override
-    @Transactional
-    public void clearCategory(Long masterId) {
-        MasterProduct master = requireScopedMaster(masterId);
-        masterProductRepository.save(master.toBuilder().category(null).build());
     }
 
     private MasterCategoryResponse toCategoryResponse(Category category) {

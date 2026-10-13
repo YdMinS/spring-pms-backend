@@ -676,11 +676,12 @@ public class CoupangListingAdapter implements ListingChannel {
         if (forUpdate) {
             payload.put("sellerProductId", cell.getPlatformProductId());
         }
-        // Category = this channel's OWN marketplace category when it has one, else the master's standard
-        // category × platform from CategoryMapping (44, 2609_45/D9). ONE resolver call gives both the code and
-        // whether it is the channel's own — never recompute `own` from the column (D10-1/D11 live in the
-        // resolver). The resolver THROWS 400 on a missing mapping (never returns null), so by this point the
-        // code is always non-null and reused below for the notice groups.
+        // Category = this channel's OWN marketplace category when it has one, else the master's own platform
+        // category (FEATURE_2610_12 / D41), else the master's standard category × platform from CategoryMapping
+        // (44, 2609_45/D9). ONE resolver call gives both the code and whether it is the channel's own — never
+        // recompute `own` from the column (D10-1/D11 live in the resolver). The resolver THROWS 400 on a missing
+        // mapping (never returns null), so by this point the code is always non-null and reused below for the
+        // notice groups.
         MasterChannelConfigService.ChannelCategory category =
                 masterChannelConfigService.resolveChannelCategory(cell);
         String categoryCode = category.category().getCode();

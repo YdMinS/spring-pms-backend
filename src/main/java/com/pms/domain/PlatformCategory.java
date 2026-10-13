@@ -13,7 +13,8 @@ import java.math.BigDecimal;
  * actual per-platform marketplace code and its commission live here: a {@code PlatformCategory} is one node
  * in a platform's own category tree (self-referencing {@code parent}), and commission resolution is
  * {@code master → oclyx Category → CategoryMapping(platform) → PlatformCategory.commissionRate} = O(1) (no
- * runtime tree climbing — the mapped node's value is used directly).</p>
+ * runtime tree climbing — the mapped node's value is used directly). A master's own platform category
+ * ({@link MasterPlatformCategory}, FEATURE_2610_12 / D41) points at a node directly and wins over the mapping.</p>
  *
  * <p>Tenant isolation: {@code @TenantId} auto-filters query-based SELECTs and auto-stamps INSERTs (per-tenant
  * marketplace category tree, consistent with the multi-tenant model). @Setter is forbidden — use
