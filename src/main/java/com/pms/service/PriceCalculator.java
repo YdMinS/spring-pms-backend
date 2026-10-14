@@ -2,9 +2,12 @@ package com.pms.service;
 
 import com.pms.domain.MarginPolicy;
 import com.pms.domain.MasterProductOption;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.repository.MarginPolicyRepository;
+import com.pms.service.listing.shipping.ElevenstShippingResolver;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -17,8 +20,10 @@ import java.math.RoundingMode;
  * <p>Per option, given the option's cost sum (Σ product.price × quantity), its parent cell and its matched
  * master option:</p>
  * <pre>
- *   sellingPrice = (costSum + delivery + box) / (1 − commissionRate × (1 + feeVatRate) − marginRate)
+ *   sellingPrice = (costSum + delivery + box + shippingFeeCost) / (1 − commissionRate × (1 + feeVatRate) − marginRate)
  * </pre>
+ * shippingFeeCost = 3.3% of the buyer's one-unit shipping fee on an 11st cell, 0 on every other cell
+ * (FEATURE_2610_13 / D16 · D92 · D111 — {@link CustomerShippingFee});
  * where commissionRate = {@code resolvePlatformCategory(cell).getCommissionRate()} (the mapped
  * {@link PlatformCategory} owns the commission — 52), delivery = {@code resolveDelivery(cell, option).cost},
  * box = {@code resolvePackage(cell, option).cost} (both from {@link MasterChannelConfigService} = option
@@ -42,11 +47,27 @@ public class PriceCalculator {
      */
     private final BigDecimal feeVatRate;
 
+    /**
+     * FEATURE_2610_13 / D16: an 11st cell's resolved shipping settings → the buyer's shipping fee the 3.3%
+     * delivery-fee commission applies to. Null only on the test-only constructor (= no 11st cells priced).
+     */
+    private final ElevenstShippingResolver elevenstShippingResolver;
+
+    /** Test-only constructor (no 11st shipping) — the Spring bean uses the 4-argument one. */
     public PriceCalculator(MarginPolicyRepository marginPolicyRepository,
                            MasterChannelConfigService masterChannelConfigService,
-                           @Value("${oclyx.pricing.fee-vat-rate:0.1}") BigDecimal feeVatRate) {
+                           BigDecimal feeVatRate) {
+        this(marginPolicyRepository, masterChannelConfigService, feeVatRate, null);
+    }
+
+    @Autowired
+    public PriceCalculator(MarginPolicyRepository marginPolicyRepository,
+                           MasterChannelConfigService masterChannelConfigService,
+                           @Value("${oclyx.pricing.fee-vat-rate:0.1}") BigDecimal feeVatRate,
+                           ElevenstShippingResolver elevenstShippingResolver) {
         this.marginPolicyRepository = marginPolicyRepository;
         this.masterChannelConfigService = masterChannelConfigService;
+        this.elevenstShippingResolver = elevenstShippingResolver;
         BigDecimal rate = feeVatRate == null ? BigDecimal.ZERO : feeVatRate;
         // Range check at startup (the @ConfigurationProperties equivalent of @DecimalMin("0.0") @DecimalMax("1.0")):
         // a typo such as 10 instead of 0.1 would silently flip every recommended price, so fail fast.
@@ -107,7 +128,16 @@ public class PriceCalculator {
         // The commission is settled together with its own VAT (D19), so the reverse-calc must subtract both.
         BigDecimal effectiveCommission = commissionRate.multiply(BigDecimal.ONE.add(feeVatRate));
         return new CellPricingBasis(commissionRate, effectiveCommission, margin.getMarginRate(),
-                margin.getDisplayDiscountRate(), margin.getMinMarginAmount(), margin.getMinMarginRate());
+                margin.getDisplayDiscountRate(), margin.getMinMarginAmount(), margin.getMinMarginRate(),
+                customerShippingFee(cell));
+    }
+
+    /** FEATURE_2610_13 / D16 · D92 · D111: 11st cells only; every other platform pays no delivery-fee commission. */
+    private CustomerShippingFee customerShippingFee(ProductListing cell) {
+        if (cell.getPlatform() != Platform.ELEVENST || elevenstShippingResolver == null) {
+            return CustomerShippingFee.NONE;
+        }
+        return ElevenstShippingResolver.customerFee(elevenstShippingResolver.resolve(cell));
     }
 
     /**
@@ -128,7 +158,7 @@ public class PriceCalculator {
 
     /**
      * The reverse-calc itself, over an already resolved basis. This is the <b>single owner of the formula</b>:
-     * {@code salePrice = (costSum + delivery + box) / (1 − commission × (1 + feeVat) − margin)}.
+     * {@code salePrice = (costSum + delivery + box + shippingFeeCost) / (1 − commission × (1 + feeVat) − margin)}.
      *
      * @throws IllegalArgumentException (→400) when the denominator is ≤ 0
      */
@@ -146,9 +176,13 @@ public class PriceCalculator {
 
         BigDecimal numerator = costSum.add(basis.delivery()).add(basis.box());
         // Divide with headroom, then round to the nearest 10 won; normalize scale to 2 for the DECIMAL(10,2) column.
-        BigDecimal salePrice = numerator.divide(denominator, 4, RoundingMode.HALF_UP)
-                .setScale(-1, RoundingMode.HALF_UP)
-                .setScale(2, RoundingMode.HALF_UP);
+        BigDecimal salePrice = round10(numerator.divide(denominator, 4, RoundingMode.HALF_UP));
+        // FEATURE_2610_13 / D16 · D92: the 11st delivery-fee commission joins the cost side. The 「조건부 무료」
+        // test is made ONCE on the price before this cost (re-judging would flip near the threshold).
+        BigDecimal shippingFeeCost = basis.customerShippingFee().costAt(salePrice);
+        if (shippingFeeCost.signum() != 0) {
+            salePrice = round10(numerator.add(shippingFeeCost).divide(denominator, 4, RoundingMode.HALF_UP));
+        }
         return new PriceResult(salePrice, originalPrice(salePrice, basis.displayDiscountRate()));
     }
 
@@ -158,7 +192,7 @@ public class PriceCalculator {
      * <b>Selling below this loses money.</b>
      *
      * <p>Same formula as {@link #prices}, <b>only the margin rate is 0</b>:
-     * {@code (costSum + delivery + box) / (1 − effectiveCommissionRate)}. Deriving it anywhere else (e.g. from
+     * {@code (costSum + delivery + box + shippingFeeCost) / (1 − effectiveCommissionRate)}. Deriving it anywhere else (e.g. from
      * the amounts already on screen) would drift, because the screen has no rate and the amounts are rounded.</p>
      *
      * <p>Unlike {@link #prices} this <b>returns {@code null} instead of throwing</b>: it is one extra column on
@@ -177,10 +211,19 @@ public class PriceCalculator {
             return null;
         }
         // Rounding kept identical to prices(): nearest 10 won, scale 2 — the two must be comparable on screen.
-        return costSum.add(basis.delivery()).add(basis.box())
-                .divide(denominator, 4, RoundingMode.HALF_UP)
-                .setScale(-1, RoundingMode.HALF_UP)
-                .setScale(2, RoundingMode.HALF_UP);
+        BigDecimal numerator = costSum.add(basis.delivery()).add(basis.box());
+        BigDecimal breakEven = round10(numerator.divide(denominator, 4, RoundingMode.HALF_UP));
+        // FEATURE_2610_13 / D112: the 11st delivery-fee commission is a cost here too (same one-time judgement).
+        BigDecimal shippingFeeCost = basis.customerShippingFee().costAt(breakEven);
+        if (shippingFeeCost.signum() != 0) {
+            breakEven = round10(numerator.add(shippingFeeCost).divide(denominator, 4, RoundingMode.HALF_UP));
+        }
+        return breakEven;
+    }
+
+    /** Nearest 10 won, then scale 2 for the DECIMAL(10,2) columns — the single rounding rule. */
+    private static BigDecimal round10(BigDecimal value) {
+        return value.setScale(-1, RoundingMode.HALF_UP).setScale(2, RoundingMode.HALF_UP);
     }
 
     /**
@@ -188,11 +231,12 @@ public class PriceCalculator {
      * {@link #prices}. Persists nothing, sends nothing.
      *
      * <pre>
-     *   비용합   = costSum + delivery + box
-     *   수수료   = judgedPrice × commissionRate × (1 + feeVatRate)
-     *   마진액   = judgedPrice − 비용합 − 수수료
-     *   마진율   = 마진액 ÷ judgedPrice
+     *   costTotal    = costSum + delivery + box
+     *   feeAmount    = judgedPrice × commissionRate × (1 + feeVatRate) + shippingFeeCost(judgedPrice)
+     *   marginAmount = judgedPrice − costTotal − feeAmount
+     *   marginRate   = marginAmount ÷ judgedPrice
      * </pre>
+     * shippingFeeCost = the 11st delivery-fee commission (FEATURE_2610_13 / D112), 0 on every other cell.
      *
      * <p>It lives next to {@link #prices} on purpose: writing the same interpretation twice is how two screens
      * start showing different numbers for the same option.</p>
@@ -205,7 +249,9 @@ public class PriceCalculator {
             throw new IllegalArgumentException("판정 가격이 0 이하라 마진을 계산할 수 없습니다");
         }
         BigDecimal costTotal = costSum.add(basis.delivery()).add(basis.box());
+        // FEATURE_2610_13 / D112: the 11st delivery-fee commission is a marketplace fee → it joins feeAmount.
         BigDecimal feeAmount = judgedPrice.multiply(basis.effectiveCommissionRate())
+                .add(basis.customerShippingFee().costAt(judgedPrice))
                 .setScale(2, RoundingMode.HALF_UP);
         BigDecimal marginAmount = judgedPrice.subtract(costTotal).subtract(feeAmount)
                 .setScale(2, RoundingMode.HALF_UP);
@@ -263,7 +309,16 @@ public class PriceCalculator {
      */
     public record CellPricingBasis(BigDecimal commissionRate, BigDecimal effectiveCommissionRate,
                                    BigDecimal targetMarginRate, BigDecimal displayDiscountRate,
-                                   BigDecimal minMarginAmount, BigDecimal minMarginRate) {
+                                   BigDecimal minMarginAmount, BigDecimal minMarginRate,
+                                   CustomerShippingFee customerShippingFee) {
+
+        /** Basis without a delivery-fee commission (every non-11st cell; tests). */
+        public CellPricingBasis(BigDecimal commissionRate, BigDecimal effectiveCommissionRate,
+                                BigDecimal targetMarginRate, BigDecimal displayDiscountRate,
+                                BigDecimal minMarginAmount, BigDecimal minMarginRate) {
+            this(commissionRate, effectiveCommissionRate, targetMarginRate, displayDiscountRate,
+                    minMarginAmount, minMarginRate, CustomerShippingFee.NONE);
+        }
     }
 
     /** A {@link CellPricingBasis} plus the per-option delivery and box costs. */
@@ -283,6 +338,10 @@ public class PriceCalculator {
 
         public BigDecimal displayDiscountRate() {
             return cellBasis.displayDiscountRate();
+        }
+
+        public CustomerShippingFee customerShippingFee() {
+            return cellBasis.customerShippingFee() != null ? cellBasis.customerShippingFee() : CustomerShippingFee.NONE;
         }
     }
 

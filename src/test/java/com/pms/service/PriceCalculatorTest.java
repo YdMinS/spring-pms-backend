@@ -8,6 +8,8 @@ import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.domain.Seller;
+import com.pms.service.listing.shipping.ElevenstShippingKeys;
+import com.pms.service.listing.shipping.ElevenstShippingResolver;
 import com.pms.repository.MarginPolicyRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -320,5 +322,33 @@ class PriceCalculatorTest {
         assertThat(priceCalculator.displayOriginalPrice(cell, result.salePrice()))
                 .isEqualByComparingTo(result.originalPrice())
                 .isEqualByComparingTo("13510");
+    }
+
+    // FEATURE_2610_13 / D16 · D92: an 11st cell adds 3.3% of the buyer's shipping fee to the cost side.
+    @Test
+    void calculatePrice_elevenstFixedShipping_addsDeliveryFeeCommission() {
+        ElevenstShippingResolver elevenstResolver = org.mockito.Mockito.mock(ElevenstShippingResolver.class);
+        PriceCalculator calculator =
+                new PriceCalculator(marginPolicyRepository, masterChannelConfigService, VAT, elevenstResolver);
+        ProductListing elevenstCell = ProductListing.builder()
+                .id(2L).platform(Platform.ELEVENST)
+                .seller(Seller.builder().id(7L).sellerName("판매자").build())
+                .build();
+        given(masterChannelConfigService.resolvePlatformCategory(elevenstCell)).willReturn(platformCategory("0.10"));
+        given(masterChannelConfigService.resolveDelivery(elevenstCell, masterOption))
+                .willReturn(CarrierRate.builder().cost(new BigDecimal("2500")).build());
+        given(masterChannelConfigService.resolvePackage(elevenstCell, masterOption))
+                .willReturn(Package.builder().cost(new BigDecimal("500")).build());
+        given(marginPolicyRepository.findBySellerIdAndPlatform(7L, Platform.ELEVENST))
+                .willReturn(Optional.of(MarginPolicy.builder().marginRate(new BigDecimal("0.15")).build()));
+        given(elevenstResolver.resolve(elevenstCell)).willReturn(java.util.Map.of(
+                ElevenstShippingKeys.DLV_CST_INST_BASI_CD, "02",
+                ElevenstShippingKeys.DLV_CST_PAY_TYP_CD, "03",
+                ElevenstShippingKeys.DLV_CST1, "3000"));
+
+        // 8000 + 3000 × 0.033 (= 99) = 8099; 8099 / 0.74 = 10944.59 → 10940
+        BigDecimal price = calculator.calculatePrice(elevenstCell, masterOption, new BigDecimal("5000"));
+
+        assertThat(price).isEqualByComparingTo("10940");
     }
 }

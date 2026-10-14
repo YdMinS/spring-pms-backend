@@ -115,7 +115,7 @@ public class ListingOptionServiceImpl implements ListingOptionService {
             if (!turningOff.isEmpty()) {
                 throw new IllegalArgumentException(
                         "마켓에 등록된 옵션은 뺄 수 없습니다: " + String.join(", ", turningOff)
-                        + " — 판매를 멈추려면 쿠팡 WING 에서 처리하세요.");
+                        + " — 판매를 멈추려면 마켓 판매자 화면(쿠팡 WING · 11번가 셀러오피스)에서 처리하세요.");
             }
         }
 

@@ -15,6 +15,7 @@ import com.pms.dto.response.ListingCategorySourceResponse;
 import com.pms.dto.response.ShippingConfigResponse;
 import com.pms.service.ListingAssetService;
 import com.pms.service.listing.ListingCategorySourceService;
+import com.pms.service.listing.shipping.ElevenstShippingRepricer;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -23,6 +24,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+
+import java.util.List;
+import java.util.Map;
 
 /**
  * Channel-cell auto-generated assets (FEATURE_2608_06 / 3b-2). ADMIN-only via the global
@@ -37,6 +41,7 @@ public class ListingAssetController {
 
     private final ListingAssetService listingAssetService;
     private final ListingCategorySourceService listingCategorySourceService;
+    private final ElevenstShippingRepricer elevenstShippingRepricer;
 
     @PostMapping("/{id}/regenerate")
     @Operation(summary = "Regenerate a cell's thumbnail + detail + option prices (backfill consumer)")
@@ -138,8 +143,13 @@ public class ListingAssetController {
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<GeneratedProductResponse>> updateShippingOverride(
             @PathVariable Long id, @RequestBody ShippingOverrideRequest request) {
-        return ResponseEntity.ok(ResponseDTO.success(
-                listingAssetService.updateShippingOverride(id, request.getOverride())));
+        listingAssetService.updateShippingOverride(id, request.getOverride());
+        // FEATURE_2610_13 / D117 · D123: an 11st cell is re-priced AFTER the save has committed (a Coupang cell is
+        // skipped). A failed re-price keeps the saved shipping and is only counted (D120). Re-read so the body
+        // carries the new prices.
+        int failed = elevenstShippingRepricer.repriceListings(List.of(id));
+        GeneratedProductResponse body = listingAssetService.getGenerated(id);
+        return ResponseEntity.ok(ResponseDTO.success(body.toBuilder().priceRecalcFailedCount(failed).build()));
     }
 
     @GetMapping("/{id}/shipping-inherited")
@@ -147,6 +157,13 @@ public class ListingAssetController {
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<ShippingConfigResponse>> resolveInheritedShipping(@PathVariable Long id) {
         return ResponseEntity.ok(ResponseDTO.success(listingAssetService.resolveInheritedShipping(id)));
+    }
+
+    @GetMapping("/{id}/elevenst-shipping-inherited")
+    @Operation(summary = "An 11st cell's inherited shipping baseline (FEATURE_2610_13 / D104; elevenst.* keys)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<Map<String, String>>> resolveInheritedElevenstShipping(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(listingAssetService.resolveInheritedElevenstShipping(id)));
     }
 
     @PatchMapping("/{id}/category-source")

@@ -60,6 +60,7 @@ import com.pms.service.listing.MasterOptionChannelSync;
 import com.pms.service.listing.MasterPropagationService;
 import com.pms.service.listing.OptionCheckSuffix;
 import com.pms.service.listing.TagMergeService;
+import com.pms.service.listing.shipping.ElevenstShippingKeys;
 import com.pms.service.listing.shipping.ShippingOverrideKeys;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -870,7 +871,7 @@ public class MasterProductServiceImpl implements MasterProductService {
         // be exactly the "delete then re-add" way around deleteOption's guard.
         for (MasterProductOption gone : existing) {
             if (!keptIds.contains(gone.getId()) && lockedOptionIds.contains(gone.getId())) {
-                throw new ValidationException("쿠팡에 등록된 옵션은 삭제할 수 없습니다. 판매 중지 후 마켓에서 정리하세요.");
+                throw new ValidationException("마켓에 등록된 옵션은 삭제할 수 없습니다. 판매 중지 후 마켓에서 정리하세요.");
             }
         }
         assertNoNameSwap(existing, request.getOptions());
@@ -983,18 +984,21 @@ public class MasterProductServiceImpl implements MasterProductService {
         MasterProduct master = requireScopedMaster(id);
         // Key whitelist only (no value validation — register 72/73 is the final guard). Master whitelist ⊂
         // listing whitelist: place keys (outbound/return center) are silently dropped (account-specific, 75).
-        // null/empty (after filtering) = no override.
+        // null/empty (after filtering) = no override. FEATURE_2610_13 / D106: the 11st quantity tiers must chain.
+        Map<String, String> filtered = ShippingOverrideKeys.filterMaster(override);
+        ElevenstShippingKeys.validateTiers(filtered);
         MasterProduct updated = masterProductRepository.save(
-                master.toBuilder().shippingOverride(ShippingOverrideKeys.filterMaster(override)).build());
+                master.toBuilder().shippingOverride(filtered).build());
         return mapToResponse(updated);
     }
 
     @Override
     @Transactional
-    public int applyShippingOverrideToChannels(Long id, List<Long> listingIds) {
+    public List<Long> applyShippingOverrideToChannels(Long id, List<Long> listingIds) {
         MasterProduct master = requireScopedMaster(id);
         // 79: the master's settings are WRITTEN ONTO each selected cell (overwrite), not just cleared —
-        // afterwards the cell's shipping settings are exactly the master's, and the cell owns them.
+        // afterwards the cell's shipping settings are exactly the master's for the cell's platform, and the cell
+        // owns them.
         // Master-level keys the master leaves empty are removed from the cell (so the cell matches the master
         // and those fields fall through to the account default). Place keys (outbound / return center) are the
         // account's own registered centers — never touched.
@@ -1003,17 +1007,26 @@ public class MasterProductServiceImpl implements MasterProductService {
 
         List<ProductListing> changed = new ArrayList<>();
         for (ProductListing cell : targets) {
+            // FEATURE_2610_13 / D104: copy only the keys of THIS cell's platform — an 11st cell gets the
+            // elevenst.* keys, every other cell the Coupang keys. Its own address keys stay.
+            boolean elevenst = cell.getPlatform() == Platform.ELEVENST;
+            Set<String> placeKeys = elevenst ? ElevenstShippingKeys.PLACE_KEYS : ShippingOverrideKeys.PLACE_KEYS;
+            Set<String> platformKeys = elevenst ? ElevenstShippingKeys.MASTER_KEYS : ShippingOverrideKeys.MASTER_KEYS;
             Map<String, String> current = cell.getShippingOverride();
             Map<String, String> next = new LinkedHashMap<>();
             if (current != null) {
                 for (Map.Entry<String, String> entry : current.entrySet()) {
-                    if (ShippingOverrideKeys.PLACE_KEYS.contains(entry.getKey())) {
+                    if (placeKeys.contains(entry.getKey())) {
                         next.put(entry.getKey(), entry.getValue());
                     }
                 }
             }
             if (masterOverride != null) {
-                next.putAll(masterOverride);
+                for (Map.Entry<String, String> entry : masterOverride.entrySet()) {
+                    if (platformKeys.contains(entry.getKey())) {
+                        next.put(entry.getKey(), entry.getValue());
+                    }
+                }
             }
             Map<String, String> resolved = next.isEmpty() ? null : next;
             if (Objects.equals(resolved, current)) {
@@ -1024,7 +1037,7 @@ public class MasterProductServiceImpl implements MasterProductService {
         if (!changed.isEmpty()) {
             productListingRepository.saveAll(changed);
         }
-        return changed.size();
+        return changed.stream().map(ProductListing::getId).toList();
     }
 
     /**
@@ -1141,7 +1154,7 @@ public class MasterProductServiceImpl implements MasterProductService {
         // Coupang keeps the approved option that can no longer be removed there.
         Set<Long> lockedOptionIds = marketLockedOptionIds(List.of(masterId)).getOrDefault(masterId, Set.of());
         if (lockedOptionIds.contains(option.getId())) {
-            throw new ValidationException("쿠팡에 등록된 옵션은 삭제할 수 없습니다. 판매 중지 후 마켓에서 정리하세요.");
+            throw new ValidationException("마켓에 등록된 옵션은 삭제할 수 없습니다. 판매 중지 후 마켓에서 정리하세요.");
         }
         // A master always keeps at least one option; dropping them all means deleting the master.
         if (optionRepository.findByMasterProductId(masterId).size() <= 1) {

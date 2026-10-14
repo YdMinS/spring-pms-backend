@@ -13,4 +13,6 @@ import lombok.Getter;
 public class ShippingForceApplyResponse {
 
     private int affectedChannels;
+    /** FEATURE_2610_13 / D120: changed 11st cells whose re-price failed after the copy. */
+    private int priceRecalcFailedCount;
 }

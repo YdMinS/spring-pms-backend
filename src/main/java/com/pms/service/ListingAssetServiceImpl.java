@@ -6,6 +6,7 @@ import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ImageOp;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
+import com.pms.domain.Platform;
 import com.pms.domain.PriceChangeReason;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
@@ -28,6 +29,8 @@ import com.pms.service.listing.ListingChannelResolver;
 import com.pms.service.price.PriceHistoryRecorder;
 import com.pms.service.listing.ListingStockPolicy;
 import com.pms.service.listing.shipping.CoupangShippingConfigResolver;
+import com.pms.service.listing.shipping.ElevenstShippingKeys;
+import com.pms.service.listing.shipping.ElevenstShippingResolver;
 import com.pms.service.listing.shipping.ShippingOverrideKeys;
 import com.pms.dto.response.ShippingConfigResponse;
 import java.util.function.Function;
@@ -92,6 +95,7 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     private final DetailContentGenerator detailContentGenerator;
     private final com.pms.service.listing.TagMergeService tagMergeService;
     private final CoupangShippingConfigResolver shippingConfigResolver;
+    private final ElevenstShippingResolver elevenstShippingResolver;
     private final PriceHistoryRecorder priceHistoryRecorder;
 
     /**
@@ -234,9 +238,13 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     public GeneratedProductResponse updateShippingOverride(Long listingId, Map<String, String> override) {
         ProductListing cell = requireScopedCell(listingId);
         // Key whitelist only (register 72/73 is the final value guard); null/empty (after filter) clears it.
-        // No regenerateAssets — shipping is not a thumbnail/detail/price binding, so nothing to re-render.
+        // No regenerateAssets — shipping is not a thumbnail/detail binding, so nothing to re-render. An 11st cell's
+        // price does read shipping (D117): the controller re-prices it after this commit (D123), not in here.
+        // FEATURE_2610_13 / D104 · D106: the cell's platform decides the key set; 11st quantity tiers must chain.
+        Map<String, String> filtered = ShippingOverrideKeys.filterListing(override, cell.getPlatform());
+        ElevenstShippingKeys.validateTiers(filtered);
         ProductListing updated = productListingRepository.save(
-                cell.toBuilder().shippingOverride(ShippingOverrideKeys.filterListing(override)).build());
+                cell.toBuilder().shippingOverride(filtered).build());
         GeneratedProductData data = generatedProductDataRepository.findByProductListingId(listingId).orElse(null);
         return toResponse(updated, data);
     }
@@ -247,6 +255,17 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         ProductListing cell = requireScopedCell(listingId);
         // master ?? account (this cell's own override excluded) — placeholder baseline for the channel modal.
         return ShippingConfigResponse.from(shippingConfigResolver.resolveInherited(cell));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<String, String> resolveInheritedElevenstShipping(Long listingId) {
+        ProductListing cell = requireScopedCell(listingId);
+        if (cell.getPlatform() != Platform.ELEVENST) {
+            throw new IllegalArgumentException("11번가 판매상품이 아닙니다.");
+        }
+        // D104: master ?? channel default (this cell's own override excluded) — the 11st modal's placeholder.
+        return elevenstShippingResolver.resolveInherited(cell);
     }
 
     @Override

@@ -54,6 +54,7 @@ import com.pms.service.listing.MasterOptionChannelSync;
 import com.pms.service.listing.MasterPropagationService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import com.pms.service.listing.shipping.ElevenstShippingKeys;
 import com.pms.service.listing.shipping.ShippingOverrideKeys;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
@@ -1164,11 +1165,11 @@ class MasterProductServiceTest {
         given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cellA, cellB));
 
         // When
-        int affected = service.applyShippingOverrideToChannels(1L, null);
+        List<Long> affected = service.applyShippingOverrideToChannels(1L, null);
 
         // Then only cell A changed: the master's value is written onto it, the place key survives.
         // Cell B already equals the master → not saved, not counted (idempotent).
-        assertThat(affected).isEqualTo(1);
+        assertThat(affected).containsExactly(100L);
         ArgumentCaptor<List<ProductListing>> captor = ArgumentCaptor.forClass(List.class);
         verify(productListingRepository).saveAll(captor.capture());
         List<ProductListing> saved = captor.getValue();
@@ -1177,6 +1178,33 @@ class MasterProductServiceTest {
         assertThat(saved.get(0).getShippingOverride())
                 .containsEntry(ShippingOverrideKeys.DELIVERY_METHOD, "SEQUENCIAL")
                 .containsEntry(ShippingOverrideKeys.OUTBOUND_SHIPPING_PLACE_CODE, "OUT-1");
+    }
+
+    // FEATURE_2610_13 / D104: each cell receives only its own platform's keys.
+    @Test
+    void applyShippingOverrideToChannels_copiesOnlyTheCellPlatformKeys() {
+        Map<String, String> masterOverride = new LinkedHashMap<>();
+        masterOverride.put(ShippingOverrideKeys.DELIVERY_CHARGE_TYPE, "FREE");
+        masterOverride.put(ElevenstShippingKeys.DLV_CST_INST_BASI_CD, "01");
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true)
+                .shippingOverride(masterOverride).build();
+        ProductListing coupangCell = ProductListing.builder().id(100L).name("쿠팡")
+                .platform(Platform.COUPANG).shippingOverride(null).build();
+        ProductListing elevenstCell = ProductListing.builder().id(101L).name("11번가")
+                .platform(Platform.ELEVENST)
+                .shippingOverride(Map.of(ElevenstShippingKeys.ADDR_SEQ_OUT, "11")).build();
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(coupangCell, elevenstCell));
+
+        List<Long> affected = service.applyShippingOverrideToChannels(1L, null);
+
+        assertThat(affected).containsExactly(100L, 101L);
+        ArgumentCaptor<List<ProductListing>> captor = ArgumentCaptor.forClass(List.class);
+        verify(productListingRepository).saveAll(captor.capture());
+        assertThat(captor.getValue().get(0).getShippingOverride())
+                .containsOnlyKeys(ShippingOverrideKeys.DELIVERY_CHARGE_TYPE);
+        assertThat(captor.getValue().get(1).getShippingOverride())
+                .containsOnlyKeys(ElevenstShippingKeys.DLV_CST_INST_BASI_CD, ElevenstShippingKeys.ADDR_SEQ_OUT);
     }
 
     @Test
@@ -1190,9 +1218,9 @@ class MasterProductServiceTest {
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
         given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cell));
 
-        int affected = service.applyShippingOverrideToChannels(1L, null);
+        List<Long> affected = service.applyShippingOverrideToChannels(1L, null);
 
-        assertThat(affected).isEqualTo(1);
+        assertThat(affected).containsExactly(100L);
         ArgumentCaptor<List<ProductListing>> captor = ArgumentCaptor.forClass(List.class);
         verify(productListingRepository).saveAll(captor.capture());
         assertThat(captor.getValue().get(0).getShippingOverride())
@@ -1214,9 +1242,9 @@ class MasterProductServiceTest {
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
         given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cellA));
 
-        int affected = service.applyShippingOverrideToChannels(1L, null);
+        List<Long> affected = service.applyShippingOverrideToChannels(1L, null);
 
-        assertThat(affected).isEqualTo(1);
+        assertThat(affected).containsExactly(100L);
         ArgumentCaptor<List<ProductListing>> captor = ArgumentCaptor.forClass(List.class);
         verify(productListingRepository).saveAll(captor.capture());
         assertThat(captor.getValue().get(0).getShippingOverride())
@@ -1237,10 +1265,10 @@ class MasterProductServiceTest {
         given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
         given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cellA, cellB));
 
-        int affected = service.applyShippingOverrideToChannels(1L, List.of(101L));
+        List<Long> affected = service.applyShippingOverrideToChannels(1L, List.of(101L));
 
         // Then only the selected cell is written; the unselected one keeps its own setting
-        assertThat(affected).isEqualTo(1);
+        assertThat(affected).containsExactly(101L);
         ArgumentCaptor<List<ProductListing>> captor = ArgumentCaptor.forClass(List.class);
         verify(productListingRepository).saveAll(captor.capture());
         assertThat(captor.getValue()).hasSize(1);
@@ -1542,7 +1570,7 @@ class MasterProductServiceTest {
 
         assertThatThrownBy(() -> service.deleteOption(1L, 10L))
                 .isInstanceOf(ValidationException.class)
-                .hasMessage("쿠팡에 등록된 옵션은 삭제할 수 없습니다. 판매 중지 후 마켓에서 정리하세요.");
+                .hasMessage("마켓에 등록된 옵션은 삭제할 수 없습니다. 판매 중지 후 마켓에서 정리하세요.");
         verify(optionRepository, never()).delete(any());
     }
 
@@ -1562,7 +1590,7 @@ class MasterProductServiceTest {
         givenEditableOption(true);
 
         assertThatThrownBy(() -> service.deleteOption(1L, 10L))
-                .hasMessage("쿠팡에 등록된 옵션은 삭제할 수 없습니다. 판매 중지 후 마켓에서 정리하세요.");
+                .hasMessage("마켓에 등록된 옵션은 삭제할 수 없습니다. 판매 중지 후 마켓에서 정리하세요.");
     }
 
     @Test
@@ -2454,7 +2482,7 @@ class MasterProductServiceTest {
 
         assertThatThrownBy(() -> service.updateComposition(1L, request))
                 .isInstanceOf(ValidationException.class)
-                .hasMessage("쿠팡에 등록된 옵션은 삭제할 수 없습니다. 판매 중지 후 마켓에서 정리하세요.");
+                .hasMessage("마켓에 등록된 옵션은 삭제할 수 없습니다. 판매 중지 후 마켓에서 정리하세요.");
         verify(componentRepository, never()).deleteByMasterProductId(any());
         verify(masterOptionChannelSync, never()).onOptionRemoved(any(), any());
     }

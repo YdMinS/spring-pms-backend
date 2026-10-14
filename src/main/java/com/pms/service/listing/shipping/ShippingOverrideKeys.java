@@ -1,5 +1,7 @@
 package com.pms.service.listing.shipping;
 
+import com.pms.domain.Platform;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
@@ -13,8 +15,13 @@ import java.util.Set;
  * ({@link #OUTBOUND_SHIPPING_PLACE_CODE}, {@link #RETURN_CENTER_CODE} + the return address block) are
  * registered per account, so their codes differ per account — a master-level override would force one
  * account's code onto every linked account and break their registrations. So the <b>master whitelist ⊂ the
- * listing whitelist</b>: the listing accepts every key; the master accepts every key EXCEPT the place keys.
+ * listing whitelist</b>: the listing accepts every key of its platform; the master accepts every key EXCEPT the
+ * place keys.
  * A master override carrying a place key is <b>silently dropped</b> on save (lenient, not a 400).</p>
+ *
+ * <p>FEATURE_2610_13 / D104: the master map also carries the 11st master keys ({@link ElevenstShippingKeys},
+ * {@code elevenst.*}), and an 11st listing takes only the 11st keys — {@link #filterListing} picks the set by
+ * the listing's platform.</p>
  */
 public final class ShippingOverrideKeys {
 
@@ -64,24 +71,35 @@ public final class ShippingOverrideKeys {
     /**
      * Filter a raw override map to the master whitelist (place keys silently dropped). Returns {@code null}
      * when the result is empty (= no override), so storage can persist {@code null} = inherit.
+     * FEATURE_2610_13 / D104: the master map also carries the 11st master keys ({@code elevenst.*}).
      */
     public static Map<String, String> filterMaster(Map<String, String> raw) {
-        return filter(raw, MASTER_KEYS);
+        return filter(raw, MASTER_KEYS, ElevenstShippingKeys.MASTER_KEYS);
     }
 
-    /** Filter a raw override map to the listing whitelist (unknown keys dropped). {@code null} when empty. */
-    public static Map<String, String> filterListing(Map<String, String> raw) {
-        return filter(raw, LISTING_KEYS);
+    /**
+     * Filter a raw override map to the whitelist of a listing on {@code platform} (unknown keys dropped):
+     * an 11st listing takes only the {@code elevenst.*} keys, every other listing only the Coupang keys
+     * (FEATURE_2610_13 / D104). {@code null} when empty.
+     */
+    public static Map<String, String> filterListing(Map<String, String> raw, Platform platform) {
+        return platform == Platform.ELEVENST
+                ? filter(raw, ElevenstShippingKeys.ALL_KEYS)
+                : filter(raw, LISTING_KEYS);
     }
 
-    private static Map<String, String> filter(Map<String, String> raw, Set<String> allowed) {
+    @SafeVarargs
+    private static Map<String, String> filter(Map<String, String> raw, Set<String>... allowedSets) {
         if (raw == null || raw.isEmpty()) {
             return null;
         }
         Map<String, String> filtered = new LinkedHashMap<>();
         for (Map.Entry<String, String> entry : raw.entrySet()) {
-            if (allowed.contains(entry.getKey())) {
-                filtered.put(entry.getKey(), entry.getValue());
+            for (Set<String> allowed : allowedSets) {
+                if (allowed.contains(entry.getKey())) {
+                    filtered.put(entry.getKey(), entry.getValue());
+                    break;
+                }
             }
         }
         return filtered.isEmpty() ? null : filtered;

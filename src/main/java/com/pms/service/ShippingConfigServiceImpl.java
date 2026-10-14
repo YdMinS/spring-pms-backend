@@ -2,11 +2,16 @@ package com.pms.service;
 
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.CoupangShippingConfig;
+import com.pms.domain.ElevenstShippingConfig;
+import com.pms.domain.Platform;
 import com.pms.dto.request.ShippingConfigRequest;
+import com.pms.dto.response.ElevenstShippingConfigResponse;
 import com.pms.dto.response.ShippingConfigResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.CoupangShippingConfigRepository;
+import com.pms.repository.ElevenstShippingConfigRepository;
+import com.pms.service.listing.shipping.ElevenstShippingKeys;
 import com.pms.service.listing.shipping.OutboundPlace;
 import com.pms.service.listing.shipping.ReturnCenter;
 import com.pms.service.listing.shipping.ShippingPlaceProvider;
@@ -16,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -38,6 +44,7 @@ public class ShippingConfigServiceImpl implements ShippingConfigService {
 
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final CoupangShippingConfigRepository shippingConfigRepository;
+    private final ElevenstShippingConfigRepository elevenstShippingConfigRepository;
     private final ShippingPlaceProviderResolver providerResolver;
 
     @Override
@@ -97,6 +104,43 @@ public class ShippingConfigServiceImpl implements ShippingConfigService {
                 .build());
 
         return ShippingConfigResponse.from(saved);
+    }
+
+    @Override
+    public ElevenstShippingConfigResponse getElevenstConfig(Long accountId) {
+        requireElevenst(findAccount(accountId));
+        Map<String, String> settings = elevenstShippingConfigRepository.findByMarketplaceAccountId(accountId)
+                .map(ElevenstShippingConfig::getSettings)
+                .orElse(null);
+        return ElevenstShippingConfigResponse.builder()
+                .marketplaceAccountId(accountId)
+                .settings(settings != null ? settings : Map.of())
+                .build();
+    }
+
+    @Override
+    @Transactional
+    public ElevenstShippingConfigResponse upsertElevenstConfig(Long accountId, Map<String, String> settings) {
+        MarketplaceAccount account = requireElevenst(findAccount(accountId));
+        Map<String, String> filtered = ElevenstShippingKeys.filter(settings, ElevenstShippingKeys.ALL_KEYS);
+        ElevenstShippingKeys.validateTiers(filtered);
+        // toBuilder from the existing row keeps its id (UNIQUE per account); a new one starts fresh.
+        ElevenstShippingConfig.ElevenstShippingConfigBuilder builder = elevenstShippingConfigRepository
+                .findByMarketplaceAccountId(accountId)
+                .map(ElevenstShippingConfig::toBuilder)
+                .orElseGet(() -> ElevenstShippingConfig.builder().marketplaceAccount(account));
+        ElevenstShippingConfig saved = elevenstShippingConfigRepository.save(builder.settings(filtered).build());
+        return ElevenstShippingConfigResponse.builder()
+                .marketplaceAccountId(accountId)
+                .settings(saved.getSettings() != null ? saved.getSettings() : Map.of())
+                .build();
+    }
+
+    private static MarketplaceAccount requireElevenst(MarketplaceAccount account) {
+        if (account.getPlatform() != Platform.ELEVENST) {
+            throw new IllegalArgumentException("11번가 판매채널이 아닙니다.");
+        }
+        return account;
     }
 
     private MarketplaceAccount findAccount(Long accountId) {

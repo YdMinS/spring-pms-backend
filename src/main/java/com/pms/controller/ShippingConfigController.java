@@ -1,11 +1,14 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.ElevenstShippingConfigRequest;
 import com.pms.dto.request.ShippingConfigRequest;
+import com.pms.dto.response.ElevenstShippingConfigResponse;
 import com.pms.dto.response.OutboundPlaceResponse;
 import com.pms.dto.response.ReturnCenterResponse;
 import com.pms.dto.response.ShippingConfigResponse;
 import com.pms.service.ShippingConfigService;
+import com.pms.service.listing.shipping.ElevenstShippingRepricer;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -30,6 +33,7 @@ import java.util.List;
 public class ShippingConfigController {
 
     private final ShippingConfigService shippingConfigService;
+    private final ElevenstShippingRepricer elevenstShippingRepricer;
 
     @GetMapping("/shipping-places/outbound")
     @Operation(summary = "List outbound shipping places (platform lookup; empty = manual entry)")
@@ -65,5 +69,25 @@ public class ShippingConfigController {
             @PathVariable Long id,
             @Valid @RequestBody ShippingConfigRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(shippingConfigService.upsertConfig(id, request)));
+    }
+
+    @GetMapping("/elevenst-shipping-config")
+    @Operation(summary = "Get the 11st shipping settings of an 11st sales channel (FEATURE_2610_13; empty map = unset)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<ElevenstShippingConfigResponse>> getElevenstConfig(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(shippingConfigService.getElevenstConfig(id)));
+    }
+
+    @PutMapping("/elevenst-shipping-config")
+    @Operation(summary = "Replace the 11st shipping settings of an 11st sales channel (FEATURE_2610_13)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<ElevenstShippingConfigResponse>> upsertElevenstConfig(
+            @PathVariable Long id,
+            @Valid @RequestBody ElevenstShippingConfigRequest request) {
+        ElevenstShippingConfigResponse saved = shippingConfigService.upsertElevenstConfig(id, request.getSettings());
+        // D117 · D123: re-price this channel's 11st cells AFTER the save has committed, one transaction per cell.
+        // A failed cell keeps its old prices and is only counted (D120) — the saved settings stay.
+        int failed = elevenstShippingRepricer.repriceAccount(id);
+        return ResponseEntity.ok(ResponseDTO.success(saved.toBuilder().priceRecalcFailedCount(failed).build()));
     }
 }
