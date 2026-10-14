@@ -1095,4 +1095,14 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID = '103-platform-category-commission-scale'",
                 Integer.class)).isEqualTo(1);
     }
+
+    /** changeset 105 (FEATURE_2610_13 / D2 · D83): 11st credential table + the five 11st courier codes. */
+    @Test
+    void elevenstAccountApplied() {
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM elevenst_account_credential", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForList(
+                "SELECT code FROM carrier_catalog WHERE platform = 'ELEVENST' ORDER BY display_order", String.class))
+                .containsExactly("00034", "00012", "00011", "00007", "00002");
+    }
 }

@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.CoupangAccountCredential;
 import com.pms.domain.DetailTemplate;
+import com.pms.domain.ElevenstAccountCredential;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Seller;
 import com.pms.domain.ThumbnailTemplate;
@@ -11,6 +12,7 @@ import com.pms.exception.ResourceNotFoundException;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.DetailTemplateRepository;
+import com.pms.repository.ElevenstAccountCredentialRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.ThumbnailTemplateRepository;
@@ -38,6 +40,7 @@ class MarketplaceAccountServiceTest {
 
     @Mock private MarketplaceAccountRepository repository;
     @Mock private CoupangAccountCredentialRepository credentialRepository;
+    @Mock private ElevenstAccountCredentialRepository elevenstCredentialRepository;
     @Mock private SellerRepository sellerRepository;
     @Mock private ThumbnailTemplateRepository thumbnailTemplateRepository;
     @Mock private DetailTemplateRepository detailTemplateRepository;
@@ -163,6 +166,69 @@ class MarketplaceAccountServiceTest {
         assertThatThrownBy(() -> service.create(baseRequest().platform("NAVER").build()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("네이버");
+    }
+
+    // FEATURE_2610_13 / D5 · D88: an 11st account stores only its API key, encrypted, never echoed back.
+    @Test
+    void create_elevenst_savesKeyWithFreshUseTime_andNeverExposesIt() {
+        given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(seller()));
+        given(repository.save(org.mockito.ArgumentMatchers.any())).willAnswer(inv -> inv.getArgument(0));
+        given(elevenstCredentialRepository.save(org.mockito.ArgumentMatchers.any()))
+                .willAnswer(inv -> inv.getArgument(0));
+
+        MarketplaceAccountResponse response = service.create(MarketplaceAccountRequest.builder()
+                .sellerId(SELLER_ID).platform("ELEVENST").apiKey("  KEY-1  ").build());
+
+        ArgumentCaptor<ElevenstAccountCredential> captor = ArgumentCaptor.forClass(ElevenstAccountCredential.class);
+        verify(elevenstCredentialRepository).save(captor.capture());
+        assertThat(captor.getValue().getApiKey()).isEqualTo("KEY-1");
+        assertThat(captor.getValue().getKeyLastUsedAt()).isNotNull();
+        verify(credentialRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
+        assertThat(response.getPlatform()).isEqualTo("ELEVENST");
+        assertThat(response.getElevenstKeyRenewalNeeded()).isFalse();
+        assertThat(response.getVendorId()).isNull();
+    }
+
+    @Test
+    void create_elevenst_withoutKey_rejected() {
+        assertThatThrownBy(() -> service.create(MarketplaceAccountRequest.builder()
+                .sellerId(SELLER_ID).platform("ELEVENST").apiKey(" ").build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("11번가 API 키를 입력하세요.");
+    }
+
+    @Test
+    void update_elevenst_blankKey_keepsExistingRow() {
+        ElevenstAccountCredential stored = ElevenstAccountCredential.builder().id(9L).apiKey("OLD").build();
+        MarketplaceAccount existing = MarketplaceAccountFixture.elevenstStubBuilder("OLD")
+                .id(60L).seller(seller()).elevenstCredential(stored).build();
+        given(repository.findById(60L)).willReturn(Optional.of(existing));
+        given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(seller()));
+        given(repository.save(org.mockito.ArgumentMatchers.any())).willAnswer(inv -> inv.getArgument(0));
+
+        service.update(60L, MarketplaceAccountRequest.builder()
+                .sellerId(SELLER_ID).platform("ELEVENST").apiKey("").build());
+
+        verify(elevenstCredentialRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void update_platformChange_rejected() {
+        MarketplaceAccount existing = MarketplaceAccountFixture.coupangStubBuilder("V1", null)
+                .id(50L).seller(seller()).build();
+        given(repository.findById(50L)).willReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.update(50L, MarketplaceAccountRequest.builder()
+                .sellerId(SELLER_ID).platform("ELEVENST").apiKey("K").build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("판매채널의 플랫폼은 바꿀 수 없습니다.");
+    }
+
+    @Test
+    void create_coupang_withoutVendorId_rejected() {
+        assertThatThrownBy(() -> service.create(baseRequest().vendorId(" ").build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("vendorId is required");
     }
 
     @Test

@@ -57,6 +57,11 @@ public class MarketplaceAccount extends BaseEntity {
     @OneToOne(mappedBy = "marketplaceAccount", fetch = FetchType.EAGER, optional = true)
     private CoupangAccountCredential coupangCredential;
 
+    // FEATURE_2610_13 / D2: the 11st API key, same inverse-EAGER shape as coupangCredential (same reasons).
+    // Read via ElevenstCredentials.of(account) — no convenience getters here.
+    @OneToOne(mappedBy = "marketplaceAccount", fetch = FetchType.EAGER, optional = true)
+    private ElevenstAccountCredential elevenstCredential;
+
     @Column(name = "is_active", nullable = false)
     private Boolean isActive;
 

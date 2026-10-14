@@ -33,19 +33,22 @@ public class MarketplaceAccountRequest {
     @Schema(description = "Account alias", example = "쿠팡 본점")
     private String accountAlias;
 
-    @NotBlank(message = "vendorId is required")
-    @Schema(description = "Coupang vendor ID", example = "A00012345", required = true)
+    // FEATURE_2610_13: required for COUPANG only — checked in the service (an 11st account has no vendor ID).
+    @Schema(description = "Coupang vendor ID (COUPANG only, required there)", example = "A00012345")
     private String vendorId;
 
     @Schema(description = "WING login ID (optional; distinct from vendorId)", example = "wing_user01")
     private String vendorUserId;
 
-    @NotBlank(message = "accessKey is required")
-    @Schema(description = "Coupang access key", required = true)
+    @Schema(description = "Coupang access key (COUPANG only, required there)")
     private String accessKey;
 
     @Schema(description = "Coupang secret key (write-only, stored encrypted). Required on create; blank on update keeps existing.")
     private String secretKey;
+
+    @Schema(description = "11st Open API key (ELEVENST only, write-only, stored encrypted). Required on create; "
+            + "blank on update keeps existing.")
+    private String apiKey;
 
     @Schema(description = "Active flag (null defaults to true on create)", example = "true")
     private Boolean isActive;
