@@ -14,7 +14,7 @@ import java.util.Map;
  * engine. Returned by regenerate/generated/detail-html endpoints.
  */
 @Getter
-@Builder
+@Builder(toBuilder = true)
 public class GeneratedProductResponse {
 
     private Long productListingId;
@@ -41,6 +41,11 @@ public class GeneratedProductResponse {
      */
     private Long detailTemplateId;
     private List<OptionPrice> optionPrices;
+    /**
+     * FEATURE_2610_13 / D120: 1 when this 11st cell's re-price failed after a shipping save, else 0. Only the
+     * shipping-override save fills it; every other endpoint returns 0.
+     */
+    private int priceRecalcFailedCount;
 
     @Getter
     @Builder

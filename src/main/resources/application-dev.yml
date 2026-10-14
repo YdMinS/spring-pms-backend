@@ -60,6 +60,11 @@ server:
 #
 # ⚠️ Do NOT re-enable these here. If dev ever needs a live marketplace round trip, use the manual
 # button on a dev-only account — never a schedule that shares a vendor id with prod.
+oklyx:
+  elevenst:
+    # FEATURE_2610_13 / D12 — dev never calls the keyed 11st API (same vendor keys as prod).
+    outbound-enabled: false
+
 oclyx:
   order-sync:
     quick-cron: "-"

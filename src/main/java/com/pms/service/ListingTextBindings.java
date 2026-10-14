@@ -9,8 +9,9 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Pure text-binding assembly shared by the thumbnail path ({@link ListingAssetServiceImpl}) and the
- * detail generator ({@link TemplateDetailContentGenerator}) — FEATURE_2608_06 / Step 2-2.
+ * Pure text-binding assembly shared by the thumbnail path ({@link ListingAssetServiceImpl}), the
+ * detail generator ({@link TemplateDetailContentGenerator}) — FEATURE_2608_06 / Step 2-2 — and the 11st payload's
+ * brand / notice texts ({@link ListingTextValueResolver}, FEATURE_2610_13).
  *
  * <p>Produces the master field values (blank entries dropped), then derives the two reserved keys
  * ({@code brandName} / {@code productName}) from the cell's first BOM product only when they are absent.

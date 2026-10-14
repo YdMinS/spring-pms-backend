@@ -172,6 +172,8 @@ public interface MasterProductService {
      * in 79): each selected cell's own shipping override is <b>overwritten</b> with the master's — the master's
      * master-level keys are written onto the cell, and master-level keys the master leaves empty are removed
      * from the cell. After this a cell's shipping settings are exactly the master's.
+     * FEATURE_2610_13 / D104: only the master keys of the cell's own platform are copied — an 11st cell takes the
+     * {@code elevenst.*} keys, every other cell the Coupang keys; the other platform's keys never reach the cell.
      *
      * <p>⚠️ This <b>writes values into the channel</b>, it does not merely clear it: the cell now owns those
      * values, so a later master edit no longer reaches it (the {@code channel ?? master ?? account} priority is
@@ -182,9 +184,9 @@ public interface MasterProductService {
      * @param id         master product id (404 when absent / cross-tenant)
      * @param listingIds channels to apply to; {@code null}/empty = every linked channel. An id outside this
      *                   master's channels is rejected with 400.
-     * @return how many channel cells actually changed
+     * @return the ids of the channel cells that actually changed (FEATURE_2610_13 / D117: the 11st ones are re-priced)
      */
-    int applyShippingOverrideToChannels(Long id, java.util.List<Long> listingIds);
+    java.util.List<Long> applyShippingOverrideToChannels(Long id, java.util.List<Long> listingIds);
 
     MasterOptionResponse createOption(Long masterId, MasterOptionRequest request);
 
@@ -205,6 +207,8 @@ public interface MasterProductService {
      * adds {@code "심사 중이라 건너뜀: listingId={id}, option={current channel option name}"} to {@code warnings}.</p>
      *
      * <p>⚠️ Local only — nothing is pushed to the market (the new names travel with the next [수정 요청]).</p>
+     *
+     * <p>FEATURE_2610_13 / D66: an 11st cell takes the 11st-safe form of the master name.</p>
      */
     ApplyOptionNamesResponse applyMasterOptionNames(Long masterId);
 

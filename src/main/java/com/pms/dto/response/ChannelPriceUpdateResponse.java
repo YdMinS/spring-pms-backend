@@ -11,7 +11,8 @@ import java.util.List;
  *                contains an {@code options} array of its own (D14).
  * @param pushed  how many options actually reached the market
  * @param skipped names of options saved locally only, because they carry no market identifier yet
- *                (not approved / DRAFT cell, D5)
+ *                (not approved / DRAFT cell, D5) or their platform takes no price push (11st, FEATURE_2610_13 /
+ *                D9 ⑤ · D56)
  * @param failed  options the market rejected — those are <b>not saved</b> (D6); the message is Coupang's own
  */
 public record ChannelPriceUpdateResponse(ListingOptionsResponse listing, int pushed,

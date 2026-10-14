@@ -20,6 +20,7 @@ import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.SellerRepository;
+import com.pms.service.elevenst.ElevenstListingRules;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,7 +45,8 @@ import java.util.Map;
  * independently, and one failure never marks a shared transaction rollback-only.</p>
  *
  * <p>Options are copied with a placeholder {@code sellingPrice} (the NOT-NULL column is filled by regenerate
- * before commit) and a null {@code platformOptionId} (issued by 3c).</p>
+ * before commit) and a null {@code platformOptionId} (issued by 3c). FEATURE_2610_13 / D66: an 11st cell's option
+ * name is the 11st-safe form of the master name.</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -126,7 +128,8 @@ public class ChannelAddServiceImpl implements ChannelAddService {
                     // option of a new channel "channel-only" (D2) — silently skipped by propagation, price
                     // recalculation and the stock clamp for ever.
                     .masterProductOption(masterOption)
-                    .optionName(masterOption.getName())
+                    // 2610_13/D66: an 11st cell stores the 11st-safe form of the master name.
+                    .optionName(ElevenstListingRules.nameForCell(cell, masterOption.getName()))
                     .sellingPrice(BigDecimal.ZERO)    // placeholder; regenerate fills the real price below
                     .platformOptionId(null)           // issued by 3c
                     .build());

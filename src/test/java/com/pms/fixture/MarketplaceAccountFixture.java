@@ -1,6 +1,7 @@
 package com.pms.fixture;
 
 import com.pms.domain.CoupangAccountCredential;
+import com.pms.domain.ElevenstAccountCredential;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.domain.Seller;
@@ -100,6 +101,14 @@ public final class MarketplaceAccountFixture {
                 .build());
         ReflectionTestUtils.setField(account, "coupangCredential", saved);
         return saved;
+    }
+
+    /** FEATURE_2610_13: an active 11st account stub with its API key attached (pure unit tests). */
+    public static MarketplaceAccount.MarketplaceAccountBuilder elevenstStubBuilder(String apiKey) {
+        return MarketplaceAccount.builder()
+                .platform(Platform.ELEVENST)
+                .isActive(true)
+                .elevenstCredential(ElevenstAccountCredential.builder().apiKey(apiKey).build());
     }
 
     /** 자격증명이 <b>없는</b> 계정(미설정 방어 경로 검증용). */

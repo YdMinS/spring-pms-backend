@@ -26,7 +26,8 @@ public interface ListingAssetService {
     GeneratedProductResponse regenerate(Long listingId);
 
     /**
-     * Endpoint 4-2: read a cell's assets (404 only when the cell itself is absent/cross-tenant).
+     * Endpoint 4-2 — and the body of the shipping-override save after its 11st re-price (FEATURE_2610_13 /
+     * R32): read a cell's assets (404 only when the cell itself is absent/cross-tenant).
      *
      * <p>2609_47/D3: a cell whose assets were never generated is <b>not</b> a 404 — the thumbnail/detail
      * fields come back null while the cell's own values (tags, option prices, stock, shipping, whether it
@@ -87,7 +88,9 @@ public interface ListingAssetService {
     /**
      * Replace a tenant-scoped cell's channel-level shipping overrides (75; 404 if absent). Key whitelist only
      * (register 72/73 is the final value guard); an empty/null map clears the override. No asset regeneration
-     * (shipping is not a thumbnail/detail/price binding). Returns the cell's current generated view.
+     * (shipping is not a thumbnail/detail binding). An 11st cell's selling price does read shipping
+     * (FEATURE_2610_13 / D117): the controller re-prices it after this save has committed (D123), never in here.
+     * Returns the cell's current generated view.
      */
     GeneratedProductResponse updateShippingOverride(Long listingId, Map<String, String> override);
 
@@ -97,6 +100,12 @@ public interface ListingAssetService {
      * these as placeholders so the user sees what applies when a channel field is left blank. Read-only.
      */
     ShippingConfigResponse resolveInheritedShipping(Long listingId);
+
+    /**
+     * FEATURE_2610_13 / D104: an 11st cell's inherited shipping baseline (master ?? channel default, its own
+     * override excluded) as {@code elevenst.*} key → value. 400 when the cell is not on 11st.
+     */
+    Map<String, String> resolveInheritedElevenstShipping(Long listingId);
 
     /**
      * Override the cell's thumbnail with an uploaded image (thumbnailSource=MANUAL_OVERRIDE) for a
@@ -123,7 +132,8 @@ public interface ListingAssetService {
      * of {@code cell} (margin reverse-calc). Step 3 of {@link #regenerateAssets(ProductListing)}, extracted
      * so a master option quantity edit can re-sync channel prices WITHOUT the thumbnail / detail work
      * (FEATURE_2608_06 / 84): re-rendering would cost an S3 GET + Java2D render + S3 PUT per cell (plus
-     * every zone image when a processing preset is attached) for a one-line option change.
+     * every zone image when a processing preset is attached) for a one-line option change. The [가격 점검]
+     * re-price and the 11st re-price after a shipping save (FEATURE_2610_13 / D117) call it for the same reason.
      *
      * <p>⚠️ Runs in the caller's transaction (default {@code REQUIRED} — no new boundary), so a caller that
      * just saved BOM quantities sees them here via JPA auto-flush.</p>

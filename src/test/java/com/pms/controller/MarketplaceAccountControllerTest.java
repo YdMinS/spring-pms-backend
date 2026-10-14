@@ -102,6 +102,20 @@ class MarketplaceAccountControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.secretKey").doesNotExist());
     }
 
+    // FEATURE_2610_13 / D5: an 11st channel is created with its API key only; the key is never echoed.
+    @Test
+    void create_elevenst_adminToken_returns201_withoutKey() throws Exception {
+        String elevenstBody = objectMapper.writeValueAsString(Map.of(
+                "sellerId", sellerId, "platform", "ELEVENST", "apiKey", "KEY-1"));
+
+        mockMvc.perform(post(PATH).header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content(elevenstBody))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.platform").value("ELEVENST"))
+                .andExpect(jsonPath("$.data.elevenstKeyRenewalNeeded").value(false))
+                .andExpect(jsonPath("$.data.apiKey").doesNotExist());
+    }
+
     @Test
     void create_adminToken_missingTemplateId_returns404() throws Exception {
         mockMvc.perform(post(PATH).header("Authorization", "Bearer " + adminToken)

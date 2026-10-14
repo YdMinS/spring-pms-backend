@@ -27,7 +27,8 @@ public record FetchResult(ListingStatus status, List<OptionId> options, String s
      * A single option's market ids.
      *
      * @param optionName          matching key against the cell's option name
-     * @param vendorItemId        Coupang vendorItemId → stored as {@code platformOptionId} (order mapping)
+     * @param vendorItemId        Coupang vendorItemId → stored as {@code platformOptionId} (order mapping); 11st sends
+     *                            our own option id here (FEATURE_2610_13 / D107 — the value sent as colSellerStockCd)
      * @param sellerProductItemId Coupang sellerProductItemId → stored for option updates
      */
     public record OptionId(String optionName, String vendorItemId, String sellerProductItemId) {

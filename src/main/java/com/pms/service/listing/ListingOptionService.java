@@ -67,6 +67,10 @@ public interface ListingOptionService {
      *
      * <p>Empty list → 400; ids not belonging to the listing → 400; an option going back to AUTO whose price
      * cannot be computed (category/fees/delivery/box/margin unset) → 400 with nothing saved (D16).</p>
+     *
+     * <p>FEATURE_2610_13: on an 11st listing a typed price off the 10-won unit → 400 (D71), and nothing is pushed —
+     * every option is saved locally and reported in {@code skipped}; 11st gets the price with [수정 요청] (D9 ⑤ ·
+     * D56).</p>
      */
     ChannelPriceUpdateResponse setOptionPrices(Long listingId, List<SetOptionPricesRequest.OptionPrice> prices);
 
@@ -77,6 +81,9 @@ public interface ListingOptionService {
      * <p>A value marks the option {@code MANUAL_OVERRIDE}, so a master rename leaves it alone (D4) — the
      * master detail's [옵션명 일괄 적용] is what pulls it back. A null/blank value restores the linked master
      * option's name and {@code AUTO}; a <b>channel-only</b> option (D2) has no name to go back to → 400.</p>
+     *
+     * <p>FEATURE_2610_13: on an 11st listing a typed name breaking the 11st rule → 400 (D71), and the restored
+     * master name is its 11st-safe form (D66, {@code ElevenstListingRules.nameForCell}).</p>
      *
      * <p>Empty list → 400; ids not belonging to the listing → 400; duplicate names within the cell → 400
      * (Coupang rejects a duplicate {@code itemName}). Every check runs before {@code saveAll}, so a rejected
@@ -95,6 +102,8 @@ public interface ListingOptionService {
      * without an option id and the cell is not REJECTED; renaming them would break the name match of the
      * approval result). A REJECTED cell's options without an id ARE renamed.
      * A duplicate name inside the cell → 400, nothing saved. Local only — nothing is pushed.</p>
+     *
+     * <p>FEATURE_2610_13 / D66: an 11st listing takes the 11st-safe form of the master name.</p>
      */
     ChannelApplyOptionNamesResponse applyMasterOptionNames(Long listingId);
 }

@@ -34,6 +34,9 @@ public class MarketplaceAccountResponse {
     // "옵션확인" suffix channel-level override (69): null = inherit. Prefill source for the front's replace PUT.
     private Boolean optionCheckSuffixEnabled;
     private String optionCheckSuffix;
+    // FEATURE_2610_13 / D88: 11st only (null for other platforms). The key itself is never exposed.
+    private LocalDateTime elevenstKeyLastUsedAt;
+    private Boolean elevenstKeyRenewalNeeded;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     // secretKey: 응답에 절대 포함하지 않음

@@ -23,6 +23,7 @@ import com.pms.service.ListingAssetService;
 import com.pms.service.OptionCheckSuffixResolver;
 import com.pms.service.PriceCalculator;
 import com.pms.service.RegistrationNameGenerator;
+import com.pms.service.elevenst.ElevenstListingRules;
 import com.pms.service.price.PriceHistoryRecorder;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -115,7 +116,7 @@ public class ListingOptionServiceImpl implements ListingOptionService {
             if (!turningOff.isEmpty()) {
                 throw new IllegalArgumentException(
                         "마켓에 등록된 옵션은 뺄 수 없습니다: " + String.join(", ", turningOff)
-                        + " — 판매를 멈추려면 쿠팡 WING 에서 처리하세요.");
+                        + " — 판매를 멈추려면 마켓 판매자 화면(쿠팡 WING · 11번가 셀러오피스)에서 처리하세요.");
             }
         }
 
@@ -195,7 +196,8 @@ public class ListingOptionServiceImpl implements ListingOptionService {
      * this different from the two writes above: the new price is pushed to the market inside this request
      * (D4), and an option is saved only once the market has accepted it (D6) — so the market call happens
      * <em>before</em> {@code saveAll}, and its failures are caught rather than thrown (a thrown exception
-     * would roll back the options that did succeed).
+     * would roll back the options that did succeed). An 11st listing pushes nothing — every option is saved
+     * locally (FEATURE_2610_13 / D9 ⑤ · D56).
      */
     @Override
     @Transactional
@@ -225,6 +227,10 @@ public class ListingOptionServiceImpl implements ListingOptionService {
             ProductListingOption option = byId.get(price.getOptionId());
             if (price.getSellingPrice() != null) {
                 BigDecimal salePrice = normalize(price.getSellingPrice());
+                // 2610_13/D71: an 11st listing takes 10-won units only — refuse the whole request.
+                if (ElevenstListingRules.isElevenst(listing) && !ElevenstListingRules.isTenWonUnit(salePrice)) {
+                    throw new IllegalArgumentException(ElevenstListingRules.PRICE_UNIT_MESSAGE);
+                }
                 targets.put(option.getId(), new TargetPrice(salePrice,
                         priceCalculator.displayOriginalPrice(listing, salePrice),
                         GeneratedContentSource.MANUAL_OVERRIDE));
@@ -238,7 +244,11 @@ public class ListingOptionServiceImpl implements ListingOptionService {
         }
 
         // 2. Push to the market, then keep only what it accepted.
-        ListingChannel adapter = resolver.resolveOptional(listing.getPlatform()).orElse(null);
+        // 2610_13 / D9 ⑤ · D56: 11st has no per-option price push — its price travels with the next [수정 요청],
+        // so an 11st listing takes the "no adapter" path (saved locally, reported in skipped).
+        ListingChannel adapter = ElevenstListingRules.isElevenst(listing)
+                ? null
+                : resolver.resolveOptional(listing.getPlatform()).orElse(null);
         List<String> skipped = new ArrayList<>();
         List<ChannelPriceUpdateResponse.FailedOption> failed = new ArrayList<>();
         Map<Long, ProductListingOption> toSave = new LinkedHashMap<>();
@@ -322,6 +332,10 @@ public class ListingOptionServiceImpl implements ListingOptionService {
             ProductListingOption option = byId.get(item.getOptionId());
             String requested = item.getOptionName() == null ? null : item.getOptionName().trim();
             if (StringUtils.hasText(requested)) {
+                // 2610_13/D71: a typed 11st name that breaks the 11st rule is refused, not rewritten.
+                if (ElevenstListingRules.isElevenst(listing) && !ElevenstListingRules.isValidName(requested)) {
+                    throw new IllegalArgumentException(ElevenstListingRules.INVALID_NAME_MESSAGE);
+                }
                 // D3: the channel named it → a master rename must not overwrite it (D4).
                 toSave.put(option.getId(), option.toBuilder()
                         .optionName(requested)
@@ -335,7 +349,7 @@ public class ListingOptionServiceImpl implements ListingOptionService {
                 throw new IllegalArgumentException("채널 전용 옵션은 되돌릴 마스터 옵션명이 없습니다");
             }
             toSave.put(option.getId(), option.toBuilder()
-                    .optionName(master.getName())
+                    .optionName(ElevenstListingRules.nameForCell(listing, master.getName()))
                     .optionNameSource(GeneratedContentSource.AUTO)
                     .build());
         }
@@ -393,7 +407,9 @@ public class ListingOptionServiceImpl implements ListingOptionService {
             if (master == null) {
                 continue;   // channel-only option (2609_22/D2) — no master name to take
             }
-            boolean alreadyApplied = master.getName().equals(option.getOptionName())
+            // 2610_13/D66: an 11st cell compares against and takes the 11st-safe form of the master name.
+            String masterName = ElevenstListingRules.nameForCell(listing, master.getName());
+            boolean alreadyApplied = masterName.equals(option.getOptionName())
                     && option.getOptionNameSource() == GeneratedContentSource.AUTO;
             if (alreadyApplied) {
                 continue;
@@ -404,11 +420,11 @@ public class ListingOptionServiceImpl implements ListingOptionService {
                 continue;
             }
             toSave.put(option.getId(), option.toBuilder()
-                    .optionName(master.getName())
+                    .optionName(masterName)
                     .optionNameSource(GeneratedContentSource.AUTO)
                     .build());
             marketNameChanged = marketNameChanged
-                    || (!master.getName().equals(option.getOptionName())
+                    || (!masterName.equals(option.getOptionName())
                         && MarketOptionPolicy.carriedOnMarket(listing, option));
         }
 

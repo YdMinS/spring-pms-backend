@@ -56,6 +56,10 @@ public class MasterProductResponse {
     @Schema(description = "Options (SKU variants)")
     private List<MasterOptionResponse> options;
 
+    @Schema(description = "FEATURE_2610_13 / D120: 11st cells whose re-price failed after the master shipping save "
+            + "(0 on every other endpoint)", example = "0")
+    private int priceRecalcFailedCount;
+
     @Getter
     @NoArgsConstructor
     @AllArgsConstructor

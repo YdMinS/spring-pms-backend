@@ -267,4 +267,13 @@ class DetailHtmlRendererTest {
         assertThat(html).doesNotContain("<style>").doesNotContain("font-family");
         assertThat(html).isEqualTo("<div style=\"text-align:center;\"><p style=\"width:80%;\">행복상회</p></div>");
     }
+
+    // 2610_13/D77: typed line breaks survive as <br>, after escaping.
+    @Test
+    void text_lineBreaks_becomeBr() {
+        DetailBlock block = DetailBlock.builder().type("text").bind("asNotice").build();
+        String html = renderer.render(template(block), Map.of("asNotice", "1줄 <b>\r\n2줄\n3줄"), Map.of(), Map.of());
+
+        assertThat(html).contains("1줄 &lt;b&gt;<br>2줄<br>3줄");
+    }
 }

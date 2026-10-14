@@ -143,9 +143,9 @@ public class MasterProduct extends BaseEntity {
 
     /**
      * Master-level shipping overrides (FEATURE_2608_06 / 75): key = an override field name (whitelist =
-     * {@code ShippingOverrideKeys.MASTER_KEYS}), value = a string (BigDecimal/enum too, parsed at resolve
-     * time). A master change applies to every linked channel; resolution = channel ?? master ?? account
-     * default (field-wise). ⚠️ No {@code @Builder.Default} — {@code null} = no override (inherit). Place keys
+     * {@code ShippingOverrideKeys.MASTER_KEYS} + the 11st master keys {@code elevenst.*}, FEATURE_2610_13 /
+     * D104), value = a string (BigDecimal/enum too, parsed at resolve time). A master change applies to every
+     * linked channel of the key's platform; resolution = channel ?? master ?? account default (field-wise). ⚠️ No {@code @Builder.Default} — {@code null} = no override (inherit). Place keys
      * (outbound/return center) are channel-level only and are dropped on save. JSON TEXT, H2/MySQL portable.
      */
     @Convert(converter = MapStringConverter.class)
