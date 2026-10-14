@@ -1,0 +1,59 @@
+# 11st account credential + 11st courier codes (FEATURE_2610_13 / D2 · D5 · D83 · D88).
+#   elevenst_account_credential = the seller's own 11st Open API key, 1:1 with marketplace_account (UNIQUE),
+#   next to coupang_account_credential (D2 — the neutral core gets no key column).
+# ⚠️ api_key is VARCHAR(512): the value is AES-GCM CIPHERTEXT (AesAttributeConverter, D5).
+# key_last_used_at = the last successful keyed 11st call (D88). Set on create and on every key change too.
+# carrier_catalog: the five 11st courier codes confirmed in the 1003 guide (D83). No other code is added.
+# ⚠️ No boolean column -> the 006 BIT follow-up is not needed.
+databaseChangeLog:
+
+  - changeSet:
+      id: 105-elevenst-account-credential
+      author: oclyx
+      comment: "FEATURE_2610_13: elevenst_account_credential (1:1 with marketplace_account, UNIQUE)."
+      changes:
+        - createTable:
+            tableName: elevenst_account_credential
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: marketplace_account_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: api_key, type: VARCHAR(512), constraints: { nullable: false } }
+              - column: { name: key_last_used_at, type: TIMESTAMP }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_elevenst_cred_tenant
+            baseTableName: elevenst_account_credential
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_elevenst_cred_account
+            baseTableName: elevenst_account_credential
+            baseColumnNames: marketplace_account_id
+            referencedTableName: marketplace_account
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            constraintName: uq_elevenst_cred_account
+            tableName: elevenst_account_credential
+            columnNames: marketplace_account_id
+      rollback:
+        - dropTable: { tableName: elevenst_account_credential }
+
+  - changeSet:
+      id: 105-elevenst-carrier-catalog
+      author: oclyx
+      comment: "FEATURE_2610_13 / D83: 11st courier codes (5 rows)."
+      changes:
+        - sql:
+            sql: >
+              INSERT INTO carrier_catalog (platform, code, name, display_order) VALUES
+              ('ELEVENST', '00034', 'CJ대한통운', 10),
+              ('ELEVENST', '00012', '롯데', 20),
+              ('ELEVENST', '00011', '한진', 30),
+              ('ELEVENST', '00007', '우체국', 40),
+              ('ELEVENST', '00002', '로젠', 50)
+      rollback:
+        - sql:
+            sql: "DELETE FROM carrier_catalog WHERE platform = 'ELEVENST'"

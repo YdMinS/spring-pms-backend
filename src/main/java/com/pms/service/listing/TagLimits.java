@@ -15,7 +15,8 @@ public final class TagLimits {
     public static final int DEFAULT = 20;
 
     /** Confirmed per-platform caps. */
-    public static final Map<Platform, Integer> BY_PLATFORM = Map.of(Platform.COUPANG, 20);
+    // FEATURE_2610_13 / D57: 11st takes no search tags from a regular seller → 0 (the merge sends an empty list).
+    public static final Map<Platform, Integer> BY_PLATFORM = Map.of(Platform.COUPANG, 20, Platform.ELEVENST, 0);
 
     private TagLimits() {
     }
