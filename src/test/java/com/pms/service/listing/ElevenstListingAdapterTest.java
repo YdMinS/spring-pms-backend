@@ -115,8 +115,10 @@ class ElevenstListingAdapterTest {
                         + "<colSellerStockCd>11</colSellerStockCd>",
                 "<colOptPrice>0</colOptPrice><colValue0>L</colValue0><colCount>9999</colCount>",
                 "<dlvCst1>3000</dlvCst1>", "<dlvEtprsCd>00034</dlvEtprsCd>", "<dlvClf>02</dlvClf>",
-                "<asDetail>A/S 글</asDetail>", "<ProductNotification><type>891045</type>");
-        assertThat(xml).doesNotContain("PrdFrDlvBasiAmt", "dlvCstInfoCd", "advrtStmt");
+                "<asDetail>A/S 글</asDetail>", "<ProductNotification><type>891045</type>",
+                "<selTermUseYn>N</selTermUseYn>");
+        assertThat(xml).doesNotContain("PrdFrDlvBasiAmt", "dlvCstInfoCd", "advrtStmt",
+                "selPrdClfCd", "aplBgnDy", "aplEndDy");
     }
 
     @Test
@@ -125,8 +127,10 @@ class ElevenstListingAdapterTest {
 
         String xml = adapter.buildPayload(cell, gen);
 
-        assertThat(xml).contains("<selPrc>9900</selPrc>", "<prdSelQty>5</prdSelQty>");
-        assertThat(xml).doesNotContain("<ProductOption>", "colTitle", "optSelectYn");
+        assertThat(xml).contains("<selPrc>9900</selPrc>", "<prdSelQty>5</prdSelQty>",
+                "<selTermUseYn>N</selTermUseYn>");
+        assertThat(xml).doesNotContain("<ProductOption>", "colTitle", "optSelectYn",
+                "selPrdClfCd", "aplBgnDy", "aplEndDy");
     }
 
     @Test
