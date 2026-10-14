@@ -207,6 +207,8 @@ public interface MasterProductService {
      * adds {@code "심사 중이라 건너뜀: listingId={id}, option={current channel option name}"} to {@code warnings}.</p>
      *
      * <p>⚠️ Local only — nothing is pushed to the market (the new names travel with the next [수정 요청]).</p>
+     *
+     * <p>FEATURE_2610_13 / D66: an 11st cell takes the 11st-safe form of the master name.</p>
      */
     ApplyOptionNamesResponse applyMasterOptionNames(Long masterId);
 

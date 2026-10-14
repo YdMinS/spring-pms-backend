@@ -87,7 +87,7 @@ public class CellBomResolver {
             return lines.isEmpty();
         }
 
-        /** 첫 구성품 또는 null — 썸네일·상세의 「대표 물품」 용도. */
+        /** The first component or null — the representative item of the thumbnail, the detail page and the 11st brand (D69). */
         public Line first() {
             return lines.isEmpty() ? null : lines.get(0);
         }

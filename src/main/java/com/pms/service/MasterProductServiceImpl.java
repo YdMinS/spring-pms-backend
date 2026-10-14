@@ -53,6 +53,7 @@ import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
+import com.pms.service.elevenst.ElevenstListingRules;
 import com.pms.service.listing.CellBomResolver;
 import com.pms.service.listing.ListingStockPolicy;
 import com.pms.service.listing.MarketOptionPolicy;
@@ -720,6 +721,8 @@ public class MasterProductServiceImpl implements MasterProductService {
         // 2609_46: identity first — the component set defines the master, so a set that already has a
         // master is rejected before anything else is judged (and before any save).
         assertComponentSetIsFree(componentIds, null);
+        // 2610_13/D78: the two 11st notice texts are refused at save time when over the 11st limit.
+        ListingTextValueResolver.requireNoticesFit(request.getFieldValues());
 
         // Atomicity: pre-validate every option (coverage + quantity) BEFORE any save. A violation throws
         // here, so the master is never persisted — provable by mock (masterProductRepository.save is never
@@ -765,6 +768,8 @@ public class MasterProductServiceImpl implements MasterProductService {
     @Transactional
     public MasterProductResponse updateMasterProduct(Long id, MasterProductUpdateRequest request) {
         MasterProduct existing = requireScopedMaster(id);
+        // 2610_13/D78: the two 11st notice texts are refused at save time when over the 11st limit.
+        ListingTextValueResolver.requireNoticesFit(request.getFieldValues());
 
         MasterProduct updated = masterProductRepository.save(existing.toBuilder()
                 .name(request.getName() != null ? request.getName() : existing.getName())
@@ -1185,7 +1190,8 @@ public class MasterProductServiceImpl implements MasterProductService {
                     productListingOptionRepository.findByProductListingId(cell.getId());
 
             // Build the whole cell's post-reset view first: a channel-only option (D2) keeps its own name,
-            // a linked one takes the master's. Nothing is saved until the cell passes the name check.
+            // a linked one takes the master's (its 11st-safe form on an 11st cell — FEATURE_2610_13 / D66).
+            // Nothing is saved until the cell passes the name check.
             List<ProductListingOption> toSave = new ArrayList<>();
             Set<String> resultingNames = new LinkedHashSet<>();
             List<String> lockedSkips = new ArrayList<>();
@@ -1193,7 +1199,9 @@ public class MasterProductServiceImpl implements MasterProductService {
             boolean marketNameChanged = false;
             for (ProductListingOption option : options) {
                 MasterProductOption linked = option.getMasterProductOption();
-                String masterName = linked == null ? null : masterNamesById.get(linked.getId());
+                // 2610_13/D66: an 11st cell compares against and takes the 11st-safe form of the master name.
+                String masterName = linked == null ? null
+                        : ElevenstListingRules.nameForCell(cell, masterNamesById.get(linked.getId()));
                 boolean alreadyApplied = masterName == null
                         || (masterName.equals(option.getOptionName())
                             && option.getOptionNameSource() == GeneratedContentSource.AUTO);

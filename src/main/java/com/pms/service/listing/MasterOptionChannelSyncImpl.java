@@ -10,6 +10,7 @@ import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.service.ListingAssetService;
+import com.pms.service.elevenst.ElevenstListingRules;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -79,10 +80,12 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
         }
         Map<Long, List<ProductListingOption>> optionsByCell = optionsByCell(cells);
         for (ProductListing cell : cells) {
+            // 2610_13/D66: an 11st cell takes the 11st-safe form of the new master name.
+            String cellName = ElevenstListingRules.nameForCell(cell, newName);
             List<ProductListingOption> cellOptions = optionsByCell.get(cell.getId());
             boolean newNameTaken = cellOptions.stream()
                     .filter(cellOption -> !masterOptionId.equals(masterOptionId(cellOption)))
-                    .anyMatch(cellOption -> Objects.equals(newName, cellOption.getOptionName()));
+                    .anyMatch(cellOption -> Objects.equals(cellName, cellOption.getOptionName()));
             boolean marketNameChanged = false;
             for (ProductListingOption cellOption : cellOptions) {
                 if (!masterOptionId.equals(masterOptionId(cellOption))) {
@@ -92,7 +95,7 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
                 if (cellOption.getOptionNameSource() == GeneratedContentSource.MANUAL_OVERRIDE) {
                     continue;
                 }
-                if (Objects.equals(newName, cellOption.getOptionName())) {
+                if (Objects.equals(cellName, cellOption.getOptionName())) {
                     continue;   // already there → no write
                 }
                 // 2609_74/D25: on the market but no option id yet → fetchStatus can only find it by NAME,
@@ -100,17 +103,17 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
                 // channel's [마스터 옵션명 반영] (D26), never automatically.
                 if (MarketOptionPolicy.awaitingMarketId(cell, cellOption)) {
                     log.info("[OPTION-SYNC] cellId={} rename to '{}' skipped: awaiting market option id",
-                            cell.getId(), newName);
+                            cell.getId(), cellName);
                     continue;
                 }
                 if (newNameTaken) {
                     // A MANUAL_OVERRIDE sibling (or a legacy duplicate) already carries that name; two options
                     // with the same name in one cell are a marketplace error (Coupang itemName).
                     log.warn("[OPTION-SYNC] cellId={} rename to '{}' skipped: name already present",
-                            cell.getId(), newName);
+                            cell.getId(), cellName);
                     continue;
                 }
-                productListingOptionRepository.save(cellOption.toBuilder().optionName(newName).build());
+                productListingOptionRepository.save(cellOption.toBuilder().optionName(cellName).build());
                 marketNameChanged = marketNameChanged || MarketOptionPolicy.carriedOnMarket(cell, cellOption);
             }
             // 2609_74/D16: a name that the market already shows has moved → the cell now disagrees with it.
@@ -261,7 +264,8 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
                 // 🔴 2609_22/D1: without this FK the new row would be born channel-only and be skipped by
                 // propagation, price recalculation and the stock clamp for ever (D2) — silently.
                 .masterProductOption(masterOption)
-                .optionName(masterOption.getName())
+                // 2610_13/D66: an 11st cell stores the 11st-safe form of the master name.
+                .optionName(ElevenstListingRules.nameForCell(cell, masterOption.getName()))
                 .sellingPrice(BigDecimal.ZERO)          // placeholder; recalculateOptionPrices fills the real one
                 .active(false)                          // ⚠️ never auto-sell a newly propagated option
                 .platformOptionId(null)                 // issued by the 3c push

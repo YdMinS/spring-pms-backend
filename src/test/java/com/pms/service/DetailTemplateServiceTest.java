@@ -256,4 +256,22 @@ class DetailTemplateServiceTest {
 
         assertThat(response.getImageProcessingPresetId()).isEqualTo(7L); // not cleared
     }
+
+    // 2610_13/D110 · D78: a notice block needs its default text, within 4000 EUC-KR bytes.
+    @Test
+    void create_noticeBlock_requiresDefaultText_withinElevenstLimit() {
+        DetailTemplateRequest blank = DetailTemplateRequest.builder()
+                .name("T").blocks(List.of(text("asNotice"))).build();
+        assertThatThrownBy(() -> service.create(blank))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("A/S 안내 · 반품/교환 안내 블록은 기본 글을 입력하세요.");
+
+        DetailTemplateRequest tooLong = DetailTemplateRequest.builder().name("T").blocks(List.of(
+                DetailBlock.builder().type("text").bind("returnExchangeNotice").defaultValue("가".repeat(2001)).build()))
+                .build();
+        assertThatThrownBy(() -> service.create(tooLong))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("11번가는 약 2,000자까지입니다");
+        verify(detailTemplateRepository, never()).save(any());
+    }
 }

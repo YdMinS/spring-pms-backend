@@ -882,4 +882,41 @@ class ListingOptionServiceTest {
         assertThat(skipped.getMarketPriceAt()).isNull();
         assertThat(skipped.getSellingPrice()).isEqualByComparingTo("15000");   // 로컬 값은 그래도 저장된다
     }
+
+    // 2610_13/D71: on an 11st listing a typed price off the 10-won unit and a typed name breaking the 11st
+    // rule are refused (400, nothing saved); a Coupang listing keeps accepting both.
+    @Test
+    void elevenstListing_refusesTypedPriceOffTenWonUnit_andInvalidTypedName() {
+        ProductListing elevenst = livePricingListing().toBuilder().platform(Platform.ELEVENST).build();
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(elevenst));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, null)));
+
+        assertThatThrownBy(() -> service.setOptionPrices(LISTING_ID,
+                List.of(new OptionPrice(1L, new BigDecimal("15005")))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("11번가 판매가는 10원 단위로 넣어 주세요.");
+        assertThatThrownBy(() -> service.setOptionNames(LISTING_ID,
+                List.of(new SetOptionNamesRequest.Item(1L, "50% 할인"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("11번가 옵션 이름은 한글 25자(영문 50자) 이하이고 & ; ' \" % < > # † 를 쓸 수 없습니다.");
+        verify(productListingOptionRepository, never()).saveAll(any());
+    }
+
+    // 2610_13 / D9 ⑤ · D56: an 11st listing never pushes a price — the option is saved and reported as skipped.
+    @Test
+    void elevenstListing_savesTypedPriceLocally_withoutPush() {
+        ProductListing elevenst = livePricingListing().toBuilder().platform(Platform.ELEVENST).build();
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(elevenst));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, "1")));
+        given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("18750.00"));
+
+        ChannelPriceUpdateResponse response =
+                service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, new BigDecimal("15000"))));
+
+        assertThat(response.skipped()).containsExactly("opt1");
+        verify(resolver, never()).resolveOptional(any());
+        verify(adapter, never()).updateOptionPrice(any(), any(), any());
+    }
 }

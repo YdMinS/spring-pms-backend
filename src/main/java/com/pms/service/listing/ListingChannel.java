@@ -49,13 +49,13 @@ public interface ListingChannel {
     boolean isShippingReady(ProductListing cell);
 
     /**
-     * Register the product on the market → returns the market product id (sellerProductId).
+     * Register the product on the market → returns the market product id (Coupang sellerProductId · 11st prdNo).
      * Does NOT wait for approval.
      *
      * @param cell the DRAFT channel cell
      * @param gen  generated assets (thumbnail URL + detail HTML) — the payload source
      * @param acct the marketplace account (credentials)
-     * @return the market product id (Coupang sellerProductId)
+     * @return the market product id (Coupang sellerProductId · 11st productNo)
      */
     String register(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct);
 
