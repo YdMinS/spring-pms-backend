@@ -48,7 +48,7 @@ import java.util.stream.Collectors;
  * unsupported (D9 ⑤ · D8).</p>
  *
  * <p>Value sources: name D108 · options D55 · D62 · D81 · D90 · D103 · shipping D84~D92 · D106 · notices D89 · D100
- * · D102 · texts D69 · D73 · certification D94 · D113 · fixed codes D63 · D64 · D95.</p>
+ * · D102 · texts D69 · D73 · certification D94 · D113 · fixed codes D63 · D64 · D95 · sale period D131.</p>
  */
 @Component
 @RequiredArgsConstructor
@@ -236,6 +236,7 @@ public class ElevenstListingAdapter implements ListingChannel {
         xml.append("</ProductCert>");
 
         BigDecimal min = minPrice(lines);
+        ElevenstXml.element(xml, "selTermUseYn", "N");
         ElevenstXml.element(xml, "selPrc", won(min));
         ElevenstXml.element(xml, "prdSelQty", lines.stream().mapToLong(Line::stock).sum());
         ElevenstXml.element(xml, "prcCmpExpYn", "Y");
