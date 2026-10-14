@@ -1,11 +1,13 @@
 package com.pms.service;
 
 import com.pms.dto.request.ShippingConfigRequest;
+import com.pms.dto.response.ElevenstShippingConfigResponse;
 import com.pms.dto.response.ShippingConfigResponse;
 import com.pms.service.listing.shipping.OutboundPlace;
 import com.pms.service.listing.shipping.ReturnCenter;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Shipping management for a marketplace account (FEATURE_2608_06 / 72): lookup-first outbound places / return
@@ -49,4 +51,19 @@ public interface ShippingConfigService {
      * @return the saved config
      */
     ShippingConfigResponse upsertConfig(Long accountId, ShippingConfigRequest request);
+
+    /**
+     * FEATURE_2610_13 / D84: the 11st shipping settings of an 11st sales channel (empty map when none yet).
+     *
+     * @throws IllegalArgumentException (→ 400) when the account is not on 11st
+     */
+    ElevenstShippingConfigResponse getElevenstConfig(Long accountId);
+
+    /**
+     * FEATURE_2610_13 / D84 · D106: replace the 11st shipping settings (only {@code elevenst.*} keys kept;
+     * quantity tiers must chain).
+     *
+     * @throws IllegalArgumentException (→ 400) when the account is not on 11st or the tiers do not chain
+     */
+    ElevenstShippingConfigResponse upsertElevenstConfig(Long accountId, Map<String, String> settings);
 }

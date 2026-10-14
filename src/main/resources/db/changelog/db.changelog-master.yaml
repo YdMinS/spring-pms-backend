@@ -210,3 +210,5 @@ databaseChangeLog:
       file: db/changelog/changes/104-master-platform-category.yaml
   - include:
       file: db/changelog/changes/105-elevenst-account.yaml
+  - include:
+      file: db/changelog/changes/106-elevenst-shipping-config.yaml

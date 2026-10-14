@@ -39,6 +39,7 @@ import com.pms.service.MasterProductService;
 import com.pms.service.listing.MasterDeleteService;
 import com.pms.service.listing.MasterFromChannelService;
 import com.pms.service.listing.MasterPropagationService;
+import com.pms.service.listing.shipping.ElevenstShippingRepricer;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -73,6 +74,8 @@ public class MasterProductController {
     private final MasterDeleteService masterDeleteService;
     /** 2609_64/D12: asset regeneration is triggered here, after the composition save has committed. */
     private final MasterPropagationService masterPropagationService;
+    /** FEATURE_2610_13 / D117 · D123: 11st re-price after a shipping save has committed. */
+    private final ElevenstShippingRepricer elevenstShippingRepricer;
 
     /**
      * Paged master list (110). {@code @ParameterObject} makes springdoc expand {@link MasterProductQuery}
@@ -220,8 +223,11 @@ public class MasterProductController {
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<MasterProductResponse>> updateShippingOverride(
             @PathVariable Long id, @RequestBody ShippingOverrideRequest request) {
-        return ResponseEntity.ok(ResponseDTO.success(
-                masterProductService.updateShippingOverride(id, request.getOverride())));
+        MasterProductResponse body = masterProductService.updateShippingOverride(id, request.getOverride());
+        // D117 · D123: re-price this master's 11st cells AFTER the save has committed, one transaction per cell.
+        // A failed cell keeps its old prices and is only counted (D120) — the saved shipping stays.
+        int failed = elevenstShippingRepricer.repriceMaster(id);
+        return ResponseEntity.ok(ResponseDTO.success(body.toBuilder().priceRecalcFailedCount(failed).build()));
     }
 
     @PostMapping("/{id}/shipping-override/apply-to-channels")
@@ -230,10 +236,12 @@ public class MasterProductController {
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<ShippingForceApplyResponse>> applyShippingOverrideToChannels(
             @PathVariable Long id, @RequestBody(required = false) ShippingForceApplyRequest request) {
-        int affected = masterProductService.applyShippingOverrideToChannels(
+        List<Long> changed = masterProductService.applyShippingOverrideToChannels(
                 id, request == null ? null : request.getListingIds());
-        return ResponseEntity.ok(ResponseDTO.success(
-                ShippingForceApplyResponse.builder().affectedChannels(affected).build()));
+        // D117 · D123: only the cells whose shipping really changed are re-priced (11st ones), after the commit.
+        int failed = elevenstShippingRepricer.repriceListings(changed);
+        return ResponseEntity.ok(ResponseDTO.success(ShippingForceApplyResponse.builder()
+                .affectedChannels(changed.size()).priceRecalcFailedCount(failed).build()));
     }
 
     @DeleteMapping("/{id}")

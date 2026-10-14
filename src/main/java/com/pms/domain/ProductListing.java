@@ -174,11 +174,12 @@ public class ProductListing extends BaseEntity {
     private DetailTemplate detailTemplate;
 
     /**
-     * Market-sync dirty marker (FEATURE_2608_06 / 3d, Design 2). {@code true} = "local assets were regenerated
-     * (layer A: {@code MasterPropagationService.propagate}) and this cell has NOT yet been pushed to the market"
-     * — i.e. pending market reflection. Only <b>on-market</b> cells ({@code platformProductId != null}) are
-     * marked true during propagation; DRAFT cells (not yet pushed) are never marked. Layer B
-     * ({@code ListingPropagationService.pushSync}) clears it back to {@code false} after a successful push.
+     * Market-sync dirty marker (FEATURE_2608_06 / 3d, Design 2). {@code true} = "this cell changed locally — e.g.
+     * layer A {@code MasterPropagationService.propagate}, or an 11st re-price after a shipping save (FEATURE_2610_13 /
+     * D121) — and has NOT yet been pushed to the market", i.e. pending market reflection. Only <b>on-market</b> cells
+     * ({@code platformProductId != null}) are marked true during propagation and the 11st re-price; DRAFT cells (not
+     * yet pushed) are never marked by them. Layer B ({@code ListingPropagationService.pushSync}) clears it back to
+     * {@code false} after a successful push.
      *
      * <p>Additive column only — pre-existing live rows are backfilled to {@code false} (not just regenerated,
      * so not pending). See changeset 014.</p>
@@ -251,7 +252,8 @@ public class ProductListing extends BaseEntity {
 
     /**
      * Per-channel shipping overrides (FEATURE_2608_06 / 75): key = an override field name (whitelist =
-     * {@code ShippingOverrideKeys.LISTING_KEYS} — the full set, including the outbound place / return center
+     * {@code ShippingOverrideKeys.LISTING_KEYS} on a Coupang cell, {@code ElevenstShippingKeys.ALL_KEYS} on an
+     * 11st cell (FEATURE_2610_13 / D104) — the full set, including the outbound place / return center
      * that are channel-level only), value = a string. Resolution = channel (this) ?? master ?? account
      * default (field-wise). ⚠️ {@code null} = no override (NOT a {@code @Builder.Default} empty map) — the
      * legacy CRUD/create path and pre-existing rows leave it unset (nullable, no live backfill). JSON TEXT.

@@ -128,7 +128,8 @@ public interface ProductListingRepository extends JpaRepository<ProductListing, 
     boolean existsByPlatformProductId(String platformProductId);
 
     /**
-     * Find all channel-cell listings grouped under a master product (coverage matrix right side).
+     * Find all channel-cell listings grouped under a master product (coverage matrix right side, and every
+     * per-master cell loop such as propagation and the 11st re-price after a shipping save, FEATURE_2610_13).
      * Tenant-filtered by {@code @TenantId} automatically.
      *
      * @param masterProductId ID of the parent MasterProduct
@@ -145,6 +146,17 @@ public interface ProductListingRepository extends JpaRepository<ProductListing, 
      * @return List of ProductListing cells across all given masters
      */
     List<ProductListing> findByMasterProductIdIn(Collection<Long> masterProductIds);
+
+    /**
+     * FEATURE_2610_13 / D117: the cells of ONE sales channel = the account's seller + the account's platform.
+     * Tenant-filtered by {@code @TenantId} on both entities.
+     *
+     * @param accountId marketplace account id
+     * @return the cells sold through that account
+     */
+    @Query("select l from ProductListing l, MarketplaceAccount a "
+            + "where a.id = :accountId and l.seller = a.seller and l.platform = a.platform")
+    List<ProductListing> findCellsOfAccount(@Param("accountId") Long accountId);
 
     /**
      * Tenant-scoped fetch by id (FEATURE_2608_06 / 3b-2). The inherited PK {@code findById} is NOT
