@@ -95,7 +95,10 @@ public class DetailHtmlRenderer {
         return raw == null ? null : fonts.get(raw);
     }
 
-    /** text: bound value, else defaultValue fallback, else skip. Escaped and wrapped in a styled &lt;p&gt;. */
+    /**
+     * text: bound value, else defaultValue fallback, else skip. Escaped, typed line breaks turned into
+     * &lt;br&gt; (2610_13/D77), and wrapped in a styled &lt;p&gt;.
+     */
     private void renderText(StringBuilder html, DetailBlock block, Map<String, String> texts,
                             Map<String, DetailFont> fonts) {
         String value = block.getBind() != null ? texts.get(block.getBind()) : null;
@@ -112,8 +115,9 @@ public class DetailHtmlRenderer {
         if (font != null) {
             html.append("font-family:").append(font.family()).append(';');
         }
+        // 2610_13/D77: every text block keeps the line breaks the user typed (escaped first, then <br>).
         html.append("\">")
-                .append(escape(value))
+                .append(escape(value).replaceAll("\\r?\\n", "<br>"))
                 .append("</p></div>");
     }
 

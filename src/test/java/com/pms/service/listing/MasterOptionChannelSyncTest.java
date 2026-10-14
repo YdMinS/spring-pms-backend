@@ -394,4 +394,22 @@ class MasterOptionChannelSyncTest {
         verify(productListingOptionRepository, never()).save(any());
         verify(listingAssetService, never()).recalculateOptionPrices(any());
     }
+
+    // 2610_13/D66: an 11st cell takes the 11st-safe form of a renamed master option; a Coupang cell takes it as is.
+    @Test
+    void onOptionRenamed_elevenstCellGetsSanitizedName() {
+        ProductListing coupang = cell(1L, null);
+        ProductListing elevenst = cell(2L, null).toBuilder().platform(Platform.ELEVENST).build();
+        given(productListingRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(coupang, elevenst));
+        given(productListingOptionRepository.findByProductListingIdIn(anyCollection())).willReturn(List.of(
+                cellOption(50L, coupang, "2개입", true, option(5L, "2개입")),
+                cellOption(60L, elevenst, "2개입", true, option(5L, "2개입"))));
+
+        sync.onOptionRenamed(MASTER_ID, 5L, "2개입 & 덤");
+
+        ArgumentCaptor<ProductListingOption> saved = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository, times(2)).save(saved.capture());
+        assertThat(saved.getAllValues()).extracting(ProductListingOption::getOptionName)
+                .containsExactly("2개입 & 덤", "2개입   덤");
+    }
 }
