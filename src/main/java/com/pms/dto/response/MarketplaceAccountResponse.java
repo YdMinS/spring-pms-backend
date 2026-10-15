@@ -37,6 +37,9 @@ public class MarketplaceAccountResponse {
     // FEATURE_2610_13 / D88: 11st only (null for other platforms). The key itself is never exposed.
     private LocalDateTime elevenstKeyLastUsedAt;
     private Boolean elevenstKeyRenewalNeeded;
+    // FEATURE_2610_16 / D7: 11st only (null for other platforms) — the channel's notice defaults.
+    private String asNotice;
+    private String returnExchangeNotice;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     // secretKey: 응답에 절대 포함하지 않음
