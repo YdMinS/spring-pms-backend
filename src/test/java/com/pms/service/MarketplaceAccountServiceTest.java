@@ -3,9 +3,11 @@ package com.pms.service;
 import com.pms.domain.CoupangAccountCredential;
 import com.pms.domain.DetailTemplate;
 import com.pms.domain.ElevenstAccountCredential;
+import com.pms.domain.ElevenstChannelDefault;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Seller;
 import com.pms.domain.ThumbnailTemplate;
+import com.pms.dto.request.ElevenstNoticesRequest;
 import com.pms.dto.request.MarketplaceAccountRequest;
 import com.pms.dto.response.MarketplaceAccountResponse;
 import com.pms.exception.ResourceNotFoundException;
@@ -13,6 +15,7 @@ import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.DetailTemplateRepository;
 import com.pms.repository.ElevenstAccountCredentialRepository;
+import com.pms.repository.ElevenstChannelDefaultRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.ThumbnailTemplateRepository;
@@ -41,6 +44,7 @@ class MarketplaceAccountServiceTest {
     @Mock private MarketplaceAccountRepository repository;
     @Mock private CoupangAccountCredentialRepository credentialRepository;
     @Mock private ElevenstAccountCredentialRepository elevenstCredentialRepository;
+    @Mock private ElevenstChannelDefaultRepository elevenstChannelDefaultRepository;
     @Mock private SellerRepository sellerRepository;
     @Mock private ThumbnailTemplateRepository thumbnailTemplateRepository;
     @Mock private DetailTemplateRepository detailTemplateRepository;
@@ -251,5 +255,61 @@ class MarketplaceAccountServiceTest {
         verify(repository).save(captor.capture());
         assertThat(captor.getValue().getThumbnailTemplate().getId()).isEqualTo(1L);   // kept
         assertThat(captor.getValue().getDetailTemplate().getId()).isEqualTo(5L);      // replaced
+    }
+
+    // FEATURE_2610_16 / D7 · D16: the existing row is replaced in place; blank text is stored as null.
+    @Test
+    void updateElevenstNotices_trimsAndStoresBlankAsNull_onTheExistingRow() {
+        MarketplaceAccount account = MarketplaceAccountFixture.elevenstStubBuilder("K").id(60L).seller(seller()).build();
+        given(repository.findById(60L)).willReturn(Optional.of(account));
+        given(elevenstChannelDefaultRepository.findByMarketplaceAccountId(60L)).willReturn(Optional.of(
+                ElevenstChannelDefault.builder().id(3L).marketplaceAccount(account).asNotice("옛 글").build()));
+
+        service.updateElevenstNotices(60L, ElevenstNoticesRequest.builder()
+                .asNotice("  고객 문의에 남겨주시면 안내해 드립니다.  ").returnExchangeNotice("   ").build());
+
+        ArgumentCaptor<ElevenstChannelDefault> captor = ArgumentCaptor.forClass(ElevenstChannelDefault.class);
+        verify(elevenstChannelDefaultRepository).save(captor.capture());
+        assertThat(captor.getValue().getId()).isEqualTo(3L);
+        assertThat(captor.getValue().getAsNotice()).isEqualTo("고객 문의에 남겨주시면 안내해 드립니다.");
+        assertThat(captor.getValue().getReturnExchangeNotice()).isNull();
+    }
+
+    // FEATURE_2610_16 / D7 · D8: a Coupang channel and an over-limit text are both 400 — nothing is saved.
+    @Test
+    void updateElevenstNotices_coupangChannelOrOverLimit_rejected() {
+        given(repository.findById(50L)).willReturn(Optional.of(
+                MarketplaceAccountFixture.coupangStubBuilder("V1", null).id(50L).seller(seller()).build()));
+        given(repository.findById(60L)).willReturn(Optional.of(
+                MarketplaceAccountFixture.elevenstStubBuilder("K").id(60L).seller(seller()).build()));
+
+        assertThatThrownBy(() -> service.updateElevenstNotices(50L,
+                ElevenstNoticesRequest.builder().asNotice("A/S").build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("11번가 판매채널이 아닙니다");
+        assertThatThrownBy(() -> service.updateElevenstNotices(60L,
+                ElevenstNoticesRequest.builder().returnExchangeNotice("가".repeat(2001)).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("11번가는 약 2,000자까지입니다");
+        verify(elevenstChannelDefaultRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
+    }
+
+    // FEATURE_2610_16 / D7: the response carries the notice defaults of an 11st channel only.
+    @Test
+    void get_mapsNoticeDefaults_forElevenstOnly() {
+        given(repository.findById(60L)).willReturn(Optional.of(
+                MarketplaceAccountFixture.elevenstStubBuilder("K").id(60L).seller(seller()).build()));
+        given(elevenstChannelDefaultRepository.findByMarketplaceAccountId(60L)).willReturn(Optional.of(
+                ElevenstChannelDefault.builder().asNotice("A/S 글").returnExchangeNotice("반품 글").build()));
+        given(repository.findById(50L)).willReturn(Optional.of(
+                MarketplaceAccountFixture.coupangStubBuilder("V1", null).id(50L).seller(seller()).build()));
+
+        MarketplaceAccountResponse elevenst = service.get(60L);
+        MarketplaceAccountResponse coupang = service.get(50L);
+
+        assertThat(elevenst.getAsNotice()).isEqualTo("A/S 글");
+        assertThat(elevenst.getReturnExchangeNotice()).isEqualTo("반품 글");
+        assertThat(coupang.getAsNotice()).isNull();
+        verify(elevenstChannelDefaultRepository, org.mockito.Mockito.never()).findByMarketplaceAccountId(50L);
     }
 }

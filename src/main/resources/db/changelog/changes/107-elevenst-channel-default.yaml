@@ -1,0 +1,40 @@
+# 11st notice defaults per sales channel (FEATURE_2610_16 / D4 · D6).
+#   elevenst_channel_default = the channel default of the two 11st notice texts (A/S · return/exchange), 1:1 with
+#   marketplace_account, next to elevenst_shipping_config. Read only when the listing and the master leave a
+#   notice blank (D5). Not part of elevenst_shipping_config: a notice edit must not re-price the 11st listings.
+# ⚠️ No boolean column -> the 006 BIT follow-up is not needed. No initial values are inserted (D14).
+databaseChangeLog:
+
+  - changeSet:
+      id: 107-elevenst-channel-default
+      author: oclyx
+      comment: "FEATURE_2610_16: elevenst_channel_default (1:1 with marketplace_account, UNIQUE)."
+      changes:
+        - createTable:
+            tableName: elevenst_channel_default
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: marketplace_account_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: as_notice, type: TEXT }
+              - column: { name: return_exchange_notice, type: TEXT }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_elevenst_chdef_tenant
+            baseTableName: elevenst_channel_default
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_elevenst_chdef_account
+            baseTableName: elevenst_channel_default
+            baseColumnNames: marketplace_account_id
+            referencedTableName: marketplace_account
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            constraintName: uq_elevenst_chdef_account
+            tableName: elevenst_channel_default
+            columnNames: marketplace_account_id
+      rollback:
+        - dropTable: { tableName: elevenst_channel_default }

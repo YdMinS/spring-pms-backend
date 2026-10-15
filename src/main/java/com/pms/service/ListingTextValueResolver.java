@@ -1,10 +1,10 @@
 package com.pms.service;
 
-import com.pms.domain.DetailBlock;
-import com.pms.domain.DetailTemplate;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.repository.ElevenstChannelDefaultRepository;
+import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.elevenst.ElevenstXml;
 import com.pms.service.listing.CellBomResolver;
@@ -22,7 +22,8 @@ import java.util.Map;
  *   <li>{@link #brand} — {@code brandName}: listing field value → master field value → first BOM product's
  *       brand (the same {@link ListingTextBindings} order the detail page uses, D69).</li>
  *   <li>{@link #notice} — {@link #KEY_AS_NOTICE} / {@link #KEY_RETURN_EXCHANGE_NOTICE}: listing → master → the
- *       default text of the first text block bound to that key in the detail template the listing uses (D73).</li>
+ *       notice default of the listing's 11st sales channel (FEATURE_2610_16 / D5). Detail template blocks are
+ *       not a source.</li>
  * </ul>
  * Values are read fresh on every call — they are not taken from the generated detail HTML (D79).
  */
@@ -41,7 +42,8 @@ public class ListingTextValueResolver {
 
     private final ProductListingOptionRepository productListingOptionRepository;
     private final CellBomResolver cellBomResolver;
-    private final ChannelTemplateResolver channelTemplateResolver;
+    private final MarketplaceAccountRepository marketplaceAccountRepository;
+    private final ElevenstChannelDefaultRepository elevenstChannelDefaultRepository;
 
     /** D69: the brand the 11st payload sends, or null when every source is blank. */
     public String brand(ProductListing cell) {
@@ -49,21 +51,17 @@ public class ListingTextValueResolver {
         return StringUtils.hasText(value) ? value : null;
     }
 
-    /** D73: the notice text for {@code key}, or null when the listing, the master and the template are all blank. */
+    /**
+     * FEATURE_2610_16 / D5: the notice text for {@code key}, or null when the listing, the master and the sales
+     * channel default are all blank.
+     */
     public String notice(ProductListing cell, String key) {
         String bound = bindings(cell).get(key);
         if (StringUtils.hasText(bound)) {
             return bound;
         }
-        DetailTemplate template = channelTemplateResolver.resolveDetail(cell);
-        List<DetailBlock> blocks = template.getBlocks() == null ? List.of() : template.getBlocks();
-        for (DetailBlock block : blocks) {
-            if ("text".equals(block.getType()) && key.equals(block.getBind())
-                    && StringUtils.hasText(block.getDefaultValue())) {
-                return block.getDefaultValue();
-            }
-        }
-        return null;
+        String channelDefault = channelDefault(cell, key);
+        return StringUtils.hasText(channelDefault) ? channelDefault : null;
     }
 
     /** D78: true when {@code value} fits the 11st notice limit (null fits). */
@@ -81,6 +79,16 @@ public class ListingTextValueResolver {
                 throw new IllegalArgumentException(NOTICE_TOO_LONG_MESSAGE);
             }
         }
+    }
+
+    /** FEATURE_2610_16 / D5: the cell's (seller, platform) sales channel — the same lookup as {@link ChannelTemplateResolver}. */
+    private String channelDefault(ProductListing cell, String key) {
+        return marketplaceAccountRepository
+                .findBySeller_IdAndPlatform(cell.getSeller().getId(), cell.getPlatform())
+                .flatMap(account -> elevenstChannelDefaultRepository.findByMarketplaceAccountId(account.getId()))
+                .map(defaults -> KEY_AS_NOTICE.equals(key) ? defaults.getAsNotice()
+                        : KEY_RETURN_EXCHANGE_NOTICE.equals(key) ? defaults.getReturnExchangeNotice() : null)
+                .orElse(null);
     }
 
     private Map<String, String> bindings(ProductListing cell) {

@@ -1,6 +1,7 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.ElevenstNoticesRequest;
 import com.pms.dto.request.MarketplaceAccountRequest;
 import com.pms.dto.request.OptionCheckSuffixRequest;
 import com.pms.dto.response.MarketplaceAccountResponse;
@@ -73,6 +74,16 @@ public class MarketplaceAccountController {
             @PathVariable @Parameter(description = "Marketplace account ID") Long id,
             @Valid @RequestBody OptionCheckSuffixRequest request) {
         service.updateRegistrationNameSuffix(id, request);
+        return ResponseEntity.ok(ResponseDTO.success(null));
+    }
+
+    @PutMapping("/{id}/elevenst-notices")
+    @Operation(summary = "Replace the 11st channel's A/S and return/exchange notice defaults (FEATURE_2610_16)",
+            description = "Blank = null. 400 when not 11st or a text is over 4000 EUC-KR bytes. ADMIN only")
+    public ResponseEntity<ResponseDTO<Void>> updateElevenstNotices(
+            @PathVariable @Parameter(description = "Marketplace account ID") Long id,
+            @RequestBody ElevenstNoticesRequest request) {
+        service.updateElevenstNotices(id, request);
         return ResponseEntity.ok(ResponseDTO.success(null));
     }
 

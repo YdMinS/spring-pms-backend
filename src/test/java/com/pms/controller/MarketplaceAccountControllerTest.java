@@ -7,6 +7,7 @@ import com.pms.domain.Seller;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.domain.ThumbnailTemplate;
 import com.pms.repository.CoupangAccountCredentialRepository;
+import com.pms.repository.ElevenstChannelDefaultRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.ThumbnailTemplateRepository;
@@ -19,6 +20,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -35,6 +37,7 @@ class MarketplaceAccountControllerTest extends BaseIntegrationTest {
     @Autowired private ThumbnailTemplateRepository thumbnailTemplateRepository;
     @Autowired private MarketplaceAccountRepository accountRepository;
     @Autowired private CoupangAccountCredentialRepository credentialRepository;
+    @Autowired private ElevenstChannelDefaultRepository elevenstChannelDefaultRepository;
 
     private static final String PATH = "/api/admin/marketplace-account";
     private Long sellerId;
@@ -170,5 +173,45 @@ class MarketplaceAccountControllerTest extends BaseIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken).contentType("application/json")
                         .content(objectMapper.writeValueAsString(Map.of("enabled", true, "suffix", "옵션확인"))))
                 .andExpect(status().isNotFound());
+    }
+
+    // FEATURE_2610_16 / D7 · D16: PUT replaces the 11st notice defaults; GET returns them; blank → null.
+    @Test
+    void updateElevenstNotices_adminToken_savesAndGetReturnsThem() throws Exception {
+        String created = mockMvc.perform(post(PATH).header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content(objectMapper.writeValueAsString(Map.of(
+                                "sellerId", sellerId, "platform", "ELEVENST", "apiKey", "KEY-1"))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long accountId = objectMapper.readTree(created).path("data").path("id").asLong();
+
+        mockMvc.perform(put(PATH + "/" + accountId + "/elevenst-notices")
+                        .header("Authorization", "Bearer " + adminToken).contentType("application/json")
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "asNotice", "  A/S 글  ", "returnExchangeNotice", "반품\n교환"))))
+                .andExpect(status().isOk());
+        mockMvc.perform(get(PATH + "/" + accountId).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.asNotice").value("A/S 글"))
+                .andExpect(jsonPath("$.data.returnExchangeNotice").value("반품\n교환"));
+
+        mockMvc.perform(put(PATH + "/" + accountId + "/elevenst-notices")
+                        .header("Authorization", "Bearer " + adminToken).contentType("application/json")
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "asNotice", " ", "returnExchangeNotice", "반품 글"))))
+                .andExpect(status().isOk());
+        assertThat(elevenstChannelDefaultRepository.findByMarketplaceAccountId(accountId).orElseThrow().getAsNotice())
+                .isNull();
+    }
+
+    @Test
+    void updateElevenstNotices_coupangAccount_returns400() throws Exception {
+        Long accountId = seedAccountWithCredential();
+
+        mockMvc.perform(put(PATH + "/" + accountId + "/elevenst-notices")
+                        .header("Authorization", "Bearer " + adminToken).contentType("application/json")
+                        .content(objectMapper.writeValueAsString(Map.of("asNotice", "A/S 글"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("11번가 판매채널이 아닙니다"));
     }
 }

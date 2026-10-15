@@ -212,3 +212,5 @@ databaseChangeLog:
       file: db/changelog/changes/105-elevenst-account.yaml
   - include:
       file: db/changelog/changes/106-elevenst-shipping-config.yaml
+  - include:
+      file: db/changelog/changes/107-elevenst-channel-default.yaml

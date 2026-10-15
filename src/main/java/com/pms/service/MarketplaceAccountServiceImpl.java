@@ -3,10 +3,12 @@ package com.pms.service;
 import com.pms.domain.CoupangAccountCredential;
 import com.pms.domain.DetailTemplate;
 import com.pms.domain.ElevenstAccountCredential;
+import com.pms.domain.ElevenstChannelDefault;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.domain.ThumbnailTemplate;
+import com.pms.dto.request.ElevenstNoticesRequest;
 import com.pms.dto.request.MarketplaceAccountRequest;
 import com.pms.dto.request.OptionCheckSuffixRequest;
 import com.pms.dto.response.MarketplaceAccountResponse;
@@ -14,6 +16,7 @@ import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.DetailTemplateRepository;
 import com.pms.repository.ElevenstAccountCredentialRepository;
+import com.pms.repository.ElevenstChannelDefaultRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.ThumbnailTemplateRepository;
@@ -50,6 +53,7 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
     private final MarketplaceAccountRepository repository;
     private final CoupangAccountCredentialRepository credentialRepository;
     private final ElevenstAccountCredentialRepository elevenstCredentialRepository;
+    private final ElevenstChannelDefaultRepository elevenstChannelDefaultRepository;
     private final SellerRepository sellerRepository;
     private final ThumbnailTemplateRepository thumbnailTemplateRepository;
     private final DetailTemplateRepository detailTemplateRepository;
@@ -223,6 +227,30 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
 
     @Override
     @Transactional
+    public void updateElevenstNotices(Long id, ElevenstNoticesRequest req) {
+        MarketplaceAccount account = findOrThrow(id);
+        if (account.getPlatform() != Platform.ELEVENST) {
+            throw new IllegalArgumentException("11번가 판매채널이 아닙니다");
+        }
+        String asNotice = normalizeSuffix(req.getAsNotice());
+        String returnExchangeNotice = normalizeSuffix(req.getReturnExchangeNotice());
+        if (!ListingTextValueResolver.noticeFits(asNotice)
+                || !ListingTextValueResolver.noticeFits(returnExchangeNotice)) {
+            throw new IllegalArgumentException(ListingTextValueResolver.NOTICE_TOO_LONG_MESSAGE);
+        }
+        // toBuilder from the existing row keeps its id (UNIQUE per account); a new one starts fresh.
+        ElevenstChannelDefault.ElevenstChannelDefaultBuilder builder = elevenstChannelDefaultRepository
+                .findByMarketplaceAccountId(id)
+                .map(ElevenstChannelDefault::toBuilder)
+                .orElseGet(() -> ElevenstChannelDefault.builder().marketplaceAccount(account));
+        elevenstChannelDefaultRepository.save(builder
+                .asNotice(asNotice)
+                .returnExchangeNotice(returnExchangeNotice)
+                .build());
+    }
+
+    @Override
+    @Transactional
     public void delete(Long id) {
         repository.delete(findOrThrow(id));
     }
@@ -251,7 +279,10 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
         }
     }
 
-    /** blank → null (inherit); else trimmed. Shared normalization for the 69 suffix text. */
+    /**
+     * blank → null (inherit); else trimmed. Shared normalization for the 69 suffix text and the 11st notice
+     * defaults (FEATURE_2610_16 / D16).
+     */
     private static String normalizeSuffix(String suffix) {
         return StringUtils.hasText(suffix) ? suffix.trim() : null;
     }
@@ -288,6 +319,10 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
      */
     private MarketplaceAccountResponse mapToResponse(MarketplaceAccount a, CoupangAccountCredential cred,
                                                      ElevenstAccountCredential elevenst) {
+        // FEATURE_2610_16 / D7: only an 11st channel carries notice defaults — no lookup for other platforms.
+        ElevenstChannelDefault notices = a.getPlatform() == Platform.ELEVENST
+                ? elevenstChannelDefaultRepository.findByMarketplaceAccountId(a.getId()).orElse(null)
+                : null;
         // secretKey 제외하고 매핑 (민감 자격증명 노출 금지)
         return MarketplaceAccountResponse.builder()
                 .id(a.getId())
@@ -307,6 +342,8 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                 .elevenstKeyLastUsedAt(elevenst != null ? elevenst.getKeyLastUsedAt() : null)
                 .elevenstKeyRenewalNeeded(elevenst != null
                         ? ElevenstCredentials.renewalNeeded(elevenst, LocalDateTime.now()) : null)
+                .asNotice(notices != null ? notices.getAsNotice() : null)
+                .returnExchangeNotice(notices != null ? notices.getReturnExchangeNotice() : null)
                 .createdAt(a.getCreatedAt())
                 .updatedAt(a.getUpdatedAt())
                 .build();
