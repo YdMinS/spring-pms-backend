@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.dto.request.ElevenstNoticesRequest;
 import com.pms.dto.request.MarketplaceAccountRequest;
 import com.pms.dto.request.OptionCheckSuffixRequest;
 import com.pms.dto.response.MarketplaceAccountResponse;
@@ -27,6 +28,12 @@ public interface MarketplaceAccountService {
      * null = inherit (blank suffix normalizes to null). 404 if the account is absent.
      */
     MarketplaceAccountResponse updateRegistrationNameSuffix(Long id, OptionCheckSuffixRequest req);
+
+    /**
+     * Replace the 11st channel's notice defaults (FEATURE_2610_16 / D7 · D8 · D16). Blank texts are stored as null;
+     * a text over 4000 EUC-KR bytes is a 400. 400 when the account is not 11st, 404 when it is absent.
+     */
+    void updateElevenstNotices(Long id, ElevenstNoticesRequest req);
 
     void delete(Long id);
 }

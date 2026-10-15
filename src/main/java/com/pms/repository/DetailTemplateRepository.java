@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -22,4 +23,11 @@ public interface DetailTemplateRepository extends JpaRepository<DetailTemplate, 
     /** Tenant-scoped fetch by id. Returns empty for a cross-tenant id (Hibernate @TenantId filter). */
     @Query("select d from DetailTemplate d where d.id = :id")
     Optional<DetailTemplate> findScopedById(@Param("id") Long id);
+
+    /**
+     * Every tenant id that owns a detail template, ignoring the {@code @TenantId} filter (native query) — the
+     * startup {@code NoticeBlockCleanupRunner} sets each tenant explicitly (FEATURE_2610_16 / D23).
+     */
+    @Query(value = "SELECT DISTINCT tenant_id FROM detail_template", nativeQuery = true)
+    List<Long> findDistinctTenantIds();
 }

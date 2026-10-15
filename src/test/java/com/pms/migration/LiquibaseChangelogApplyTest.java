@@ -1105,4 +1105,15 @@ class LiquibaseChangelogApplyTest {
                 "SELECT code FROM carrier_catalog WHERE platform = 'ELEVENST' ORDER BY display_order", String.class))
                 .containsExactly("00034", "00012", "00011", "00007", "00002");
     }
+
+    /** changeset 107 (FEATURE_2610_16 / D6 · D14): 11st notice defaults table, created empty. */
+    @Test
+    void elevenstChannelDefaultApplied() {
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM elevenst_channel_default WHERE as_notice IS NULL AND return_exchange_notice IS NULL",
+                Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID = '107-elevenst-channel-default'",
+                Integer.class)).isEqualTo(1);
+    }
 }

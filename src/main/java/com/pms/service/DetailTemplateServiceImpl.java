@@ -37,8 +37,9 @@ import java.util.stream.Collectors;
 public class DetailTemplateServiceImpl implements DetailTemplateService {
 
     private static final Set<String> KNOWN_TYPES = Set.of("text", "imageZone", "asset", "spacer");
-    /** 2610_13/D110: an A/S or return/exchange notice block without default text cannot be saved. */
-    static final String NOTICE_DEFAULT_REQUIRED_MESSAGE = "A/S 안내 · 반품/교환 안내 블록은 기본 글을 입력하세요.";
+    /** FEATURE_2610_16 / D24: notice texts live on the 11st sales channel, never in a detail template. */
+    static final String NOTICE_BLOCK_REJECTED_MESSAGE =
+            "A/S 안내 · 반품/교환 안내는 판매채널 수정의 플랫폼 기본값에서 넣으세요";
 
     private final DetailTemplateRepository detailTemplateRepository;
     private final ProcessingPresetRepository processingPresetRepository;
@@ -117,9 +118,8 @@ public class DetailTemplateServiceImpl implements DetailTemplateService {
     /**
      * Block rules (→400 on violation). {@code null} = keep-existing (partial update) → skip. Only the
      * essential per-type requirement is checked; widthPercent/align/defaultValue are normalized by the
-     * renderer (fallback/skip), so they are not validated here (ThumbnailTemplate.validateFields minimalism) —
-     * except a notice text block's defaultValue (FEATURE_2610_13 / D110 · D78: required, within 4000 EUC-KR
-     * bytes).
+     * renderer (fallback/skip), so they are not validated here (ThumbnailTemplate.validateFields minimalism).
+     * A text block bound to a notice key is refused (FEATURE_2610_16 / D24).
      */
     private void validateBlocks(List<DetailBlock> blocks) {
         if (blocks == null) {
@@ -144,14 +144,9 @@ public class DetailTemplateServiceImpl implements DetailTemplateService {
                     if (!StringUtils.hasText(block.getBind())) {
                         throw new IllegalArgumentException("텍스트 블록은 bind(필드키)가 필요합니다");
                     }
-                    // 2610_13/D110 · D78: a notice block must carry its default text, within the 11st limit.
+                    // FEATURE_2610_16 / D24: the two notice keys are entered on the 11st sales channel instead.
                     if (ListingTextValueResolver.NOTICE_KEYS.contains(block.getBind())) {
-                        if (!StringUtils.hasText(block.getDefaultValue())) {
-                            throw new IllegalArgumentException(NOTICE_DEFAULT_REQUIRED_MESSAGE);
-                        }
-                        if (!ListingTextValueResolver.noticeFits(block.getDefaultValue())) {
-                            throw new IllegalArgumentException(ListingTextValueResolver.NOTICE_TOO_LONG_MESSAGE);
-                        }
+                        throw new IllegalArgumentException(NOTICE_BLOCK_REJECTED_MESSAGE);
                     }
                 }
                 case "imageZone" -> {

@@ -257,21 +257,21 @@ class DetailTemplateServiceTest {
         assertThat(response.getImageProcessingPresetId()).isEqualTo(7L); // not cleared
     }
 
-    // 2610_13/D110 · D78: a notice block needs its default text, within 4000 EUC-KR bytes.
+    // FEATURE_2610_16 / D24 ②: a text block bound to either notice key is refused, default text or not.
     @Test
-    void create_noticeBlock_requiresDefaultText_withinElevenstLimit() {
-        DetailTemplateRequest blank = DetailTemplateRequest.builder()
+    void create_noticeBlock_rejected_pointsToSalesChannelDefaults() {
+        DetailTemplateRequest asNotice = DetailTemplateRequest.builder()
                 .name("T").blocks(List.of(text("asNotice"))).build();
-        assertThatThrownBy(() -> service.create(blank))
+        assertThatThrownBy(() -> service.create(asNotice))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("A/S 안내 · 반품/교환 안내 블록은 기본 글을 입력하세요.");
+                .hasMessage("A/S 안내 · 반품/교환 안내는 판매채널 수정의 플랫폼 기본값에서 넣으세요");
 
-        DetailTemplateRequest tooLong = DetailTemplateRequest.builder().name("T").blocks(List.of(
-                DetailBlock.builder().type("text").bind("returnExchangeNotice").defaultValue("가".repeat(2001)).build()))
+        DetailTemplateRequest returnNotice = DetailTemplateRequest.builder().name("T").blocks(List.of(
+                DetailBlock.builder().type("text").bind("returnExchangeNotice").defaultValue("반품 글").build()))
                 .build();
-        assertThatThrownBy(() -> service.create(tooLong))
+        assertThatThrownBy(() -> service.create(returnNotice))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("11번가는 약 2,000자까지입니다");
+                .hasMessage("A/S 안내 · 반품/교환 안내는 판매채널 수정의 플랫폼 기본값에서 넣으세요");
         verify(detailTemplateRepository, never()).save(any());
     }
 }
