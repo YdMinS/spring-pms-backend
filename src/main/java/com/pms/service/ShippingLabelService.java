@@ -7,19 +7,20 @@ import com.pms.dto.response.ShippingLabelPreviewRow;
 import java.util.List;
 
 /**
- * 송장 접수용 스프레드시트 생성 서비스 (생성 레그).
+ * Label-sheet generation service (generation leg).
  *
- * 쿠팡 ordersheets(status=INSTRUCT)를 <b>온디맨드 조회</b>해 택배사 접수용 xlsx 로 내려준다.
- * 「내부 상품준비중」 시트만 status=ACCEPT 로 조회한다({@link #previewInternalRows}, FEATURE_2609_75).
+ * Reads the marketplace <b>on demand</b> — Coupang ordersheets (status=INSTRUCT) and the 11st preparing list 1635
+ * (FEATURE_2610_17 / D2 · D42) — and returns the carrier intake xlsx. Only the 「내부 상품준비중」 sheet reads Coupang
+ * status=ACCEPT ({@link #previewInternalRows}, FEATURE_2609_75).
  *
- * <p>❌ 수령인 연락처·주소·배송메시지는 DB 에 저장하지 않는다 — xlsx 에만 담고 버린다.
- * (이름은 orders 에 저장됨, FEATURE_2609_06)
- * <br>✅ 조회분을 주문 3층(orders·order_shipment·order_line)에 upsert 한다(2609_13 D1) — 시트에 실린 주문은 발송처리 시
- * DB 에 있어야 하므로, 받아온 라인을 버리지 않는다. 주소·연락처·배송메시지는 여전히 저장하지 않는다(D7).
- * 저장은 best-effort 라 실패해도 xlsx 는 그대로 나간다(D6).
- * <br>대상 플랫폼: 쿠팡(COUPANG)만.
+ * <p>❌ Receiver phone, address and delivery message are never stored in the DB — they go into the xlsx and are
+ * dropped (names are stored in orders, FEATURE_2609_06).
+ * <br>✅ Fetched rows are upserted into the order tables (orders · order_shipment · order_line, 2609_13 D1) — a sheet
+ * order must exist in the DB when the shipment is confirmed, so fetched lines are not thrown away. Address, phone and
+ * message are still not stored (D7). Saving is best-effort: a failure still returns the xlsx (D6).
+ * <br>Target platforms: COUPANG and ELEVENST.
  *
- * <p>사용 예제 (Controller):
+ * <p>Usage (Controller):
  * <pre>{@code
  * List<ShippingLabelPreviewRow> rows = shippingLabelService.previewRows(sellerId);
  * byte[] xlsx = shippingLabelService.toXlsxFromExport(editedRows);
@@ -28,22 +29,25 @@ import java.util.List;
 public interface ShippingLabelService {
 
     /**
-     * 대상 계정의 쿠팡 ordersheets(INSTRUCT)를 조회·펼쳐 편집용 미리보기 행으로 반환한다 (V2).
+     * Reads the target accounts' Coupang ordersheets (INSTRUCT) and 11st preparing lists (1635), flattens them and
+     * returns preview rows for editing (V2).
      *
-     * @param sellerId null 이면 활성 전체 계정, 지정 시 해당 셀러의 활성 계정만
+     * @param sellerId null = every active account; set = only that seller's active accounts
      */
     List<ShippingLabelPreviewRow> previewRows(Long sellerId);
 
     /**
-     * 주문 라인 한 건(order_line.id)의 쿠팡 발주서를 단건 조회해 편집용 preview 행으로 반환한다.
+     * Preview rows of one order line's order (order_line.id).
      *
-     * 목록 기반 previewRows 와 달리 status 조건이 없어 어떤 상태의 주문에서도 시트를 만들 수 있고,
-     * 대상 범위는 그 주문번호(orderId)의 모든 박스·모든 라인이다(PLAN D2).
+     * Coupang: the single ordersheet lookup — unlike the list-based previewRows it has no status condition, so a sheet
+     * can be made from an order in any status, covering every box and line of that orderId (PLAN D2).
+     * 11st: the same 1635 preparing list, keeping only that order — rows only while the order is preparing
+     * (FEATURE_2610_17 / D2).
      *
-     * @param orderItemId 우리 DB order_line PK (쿠팡 orderId 가 아님)
-     * @throws com.pms.exception.ResourceNotFoundException 주문 라인 없음
-     * @throws IllegalArgumentException 쿠팡 계정 주문이 아님
-     * @throws IllegalStateException 쿠팡 조회/파싱 실패
+     * @param orderItemId our DB order_line PK (not the marketplace order id)
+     * @throws com.pms.exception.ResourceNotFoundException no such order line
+     * @throws IllegalArgumentException neither a Coupang nor an 11st account's order
+     * @throws IllegalStateException Coupang lookup / parse failure
      */
     List<ShippingLabelPreviewRow> previewRowsByOrder(Long orderItemId);
 

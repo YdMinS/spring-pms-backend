@@ -46,7 +46,7 @@ public class OrderAcknowledgeControllerTest extends BaseIntegrationTest {
     @Test
     public void testAcknowledgeWithAdminTokenReturnsResult() throws Exception {
         given(orderAcknowledgeService.acknowledge(any())).willReturn(
-                new OrderAcknowledgeResult(2, 1, 1, List.of(), List.of(), List.of()));
+                new OrderAcknowledgeResult(2, 1, 1, List.of(), List.of(), List.of(), List.of()));
 
         mockMvc.perform(post(PATH).contentType(MediaType.APPLICATION_JSON).content(BODY)
                 .header("Authorization", "Bearer " + adminToken))

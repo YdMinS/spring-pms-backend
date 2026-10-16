@@ -1,11 +1,12 @@
 package com.pms.service;
 
 /**
- * 송장 접수시트의 한 행(상품 라인 단위) 내부 모델.
+ * Internal model of one label-sheet row (per product line).
  *
- * ⚠️ DTO 로 노출하지 않는다 — 출력은 xlsx bytes 뿐이며, 수령인 연락처·주소·배송메시지는 DB 에 저장하지 않는다.
- * (이름은 orders 에 저장됨, FEATURE_2609_06)
- * box(shipmentBox) 1개 × orderItems N개를 1:N 으로 펼친 결과이며, box 레벨 필드는 모든 라인에 복제된다.
+ * ⚠️ Not exposed as a DTO — the output is xlsx bytes only; receiver phone, address and delivery message are never
+ * stored in the DB (names are stored in orders, FEATURE_2609_06).
+ * Coupang: one box (shipmentBox) × N orderItems flattened 1:N, box-level fields copied to every line.
+ * 11st: one preparing-list row = one sheet row (FEATURE_2610_17 / D42).
  *
  * @see ShippingLabelService
  */

@@ -3,16 +3,20 @@ package com.pms.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
+import com.pms.domain.ElevenstOrderLine;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderLine;
 import com.pms.domain.OrderStatus;
 import com.pms.domain.Platform;
 import com.pms.dto.request.OrderAcknowledgeRequest;
+import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.service.ShipmentConfirmResult.FailedBox;
 import com.pms.service.ShipmentConfirmResult.SkippedOrder;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangCredentials;
+import com.pms.service.elevenst.ElevenstOrderActions;
+import com.pms.service.elevenst.ElevenstRejectedException;
 import com.pms.service.reservation.InternalShipmentStageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,26 +24,32 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
- * {@link OrderAcknowledgeService} 구현 — COUPANG 전용 발주처리 레그.
+ * {@link OrderAcknowledgeService} implementation — the order-confirmation leg for COUPANG and ELEVENST
+ * (FEATURE_2610_17 / D20).
  *
- * 흐름: 라인 id dedupe → {@code findWithAccountByIdIn} 전개 → 라인 분류(비-쿠팡·박스 없음=unsupported,
- * 결제완료 아님=skipped) → 계정별 박스 dedupe → 계정별·청크별 1 PUT → responseList 집계 →
- * 성공 박스의 로컬 상태를 PREPARING 으로 write-back(PLAN 2609_17 D3).
+ * Flow: dedupe line ids → expand with {@code findWithAccountByIdIn} → classify lines (other platform · no box =
+ * unsupported, not paid = skipped) → Coupang: dedupe boxes per account → one PUT per account and chunk → sum the
+ * responseList; 11st: one 1634 call per (delivery number, product number) group (D48) → write PREPARING back to the
+ * succeeded boxes / groups (PLAN 2609_17 D3).
  *
- * ⚠️ 청크 단위 try/catch 로 전송 실패를 격리한다 — 실패한 청크의 박스만 failed 로 담고
- *    같은 계정의 다음 청크와 다른 계정 배치는 계속 보낸다.
- * ⚠️ 이 서비스에 {@code @Transactional} 을 붙이면 안 된다 — 외부 HTTP 를 도는 경로다.
- *    {@code OrderLine} 조회는 {@code @EntityGraph} finder 로만 한다(open-in-view=false).
- * ⚠️ 발주처리는 되돌릴 수 없다. 호출 경로는 셋뿐이다 — 컨트롤러(화면 [발주처리] 버튼) · <b>사용자가 만든 예약 발송의 실행</b>
- *    (FEATURE_2609_75 / D6 — 2609_17 D4 부분 번복) · [지금 발송]의 내부 단계 분기(D27). 셋 다 사용자가 주문을 고른 경로다.
- *    주문 동기화·다른 스케줄은 여전히 부르지 않는다.
+ * ⚠️ Send failures are isolated per chunk (Coupang) / per group (11st) — only those boxes go to failed and the next
+ *    chunk, group and account are still sent.
+ * ⚠️ Never put {@code @Transactional} on this service — it runs external HTTP.
+ *    {@code OrderLine} is read only through {@code @EntityGraph} finders (open-in-view=false).
+ * ⚠️ Order confirmation cannot be undone. There are only three callers — the controller (the screen's [발주처리]
+ *    button) · <b>the run of a reservation the user made</b> (FEATURE_2609_75 / D6 — partly reverses 2609_17 D4) ·
+ *    the internal-stage branch of [지금 발송] (D27). All three are paths where the user picked the orders.
+ *    The order sync and other schedules still never call it.
  */
 @Slf4j
 @Service
@@ -64,6 +74,9 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
     private final OrderLineRepository orderLineRepository;
     private final ObjectMapper objectMapper;
     private final InternalShipmentStageService internalShipmentStageService;
+    /** FEATURE_2610_17 / D20 · D48: 11st order confirmation 1634. */
+    private final ElevenstOrderActions elevenstOrderActions;
+    private final ElevenstOrderLineRepository elevenstOrderLineRepository;
 
     @Override
     public OrderAcknowledgeResult acknowledge(OrderAcknowledgeRequest request) {
@@ -101,15 +114,19 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
         Map<Long, Set<String>> boxIdsByAccount = new LinkedHashMap<>();
         // 성공 시 status 를 갱신할 DB 라인(박스 단위).
         Map<String, List<OrderLine>> linesByBoxId = new LinkedHashMap<>();
+        // FEATURE_2610_17 / D48: 11st lines grouped by (account, delivery number, product number) — one 1634 call each.
+        Map<String, List<OrderLine>> elevenstGroups = new LinkedHashMap<>();
 
         for (OrderLine line : lines) {
             MarketplaceAccount account = line.getOrder().getMarketplaceAccount();
             String orderId = line.getOrder().getExternalOrderId();
             String boxId = (line.getOrderShipment() == null)
                     ? null : line.getOrderShipment().getExternalShipmentId();
-            // 플랫폼 판정은 계정 기준 — ShipmentConfirmServiceImpl 과 같은 기준이어야 두 레그가 갈라지지 않는다
-            // (orders 에도 platform 컬럼이 있지만 쓰지 않는다).
-            if (!Platform.COUPANG.equals(account.getPlatform()) || boxId == null || boxId.isBlank()) {
+            boolean supported = Platform.COUPANG.equals(account.getPlatform())
+                    || Platform.ELEVENST.equals(account.getPlatform());
+            // Platform judged by the account — the same basis as ShipmentConfirmServiceImpl so the two legs never
+            // diverge (orders has a platform column too, but it is not used). COUPANG and ELEVENST (FEATURE_2610_17 / D20).
+            if (!supported || boxId == null || boxId.isBlank()) {
                 if (reportedOrders.add(orderId)) {
                     unsupported.add(orderId);
                 }
@@ -117,9 +134,14 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
             }
             if (line.getStatus() != STATUS_PAID) {
                 if (reportedOrders.add(orderId)) {
+                    // D47: the acknowledge screen has no reason column → null.
                     skipped.add(new SkippedOrder(orderId,
-                            line.getStatus() == null ? null : line.getStatus().name()));
+                            line.getStatus() == null ? null : line.getStatus().name(), null));
                 }
+                continue;
+            }
+            if (Platform.ELEVENST.equals(account.getPlatform())) {
+                elevenstGroups.computeIfAbsent(account.getId() + "|" + boxId, k -> new ArrayList<>()).add(line);
                 continue;
             }
             accountById.putIfAbsent(account.getId(), account);
@@ -163,11 +185,101 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
             releaseInternalStage(succeededBoxIds, linesByBoxId);
         }
 
+        // FEATURE_2610_17 / D57: the per-marketplace split — only marketplaces that had something to send.
+        List<OrderAcknowledgeResult.PlatformResult> byPlatform = new ArrayList<>();
+        if (targetBoxes > 0) {
+            byPlatform.add(new OrderAcknowledgeResult.PlatformResult(Platform.COUPANG, succeeded, List.copyOf(failed)));
+        }
+        if (!elevenstGroups.isEmpty()) {
+            ElevenstAckOutcome elevenst = acknowledgeElevenst(elevenstGroups);
+            targetBoxes += elevenst.groups();
+            succeeded += elevenst.succeeded();
+            failed.addAll(elevenst.failed());
+            if (elevenst.groups() > 0) {
+                byPlatform.add(new OrderAcknowledgeResult.PlatformResult(Platform.ELEVENST, elevenst.succeeded(),
+                        elevenst.failed()));
+            }
+        }
+
         log.info("발주처리 결과: lines={} boxes={} succeeded={} failed={} skipped={} unsupported={}",
                 lines.size(), targetBoxes, succeeded, failed.size(), skipped.size(), unsupported.size());
 
-        return new Outcome(new OrderAcknowledgeResult(
-                lines.size(), targetBoxes, succeeded, failed, skipped, unsupported), List.copyOf(succeededBoxIds));
+        return new Outcome(new OrderAcknowledgeResult(lines.size(), targetBoxes, succeeded, failed, skipped,
+                unsupported, List.copyOf(byPlatform)), List.copyOf(succeededBoxIds));
+    }
+
+    /**
+     * 11st order confirmation (FEATURE_2610_17 / D20 · D48): within each delivery number, one 1634 call per product
+     * number ({@code prdNo}); 11st confirms the other lines of that group with the same call, so every line of a
+     * succeeded group becomes {@code PREPARING}. −3206 「이미 발주 처리 되었거나 발주 처리할 건이 없음」 counts as
+     * success. A failed group is reported with its delivery number and the next group is still sent.
+     *
+     * @param linesByAccountAndDlvNo paid 11st lines keyed by {@code accountId|dlvNo}
+     */
+    private ElevenstAckOutcome acknowledgeElevenst(Map<String, List<OrderLine>> linesByAccountAndDlvNo) {
+        List<Long> lineIds = linesByAccountAndDlvNo.values().stream().flatMap(List::stream)
+                .map(OrderLine::getId).toList();
+        Map<Long, ElevenstOrderLine> mirrors = elevenstOrderLineRepository.findByOrderLine_IdIn(lineIds).stream()
+                .collect(Collectors.toMap(m -> m.getOrderLine().getId(), Function.identity(), (a, b) -> a));
+        int groups = 0;
+        int succeeded = 0;
+        List<FailedBox> failed = new ArrayList<>();
+        List<OrderLine> confirmed = new ArrayList<>();
+        for (List<OrderLine> dlvLines : linesByAccountAndDlvNo.values()) {
+            MarketplaceAccount account = dlvLines.get(0).getOrder().getMarketplaceAccount();
+            String dlvNo = dlvLines.get(0).getOrderShipment().getExternalShipmentId();
+            Map<String, List<OrderLine>> byProduct = new LinkedHashMap<>();
+            Map<String, ElevenstOrderLine> anchorByProduct = new HashMap<>();
+            for (OrderLine line : dlvLines) {
+                ElevenstOrderLine mirror = mirrors.get(line.getId());
+                if (mirror == null) {
+                    log.warn("11번가 발주처리 라인 제외 — 11번가 거울 행 없음: line={}", line.getId());
+                    continue;
+                }
+                String prdNo = mirror.getPrdNo() == null ? "" : mirror.getPrdNo();
+                byProduct.computeIfAbsent(prdNo, k -> new ArrayList<>()).add(line);
+                anchorByProduct.putIfAbsent(prdNo, mirror);
+            }
+            for (Map.Entry<String, List<OrderLine>> group : byProduct.entrySet()) {
+                groups++;
+                try {
+                    elevenstOrderActions.acknowledge(account, anchorByProduct.get(group.getKey()), dlvNo);
+                    succeeded++;
+                    confirmed.addAll(group.getValue());
+                } catch (Exception e) {
+                    log.warn("11번가 발주처리 실패: account={} dlvNo={} prdNo={}", account.getId(), dlvNo,
+                            group.getKey(), e);
+                    failed.add(failedGroup(dlvNo, e));
+                }
+            }
+        }
+        if (!confirmed.isEmpty()) {
+            try {
+                orderLineRepository.saveAll(confirmed.stream()
+                        .map(line -> line.toBuilder().status(STATUS_PREPARING).build())
+                        .toList());
+            } catch (Exception e) {
+                log.warn("11번가 발주처리 write-back 실패 (11번가 전송은 성공): {}", e.getMessage());
+            }
+        }
+        return new ElevenstAckOutcome(groups, succeeded, failed);
+    }
+
+    /**
+     * Failed 11st group row (D54): delivery number + 11st's {@code result_code} / {@code result_text} as given; a
+     * call that never got a result (network, unreadable body) is {@code ERROR} + the exception text, like a Coupang
+     * chunk failure.
+     */
+    private static FailedBox failedGroup(String dlvNo, Exception e) {
+        if (e instanceof ElevenstRejectedException rejected && rejected.getResultCode() != null) {
+            return new FailedBox(dlvNo, rejected.getResultCode(),
+                    rejected.getResultText() == null ? "" : rejected.getResultText());
+        }
+        return new FailedBox(dlvNo, "ERROR", e.getMessage());
+    }
+
+    /** {@link #acknowledgeElevenst} result — groups sent · groups succeeded · failed groups. */
+    private record ElevenstAckOutcome(int groups, int succeeded, List<FailedBox> failed) {
     }
 
     /** 박스 id → 그 박스 라인들의 배송 묶음 id. id 가 없는 묶음(저장 전)은 건너뛴다. */
