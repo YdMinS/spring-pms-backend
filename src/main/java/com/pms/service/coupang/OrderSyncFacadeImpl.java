@@ -1,6 +1,7 @@
 package com.pms.service.coupang;
 
 import com.pms.config.CoupangProperties;
+import com.pms.config.ElevenstProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.exception.ResourceNotFoundException;
@@ -8,6 +9,7 @@ import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.security.TenantContext;
 import com.pms.service.claim.ClaimOrderBackfillService;
 import com.pms.service.claim.ClaimSyncAdapter;
+import com.pms.service.elevenst.ElevenstOrderSyncService;
 import com.pms.service.inquiry.InquirySyncAdapter;
 import com.pms.service.coupang.CoupangOrderSyncService.SyncResult;
 import com.pms.service.coupang.CoupangReturnSyncService.CancelSyncResult;
@@ -24,21 +26,21 @@ import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 
 /**
- * {@link OrderSyncFacade} 구현.
+ * {@link OrderSyncFacade} implementation.
  *
- * syncOne = ordersheets(Phase2) → returnRequests 취소 보정(§A) → 미완결 추적(05) → 교환 적재(06) →
- * 클레임 주문 백필(04) →
- * 고객문의 적재(2609_23 D12) 순서로 한 계정을 동기화한다.
- * syncEach 는 계정마다 try/catch 로 격리해 한 계정 실패가 전체를 롤백하지 않게 하며, 계정들을 전용
- * 풀(coupangSyncExecutor)에서 <b>동시에</b> 돌린다 — 쿠팡 호출 예산이 업체코드별이라 계정 수가 늘어도
- * 사이클 시간이 비례해 늘지 않는다(FEATURE_2609_46 / PLAN D6).
+ * syncOne syncs one Coupang account in this order: ordersheets (Phase2) → returnRequests cancel correction (§A) →
+ * open-claim tracking (05) → exchange load (06) → claim order backfill (04) → customer inquiry load (2609_23 D12).
+ * An 11st account is handed to {@link ElevenstOrderSyncService} after the lock instead (FEATURE_2610_17 / D11).
+ * syncEach isolates every account with try/catch so one account failing does not roll back the rest, and runs the
+ * accounts <b>concurrently</b> on a dedicated pool (coupangSyncExecutor) — the Coupang call budget is per vendor
+ * code, so the cycle time does not grow with the account count (FEATURE_2609_46 / PLAN D6).
  *
- * ⚠️ 이 파사드는 의도적으로 @Transactional 을 두지 않는다. 공유 트랜잭션을 열면 내부
- * {@link CoupangOrderSyncService}/{@link CoupangReturnSyncService}(각자 @Transactional)가 그 트랜잭션에
- * 합류(REQUIRED)하고, 한 계정이 예외(예: 쿠팡 504)를 던지면 공유 트랜잭션이 rollback-only 로 마킹된다.
- * 그러면 try/catch 로 예외를 삼켜도 커밋 시 UnexpectedRollbackException 이 나고 성공한 계정까지 롤백된다.
- * @Transactional 없이 두면 계정별 내부 호출이 각각 독립 트랜잭션으로 커밋/롤백돼 격리가 보장된다.
- * (내부 서비스는 account 의 scalar 필드만 사용 — lazy 연관 접근 없음 — 이라 계정이 detached 여도 안전.)
+ * ⚠️ This facade deliberately has no @Transactional. A shared transaction would make the inner
+ * {@link CoupangOrderSyncService}/{@link CoupangReturnSyncService} (each @Transactional) join it (REQUIRED), and one
+ * account throwing (e.g. a Coupang 504) would mark the shared transaction rollback-only. Even with the exception
+ * swallowed by try/catch, the commit would then fail with UnexpectedRollbackException and roll back the accounts
+ * that succeeded. Without @Transactional each account's inner calls commit / roll back in their own transactions.
+ * (The inner services read only the account's scalar fields — no lazy association — so a detached account is safe.)
  */
 @Slf4j
 @Service
@@ -64,6 +66,10 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
     private final ExecutorService coupangSyncExecutor;
     /** 채널별 동기화 락(FEATURE_2609_48 / D1·D8) — 같은 채널을 동시에 두 벌 돌리지 않는다. */
     private final AccountSyncLock accountSyncLock;
+    /** The 11st round (FEATURE_2610_17 / D11) — an 11st account goes here after the lock, Coupang steps untouched. */
+    private final ElevenstOrderSyncService elevenstOrderSyncService;
+    /** D10: dev · local (outbound off) scheduled rounds skip 11st channels. */
+    private final ElevenstProperties elevenstProperties;
 
     @Override
     public OrderSyncResult sync(Long accountId) {
@@ -147,19 +153,20 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
     }
 
     /**
-     * 계정 목록을 격리 동기화해 합산 (COUPANG 만, 한 계정 실패는 로그 후 계속).
+     * Syncs the accounts in isolation and sums the results (COUPANG and ELEVENST; one account failing is logged and
+     * the rest continue — FEATURE_2610_17 / D9).
      *
-     * <p>프리셋을 받는다(FEATURE_2609_49 / D7) — 화면이 부르는 셀러/전체 동기화는 {@code QUICK},
-     * 새벽 리컨실 스케줄만 {@code RECONCILE} 이다. 프리셋이 정하는 건 주문 조회의 상태·창뿐이고
-     * 나머지 단계는 동일하게 돈다.
+     * <p>Takes a preset (FEATURE_2609_49 / D7) — the seller / all syncs the screen calls use {@code QUICK}; only the
+     * early-morning reconcile schedule uses {@code RECONCILE}. The preset decides only the statuses and the window of
+     * the order lookup; the other steps run the same.
      *
-     * @param scheduled 스케줄 회차인가 — {@code true} 면 실패·부분 실패를 기록하지 않는다(D13)
+     * @param scheduled whether this is a scheduled round — {@code true} records no failure or partial failure (D13)
      */
     private OrderSyncResult syncEach(List<MarketplaceAccount> accounts, OrderSyncPreset preset,
                                      boolean scheduled) {
         long startedAt = System.nanoTime();
         List<MarketplaceAccount> targets = accounts.stream()
-                .filter(a -> Platform.COUPANG.equals(a.getPlatform()))
+                .filter(a -> isSyncTarget(a, scheduled))
                 .toList();
         int processed = targets.size();
 
@@ -179,12 +186,13 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
             }
         }
         long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000;
-        // accounts = 이 사이클이 다룬 쿠팡 계정 수(플랫폼 필터를 통과한 수)다. 넘겨받은 전체 계정 수가 아니고,
-        // 그중 skipped 만큼은 락에 막혀 쿠팡을 치지 않았다(2609_48 D5) — 실제로 돈 수는 accounts - skipped 다.
-        // 병렬화(2609_46 D6) 이후 이 값은 계정 수에 비례하지 않는다 — 비례하기 시작하면 동시 실행 수
-        // (oklyx.coupang.sync-concurrency)가 포화됐다는 뜻이다.
-        // 🔴 preset 을 로그에 싣는다(2609_49) — 야간 전량 회차와 15분 회차를 구분하지 못하면
-        // 이후 튜닝(어느 쪽이 얼마나 걸리나)의 근거가 사라진다.
+        // accounts = the number of channels this cycle handled (those that passed isSyncTarget), not every account
+        // passed in; `skipped` of them were blocked by the lock and called no marketplace (2609_48 D5) — the
+        // number actually run is accounts - skipped.
+        // Since the parallelization (2609_46 D6) this value does not grow with the account count — once it does,
+        // the concurrency limit (oklyx.coupang.sync-concurrency) is saturated.
+        // 🔴 The preset goes into the log (2609_49) — without telling the nightly full round from the 15-minute round,
+        // later tuning (which one takes how long) loses its basis.
         log.info("Order sync cycle done: preset={} accounts={} skipped={} elapsedMs={}",
                 preset, processed, total.skippedAccounts(), elapsedMs);
         if (elapsedMs > coupangProperties.getSyncCycleWarnSeconds() * 1000L) {
@@ -192,6 +200,19 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
                     coupangProperties.getSyncCycleWarnSeconds(), processed, elapsedMs);
         }
         return total;
+    }
+
+    /**
+     * FEATURE_2610_17 / D9 · D10: Coupang always; 11st too, except a scheduled round on a server whose 11st calls
+     * are switched off (dev · local) — that round skips the channel without calling or recording anything. A manual
+     * round still runs it and shows the 「개발 서버에서는 11번가를 부르지 않습니다」 failure (D8).
+     */
+    private boolean isSyncTarget(MarketplaceAccount account, boolean scheduled) {
+        if (Platform.COUPANG.equals(account.getPlatform())) {
+            return true;
+        }
+        return Platform.ELEVENST.equals(account.getPlatform())
+                && !(scheduled && !elevenstProperties.isOutboundEnabled());
     }
 
     /**
@@ -233,11 +254,12 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
     }
 
     /**
-     * 한 계정: ordersheets 먼저 → 취소 보정(이미 적재된 주문 위에 보정).
+     * One account: Coupang = ordersheets first → cancel correction (on top of the orders already loaded); 11st =
+     * {@code ElevenstOrderSyncService} (FEATURE_2610_17 / D11).
      *
-     * <p>락을 잡고 돈다 — 이 채널이 이미 돌고 있으면 쿠팡을 치지 않고 건너뛴다(FEATURE_2609_48 / D8).
-     * 단건({@code sync(accountId)})과 전체/셀러({@code syncEach → syncOneIsolated})가 둘 다 여기를
-     * 지나므로 락은 이 한 자리에만 건다.
+     * <p>Runs under the lock — when this channel is already running it is skipped without calling the marketplace
+     * (FEATURE_2609_48 / D8). Both the single ({@code sync(accountId)}) and the all / seller
+     * ({@code syncEach → syncOneIsolated}) paths pass here, so the lock sits in this one place only.
      */
     private OrderSyncResult syncOne(MarketplaceAccount account, OrderSyncPreset preset, boolean scheduled) {
         AccountSyncLock.Lease lease =
@@ -275,6 +297,12 @@ public class OrderSyncFacadeImpl implements OrderSyncFacade {
         // 계정의 테넌트를 쓰는 이유는 그대로다 — 저장되는 order_line/shopping_list_item(@TenantId) 이
         // 트리거(웹 관리자·SecurityContext 없는 배치)와 무관하게 그 계정의 테넌트로 들어가야 한다.
         // ⚠️ syncPeriod 는 syncOne 을 부르지 않는 별도 경로라 자체 저장·복원을 그대로 둔다.
+
+        // FEATURE_2610_17 / D11: an 11st channel runs its own round; the Coupang steps below stay as they are.
+        if (Platform.ELEVENST.equals(account.getPlatform())) {
+            return elevenstOrderSyncService.sync(account, preset, scheduled);
+        }
+
         // 주문 조회 = 프리셋이 정한다(2609_49 D1·D6). 나머지 단계는 프리셋과 무관하게 전부 돈다.
         SyncResult orders;
         try {

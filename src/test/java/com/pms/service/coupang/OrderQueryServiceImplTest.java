@@ -2,6 +2,7 @@ package com.pms.service.coupang;
 
 import com.pms.config.CoupangProperties;
 import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.ElevenstOrderLine;
 import com.pms.domain.InternalShipmentStage;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Order;
@@ -12,6 +13,7 @@ import com.pms.domain.Platform;
 import com.pms.dto.response.OrderItemResponse;
 import com.pms.dto.response.OrderMonthResponse;
 import com.pms.repository.CoupangOrderLineRepository;
+import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.OrderRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -44,6 +46,7 @@ class OrderQueryServiceImplTest {
 
     @Mock private OrderRepository orderRepository;
     @Mock private CoupangOrderLineRepository coupangOrderLineRepository;
+    @Mock private ElevenstOrderLineRepository elevenstOrderLineRepository;
     @Mock private CoupangProperties coupangProperties;
     @InjectMocks private OrderQueryServiceImpl service;
 
@@ -299,5 +302,21 @@ class OrderQueryServiceImplTest {
         given(orderRepository.countByMonth()).willReturn(List.of());
 
         assertThat(service.months()).isEmpty();
+    }
+
+    /** FEATURE_2610_17 / D5: an 11st line shows its prdStckNo and list code in the Coupang mirror slots. */
+    @Test
+    void list_elevenstLine_mapsPrdStckNoAndListCode() {
+        given(coupangProperties.getSyncDays()).willReturn(14);
+        OrderLine sample = sample();
+        given(orderRepository.findRecentOrders(any(LocalDateTime.class))).willReturn(List.of(sample));
+        given(elevenstOrderLineRepository.findByOrderLine_IdIn(anyList())).willReturn(List.of(
+                ElevenstOrderLine.builder().id(9L).orderLine(sample).ordNo("O1").ordPrdSeq("1")
+                        .prdStckNo("STK-1").platformStatus("202").build()));
+
+        OrderItemResponse r = service.list(null, null, null).get(0);
+
+        assertThat(r.getExternalItemId()).isEqualTo("STK-1");
+        assertThat(r.getPlatformStatus()).isEqualTo("202");
     }
 }

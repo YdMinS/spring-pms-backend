@@ -2,11 +2,13 @@ package com.pms.service.coupang;
 
 import com.pms.config.CoupangProperties;
 import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.ElevenstOrderLine;
 import com.pms.domain.OrderLine;
 import com.pms.domain.OrderStatus;
 import com.pms.dto.response.OrderItemResponse;
 import com.pms.dto.response.OrderMonthResponse;
 import com.pms.repository.CoupangOrderLineRepository;
+import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -20,17 +22,18 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * {@link OrderQueryService} 구현. 주문 3층 + 쿠팡 거울 → {@link OrderItemResponse} 매핑
- * (raw·민감정보 제외, purchasableQty 파생값 포함).
+ * {@link OrderQueryService} implementation. Three order layers + the platform mirrors (Coupang · 11st,
+ * FEATURE_2610_17 / D5) → {@link OrderItemResponse} mapping (no raw · sensitive data, with the derived
+ * purchasableQty).
  *
- * <p>조회 기간을 지정하지 않으면(기본값) 동기화 윈도우(syncDays)와 같은 기간으로 제한한다 — 윈도우 밖 주문은
- * 상태가 갱신되지 않아 stale(예: 결제완료로 얼어붙음) 하기 때문이다. 단, from/to 를 명시하면 그 창을
- * 벗어난 과거도 조회하며, stale 고지는 클라이언트 책임이다(FEATURE_2609_08 D1·D7).
- * 기준일은 {@code orders.ordered_at}.
+ * <p>Without a period (the default) the query is limited to the sync window (syncDays) — orders outside it get no
+ * status updates and go stale (e.g. frozen at paid). With an explicit from/to it also reads the past beyond that
+ * window, and telling the user about staleness is the client's job (FEATURE_2609_08 D1·D7). The reference date is
+ * {@code orders.ordered_at}.
  *
- * <p>🔴 플랫폼 원문(vendorItemId·platform_status)은 라인마다 다시 조회하지 않고 라인 id 묶음으로
- * <b>한 번에</b> 읽어 Map 으로 쓴다(FEATURE_2609_26 / 04 §3-3) — core 에 역참조를 두면 플랫폼이
- * core 로 새어 들어오고 N+1 이 따라온다.
+ * <p>🔴 The platform originals (vendorItemId · prdStckNo · platform_status) are not read again per line but
+ * <b>once</b> per batch of line ids into a Map (FEATURE_2609_26 / 04 §3-3) — a back reference in core would leak
+ * the platform into core and bring N+1 with it.
  */
 @Service
 @RequiredArgsConstructor
@@ -39,6 +42,7 @@ public class OrderQueryServiceImpl implements OrderQueryService {
 
     private final OrderRepository orderRepository;
     private final CoupangOrderLineRepository coupangOrderLineRepository;
+    private final ElevenstOrderLineRepository elevenstOrderLineRepository;
     private final CoupangProperties coupangProperties;
 
     @Override
@@ -47,7 +51,10 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 ? defaultWindow(sellerId)
                 : period(sellerId, from, to);
         Map<Long, CoupangOrderLine> mirrors = mirrorsByLineId(lines);
-        return lines.stream().map(line -> toResponse(line, mirrors.get(line.getId()))).toList();
+        Map<Long, ElevenstOrderLine> elevenstMirrors = elevenstMirrorsByLineId(lines);
+        return lines.stream()
+                .map(line -> toResponse(line, mirrors.get(line.getId()), elevenstMirrors.get(line.getId())))
+                .toList();
     }
 
     @Override
@@ -92,7 +99,17 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 .collect(Collectors.toMap(m -> m.getOrderLine().getId(), Function.identity(), (a, b) -> a));
     }
 
-    private OrderItemResponse toResponse(OrderLine line, CoupangOrderLine mirror) {
+    /** Line id → 11st mirror row (FEATURE_2610_17 / D5). No IN query for an empty list. */
+    private Map<Long, ElevenstOrderLine> elevenstMirrorsByLineId(List<OrderLine> lines) {
+        if (lines.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> ids = lines.stream().map(OrderLine::getId).toList();
+        return elevenstOrderLineRepository.findByOrderLine_IdIn(ids).stream()
+                .collect(Collectors.toMap(m -> m.getOrderLine().getId(), Function.identity(), (a, b) -> a));
+    }
+
+    private OrderItemResponse toResponse(OrderLine line, CoupangOrderLine mirror, ElevenstOrderLine elevenstMirror) {
         var order = line.getOrder();
         // 전량취소는 저장되지 않는 파생값이라 여기서 만들어 낸다(PLAN D26).
         OrderStatus effective = line.effectiveStatus();
@@ -103,7 +120,9 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 .externalOrderId(order.getExternalOrderId())
                 .externalBoxId(line.getOrderShipment() != null
                         ? line.getOrderShipment().getExternalShipmentId() : null)
-                .externalItemId(mirror != null ? mirror.getVendorItemId() : null)
+                // 11st: externalItemId = prdStckNo (the vendorItemId slot), platformStatus = list code (D5).
+                .externalItemId(mirror != null ? mirror.getVendorItemId()
+                        : elevenstMirror != null ? elevenstMirror.getPrdStckNo() : null)
                 .itemName(line.getItemName())
                 .ordererName(order.getOrdererName())
                 .receiverName(order.getReceiverName())
@@ -112,7 +131,8 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 .holdCount(line.getHoldQty())
                 .purchasableQty(line.purchasableQty())
                 .status(effective != null ? effective.name() : null)
-                .platformStatus(mirror != null ? mirror.getPlatformStatus() : null)
+                .platformStatus(mirror != null ? mirror.getPlatformStatus()
+                        : elevenstMirror != null ? elevenstMirror.getPlatformStatus() : null)
                 .cancelled(line.isFullyCancelled())
                 // D29 — 표시용 상태가 PAID 인 라인에서만(전량 취소는 저장 status 가 PAID 로 남는다). 읽을 때 거른다 — 칸은 지우지 않는다(D1).
                 .internalStage(effective == OrderStatus.PAID && line.getOrderShipment() != null

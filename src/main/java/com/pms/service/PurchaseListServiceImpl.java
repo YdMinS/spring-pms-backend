@@ -1,6 +1,7 @@
 package com.pms.service;
 
 import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.ElevenstOrderLine;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderLine;
 import com.pms.domain.OrderStatus;
@@ -24,6 +25,7 @@ import com.pms.dto.response.UnmappedOrder;
 import com.pms.config.CoupangProperties;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CoupangOrderLineRepository;
+import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -69,6 +71,7 @@ public class PurchaseListServiceImpl implements PurchaseListService {
     private final PurchaseRecordRepository purchaseRecordRepository;
     private final OrderLineRepository orderLineRepository;
     private final CoupangOrderLineRepository coupangOrderLineRepository;
+    private final ElevenstOrderLineRepository elevenstOrderLineRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
     /** 셀 옵션의 구성품은 마스터를 타고 얻는다(2609_71) — 셀 BOM 사본을 읽지 않는다. */
     private final CellBomResolver cellBomResolver;
@@ -328,6 +331,21 @@ public class PurchaseListServiceImpl implements PurchaseListService {
                         (a, b) -> a));
     }
 
+    /** Line id → 11st option number ({@code prdStckNo}) — the unmapped group key of 11st lines (D17). */
+    private Map<Long, String> elevenstItemIdsByLine(List<OrderLine> lines) {
+        if (lines.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> ids = lines.stream().map(OrderLine::getId).toList();
+        Map<Long, String> byLine = new HashMap<>();
+        for (ElevenstOrderLine mirror : elevenstOrderLineRepository.findByOrderLine_IdIn(ids)) {
+            if (mirror.getPrdStckNo() != null) {
+                byLine.putIfAbsent(mirror.getOrderLine().getId(), mirror.getPrdStckNo());
+            }
+        }
+        return byLine;
+    }
+
     private PurchaseLine toLine(ShoppingListItem li, Map<Long, ChannelLabel> channels) {
         OrderLine line = li.getOrderLine();
         ChannelLabel channel = line == null
@@ -346,16 +364,20 @@ public class PurchaseListServiceImpl implements PurchaseListService {
                 li.neededQty());
     }
 
-    /** 결제완료인데 옵션 미매핑이거나 BOM 이 빈 주문을 vendorItemId 단위로 집계. */
+    /**
+     * Paid lines whose option is unmapped or whose BOM is empty, grouped by the market option number — Coupang
+     * {@code vendorItemId} or 11st {@code prdStckNo} (FEATURE_2610_17 / D17).
+     */
     private List<UnmappedOrder> buildUnmapped() {
         List<OrderLine> lines = purchaseTargetLines();
         Map<Long, String> vendorItemIds = vendorItemIdsByLine(lines);
+        Map<Long, String> elevenstItemIds = elevenstItemIdsByLine(lines);
         Map<Long, ProductListingOption> optionsByLine = optionsByLine(lines, vendorItemIds);
         Map<Long, CellBomResolver.Bom> boms = cellBomResolver.forOptions(distinctOptions(optionsByLine));
         Map<String, List<OrderLine>> byItem = new LinkedHashMap<>();
         for (OrderLine line : lines) {
             if (line.purchasableQty() <= 0) continue;
-            String vendorItemId = vendorItemIds.get(line.getId());
+            String vendorItemId = vendorItemIds.getOrDefault(line.getId(), elevenstItemIds.get(line.getId()));
             if (vendorItemId == null) continue;
             // 2609_71: 미매핑 = 옵션을 못 찾았거나, 마스터에 연결되지 않아 구성품을 알 수 없거나
             // (채널 전용 옵션), 마스터 옵션에 구성품이 하나도 없는 경우. 셋 다 살 것을 뽑을 수 없다.
@@ -376,13 +398,18 @@ public class PurchaseListServiceImpl implements PurchaseListService {
     }
 
     /**
-     * 주문 라인 → 채널 옵션. vendorItemId 당 한 번만 조회한다(같은 옵션의 주문이 여러 건이어도 쿼리는 1회).
-     * 옵션을 못 찾은 라인은 아예 들어 있지 않다 — 그 라인은 미매핑이다.
+     * Order line → channel option (FEATURE_2610_17 / D17): the line's own option column first; only when it is empty,
+     * the Coupang {@code vendorItemId} lookup as before (one query per vendorItemId even when several orders share it).
+     * A line without an option is absent from the map — that line is unmapped.
      */
     private Map<Long, ProductListingOption> optionsByLine(List<OrderLine> lines, Map<Long, String> vendorItemIds) {
         Map<String, Optional<ProductListingOption>> cache = new HashMap<>();
         Map<Long, ProductListingOption> byLine = new LinkedHashMap<>();
         for (OrderLine line : lines) {
+            if (line.getProductListingOption() != null) {
+                byLine.put(line.getId(), line.getProductListingOption());
+                continue;
+            }
             String vendorItemId = vendorItemIds.get(line.getId());
             if (vendorItemId == null) continue;   // 거울 행 없음 = 옵션 매칭 키가 없다
             cache.computeIfAbsent(vendorItemId, productListingOptionRepository::findByPlatformOptionId)
