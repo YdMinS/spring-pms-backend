@@ -711,6 +711,29 @@ class CoupangListingAdapterTest {
 
 
     @Test
+    void fetchStatus_coupangDefault400_becomesRetryableMessage() {
+        given(client.get(anyString(), eq(""), any())).willThrow(org.springframework.web.client.HttpClientErrorException.create(
+                org.springframework.http.HttpStatus.BAD_REQUEST, "Bad Request", null,
+                "{\"code\":\"DEFAULT\",\"message\":\"오류가 발생하였습니다\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                java.nio.charset.StandardCharsets.UTF_8));
+
+        assertThatThrownBy(() -> adapter.fetchStatus(cell(), acct()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("상품 수정 진행중입니다. 잠시 후 다시 시도해주십시오.");
+    }
+
+    @Test
+    void fetchStatus_otherCoupang400_isRethrown() {
+        given(client.get(anyString(), eq(""), any())).willThrow(org.springframework.web.client.HttpClientErrorException.create(
+                org.springframework.http.HttpStatus.BAD_REQUEST, "Bad Request", null,
+                "{\"code\":\"ERROR\",\"message\":\"x\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                java.nio.charset.StandardCharsets.UTF_8));
+
+        assertThatThrownBy(() -> adapter.fetchStatus(cell(), acct()))
+                .isInstanceOf(org.springframework.web.client.HttpClientErrorException.BadRequest.class);
+    }
+
+    @Test
     void fetchStatus_carriesStatusName() {
         given(client.get(anyString(), eq(""), any())).willReturn(
                 "{\"code\":\"SUCCESS\",\"data\":{\"statusName\":\"부분승인완료\","

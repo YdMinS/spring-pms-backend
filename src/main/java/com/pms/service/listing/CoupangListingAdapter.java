@@ -31,6 +31,7 @@ import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -222,7 +223,18 @@ public class CoupangListingAdapter implements ListingChannel {
      */
     @Override
     public ImportedProduct fetchProduct(String platformProductId, MarketplaceAccount acct) {
-        String raw = client.get(SELLER_PRODUCTS + "/" + platformProductId, "", acct);
+        String raw;
+        try {
+            raw = client.get(SELLER_PRODUCTS + "/" + platformProductId, "", acct);
+        } catch (HttpClientErrorException.BadRequest e) {
+            // 2026-10-16: right after an update request Coupang answers this GET with an opaque
+            // 400 {"code":"DEFAULT"} for a minute or two, then serves it again. Surface it as a retryable
+            // 400 instead of a 500.
+            if (e.getResponseBodyAsString().contains("\"DEFAULT\"")) {
+                throw new IllegalArgumentException(FETCH_IN_PROGRESS_MESSAGE);
+            }
+            throw e;
+        }
         JsonNode data = readJson(raw).path("data");
 
         String categoryCode = asTextOrNull(data, "displayCategoryCode");
@@ -1023,6 +1035,8 @@ public class CoupangListingAdapter implements ListingChannel {
         }
         return String.join(" / ", parts);
     }
+
+    static final String FETCH_IN_PROGRESS_MESSAGE = "상품 수정 진행중입니다. 잠시 후 다시 시도해주십시오.";
 
     private static final String PER_UNIT_QUANTITY = "개당 수량";
     private static final String QUANTITY = "수량";
