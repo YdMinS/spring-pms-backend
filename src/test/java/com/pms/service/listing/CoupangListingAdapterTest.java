@@ -231,9 +231,9 @@ class CoupangListingAdapterTest {
     }
 
     // 2026-10-07 tea category: 개당 수량 basic unit 개 is not among usableUnits (개입/EA) → send 개입;
-    // optional 총 수량 is not sent at all.
+    // a stored 총 수량 is sent even when the meta marks it OPTIONAL (2026-10-16: Coupang rejected the update without it).
     @Test
-    void register_usesAcceptedUnitAndDropsOptionalGrandTotal() throws Exception {
+    void register_usesAcceptedUnitAndKeepsOptionalGrandTotal() throws Exception {
         MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨").build();
         ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
@@ -263,7 +263,7 @@ class CoupangListingAdapterTest {
             sent.put(a.path("attributeTypeName").asText(), a.path("attributeValueName").asText());
         }
         assertThat(sent).containsEntry("개당 수량", "12개입").containsEntry("수량", "2개")
-                .containsEntry("최소 중량", "1.3g").doesNotContainKey("총 수량");
+                .containsEntry("최소 중량", "1.3g").containsEntry("총 수량", "24개");
     }
 
     @Test
