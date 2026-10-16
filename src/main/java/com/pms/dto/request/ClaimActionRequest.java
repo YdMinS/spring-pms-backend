@@ -26,7 +26,8 @@ public record ClaimActionRequest(
         @Size(max = 30, message = "택배사 코드는 30자 이하여야 합니다") String deliveryCompanyCode,
         @Size(max = 50, message = "송장번호는 50자 이하여야 합니다") String invoiceNumber,
         @Size(max = 50, message = "등기번호는 50자 이하여야 합니다") String regNumber,
-        @Size(max = 50, message = "거부 사유 코드는 50자 이하여야 합니다") String rejectCode) {
+        @Size(max = 50, message = "거부 사유 코드는 50자 이하여야 합니다") String rejectCode,
+        @Size(max = 200, message = "사유는 200자 이하여야 합니다") String reasonText) {
 
     /**
      * 액션 메타가 요구하는 필드가 채워졌는지 검증한다. 여분 필드는 무시한다.
@@ -40,6 +41,11 @@ public record ClaimActionRequest(
                 requireText(invoiceNumber, "송장번호는 필수입니다");
             }
             case REJECT_CODE -> requireText(rejectCode, "거부 사유는 필수입니다");
+            case REASON -> {
+                // FEATURE_2610_17 / D34 · D39 ①: code and text are both required.
+                requireText(rejectCode, "사유를 선택하세요");
+                requireText(reasonText, "사유는 필수입니다");
+            }
             case NONE -> {
                 // 추가 입력 없음 — 여분 필드가 실려 와도 무시한다.
             }

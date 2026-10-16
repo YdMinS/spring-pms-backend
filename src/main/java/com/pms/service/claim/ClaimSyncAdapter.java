@@ -4,19 +4,21 @@ import com.pms.domain.Platform;
 import com.pms.domain.MarketplaceAccount;
 
 /**
- * 플랫폼별 교환 클레임 동기화 진입점 (FEATURE_2609_18 / PLAN D21 — seam 만 확보한다).
+ * Per-platform claim sync entry (FEATURE_2609_18 / PLAN D21 — the seam only).
  *
- * 반품은 취소 보정 응답에 얹혀 적재되므로(D15) 이 seam 밖에 남는다 — 지금 옮기면 쿠팡 호출이 는다.
+ * Coupang: exchanges only — Coupang returns ride on the cancel-correction response (D15) and stay outside this seam;
+ * moving them would add Coupang calls. 11st: returns and exchanges both (FEATURE_2610_17 / D15 — the 11st round has
+ * no cancel-correction step to carry the returns).
  *
- * <p>⚠️ {@code platform()} 하나만 둔다 — {@code supports(account)}·{@code priority()} 는 구현이
- * 1개인 지금 쓰이지 않는다.
+ * <p>⚠️ Only {@code platform()} — callers pick the one adapter whose platform matches the account;
+ * {@code supports(account)} · {@code priority()} are not needed for that.
  */
 public interface ClaimSyncAdapter {
 
     /** {@code marketplace_account.platform} 과 대조할 값. 예: {@link Platform#COUPANG}. */
     Platform platform();
 
-    /** 신규 창 적재 + 미완결 추적. 계정 1건 처리 결과. */
+    /** New-window load (+ open-claim tracking for Coupang). Result of one account. */
     ClaimSyncResult syncExchanges(MarketplaceAccount account);
 
     /**

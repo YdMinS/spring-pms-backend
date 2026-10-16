@@ -9,12 +9,17 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.dto.response.ReplyCapability;
 import com.pms.fixture.MarketplaceAccountFixture;
+import com.pms.service.CarrierCodeService;
+import com.pms.service.CarrierOption;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.mock;
 
 /**
  * InquiryReplyPolicy — 유형별 가능/불가 · 사유 우선순위 · parentReplyId 선택 (FEATURE_2609_23 / 04).
@@ -38,7 +43,7 @@ class InquiryReplyPolicyTest {
         }
     };
 
-    private final InquiryReplyPolicy policy = new InquiryReplyPolicy(List.of(COUPANG_ADAPTER));
+    private final InquiryReplyPolicy policy = new InquiryReplyPolicy(List.of(COUPANG_ADAPTER), mock(CarrierCodeService.class));
 
     @Test
     void evaluate_unansweredProductQna_allowsReplyWithMinLengthOne() {
@@ -136,6 +141,87 @@ class InquiryReplyPolicyTest {
 
         assertThat(capability.canReply()).isFalse();
         assertThat(capability.reason()).isEqualTo("판매자 답변이 요청된 문의가 아닙니다.");
+    }
+
+    // ---- FEATURE_2610_17 / D27 · D44 · D45 ----
+
+    private static final InquiryReplyAdapter ELEVENST_ADAPTER = new InquiryReplyAdapter() {
+        @Override
+        public Platform platform() {
+            return Platform.ELEVENST;
+        }
+
+        @Override
+        public void reply(MarketplaceAccount account, CustomerInquiry inquiry, ReplyCommand command) {
+            throw new UnsupportedOperationException("the policy test sends nothing");
+        }
+    };
+
+    @Test
+    void evaluate_elevenstUrgentNoticeReRequested_canReplyWithMinLengthOne_noWingIdNeeded() {
+        InquiryReplyPolicy withElevenst = new InquiryReplyPolicy(List.of(COUPANG_ADAPTER, ELEVENST_ADAPTER),
+                mock(CarrierCodeService.class));
+        MarketplaceAccount eleven = MarketplaceAccountFixture.elevenstStubBuilder("KEY").id(9L).build();
+        CustomerInquiry urgent = inquiry(InquiryType.CALL_CENTER, InquiryStatus.UNANSWERED, eleven).toBuilder()
+                .platform(Platform.ELEVENST).platformStatus("04").build();
+
+        ReplyCapability capability = withElevenst.evaluate(urgent, List.of());
+
+        assertThat(capability.canReply()).isTrue();
+        assertThat(capability.minLength()).isEqualTo(1);
+        assertThat(capability.parentReplyId()).isNull();
+    }
+
+    // ---- FEATURE_2610_17 / D68 ----
+
+    @Test
+    void evaluate_elevenstNonDelivery_givesTheNonDeliveryFormWithItsReasonsAndMax200() {
+        InquiryReplyPolicy withElevenst = new InquiryReplyPolicy(List.of(ELEVENST_ADAPTER),
+                mock(CarrierCodeService.class));
+        CustomerInquiry report = nonDeliveryReport();
+
+        ReplyCapability capability = withElevenst.evaluate(report, List.of());
+
+        assertThat(capability.canReply()).isTrue();
+        assertThat(capability.form()).isEqualTo(ReplyCapability.FORM_NON_DELIVERY);
+        assertThat(capability.maxLength()).isEqualTo(200);
+        assertThat(capability.reasons()).extracting(c -> c.code()).containsExactly("101", "102", "103", "104");
+    }
+
+    @Test
+    void nonDelivery_resend_checksCarrierAndInvoice_andBuildsTheRecordLine() {
+        CarrierCodeService carriers = mock(CarrierCodeService.class);
+        given(carriers.validateDeliveryCompanyCode("00034", Platform.ELEVENST)).willReturn("00034");
+        given(carriers.findOptions(Platform.ELEVENST)).willReturn(List.of(new CarrierOption("00034", "CJ대한통운", true)));
+        InquiryReplyPolicy withElevenst = new InquiryReplyPolicy(List.of(ELEVENST_ADAPTER), carriers);
+
+        InquiryReplyPolicy.NonDeliveryInput input = withElevenst.nonDelivery(nonDeliveryReport(), "오늘 다시 보냈습니다",
+                "102", "00034", "1234-5678-9012");
+
+        assertThat(input.invoiceNumber()).isEqualTo("123456789012");
+        assertThat(input.recordText()).isEqualTo("재발송하였습니다. — 오늘 다시 보냈습니다 (재발송 CJ대한통운 123456789012)");
+    }
+
+    @Test
+    void nonDelivery_otherReason_sendsNoInvoice_andUnknownReasonIs400() {
+        InquiryReplyPolicy withElevenst = new InquiryReplyPolicy(List.of(ELEVENST_ADAPTER),
+                mock(CarrierCodeService.class));
+
+        InquiryReplyPolicy.NonDeliveryInput input = withElevenst.nonDelivery(nonDeliveryReport(), "통화했습니다",
+                "101", "00034", "123456789012");
+
+        assertThat(input.carrierCode()).isNull();
+        assertThat(input.invoiceNumber()).isNull();
+        assertThat(input.recordText()).isEqualTo("구매자와 연락하여 협의하였습니다. — 통화했습니다");
+        assertThatThrownBy(() -> withElevenst.nonDelivery(nonDeliveryReport(), "x", "999", null, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("처리 사유를 선택하세요");
+    }
+
+    private CustomerInquiry nonDeliveryReport() {
+        MarketplaceAccount eleven = MarketplaceAccountFixture.elevenstStubBuilder("KEY").id(9L).build();
+        return inquiry(InquiryType.NON_DELIVERY, InquiryStatus.UNANSWERED, eleven).toBuilder()
+                .platform(Platform.ELEVENST).platformStatus("미도착처리중").build();
     }
 
     private MarketplaceAccount account(String vendorUserId) {

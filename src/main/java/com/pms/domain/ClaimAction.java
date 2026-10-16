@@ -22,14 +22,21 @@ public enum ClaimAction {
     RETURN_APPROVE(ClaimType.RETURN, "반품 승인", Requires.NONE, true),
     RETURN_COLLECT_INVOICE(ClaimType.RETURN, "회수 송장 등록", Requires.INVOICE, false),
     /**
-     * 쿠팡이 회수 송장 등록을 거절해 우리 장부에만 남은 값을 <b>그대로 다시 보낸다</b>
-     * (FEATURE_2609_70 / D7~D9).
+     * Sends again, <b>as is</b>, the pickup invoice the marketplace refused and that stayed only in our ledger
+     * (FEATURE_2609_70 / D7~D9 · 11st FEATURE_2610_17 / D22).
      *
-     * <p>{@code requires=NONE} 인 이유가 핵심이다 — 송장번호를 다시 입력받으면 오타로 다른 번호가
-     * 들어가고, 그건 D5 가 막은 <b>수정</b>이 된다. 서버가 저장된 값을 싣는다.
-     * <p>값 기록의 재시도라 {@code irreversible=false}(2단 확인 없음).
+     * <p>Why {@code requires=NONE} matters — asking for the number again would let a typo send another number, and
+     * that is the <b>edit</b> D5 forbids. The server sends the stored value.
+     * <p>A retry of a recorded value, so {@code irreversible=false} (no 2-step confirm). The 11st adapter labels it
+     * 「마켓에 다시 보내기」 (D18 · D22); this default label is the Coupang one.
      */
     RETURN_COLLECT_INVOICE_RESEND(ClaimType.RETURN, "쿠팡에 다시 보내기", Requires.NONE, false),
+    /** 11st only (FEATURE_2610_17 / D23 · D34): return reject 1645 — 🔴 cannot be undone. */
+    RETURN_REJECT(ClaimType.RETURN, "반품 거부", Requires.REASON, true),
+    /** 11st only (D23 · D34): return hold 1654. */
+    RETURN_HOLD(ClaimType.RETURN, "반품 보류", Requires.REASON, false),
+    /** 11st only (D23 · D34): return-completion hold 1655 — stops 11st's automatic return completion. */
+    RETURN_COMPLETE_HOLD(ClaimType.RETURN, "반품완료 보류", Requires.REASON, false),
 
     EXCHANGE_RECEIVE_CONFIRM(ClaimType.EXCHANGE, "교환 입고확인", Requires.NONE, false),
     /** 🔴 되돌릴 수 없다. */
@@ -49,7 +56,12 @@ public enum ClaimAction {
         /** 택배사 코드 + 송장번호. */
         INVOICE,
         /** 거부 사유 코드(선택지는 어댑터가 {@code choices} 로 내려준다, D19). */
-        REJECT_CODE
+        REJECT_CODE,
+        /**
+         * Reason code (from {@code choices}) + reason text, both required (FEATURE_2610_17 / D34 · D39 ①) — the 11st
+         * reject / hold actions. The 11st adapter also returns it for {@code EXCHANGE_REJECT} (D15).
+         */
+        REASON
     }
 
     private final ClaimType claimType;

@@ -37,6 +37,7 @@ import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 /**
  * ClaimSyncService — 반품·교환만 다시 가져오기 (FEATURE_2609_70 / D14·D15·D15-1).
@@ -203,5 +204,20 @@ class ClaimSyncServiceTest {
         verify(syncStatusRecorder, never()).recordSuccess(anyLong());
         verify(syncStatusRecorder, never()).recordPartial(anyLong(), anyString(), anyBoolean(), anyBoolean());
         verify(syncStatusRecorder, never()).recordFailure(anyLong(), any());
+    }
+
+    /** FEATURE_2610_17 / D15: an 11st channel runs only its adapter (returns + exchanges) — no Coupang step. */
+    @Test
+    void elevenst_runsTheElevenstAdapterOnly_andStampsClaimSync() {
+        MarketplaceAccount eleven = MarketplaceAccountFixture.elevenstStubBuilder("KEY").id(9L).tenantId(1L).build();
+        given(marketplaceAccountRepository.findById(9L)).willReturn(Optional.of(eleven));
+        given(claimSyncAdapter.platform()).willReturn(Platform.ELEVENST);
+        claimSyncAdapters.add(claimSyncAdapter);
+
+        service.sync(9L);
+
+        verify(claimSyncAdapter).syncExchanges(eleven);
+        verify(syncStatusRecorder).recordClaimSyncCompleted(9L);
+        verifyNoInteractions(coupangReturnSyncService, claimOrderBackfillService);
     }
 }

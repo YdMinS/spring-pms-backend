@@ -19,6 +19,11 @@ import com.pms.repository.OrderShipmentRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangCredentials;
 import com.pms.service.coupang.OrderUpserter;
+import com.pms.service.coupang.SyncWindow;
+import com.pms.service.elevenst.ElevenstOrderApi;
+import com.pms.service.elevenst.ElevenstOrderList;
+import com.pms.service.elevenst.ElevenstOrderUpserter;
+import com.pms.service.elevenst.ElevenstPaths;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.Row;
@@ -36,19 +41,21 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
 /**
- * {@link ShippingLabelService} 구현 — 쿠팡 ordersheets(INSTRUCT) 조회 → 행 펼침 → xlsx.
+ * {@link ShippingLabelService} implementation — Coupang ordersheets (INSTRUCT) / 11st 1635 lookup → flatten rows →
+ * xlsx.
  *
- * 쿼리 빌드는 {@code CoupangOrderSyncServiceImpl} 패턴을 따른다(status=INSTRUCT 고정).
- * 🔴 여기서 {@code INSTRUCT} 는 <b>쿠팡 조회 파라미터</b>지 우리 상태가 아니다 — DB 를 상태로 조회하지
- * 않으므로 {@code OrderStatus} 로 바꾸지 않는다(FEATURE_2609_26 / 04 §3-2).
- * 조회분은 {@code OrderUpserter} 로 주문 3층에 upsert 한다(PLAN 2609_13 D1) — best-effort 라
- * 저장이 실패해도 시트는 그대로 나간다(D6). 이 서비스에 @Transactional 을 붙이면 안 된다(D3).
- * 계정·seller 는 리포지토리에서 {@code @EntityGraph} 로 eager fetch 하므로, 외부 HTTP 루프를
- * 도는 이 서비스는 @Transactional 없이도 seller.sellerName 접근이 안전하다(open-in-view=false).
+ * The Coupang query follows the {@code CoupangOrderSyncServiceImpl} pattern (status=INSTRUCT fixed).
+ * 🔴 {@code INSTRUCT} here is a <b>Coupang query parameter</b>, not our status — the DB is not queried by status, so
+ * it is not turned into {@code OrderStatus} (FEATURE_2609_26 / 04 §3-2).
+ * Fetched rows are upserted into the order tables through {@code OrderUpserter} / {@code ElevenstOrderUpserter}
+ * (PLAN 2609_13 D1) — best-effort, so a failed save still returns the sheet (D6). Never put @Transactional on this
+ * service (D3). Account and seller are fetched eagerly by the repository's {@code @EntityGraph}, so this service,
+ * which loops over external HTTP, reads seller.sellerName safely without @Transactional (open-in-view=false).
  */
 @Slf4j
 @Service
@@ -67,6 +74,9 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
     /** 내부 시트 조회 창 폭 — to − from ≤ 30일(= 31일 창). instruct-days 30 이 실측 통과한 폭과 같다(D26). */
     private static final int MAX_WINDOW_DAYS = 30;
 
+    /** FEATURE_2610_17: 11st order lists accept at most 7 days per call. */
+    private static final int ELEVENST_WINDOW_DAYS = 7;
+
     private static final String[] HEADERS = {
             "받는사람 이름", "전화번호", "우편번호", "주소", "상품명", "택배수량",
             "내품수량", "주문번호", "배송메시지", "관리코드", "판매자", "플랫폼"
@@ -79,6 +89,9 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
     private final OrderLineRepository orderLineRepository;
     private final OrderUpserter orderUpserter;
     private final OrderShipmentRepository orderShipmentRepository;
+    /** FEATURE_2610_17 / D2 · D42: 11st preparing list 1635 (address and phone are read, never stored — D7). */
+    private final ElevenstOrderApi elevenstOrderApi;
+    private final ElevenstOrderUpserter elevenstOrderUpserter;
 
     public List<ShippingLabelRow> collectRows(Long sellerId) {
         List<MarketplaceAccount> accounts = (sellerId == null)
@@ -89,12 +102,13 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
         int targetAccounts = 0;
         int failedAccounts = 0;
         for (MarketplaceAccount account : accounts) {
-            if (!Platform.COUPANG.equals(account.getPlatform())) {
+            boolean elevenst = Platform.ELEVENST.equals(account.getPlatform());
+            if (!Platform.COUPANG.equals(account.getPlatform()) && !elevenst) {
                 continue;
             }
             targetAccounts++;
             try {
-                rows.addAll(collectAccountRows(account));
+                rows.addAll(elevenst ? collectElevenstRows(account, null) : collectAccountRows(account));
             } catch (Exception e) {
                 // 한 계정 오류가 전체를 막지 않는다 — 로그 후 계속.
                 failedAccounts++;
@@ -102,8 +116,8 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
                         account.getId(), account.getPlatform(), e);
             }
         }
-        // 대상 쿠팡 계정 전체가 실패해 한 행도 못 모았으면 빈 파일로 감추지 말고 오류를 드러낸다
-        // (컨트롤러가 500 으로 매핑 — "정상인데 INSTRUCT 주문 0건" 과 "조회 실패" 를 구분).
+        // When every target account (Coupang · 11st) failed and not one row was collected, surface the error instead
+        // of an empty file (the controller maps it to 500 — tells "fine, 0 preparing orders" from "lookup failed").
         if (rows.isEmpty() && targetAccounts > 0 && failedAccounts == targetAccounts) {
             throw new IllegalStateException("쿠팡 ordersheets 조회 실패 — 대상 계정 전체 오류");
         }
@@ -122,8 +136,12 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
 
         String externalOrderId = line.getOrder().getExternalOrderId();
         MarketplaceAccount account = line.getOrder().getMarketplaceAccount();
+        if (Platform.ELEVENST.equals(account.getPlatform())) {
+            // FEATURE_2610_17 / D2: the same 1635 list, keeping only this order — only a preparing order has rows.
+            return collectElevenstRows(account, externalOrderId).stream().map(ShippingLabelPreviewRow::from).toList();
+        }
         if (!Platform.COUPANG.equals(account.getPlatform())) {
-            throw new IllegalArgumentException("쿠팡 주문만 송장시트를 만들 수 있습니다: " + account.getPlatform());
+            throw new IllegalArgumentException("쿠팡 · 11번가 주문만 송장시트를 만들 수 있습니다: " + account.getPlatform());
         }
 
         String path = coupangProperties.getOrdersheetByOrderPath()
@@ -303,6 +321,68 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
         } while (!nextToken.isBlank());
 
         return rows;
+    }
+
+    /**
+     * 11st sheet rows (FEATURE_2610_17 / D2 · D42): the 1635 preparing list over the same look-back as the Coupang
+     * sheet ({@code oklyx.coupang.instruct-days}), cut into 7-day calls (11st order lists accept 7 days at most).
+     * Rows are loaded into the order tables best-effort (same rule as the Coupang sheet — a sheet order must exist
+     * in the DB); address and phone go to the sheet only (D7).
+     *
+     * @param onlyOrderNo when set, only that order's rows (single-order sheet)
+     */
+    private List<ShippingLabelRow> collectElevenstRows(MarketplaceAccount account, String onlyOrderNo) {
+        LocalDateTime now = LocalDateTime.now(SyncWindow.KST);
+        LocalDateTime start = now.minusDays(coupangProperties.getInstructDays());
+        List<ShippingLabelRow> rows = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (LocalDateTime from = start; from.isBefore(now); from = from.plusDays(ELEVENST_WINDOW_DAYS)) {
+            LocalDateTime to = from.plusDays(ELEVENST_WINDOW_DAYS).isAfter(now) ? now : from.plusDays(ELEVENST_WINDOW_DAYS);
+            List<Map<String, String>> page = elevenstOrderApi.listByMinute(account, ElevenstPaths.ORDERS_PREPARING,
+                    "ordPrdSeq", from, to);
+            try {
+                elevenstOrderUpserter.upsertRows(account, ElevenstOrderList.PREPARING, page);
+            } catch (Exception e) {
+                log.warn("11번가 송장시트 주문 적재 실패(시트는 계속 생성): account={}", account.getId(), e);
+            }
+            for (Map<String, String> row : page) {
+                String orderNo = value(row, "ordNo");
+                if (onlyOrderNo != null && !onlyOrderNo.equals(orderNo)) {
+                    continue;
+                }
+                if (seen.add(orderNo + "|" + value(row, "ordPrdSeq"))) {
+                    flattenElevenstRow(account, row, rows);
+                }
+            }
+        }
+        return rows;
+    }
+
+    /** One 11st order row → one sheet row, the D42 field mapping; quantity 0 or less → no row. */
+    private void flattenElevenstRow(MarketplaceAccount account, Map<String, String> row, List<ShippingLabelRow> rows) {
+        int quantity;
+        try {
+            quantity = Integer.parseInt(value(row, "ordQty"));
+        } catch (NumberFormatException e) {
+            quantity = 0;
+        }
+        if (quantity <= 0) {
+            return;
+        }
+        String phone = value(row, "rcvrPrtblNo").isBlank() ? value(row, "rcvrTlphn") : value(row, "rcvrPrtblNo");
+        rows.add(new ShippingLabelRow(
+                value(row, "rcvrNm"), phone, value(row, "rcvrMailNo"),
+                joinAddress(value(row, "rcvrBaseAddr"), value(row, "rcvrDtlsAddr")),
+                value(row, "prdNm"), quantity,
+                DEFAULT_PARCEL_QUANTITY, value(row, "prdStckNo"),
+                value(row, "ordNo"), value(row, "ordDlvReqCont"), value(row, "dlvNo"),
+                account.getSeller().getSellerName(), account.getPlatform().name()));
+    }
+
+    /** Field text, "" when absent (same as the Coupang {@code asText("")}). */
+    private static String value(Map<String, String> row, String field) {
+        String text = row.get(field);
+        return text == null ? "" : text.trim();
     }
 
     /**

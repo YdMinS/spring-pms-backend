@@ -4,13 +4,14 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
- * 주문 동기화 단일 진입점 (★ 중복 방지).
+ * The single entry of the order sync (★ no duplicates).
  *
- * 앱 진입·화면 새로고침·스케줄러 등 모든 동기화 호출은 반드시 이 facade 한 곳을 거친다.
- * 화면/호출부마다 ordersheets+returnRequests 묶음 로직을 복제하지 말 것(CLAUDE.md 공통 서비스 규칙).
+ * Every sync call — app start, screen refresh, scheduler — goes through this facade only. Do not copy the
+ * ordersheets + returnRequests bundle logic per screen or caller (CLAUDE.md common-service rule).
  *
- * 순서 고정: ordersheets upsert(신규/갱신) → returnRequests 취소 보정. 계정 단위 격리(한 계정 실패가
- * 전체를 롤백하지 않음, 단 단건 sync(accountId)는 예외 전파).
+ * Fixed order: orders upsert (new / update) → cancel correction (Coupang returnRequests · 11st cancel lists,
+ * FEATURE_2610_17 / D11). Isolated per account (one account failing does not roll back the rest; only the single
+ * sync(accountId) propagates the exception).
  */
 public interface OrderSyncFacade {
 
@@ -30,19 +31,20 @@ public interface OrderSyncFacade {
      */
     OrderSyncResult sync(Long accountId, OrderSyncPreset preset);
 
-    /** 한 셀러의 활성 COUPANG 계정 전체 동기화 (계정 단위 격리). 항상 {@link OrderSyncPreset#QUICK} 이다. */
+    /** Syncs every active COUPANG / ELEVENST account of one seller (isolated per account). Always {@link OrderSyncPreset#QUICK}. */
     OrderSyncResult syncBySeller(Long sellerId);
 
-    /** 모든 셀러의 활성 COUPANG 계정 전체 동기화 (계정 단위 격리). 항상 {@link OrderSyncPreset#QUICK} 이다. */
+    /** Syncs every active COUPANG / ELEVENST account of every seller (isolated per account). Always {@link OrderSyncPreset#QUICK}. */
     OrderSyncResult syncAll();
 
     /**
-     * 모든 셀러의 활성 COUPANG 계정을 <b>지정 프리셋</b>으로 동기화 — 스케줄러의 유일한 입구
+     * Syncs every active COUPANG account — and ELEVENST account, unless 11st calls are switched off on this server
+     * (FEATURE_2610_17 / D10) — of every seller with the <b>given preset</b>: the scheduler's only entry
      * (FEATURE_2609_49 / D1·D2).
      *
-     * <p>🔴 이 경로의 회차는 실패·부분 실패를 {@code SyncStatusRecorder} 에 <b>낙인하지 않는다</b>(D13).
-     * 누르지도 않은 사용자에게 화면 배너가 상주하기 때문이다 — 실패는 로그로만 남는다.
-     * 성공·단계별 앵커 기록은 그대로 한다({@code lastOrderSyncAt} 이 배너·조회 창의 원천).
+     * <p>🔴 Rounds on this path do <b>not</b> stamp failures or partial failures into {@code SyncStatusRecorder}
+     * (D13): the screen banner would stay for users who never pressed anything — failures are only logged.
+     * Success and per-step anchors are still recorded ({@code lastOrderSyncAt} feeds the banner and the window).
      */
     OrderSyncResult syncAll(OrderSyncPreset preset);
 
@@ -62,12 +64,12 @@ public interface OrderSyncFacade {
                            int skippedAccounts) {
 
         /**
-         * 이미 같은 채널이 돌고 있어 쿠팡을 치지 않은 회차(FEATURE_2609_48 / D5).
-         * 실패가 아니라 "지금 하는 중"이다.
+         * A round that did not call the marketplace because the same channel is already running
+         * (FEATURE_2609_48 / D5). Not a failure but "in progress".
          *
-         * <p>🔴 {@code syncedAt} 이 {@code null} 인 이유(D9): 이 회차는 조회를 하지 않았다.
-         * {@code now()} 를 실으면 {@link #plus} 가 그것을 취해, 전체 동기화의 마지막 계정이
-         * 건너뛰었을 때 합계 시각이 실제로 조회하지 않은 시각으로 덮인다.
+         * <p>🔴 Why {@code syncedAt} is {@code null} (D9): this round read nothing. With {@code now()}
+         * {@link #plus} would take it, and when the last account of a full sync is skipped the total time
+         * would become a moment nothing was read.
          */
         static OrderSyncResult skipped() {
             return new OrderSyncResult(null, 0, 0, 0, 1);

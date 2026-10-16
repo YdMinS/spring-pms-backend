@@ -24,7 +24,13 @@ public class InquiryTypeCatalog {
     private static final Map<Platform, List<InquiryTypeCatalogResponse.Option>> BY_PLATFORM = Map.of(
             Platform.COUPANG, List.of(
                     new InquiryTypeCatalogResponse.Option(InquiryType.PRODUCT_QNA, "상품문의"),
-                    new InquiryTypeCatalogResponse.Option(InquiryType.CALL_CENTER, "고객센터문의")));
+                    new InquiryTypeCatalogResponse.Option(InquiryType.CALL_CENTER, "고객센터문의")),
+            // FEATURE_2610_17 / D16 · D26 · D68: 11st product Q&A, urgent notices (「긴급문의」 only) and
+            // non-delivery reports.
+            Platform.ELEVENST, List.of(
+                    new InquiryTypeCatalogResponse.Option(InquiryType.PRODUCT_QNA, "상품 Q&A"),
+                    new InquiryTypeCatalogResponse.Option(InquiryType.CALL_CENTER, "긴급알리미"),
+                    new InquiryTypeCatalogResponse.Option(InquiryType.NON_DELIVERY, "상품 미도착")));
 
     /**
      * 주어진 플랫폼들의 지원 유형 목록. 아는 플랫폼만 담는다(모르는 플랫폼은 조용히 빠진다) —

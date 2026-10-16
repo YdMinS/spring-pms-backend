@@ -41,7 +41,8 @@ public class InquiryReplyController {
             description = "Irreversible; the server re-evaluates reply capability before sending (ADMIN role required)")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "200", description = "Reply sent; returns the refreshed inquiry")
-    @ApiResponse(responseCode = "400", description = "Blank body, length violation, not repliable, or the marketplace rejected the reply")
+    @ApiResponse(responseCode = "400", description = "Blank body, length violation, not repliable, a missing or unknown non-delivery "
+            + "reason / carrier / invoice (11st, FEATURE_2610_17 / D68), or the marketplace rejected the reply")
     @ApiResponse(responseCode = "401", description = "Authentication required")
     @ApiResponse(responseCode = "403", description = "Permission denied (ADMIN role required)")
     @ApiResponse(responseCode = "404", description = "Inquiry not found")
@@ -50,6 +51,6 @@ public class InquiryReplyController {
             @PathVariable Long id,
             @Valid @RequestBody InquiryReplyRequest request) {
         // 길이 검증은 정책이 한다(유형마다 다르다) — 여기서는 빈 본문만 막는다.
-        return ResponseEntity.ok(ResponseDTO.success(inquiryReplyService.reply(id, request.content())));
+        return ResponseEntity.ok(ResponseDTO.success(inquiryReplyService.reply(id, request)));
     }
 }

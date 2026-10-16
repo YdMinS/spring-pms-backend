@@ -76,7 +76,7 @@ public class GlobalExceptionHandler {
             ClaimActionFailedException e) {
         log.warn("ClaimActionFailedException: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                .body(ResponseDTO.failure("쿠팡 처리에 실패했습니다", e.getResult()));
+                .body(ResponseDTO.failure("마켓 처리에 실패했습니다", e.getResult()));
     }
 
     /**

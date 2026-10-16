@@ -4,38 +4,45 @@ import com.pms.dto.request.ManualShipmentRequest;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
- * 발송처리 레그: order_line 전개 → 쿠팡 송장업로드(상품준비중→배송지시) 전송.
+ * Shipment-confirm leg: expand order_line → marketplace invoice upload (preparing → shipped) — Coupang invoices and
+ * 11st shipping 1888 (FEATURE_2610_17 / D2).
  *
- * <p>경로는 <b>둘</b>이다:
+ * <p>There are <b>two</b> paths:
  * <ul>
- *   <li>일괄 — 택배사 결과 xlsx 업로드({@link #confirm}). 택배사는 서버가 활성 1개를 자동 선택한다.</li>
- *   <li>단건 수동 — 주문 상세에서 라인 1건({@link #confirmManual}). 사용자가 택배사·송장번호를 지정하고,
- *       이미 배송지시 이상인 박스면 송장수정({@code updateInvoices}) 으로 보낸다(PLAN 2609_11 D3).</li>
+ *   <li>Bulk — upload the carrier result xlsx ({@link #confirm}). The server picks the one active carrier.</li>
+ *   <li>Single manual — one line from the order detail ({@link #confirmManual}). The user picks carrier and invoice;
+ *       a Coupang box already DEPARTURE or later goes as an invoice update ({@code updateInvoices}) (PLAN 2609_11 D3).
+ *       11st has no update API — an already shipped 11st line is refused (D21).</li>
  * </ul>
  *
- * 생성 레그({@link ShippingLabelService})의 후속. 생성은 접수시트 xlsx 다운로드, 이 서비스는 발송처리.
- * 조회는 읽기 전용. 단, 송장업로드에 성공한 박스의 {@code status} 만 {@code DEPARTURE} 로 갱신한다
- * (PLAN 2609_07 D4) — 그 외 필드·행은 동기화({@code OrderSyncFacade}) 전담.
- * ⚠️ 현재 대상 플랫폼은 COUPANG 뿐 — 네이버 등은 후속 어댑터(현재 스코프 아님).
+ * Follows the generation leg ({@link ShippingLabelService}): that one downloads the label sheet xlsx, this one
+ * confirms shipment. Reads only, except the {@code status} of the succeeded boxes, which becomes {@code SHIPPED}
+ * (PLAN 2609_07 D4) — every other field and row belongs to the sync ({@code OrderSyncFacade}).
+ * ⚠️ Target platforms are COUPANG and ELEVENST — Naver etc. are a later adapter (not in scope).
  */
 public interface ShipmentConfirmService {
 
     /**
-     * 택배사 결과 xlsx 를 파싱해 계정별로 쿠팡 송장업로드 API 를 배치 전송하고 결과를 집계한다.
+     * Parses the carrier result xlsx and sends the invoices — Coupang in one batch per account, 11st one call per
+     * delivery number — and sums the results.
      *
-     * @param file 택배사 고정 양식 xlsx (주문번호 col 5, 운송장번호 col 6 만 사용)
-     * @return 전개/그룹핑/응답집계 결과
-     * @throws IllegalArgumentException 빈 파일/파싱 실패(→ 400)
+     * @param file the carrier's fixed xlsx (only order number col 5 and invoice number col 6 are used)
+     * @return expand / group / response summary
+     * @throws IllegalArgumentException empty file / parse failure (→ 400)
      */
     ShipmentConfirmResult confirm(MultipartFile file);
 
     /**
-     * 주문 라인 1건이 속한 <b>박스</b>에 대해 사용자가 고른 택배사·송장번호로 송장업로드/수정을 보낸다.
-     * 같은 주문의 다른 박스는 건드리지 않는다(PLAN 2609_11 D1).
+     * Sends the invoice the user picked (carrier + number) for the <b>box</b> of one order line — upload or update
+     * (Coupang) · upload only (11st). Other boxes of the same order are untouched (PLAN 2609_11 D1). An 11st
+     * {@code PARTIAL} / {@code SPLIT} request sends only its chosen lines (FEATURE_2610_17 / D64).
      *
-     * @param request 앵커 라인 id · 택배사 id · 송장번호
-     * @return 전송 결과(모드·성공/실패 상세·로컬 상태)
-     * @throws IllegalArgumentException 라인 없음 · 비-COUPANG · externalBoxId 없음 · 택배사 코드 미등록 (→ 400)
+     * @param request anchor line id · carrier code · invoice number (+ 11st {@code mode} · {@code orderItemIds} ·
+     *                {@code splits}, D64)
+     * @return send result (mode · success / failure detail · local status)
+     * @throws IllegalArgumentException no line · neither COUPANG nor ELEVENST · no externalBoxId · carrier code not
+     *                                  registered · 11st paid (D20) or already shipped (D21) · 11st PARTIAL / SPLIT
+     *                                  rule (D64, R19) (→ 400)
      */
     ManualShipmentResult confirmManual(ManualShipmentRequest request);
 

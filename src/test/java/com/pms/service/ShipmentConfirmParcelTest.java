@@ -20,6 +20,7 @@ import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ShipmentParcelRepository;
 import com.pms.service.coupang.OrderUpserter;
+import com.pms.service.elevenst.ElevenstOrderActions;
 import com.pms.service.reservation.InternalShipmentStageService;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -86,6 +87,8 @@ class ShipmentConfirmParcelTest {
     private ShipmentParcelRepository shipmentParcelRepository;
     @Mock private OrderAcknowledgeService orderAcknowledgeService;
     @Mock private InternalShipmentStageService internalShipmentStageService;
+    @Mock
+    private ElevenstOrderActions elevenstOrderActions;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private ShipmentConfirmServiceImpl service;
@@ -102,7 +105,7 @@ class ShipmentConfirmParcelTest {
         service = new ShipmentConfirmServiceImpl(
                 coupangApiClient, coupangProperties, orderLineRepository, coupangOrderLineRepository,
                 marketplaceAccountRepository, carrierCodeService, objectMapper, orderUpserter,
-                new ShipmentParcelRecorder(shipmentParcelRepository), orderAcknowledgeService, internalShipmentStageService);
+                new ShipmentParcelRecorder(shipmentParcelRepository), orderAcknowledgeService, internalShipmentStageService, elevenstOrderActions, null);
 
         account = account();
 

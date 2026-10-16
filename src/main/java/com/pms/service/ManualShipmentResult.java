@@ -3,17 +3,20 @@ package com.pms.service;
 import java.util.List;
 
 /**
- * 단건 발송처리 결과.
+ * Result of a single (manual) shipment confirm.
  *
- * @param orderId        쿠팡 주문번호
- * @param shipmentBoxId  전송한 박스(운송장이 붙는 단위, PLAN 2609_11 D1)
- * @param mode           "CREATE"(신규 업로드) | "UPDATE"(송장수정) — 서버가 상태로 결정(D3)
- * @param sentLines      전송한 dto 수 = 박스의 옵션 라인 수
- * @param succeeded      쿠팡 responseList 의 succeed=true 건수
- * @param failed         실패 상세(쿠팡 원문, D6) — {@link ShipmentConfirmResult.FailedBox} 재사용
- * @param resultStatus   성공 후 로컬 상태(CREATE 성공 시 {@code "SHIPPED"}, 그 외 null) — 클라이언트가
- *                       화면 갱신에 그대로 쓴다(D4). 🔴 중립 상태다(FEATURE_2609_26 / PLAN D4) —
- *                       원문(DEPARTURE)을 내려주면 갱신 직후에만 옛 라벨이 노출돼 재현이 어렵다
+ * @param orderId        marketplace order number (Coupang orderId · 11st ordNo)
+ * @param shipmentBoxId  the box that was sent (the unit an invoice attaches to, PLAN 2609_11 D1) — 11st = delivery
+ *                       number {@code dlvNo} (FEATURE_2610_17 / D2)
+ * @param mode           "CREATE" (new upload) | "UPDATE" (invoice update) — the server decides by status (D3); 11st is
+ *                       always "CREATE" (no update API, D21)
+ * @param sentLines      Coupang: dto count sent = option lines of the box · 11st: order lines of the delivery number,
+ *                       or the chosen lines of a {@code PARTIAL} / {@code SPLIT} send (FEATURE_2610_17 / D64)
+ * @param succeeded      Coupang: responseList succeed=true count · 11st: 1 when the delivery number was accepted
+ * @param failed         failure details (the marketplace's own wording, D6) — reuses {@link ShipmentConfirmResult.FailedBox}
+ * @param resultStatus   local status after success ({@code "SHIPPED"} on a CREATE success, else null) — the client uses
+ *                       it as is to refresh the screen (D4). 🔴 It is the neutral status (FEATURE_2609_26 / PLAN D4) —
+ *                       sending the raw value (DEPARTURE) would show the old label only right after the refresh
  */
 public record ManualShipmentResult(String orderId, String shipmentBoxId, String mode, int sentLines,
                                    int succeeded, List<ShipmentConfirmResult.FailedBox> failed,

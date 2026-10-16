@@ -1,23 +1,57 @@
 package com.pms.dto.request;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
+import java.util.List;
+
 /**
- * 단건 발송처리 요청 — 주문 상세에서 고른 라인 1건 + 사용자가 선택한 택배사·입력한 송장번호.
+ * Single shipment request — the line picked on the order detail + the carrier the user chose and the invoice typed.
  *
- * <p>전송 단위는 이 라인이 아니라 <b>이 라인이 속한 박스 전체</b>다(PLAN 2609_11 D1).
- * 택배사는 마켓 코드 자체로 고른다 — 쿠팡은 택배사 목록 API 가 없고 문서의 정적 코드표가 SSOT 라
- * 로컬 {@code carrier} 행이 없는 택배사가 대부분이기 때문(D2 개정 2026-09-03).
- * 임의 문자열은 서버가 {@link com.pms.domain.CarrierCatalog} 화이트리스트로 거른다(PLAN 2609_37 D1).
+ * <p>The send unit is <b>the whole box this line belongs to</b>, not the line (PLAN 2609_11 D1). The carrier is picked
+ * as the marketplace code itself — Coupang has no carrier-list API and the guide's static code table is the SSOT, so
+ * most carriers have no local {@code carrier} row (D2 revised 2026-09-03). Any string is filtered by the server's
+ * {@link com.pms.domain.CarrierCatalog} whitelist (PLAN 2609_37 D1).
  *
- * <p>record 사용 → accessor 자동 생성 (Lombok 금지).
+ * <p>11st only (FEATURE_2610_17 / D64) — {@code mode}:
+ * <ul>
+ *   <li>{@code ALL} or null — the whole delivery with one invoice (1888, the default)</li>
+ *   <li>{@code PARTIAL} — only {@code orderItemIds} of the delivery with one invoice (1636)</li>
+ *   <li>{@code SPLIT} — the one line in {@code orderItemIds} over {@code splits} (6791, 2~10 invoices; the quantities
+ *       add up to the line's order quantity). {@code invoiceNumber} is the first split's invoice</li>
+ * </ul>
+ * A Coupang order ignores the three fields.
+ *
+ * <p>Record → accessors are generated (no Lombok).
  */
 public record ManualShipmentRequest(
         @NotNull(message = "주문 라인 ID는 필수입니다") Long orderItemId,
         @NotBlank(message = "택배사는 필수입니다")
         @Size(max = 30, message = "택배사 코드는 30자 이하여야 합니다") String deliveryCompanyCode,
         @NotBlank(message = "송장번호는 필수입니다")
-        @Size(max = 50, message = "송장번호는 50자 이하여야 합니다") String invoiceNumber) {
+        @Size(max = 50, message = "송장번호는 50자 이하여야 합니다") String invoiceNumber,
+        @Size(max = 10, message = "보내는 방식은 10자 이하여야 합니다") String mode,
+        List<Long> orderItemIds,
+        @Valid List<Split> splits) {
+
+    /** {@code mode} values (FEATURE_2610_17 / D64). */
+    public static final String MODE_ALL = "ALL";
+    public static final String MODE_PARTIAL = "PARTIAL";
+    public static final String MODE_SPLIT = "SPLIT";
+
+    /** The request before FEATURE_2610_17 — the whole box with one invoice. */
+    public ManualShipmentRequest(Long orderItemId, String deliveryCompanyCode, String invoiceNumber) {
+        this(orderItemId, deliveryCompanyCode, invoiceNumber, null, null, null);
+    }
+
+    /** One invoice of a {@code SPLIT} send. */
+    public record Split(
+            @NotBlank(message = "송장번호는 필수입니다")
+            @Size(max = 50, message = "송장번호는 50자 이하여야 합니다") String invoiceNumber,
+            @NotNull(message = "수량이 필요합니다") @Min(value = 1, message = "수량은 1개 이상이어야 합니다")
+            Integer quantity) {
+    }
 }

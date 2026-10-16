@@ -1,5 +1,6 @@
 package com.pms.service.inquiry;
 
+import com.pms.dto.request.InquiryReplyRequest;
 import com.pms.dto.response.CustomerInquiryResponse;
 
 /**
@@ -10,16 +11,18 @@ import com.pms.dto.response.CustomerInquiryResponse;
 public interface InquiryReplyService {
 
     /**
-     * 답변 1건 전송 후 <b>갱신된 문의</b>를 돌려준다.
+     * Sends one reply and returns the <b>updated inquiry</b>.
      *
-     * 반환은 {@code GET /api/inquiries/{id}} 와 <b>같은 타입·같은 조립 경로</b>다 — 화면이 성공 응답으로
-     * 문의 객체를 통째로 교체하므로 스레드뿐 아니라 관련 주문·상품과 재판정된 {@code replyCapability}
-     * (= {@code canReply false})까지 실려야 한다.
+     * The return is the <b>same type and assembly path</b> as {@code GET /api/inquiries/{id}} — the screen replaces
+     * the whole inquiry object with the success response, so it must carry not only the thread but the related
+     * order · product and the re-judged {@code replyCapability} (= {@code canReply false}).
      *
-     * @throws com.pms.exception.ResourceNotFoundException 없는 문의 (→404)
-     * @throws IllegalArgumentException                    정책상 불가 · 길이 위반 · 동시 전송 (→400)
-     * @throws InquiryReplyFailedException                 플랫폼이 거절 (→400, 원문 메시지)
-     * @throws com.pms.exception.BusinessException         전송 결과 불명(타임아웃·네트워크) (→502)
+     * @throws com.pms.exception.ResourceNotFoundException no such inquiry (→404)
+     * @throws IllegalArgumentException                    not repliable by policy · length out of range · already
+     *                                                     sending · 11st non-delivery reason / carrier / invoice
+     *                                                     missing or unknown (FEATURE_2610_17 / D68) (→400)
+     * @throws InquiryReplyFailedException                 the platform rejected it (→400, its own message)
+     * @throws com.pms.exception.BusinessException         send result unknown (timeout · network) (→502)
      */
-    CustomerInquiryResponse reply(Long inquiryId, String content);
+    CustomerInquiryResponse reply(Long inquiryId, InquiryReplyRequest request);
 }

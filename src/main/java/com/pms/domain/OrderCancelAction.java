@@ -5,21 +5,23 @@ import lombok.*;
 import org.hibernate.annotations.TenantId;
 
 /**
- * 발송 전 주문 취소의 <b>시도 1건 = 1행</b> (FEATURE_2609_25 / PLAN D8).
+ * <b>One row per attempt</b> of a seller cancel before shipping (FEATURE_2609_25 / PLAN D8) — the Coupang cancel and
+ * the 11st sale refusal 1638 alike (FEATURE_2610_17 / D70).
  *
- * <p>성공·실패를 모두 남긴다. 세 가지 일을 한다:
+ * <p>Success and failure are both kept. It does three jobs:
  * <ol>
- *   <li>되돌릴 수 없는 쓰기(취소는 철회 API 가 없고 판매자 점수가 깎인다)의 감사기록</li>
- *   <li>사용자가 고른 <b>사유</b>의 유일한 보존처 — INSTRUCT 건은 쿠팡이 사유를 덮어쓴다</li>
- *   <li>쿠팡 실패 원문·접수번호 보존</li>
+ *   <li>the audit trail of an irreversible write (a cancel has no withdraw API and lowers the seller score)</li>
+ *   <li>the only place the chosen <b>reason</b> survives — Coupang overwrites the reason on INSTRUCT lines, and the
+ *       11st reason text is kept nowhere else</li>
+ *   <li>the marketplace's failure wording and receipt number</li>
  * </ol>
- * {@code order_line} 에 컬럼으로 뭉개면 마지막 1건만 남아 셋 다 못 한다.
+ * Folding it into {@code order_line} columns would keep only the last attempt and do none of the three.
  *
- * <p>⚠️ <b>UNIQUE 제약이 없다</b> — 실패 재시도가 여러 행으로 쌓이는 것이 정상이다.
+ * <p>⚠️ <b>No UNIQUE constraint</b> — retries of a failure piling up as several rows is normal.
  *
- * <p>⚠️ 서버가 걸러낸 건({@code skipped}/{@code unsupported})은 남기지 않는다. 기준은 "전송했는가"가
- * 아니라 <b>"사용자에게 실패로 보고되는가"</b> 다 — WING ID 가 없어 전송조차 못 한 건은 실패로
- * 보고되므로 남긴다.
+ * <p>⚠️ Lines the server filtered out ({@code skipped}/{@code unsupported}) are not kept. The rule is not "was it
+ * sent" but <b>"is it reported to the user as a failure"</b> — a line that could not even be sent for lack of a WING
+ * ID is reported as failed, so it is kept.
  */
 @Entity
 @Table(name = "order_cancel_action")
@@ -44,39 +46,63 @@ public class OrderCancelAction extends BaseEntity {
     @JoinColumn(name = "order_line_id", nullable = false)
     private OrderLine orderLine;
 
-    /** 요청한 취소 수량(부분취소 지원). */
+    /**
+     * The cancel quantity — Coupang: the requested quantity (partial cancel supported) · 11st: the line's remaining
+     * quantity right before sending, as 1638 cancels the whole line (D70).
+     */
     @Column(nullable = false)
     private Integer quantity;
 
-    /** 사용자가 고른 사유 — 우리 enum 이름. 쿠팡 코드가 아니라 여기 것이 원본이다. */
+    /**
+     * The reason the user picked — our enum name; this, not the Coupang code, is the source. Required on a Coupang
+     * row (the server enforces it — FEATURE_2610_17 / D71); {@code null} on an 11st row, whose reason lives in
+     * {@code platform_reason_code} · {@code reason_text} (D70).
+     */
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 40)
+    @Column(length = 40)
     private OrderCancelReason reason;
 
-    /** 실제 전송한 {@code middleCancelCode}. 매핑이 바뀌어도 그때 보낸 값이 남는다. */
+    /**
+     * The marketplace reason code actually sent — Coupang {@code middleCancelCode} · 11st 1638 {@code ordCnRsnCd}
+     * (D70). The value sent at the time stays even if the mapping changes.
+     */
     @Column(name = "platform_reason_code", length = 20)
     private String platformReasonCode;
 
-    /** 전송 <b>직전</b>의 <b>플랫폼</b> 상태 원문({@code coupang_order_line.platform_status} = ACCEPT/INSTRUCT) — 즉시취소였는지 출고중지였는지의 근거. */
+    /** The reason text the seller wrote for an 11st sale refusal (1~200, D70); {@code null} on a Coupang row. */
+    @Column(name = "reason_text", length = 200)
+    private String reasonText;
+
+    /**
+     * The raw <b>marketplace</b> status <b>right before</b> sending — Coupang {@code coupang_order_line.platform_status}
+     * (ACCEPT/INSTRUCT, the evidence of instant cancel vs shipment stop) · 11st {@code elevenst_order_line.platform_status}
+     * (201 · 202 · 301, D70).
+     */
     @Column(name = "status_at_send", length = 30)
     private String statusAtSend;
 
     @Column(nullable = false)
     private boolean succeeded;
 
-    /** 성공 시 쿠팡 접수번호({@code receiptMap} 의 {@code receiptId}). */
+    /** The Coupang receipt number on success ({@code receiptId} of {@code receiptMap}); {@code null} on an 11st row. */
     @Column(name = "receipt_id", length = 50)
     private String receiptId;
 
-    /** {@code CANCEL}(즉시취소) / {@code STOP_SHIPMENT}(출고중지). 못 읽었으면 null. */
-    @Column(name = "receipt_type", length = 20)
+    /**
+     * Coupang {@code CANCEL} (instant cancel) / {@code STOP_SHIPMENT} (shipment stop), null when unread · 11st
+     * {@code ELEVENST_SALE_REFUSAL} (D70).
+     */
+    @Column(name = "receipt_type", length = 30)
     private String receiptType;
 
-    /** 쿠팡 응답 {@code code} 원문 — 번역·요약 금지. */
+    /** The marketplace's own result code (Coupang {@code code} · 11st {@code result_code}) — never translated. */
     @Column(name = "result_code", length = 50)
     private String resultCode;
 
-    /** 쿠팡 응답 {@code message} 원문 — 번역·요약 금지(truncate 1000). */
+    /**
+     * The marketplace's own wording (Coupang {@code message} · 11st {@code result_text}) — never translated or
+     * summarised (truncated to 1000).
+     */
     @Column(name = "result_message", length = 1000)
     private String resultMessage;
 

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.ElevenstOrderLine;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderCancelAction;
 import com.pms.domain.OrderCancelReason;
@@ -12,6 +13,7 @@ import com.pms.domain.OrderStatus;
 import com.pms.domain.Platform;
 import com.pms.dto.request.OrderCancelRequest;
 import com.pms.repository.CoupangOrderLineRepository;
+import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.OrderCancelActionRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.service.OrderCancelResult.CancelledLine;
@@ -20,6 +22,9 @@ import com.pms.service.OrderCancelResult.SkippedLine;
 import com.pms.service.claim.ActionChoice;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangCredentials;
+import com.pms.service.elevenst.ElevenstRejectedException;
+import com.pms.service.elevenst.ElevenstSellerActions;
+import com.pms.service.elevenst.ElevenstSellerChoices;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.Authentication;
@@ -39,24 +44,30 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * {@link OrderCancelService} 구현 — COUPANG 전용 발송 전 취소 레그 (FEATURE_2609_25).
+ * {@link OrderCancelService} implementation — the seller cancel before shipping (FEATURE_2609_25). 11st lines take
+ * the sale-refusal path (1638, FEATURE_2610_17 / D61) — see {@link #cancelElevenst}; the rest of this note describes
+ * the Coupang leg.
  *
- * 흐름: 라인 id 중복 검사 → {@code findWithAccountByIdIn} 전개 → 라인 분류(비-쿠팡·박스 없음=unsupported,
- * 상태 밖·전량취소=skipped, 수량 초과=400, WING ID 없음=failed) → 계정·주문·박스 그룹 → 그룹마다 1 POST →
- * {@code failedVendorItemIds}/{@code receiptMap} 판정 → receiptType 별 write-back → 이력 적재.
+ * Flow: duplicate line-id check → {@code findWithAccountByIdIn} expand → reason check of each platform in the request
+ * (FEATURE_2610_17 / D71) → line sort (non-Coupang · no box = unsupported, status outside · fully cancelled =
+ * skipped, quantity over = 400, no WING ID = failed) → group by account · order · box → one POST per group →
+ * {@code failedVendorItemIds}/{@code receiptMap} judgement → write-back per receiptType → history rows.
  *
- * ⚠️ 그룹 단위 try/catch 로 전송 실패를 격리한다 — 한 박스가 실패해도 다른 박스는 계속 보낸다.
- * ⚠️ 이 서비스에 {@code @Transactional} 을 붙이면 안 된다 — 외부 HTTP 를 도는 경로다.
- *    {@code OrderLine} 조회는 {@code @EntityGraph} finder 로만 한다(open-in-view=false).
- * ⚠️ write-back·이력 저장 실패는 결과를 뒤집지 않는다 — 쿠팡 취소는 이미 일어났고, 실패로 보고하면
- *    사용자가 재전송한다(D7·D8).
+ * ⚠️ Send failures are isolated by a try/catch per group — one failing box does not stop the other boxes.
+ * ⚠️ Never put {@code @Transactional} on this service — it is a path that runs external HTTP.
+ *    {@code OrderLine} is read only through {@code @EntityGraph} finders (open-in-view=false).
+ * ⚠️ A failed write-back or history save does not flip the result — the Coupang cancel already happened, and
+ *    reporting it as failed would make the user send it again (D7·D8).
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class OrderCancelServiceImpl implements OrderCancelService {
 
-    /** 취소를 받아 주는 상태 화이트리스트 — 그 외는 쿠팡이 400 을 준다(D2). 되돌릴 수 없는 쓰기라 안 보낸다. */
+    /**
+     * Statuses a seller cancel is sent from — Coupang answers any other with a 400 (D2), and 11st sale refusal takes
+     * paid · preparing too (FEATURE_2610_17 / D61). An irreversible write, so nothing else is sent.
+     */
     private static final Set<OrderStatus> CANCELLABLE_STATUSES = Set.of(
             OrderStatus.PAID, OrderStatus.PREPARING);
 
@@ -65,6 +76,14 @@ public class OrderCancelServiceImpl implements OrderCancelService {
 
     /** 즉시취소 접수 — 취소확정 수량으로 반영한다. 그 외(출고중지·미확인)는 보류 수량으로 간다(D7). */
     private static final String RECEIPT_TYPE_CANCEL = "CANCEL";
+
+    /** Receipt type of an 11st sale refusal sent to 11st (FEATURE_2610_17 / D61). */
+    static final String ELEVENST_SALE_REFUSAL = "ELEVENST_SALE_REFUSAL";
+
+    /** FEATURE_2610_17 / D71: the reason check of both platforms, before anything is sent. */
+    static final String REASON_REQUIRED_MESSAGE = "취소 사유를 선택하세요";
+    static final String ELEVENST_REASON_TEXT_MESSAGE = "사유 글은 1~200자로 적어 주세요.";
+    private static final int ELEVENST_REASON_TEXT_MAX = 200;
 
     private static final String NO_WING_ID = "NO_WING_ID";
     private static final String NO_WING_ID_MESSAGE =
@@ -76,6 +95,9 @@ public class OrderCancelServiceImpl implements OrderCancelService {
     private final CoupangOrderLineRepository coupangOrderLineRepository;
     private final OrderCancelActionRepository orderCancelActionRepository;
     private final ObjectMapper objectMapper;
+    /** FEATURE_2610_17 / D61: 11st sale refusal (1638). */
+    private final ElevenstSellerActions elevenstSellerActions;
+    private final ElevenstOrderLineRepository elevenstOrderLineRepository;
 
     @Override
     public OrderCancelResult cancel(OrderCancelRequest request) {
@@ -91,12 +113,13 @@ public class OrderCancelServiceImpl implements OrderCancelService {
         if (lines.isEmpty()) {
             throw new IllegalArgumentException("주문 라인을 찾을 수 없습니다");
         }
+        OrderCancelReason reason = request.reason();
+        ElevenstReason elevenstReason = checkReasons(lines, quantityById, request);
         // vendorItemId(전송 식별자)와 platform_status(이력의 근거)는 쿠팡 거울에 있다 — 한 번에 읽는다(04 §3-3).
         Map<Long, CoupangOrderLine> mirrors = coupangOrderLineRepository
                 .findByOrderLine_IdIn(lines.stream().map(OrderLine::getId).toList()).stream()
                 .collect(Collectors.toMap(m -> m.getOrderLine().getId(), Function.identity(), (a, b) -> a));
 
-        OrderCancelReason reason = request.reason();
         List<CancelledLine> cancelled = new ArrayList<>();
         List<FailedLine> failed = new ArrayList<>();
         List<SkippedLine> skipped = new ArrayList<>();
@@ -104,6 +127,7 @@ public class OrderCancelServiceImpl implements OrderCancelService {
         List<Item> noWingId = new ArrayList<>();
         Map<Long, MarketplaceAccount> accountById = new LinkedHashMap<>();
         Map<GroupKey, List<Item>> groups = new LinkedHashMap<>();
+        List<OrderLine> elevenstLines = new ArrayList<>();
 
         for (OrderLine line : lines) {
             Integer quantity = quantityById.get(line.getId());
@@ -111,6 +135,17 @@ public class OrderCancelServiceImpl implements OrderCancelService {
                 continue;                                   // 요청에 없는 라인은 무시(방어)
             }
             MarketplaceAccount account = line.getOrder().getMarketplaceAccount();
+            if (Platform.ELEVENST.equals(account.getPlatform())) {
+                // FEATURE_2610_17 / D61: the whole line goes to 11st (1638) — the quantity is not used.
+                if (line.getStatus() == null || !CANCELLABLE_STATUSES.contains(line.getStatus())) {
+                    skipped.add(skippedLine(line, "취소할 수 없는 상태입니다"));
+                } else if (line.isFullyCancelled()) {
+                    skipped.add(skippedLine(line, "이미 전량 취소된 주문입니다"));
+                } else {
+                    elevenstLines.add(line);
+                }
+                continue;
+            }
             String boxId = (line.getOrderShipment() == null)
                     ? null : line.getOrderShipment().getExternalShipmentId();
             CoupangOrderLine mirror = mirrors.get(line.getId());
@@ -118,7 +153,7 @@ public class OrderCancelServiceImpl implements OrderCancelService {
             // 거울 행이 없으면 전송 식별자(vendorItemId)를 만들 수 없어 같은 부류로 묶는다.
             if (!Platform.COUPANG.equals(account.getPlatform()) || boxId == null || boxId.isBlank()
                     || mirror == null) {
-                unsupported.add(skippedLine(line, "쿠팡 주문이 아니거나 배송번호가 없습니다"));
+                unsupported.add(skippedLine(line, "쿠팡 · 11번가 주문이 아니거나 배송번호가 없습니다"));
                 continue;
             }
             if (line.getStatus() == null || !CANCELLABLE_STATUSES.contains(line.getStatus())) {
@@ -194,6 +229,9 @@ public class OrderCancelServiceImpl implements OrderCancelService {
         }
 
         writeBack(writeBack);
+        if (!elevenstLines.isEmpty()) {
+            cancelElevenst(elevenstLines, elevenstReason, cancelled, failed);
+        }
 
         int succeededQty = cancelled.stream().mapToInt(CancelledLine::cancelledQty).sum();
         log.info("주문취소 결과: lines={} succeeded={} qty={} failed={} skipped={} unsupported={}",
@@ -202,6 +240,81 @@ public class OrderCancelServiceImpl implements OrderCancelService {
 
         return new OrderCancelResult(lines.size(), cancelled.size(), succeededQty,
                 cancelled, failed, skipped, unsupported);
+    }
+
+    /**
+     * FEATURE_2610_17 / D71: the reason of each platform present in the request is checked here — after the lines are
+     * read (the platform is known) and before any grouping or sending, so one bad reason sends nothing. A Coupang line
+     * needs {@code reason} (the DB no longer holds it NOT NULL — D70); an 11st line needs a listed {@code reasonCode}
+     * and a 1~200 character {@code reasonText}.
+     *
+     * @return the trimmed 11st reason, or {@code null} when the request has no 11st line
+     */
+    private ElevenstReason checkReasons(List<OrderLine> lines, Map<Long, Integer> quantityById,
+                                        OrderCancelRequest request) {
+        boolean coupang = false;
+        boolean elevenst = false;
+        for (OrderLine line : lines) {
+            if (!quantityById.containsKey(line.getId())) {
+                continue;
+            }
+            Platform platform = line.getOrder().getMarketplaceAccount().getPlatform();
+            coupang |= Platform.COUPANG.equals(platform);
+            elevenst |= Platform.ELEVENST.equals(platform);
+        }
+        if (coupang && request.reason() == null) {
+            throw new IllegalArgumentException(REASON_REQUIRED_MESSAGE);
+        }
+        if (!elevenst) {
+            return null;
+        }
+        String code = request.reasonCode() == null ? null : request.reasonCode().trim();
+        ElevenstSellerChoices.requireLabel(ElevenstSellerChoices.SELLER_CANCEL_REASONS, code, REASON_REQUIRED_MESSAGE);
+        String text = request.reasonText() == null ? "" : request.reasonText().trim();
+        if (text.isEmpty() || text.length() > ELEVENST_REASON_TEXT_MAX) {
+            throw new IllegalArgumentException(ELEVENST_REASON_TEXT_MESSAGE);
+        }
+        return new ElevenstReason(code, text);
+    }
+
+    /**
+     * 11st sale refusal (1638, FEATURE_2610_17 / D61): one call per line, the whole line. The line is not changed
+     * here — the next sync reads it from the 11st cancel-completed list (1642) as {@code cancel_qty} (D14). A success
+     * is reported as a cancelled line with {@code cancelledQty} 0 and receipt type
+     * {@value #ELEVENST_SALE_REFUSAL}; a refusal keeps 11st's own code and wording. Every attempt reported to the user
+     * leaves one history row (D70).
+     */
+    private void cancelElevenst(List<OrderLine> lines, ElevenstReason reason, List<CancelledLine> cancelled,
+                                List<FailedLine> failed) {
+        Map<Long, ElevenstOrderLine> mirrors = elevenstOrderLineRepository
+                .findByOrderLine_IdIn(lines.stream().map(OrderLine::getId).toList()).stream()
+                .collect(Collectors.toMap(m -> m.getOrderLine().getId(), Function.identity(), (a, b) -> a));
+        for (OrderLine line : lines) {
+            ElevenstOrderLine mirror = mirrors.get(line.getId());
+            if (mirror == null) {
+                failed.add(new FailedLine(line.getId(), null, "ERROR", "11번가 주문 정보가 없습니다"));
+                recordElevenst(line, null, reason, false, "ERROR", "11번가 주문 정보가 없습니다");
+                continue;
+            }
+            try {
+                ElevenstSellerActions.Outcome outcome = elevenstSellerActions.rejectOrder(
+                        line.getOrder().getMarketplaceAccount(), mirror, reason.code(), reason.text());
+                cancelled.add(new CancelledLine(line.getId(), 0, line.getCancelQty(), line.getHoldQty(),
+                        line.purchasableQty(), line.getStatus().name(), null, ELEVENST_SALE_REFUSAL));
+                recordElevenst(line, mirror.getPlatformStatus(), reason, true, outcome.code(), outcome.text());
+                log.info("11번가 판매불가 처리: line={} ordNo={} reason={}", line.getId(), mirror.getOrdNo(),
+                        reason.code());
+            } catch (ElevenstRejectedException e) {
+                String code = e.getResultCode() == null ? "ERROR" : e.getResultCode();
+                String message = e.getResultText() == null ? e.getMessage() : e.getResultText();
+                failed.add(new FailedLine(line.getId(), mirror.getPrdStckNo(), code, message));
+                recordElevenst(line, mirror.getPlatformStatus(), reason, false, code, message);
+            } catch (Exception e) {
+                log.warn("11번가 판매불가 처리 실패: line={}", line.getId(), e);
+                failed.add(new FailedLine(line.getId(), mirror.getPrdStckNo(), "ERROR", e.getMessage()));
+                recordElevenst(line, mirror.getPlatformStatus(), reason, false, "ERROR", e.getMessage());
+            }
+        }
     }
 
     @Override
@@ -310,13 +423,20 @@ public class OrderCancelServiceImpl implements OrderCancelService {
     }
 
     /**
-     * 시도 1건 = 1행 (D8). 성공·실패·{@code NO_WING_ID} 를 남긴다.
+     * One row per Coupang attempt (D8) — success, failure and {@code NO_WING_ID} are kept.
      *
-     * <p>기준은 "전송했는가"가 아니라 <b>"사용자에게 실패로 보고되는가"</b> 다 —
-     * 서버가 걸러낸 {@code skipped}/{@code unsupported} 는 사용자가 고른 것이 아니라 남기지 않는다.
+     * <p>The rule is not "was it sent" but <b>"is it reported to the user as a failure"</b> — the
+     * {@code skipped}/{@code unsupported} lines the server filtered out were not the user's choice, so they are not
+     * kept. A row without {@code reason} is not saved (FEATURE_2610_17 / D71 guard).
      */
     private void record(Item item, OrderCancelReason reason, boolean succeeded,
                         String receiptId, String receiptType, String code, String message) {
+        if (reason == null) {
+            // FEATURE_2610_17 / D71: a Coupang row needs its reason — checkReasons stops this before sending, so this
+            // is only a guard; the row is not saved.
+            log.error("주문취소 감사기록 생략(사유 없음): line={} succeeded={}", item.line().getId(), succeeded);
+            return;
+        }
         try {
             orderCancelActionRepository.save(OrderCancelAction.builder()
                     .orderLine(item.line())
@@ -337,6 +457,31 @@ public class OrderCancelServiceImpl implements OrderCancelService {
         } catch (Exception e) {
             // 기록 실패가 전송 결과를 뒤집으면 안 된다 — 이미 보낸 것은 되돌릴 수 없다.
             log.error("주문취소 감사기록 실패: line={} succeeded={}", item.line().getId(), succeeded, e);
+        }
+    }
+
+    /**
+     * One history row of an 11st sale refusal (FEATURE_2610_17 / D70): {@code reason} stays {@code null}, the 11st
+     * code goes to {@code platform_reason_code} and the seller's text to {@code reason_text}; the quantity is the
+     * line's remaining quantity right before sending. A failed save is only logged, like {@link #record}.
+     */
+    private void recordElevenst(OrderLine line, String statusAtSend, ElevenstReason reason, boolean succeeded,
+                                String code, String message) {
+        try {
+            orderCancelActionRepository.save(OrderCancelAction.builder()
+                    .orderLine(line)
+                    .quantity(line.purchasableQty())
+                    .platformReasonCode(reason.code())
+                    .reasonText(reason.text())
+                    .statusAtSend(statusAtSend)
+                    .succeeded(succeeded)
+                    .receiptType(ELEVENST_SALE_REFUSAL)
+                    .resultCode(code)
+                    .resultMessage(truncate(message))
+                    .createdBy(currentUsername())
+                    .build());
+        } catch (Exception e) {
+            log.error("11번가 판매불가 감사기록 실패: line={} succeeded={}", line.getId(), succeeded, e);
         }
     }
 
@@ -376,6 +521,10 @@ public class OrderCancelServiceImpl implements OrderCancelService {
         String platformStatus() {
             return mirror.getPlatformStatus();
         }
+    }
+
+    /** The checked 11st sale-refusal reason of a request: listed code + trimmed 1~200 character text (D71). */
+    private record ElevenstReason(String code, String text) {
     }
 
     /** 접수 1건의 식별자 — {@code receiptType} 이 write-back 컬럼을 가른다. */

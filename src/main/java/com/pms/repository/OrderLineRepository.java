@@ -67,9 +67,10 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
     List<OrderLine> findByExternalOrderId(@Param("externalOrderId") String externalOrderId);
 
     /**
-     * 단건 송장시트·단건 발송처리용 조회 — 계정과 <b>seller</b> 까지 eager fetch 한다.
+     * One-line read for the single label sheet · single shipment · 11st seller actions (FEATURE_2610_17 / D63 · D66
+     * · D67) — fetches the account and the <b>seller</b> eagerly.
      *
-     * <p>시트 생성은 외부 HTTP 를 도는 경로라 {@code seller.getSellerName()} 이 지연로딩이면 터진다.
+     * <p>These paths run external HTTP, so a lazy {@code seller.getSellerName()} would blow up.
      */
     @EntityGraph(attributePaths = {"order", "order.marketplaceAccount",
             "order.marketplaceAccount.seller", "orderShipment"})

@@ -10,16 +10,19 @@ import jakarta.validation.constraints.Size;
 import java.util.List;
 
 /**
- * 발송 전 주문 취소 요청 (FEATURE_2609_25 / PLAN D1 · D4).
+ * Seller cancel before shipping (FEATURE_2609_25 / PLAN D1 · D4 · FEATURE_2610_17 / D61).
  *
- * <p>취소 단위는 <b>라인(옵션) × 수량</b>이다 — 발주처리(박스 단위, 수량 없음)와 다르다.
- * 화면은 주문 상세에서 1건만 채우지만 계약은 배열로 둔다(서버가 계정→orderId→boxId 로 그룹핑해
- * 그룹마다 1 POST 를 보낸다).
+ * <p>The cancel unit is <b>line (option) × quantity</b> — unlike order confirmation (box unit, no quantity). The
+ * screen fills one line from the order detail, but the contract stays an array (the server groups by account →
+ * orderId → boxId and sends one POST per group).
  *
- * <p>사유는 enum 역직렬화가 곧 검증이다 — 목록 밖의 값은 400 이고, 목록의 원천은
- * {@code GET /api/admin/orders/cancel-reasons}(같은 enum) 하나뿐이다.
+ * <p>Coupang lines use {@code reason} — enum deserialization rejects a value outside the list (400; the list's only
+ * source is {@code GET /api/admin/orders/cancel-reasons}, the same enum). 11st lines (sale refusal 1638, D61) use
+ * {@code reasonCode} (11st code, list from {@code GET /api/orders/elevenst-choices}) + {@code reasonText} (1~200
+ * characters) and cancel the whole line — {@code quantity} is not sent to 11st. No reason field is required here:
+ * the service checks each platform's reason before anything is sent (FEATURE_2610_17 / D71).
  *
- * <p>record 사용 → accessor 자동 생성 (Lombok 금지).
+ * <p>Record → accessors are generated (no Lombok).
  */
 public record OrderCancelRequest(
 
@@ -28,12 +31,24 @@ public record OrderCancelRequest(
         @Valid
         List<Line> lines,
 
-        @NotNull(message = "취소 사유를 선택하세요")
-        OrderCancelReason reason) {
+        /** Coupang reason; null for an 11st-only request. */
+        OrderCancelReason reason,
+
+        /** 11st sale-refusal reason code (D61); null for a Coupang-only request. */
+        String reasonCode,
+
+        /** 11st reason text, 1~200 characters (D61 · D39 ①); null for a Coupang-only request. */
+        @Size(max = 200, message = "사유 글은 1~200자로 적어 주세요.") String reasonText) {
+
+    /** Coupang-only request (the shape before FEATURE_2610_17). */
+    public OrderCancelRequest(List<Line> lines, OrderCancelReason reason) {
+        this(lines, reason, null, null);
+    }
 
     /**
-     * 취소할 라인 1건. {@code quantity} 상한은 서버가 {@code purchasableQty()} 로 다시 본다(D3) —
-     * 되돌릴 수 없는 API 라 쿠팡에 맡기지 않고 우리가 먼저 400 으로 막는다.
+     * One line to cancel. For a Coupang line the server checks the {@code quantity} cap against
+     * {@code purchasableQty()} again (D3) — an irreversible API, so we stop it with a 400 first instead of leaving it
+     * to Coupang. An 11st line cancels the whole line, so its quantity is not sent (FEATURE_2610_17 / D61).
      */
     public record Line(
             @NotNull(message = "주문 라인 id가 필요합니다") Long orderItemId,

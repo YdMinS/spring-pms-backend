@@ -19,6 +19,7 @@ import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.OrderUpserter;
+import com.pms.service.elevenst.ElevenstOrderActions;
 import com.pms.service.reservation.InternalShipmentStageService;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -90,6 +91,10 @@ class ShipmentConfirmServiceImplTest {
     private OrderAcknowledgeService orderAcknowledgeService;
     @Mock
     private InternalShipmentStageService internalShipmentStageService;
+    @Mock
+    private ElevenstOrderActions elevenstOrderActions;
+    @Mock
+    private ElevenstManualShipper elevenstManualShipper;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private ShipmentConfirmServiceImpl service;
@@ -102,7 +107,7 @@ class ShipmentConfirmServiceImplTest {
         service = new ShipmentConfirmServiceImpl(
                 coupangApiClient, coupangProperties, orderLineRepository, coupangOrderLineRepository,
                 marketplaceAccountRepository, carrierCodeService, objectMapper, orderUpserter,
-                shipmentParcelRecorder, orderAcknowledgeService, internalShipmentStageService);
+                shipmentParcelRecorder, orderAcknowledgeService, internalShipmentStageService, elevenstOrderActions, elevenstManualShipper);
         // vendorItemId 는 core 가 아니라 쿠팡 거울에 있다(2609_26 / 04 §3-3) — 배치 조회를 그대로 흉내낸다.
         lenient().when(coupangOrderLineRepository.findByOrderLine_IdIn(anyList()))
                 .thenAnswer(invocation -> {
@@ -953,5 +958,72 @@ class ShipmentConfirmServiceImplTest {
         return "{\"code\":200,\"data\":{\"responseCode\":1,\"responseList\":["
                 + "{\"shipmentBoxId\":\"302\",\"succeed\":false,"
                 + "\"resultCode\":\"DUPLICATE_INVOICE_NUMBER\",\"resultMessage\":\"중복 송장번호\"}]}}";
+    }
+
+    // ---- FEATURE_2610_17 / D2 · D21 · D47 ----
+
+    private MarketplaceAccount elevenst() {
+        return MarketplaceAccountFixture.elevenstStubBuilder("KEY").id(5L).build();
+    }
+
+    @Test
+    void confirm_elevenstPreparing_oneShipCallPerDeliveryNumber_andWriteBack() throws Exception {
+        MarketplaceAccount eleven = elevenst();
+        OrderLine l1 = line(eleven, "D1", "7001", "71", OrderStatus.PREPARING);
+        OrderLine l2 = line(eleven, "D1", "7002", "72", OrderStatus.PREPARING);   // bundled under the same dlvNo
+        given(orderLineRepository.findByExternalOrderId("7001")).willReturn(List.of(l1));
+        given(orderLineRepository.findByExternalOrderId("7002")).willReturn(List.of(l2));
+        given(carrierCodeService.resolveDeliveryCompanyCode(Platform.ELEVENST)).willReturn("00034");
+
+        ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{"7001", "INV1"}, {"7002", "INV2"}}));
+
+        verify(elevenstOrderActions).ship(eq(eleven), eq("D1"), eq("00034"), eq("INV1"), any());
+        assertThat(result.matchedOrders()).isEqualTo(2);
+        assertThat(result.succeeded()).isEqualTo(1);
+        ArgumentCaptor<List<OrderLine>> saved = ArgumentCaptor.forClass(List.class);
+        verify(orderLineRepository).saveAll(saved.capture());
+        assertThat(saved.getValue()).extracting(OrderLine::getStatus).containsOnly(OrderStatus.SHIPPED);
+        verify(coupangApiClient, never()).post(anyString(), anyString(), any());
+    }
+
+    @Test
+    void confirm_elevenstPaid_isSkippedWithAcknowledgeFirstReason() throws Exception {
+        OrderLine paid = line(elevenst(), "D2", "7003", "73", OrderStatus.PAID);
+        given(orderLineRepository.findByExternalOrderId("7003")).willReturn(List.of(paid));
+
+        ShipmentConfirmResult result = service.confirm(xlsx(new Object[][]{{"7003", "INV3"}}));
+
+        assertThat(result.skipped()).extracting(ShipmentConfirmResult.SkippedOrder::reason)
+                .containsExactly("11번가에서 발주처리를 먼저 해 주세요.");
+        verify(elevenstOrderActions, never()).ship(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void confirmManual_elevenst_paidAndShippedAreRefused() {
+        OrderLine paid = line(elevenst(), "D3", "7004", "74", OrderStatus.PAID);
+        OrderLine shipped = line(elevenst(), "D4", "7005", "75", OrderStatus.SHIPPED);
+        given(orderLineRepository.findWithAccountAndSellerById(74L)).willReturn(Optional.of(paid));
+        given(orderLineRepository.findWithAccountAndSellerById(75L)).willReturn(Optional.of(shipped));
+
+        assertThatThrownBy(() -> service.confirmManual(new ManualShipmentRequest(74L, "00034", "INV")))
+                .hasMessage("11번가 주문은 [발주처리] 뒤에 송장을 등록할 수 있습니다.");
+        assertThatThrownBy(() -> service.confirmManual(new ManualShipmentRequest(75L, "00034", "INV")))
+                .hasMessage("11번가는 송장 수정을 지원하지 않습니다. 11번가 셀러오피스에서 고쳐 주세요.");
+        verify(elevenstOrderActions, never()).ship(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void confirmManual_elevenstPreparing_shipsTheDeliveryNumber() {
+        MarketplaceAccount eleven = elevenst();
+        OrderLine anchor = line(eleven, "D5", "7006", "76", OrderStatus.PREPARING);
+        given(orderLineRepository.findWithAccountAndSellerById(76L)).willReturn(Optional.of(anchor));
+        given(orderLineRepository.findByExternalOrderId("7006")).willReturn(List.of(anchor));
+        given(carrierCodeService.validateDeliveryCompanyCode("00012", Platform.ELEVENST)).willReturn("00012");
+
+        ManualShipmentResult result = service.confirmManual(new ManualShipmentRequest(76L, "00012", "1234-5678"));
+
+        verify(elevenstOrderActions).ship(eq(eleven), eq("D5"), eq("00012"), eq("12345678"), any());
+        assertThat(result.mode()).isEqualTo("CREATE");
+        assertThat(result.resultStatus()).isEqualTo("SHIPPED");
     }
 }

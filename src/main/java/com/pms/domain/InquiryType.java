@@ -16,6 +16,9 @@ public enum InquiryType {
     /** 상품 페이지 Q&A — 구매 전 질문이 다수라 주문이 없는 것이 정상이다(D14·D15). */
     PRODUCT_QNA,
 
-    /** 쿠팡 상담사가 판매자에게 이관한 건. */
-    CALL_CENTER
+    /** Coupang: a case a Coupang agent handed to the seller · 11st: an urgent notice 「긴급문의」 (FEATURE_2610_17 / D26). */
+    CALL_CENTER,
+
+    /** 11st only: a buyer's non-delivery report 6733 「상품 미도착」, handled by 6734 (FEATURE_2610_17 / D68). */
+    NON_DELIVERY
 }

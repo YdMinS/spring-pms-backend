@@ -1,6 +1,7 @@
 package com.pms.service;
 
 import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.ElevenstOrderLine;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Order;
 import com.pms.domain.OrderLine;
@@ -23,6 +24,7 @@ import com.pms.dto.response.PurchaseProductGroup;
 import com.pms.dto.response.PurchaseRecordResult;
 import com.pms.dto.response.PurchaseRecordView;
 import com.pms.repository.CoupangOrderLineRepository;
+import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -70,6 +72,7 @@ class PurchaseListServiceTest {
     @Mock private PurchaseRecordRepository purchaseRecordRepository;
     @Mock private OrderLineRepository orderLineRepository;
     @Mock private CoupangOrderLineRepository coupangOrderLineRepository;
+    @Mock private ElevenstOrderLineRepository elevenstOrderLineRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private CellBomResolver cellBomResolver;
     @Mock private ProductRepository productRepository;
@@ -362,6 +365,43 @@ class PurchaseListServiceTest {
         assertThat(res.unmappedOrders().get(0).externalItemId()).isEqualTo("X");
         assertThat(res.unmappedOrders().get(0).purchasableQty()).isEqualTo(5);
         assertThat(res.unmappedOrders().get(0).orderCount()).isEqualTo(1);
+    }
+
+    /** FEATURE_2610_17 / D17: an 11st line without an option is grouped under its 11st option number. */
+    @Test
+    void getList_elevenstLineWithoutOption_unmappedUnderPrdStckNo() {
+        OrderLine line = paidLine(11L, 2);
+        given(shoppingListItemRepository.findAll()).willReturn(List.of());
+        given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of(line));
+        given(elevenstOrderLineRepository.findByOrderLine_IdIn(List.of(11L))).willReturn(List.of(
+                ElevenstOrderLine.builder().id(1L).orderLine(line).ordNo("O11").ordPrdSeq("1")
+                        .prdStckNo("STK-9").build()));
+
+        PurchaseListResponse res = service.getList();
+
+        assertThat(res.unmappedOrders()).hasSize(1);
+        assertThat(res.unmappedOrders().get(0).externalItemId()).isEqualTo("STK-9");
+        assertThat(res.unmappedOrders().get(0).purchasableQty()).isEqualTo(2);
+        verify(productListingOptionRepository, never()).findByPlatformOptionId(any());
+    }
+
+    /** D17: the line's own option column is read first — no vendorItemId lookup for it. */
+    @Test
+    void extract_usesLineOptionColumnFirst() {
+        Product a = product(PRODUCT_ID, "A");
+        ProductListingOption option = ProductListingOption.builder().id(70L).build();
+        OrderLine line = paidLine(12L, 3).toBuilder().productListingOption(option).build();
+        given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of(line));
+        given(cellBomResolver.forOptions(List.of(option))).willReturn(Map.of(70L,
+                new CellBomResolver.Bom(List.of(new CellBomResolver.Line(1L, a, 2)), false)));
+        given(shoppingListItemRepository.findByOrderLine_IdAndProduct_Id(12L, PRODUCT_ID)).willReturn(Optional.empty());
+
+        service.extract();
+
+        ArgumentCaptor<ShoppingListItem> saved = ArgumentCaptor.forClass(ShoppingListItem.class);
+        verify(shoppingListItemRepository).save(saved.capture());
+        assertThat(saved.getValue().getAutoQty()).isEqualTo(6);
+        verify(productListingOptionRepository, never()).findByPlatformOptionId(any());
     }
 
     @Test
