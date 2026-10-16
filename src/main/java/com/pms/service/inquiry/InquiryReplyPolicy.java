@@ -8,7 +8,12 @@ import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.dto.response.ReplyCapability;
+import com.pms.service.CarrierCodeService;
+import com.pms.service.CarrierOption;
+import com.pms.service.InvoiceNumbers;
+import com.pms.service.claim.ActionChoice;
 import com.pms.service.coupang.CoupangCredentials;
+import com.pms.service.elevenst.ElevenstSellerChoices;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -47,13 +52,29 @@ public class InquiryReplyPolicy {
     /** 상품문의는 한 글자도 허용, 고객센터는 쿠팡이 2자 미만을 거절한다 — 유형별로 다르다. */
     private static final int MIN_LENGTH_PRODUCT_QNA = 1;
     private static final int MIN_LENGTH_CALL_CENTER = 2;
-    /** FEATURE_2610_17 / D27: 11st takes at least 1 character for both types. */
+    /** FEATURE_2610_17 / D27 · D68: 11st takes at least 1 character for every type. */
     private static final int MIN_LENGTH_ELEVENST = 1;
 
-    /** 되돌릴 수 없다(D17) — 쿠팡은 답변 수정·삭제 API 가 없다. 두 유형 모두 true. */
+    /**
+     * Cannot be undone (D17) — Coupang has no API to edit or delete a reply. True for every type (the 11st
+     * non-delivery handling too, FEATURE_2610_17 / D68).
+     */
     private static final boolean ONCE = true;
+    /** FEATURE_2610_17 / D68: the 11st non-delivery detail text is 1~200 characters (same value as D39 ①). */
+    private static final int MAX_LENGTH_NON_DELIVERY = 200;
 
     private final List<InquiryReplyAdapter> adapters;
+    /** FEATURE_2610_17 / D68: checks the re-shipping carrier and gives its name for the record line. */
+    private final CarrierCodeService carrierCodeService;
+
+    /**
+     * The checked 11st non-delivery input (FEATURE_2610_17 / D68).
+     *
+     * @param recordText the reply line stored after a success: 「{reason name} — {detail}」, plus
+     *                   「 (재발송 {carrier name} {invoice})」 for reason 102
+     */
+    public record NonDeliveryInput(String reasonCode, String carrierCode, String invoiceNumber, String recordText) {
+    }
 
     /**
      * 지금 이 문의에 답변할 수 있는가.
@@ -64,12 +85,40 @@ public class InquiryReplyPolicy {
         InquiryType type = inquiry.getInquiryType();
         int minLength = (inquiry.getPlatform() == Platform.ELEVENST) ? MIN_LENGTH_ELEVENST : minLength(type);
         String parentReplyId = parentReplyId(inquiry, replies);
+        boolean nonDelivery = type == InquiryType.NON_DELIVERY;
+        int maxLength = nonDelivery ? MAX_LENGTH_NON_DELIVERY : MAX_LENGTH;
+        String form = nonDelivery ? ReplyCapability.FORM_NON_DELIVERY : ReplyCapability.FORM_TEXT;
+        List<ActionChoice> reasons =
+                nonDelivery ? ElevenstSellerChoices.NON_DELIVERY_REASONS : List.of();
 
         String reason = blockReason(inquiry, replies);
-        if (reason != null) {
-            return new ReplyCapability(false, reason, minLength, MAX_LENGTH, ONCE, parentReplyId);
+        return new ReplyCapability(reason == null, reason, minLength, maxLength, ONCE, parentReplyId, form, reasons);
+    }
+
+    /**
+     * Checks the 11st non-delivery form (FEATURE_2610_17 / D68): a listed reason is required; reason 102 also needs
+     * an 11st carrier and an invoice number (delivery method parcel, set by the adapter). Other reasons send neither.
+     *
+     * @param detail the stripped detail text, already length-checked by the caller
+     * @throws IllegalArgumentException missing or unknown reason · carrier · invoice (→ 400)
+     */
+    public NonDeliveryInput nonDelivery(CustomerInquiry inquiry, String detail, String reasonCode, String carrierCode,
+                                        String invoiceNumber) {
+        String code = reasonCode == null ? null : reasonCode.trim();
+        String label = ElevenstSellerChoices.requireLabel(ElevenstSellerChoices.NON_DELIVERY_REASONS, code,
+                "처리 사유를 선택하세요");
+        if (!ElevenstSellerChoices.RESEND.equals(code)) {
+            return new NonDeliveryInput(code, null, null, label + " — " + detail);
         }
-        return new ReplyCapability(true, null, minLength, MAX_LENGTH, ONCE, parentReplyId);
+        String carrier = carrierCodeService.validateDeliveryCompanyCode(carrierCode, inquiry.getPlatform());
+        String invoice = InvoiceNumbers.normalizeRequired(invoiceNumber);
+        String carrierName = carrierCodeService.findOptions(inquiry.getPlatform()).stream()
+                .filter(option -> carrier.equals(option.deliveryCompanyCode()))
+                .map(CarrierOption::carrierName)
+                .findFirst()
+                .orElse(carrier);
+        return new NonDeliveryInput(code, carrier, invoice,
+                label + " — " + detail + " (재발송 " + carrierName + " " + invoice + ")");
     }
 
     /**

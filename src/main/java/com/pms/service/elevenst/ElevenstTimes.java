@@ -10,10 +10,11 @@ import java.util.List;
  * 11st request / response time formats (FEATURE_2610_17 / D32). Every 11st time is KST wall clock — values are
  * read and written as {@link LocalDateTime} without a zone.
  *
- * <p>Requests: order · claim lists and {@code sendDt} of 1888 · 6747 = {@code yyyyMMddHHmm} ({@link #MINUTE});
- * the cancel-reject {@code sendDt} (1641), Q&A and urgent-notice lists = {@code yyyyMMdd} ({@link #DAY}).
+ * <p>Requests: order · claim lists and {@code sendDt} of 1888 · 6747 · 1636 · 6791 = {@code yyyyMMddHHmm}
+ * ({@link #MINUTE}); the cancel-reject {@code sendDt} (1641 · 1745), the shipping-delay date (6728), Q&A,
+ * urgent-notice and non-delivery lists = {@code yyyyMMdd} ({@link #DAY}).
  * Responses: {@link #parse} accepts the shapes the guide shows ({@code yyyy-MM-dd HH:mm:ss},
- * {@code 2010-01-19 12:47:02.0}, {@code 20140929}) and returns null for anything else.
+ * {@code 2010-01-19 12:47:02.0}, {@code 2018/12/11 13:27:37}, {@code 20140929}) and returns null for anything else.
  */
 public final class ElevenstTimes {
 
@@ -23,6 +24,7 @@ public final class ElevenstTimes {
     private static final List<DateTimeFormatter> DATE_TIMES = List.of(
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.S"),
+            DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss"),
             DateTimeFormatter.ofPattern("yyyyMMddHHmmss"),
             DateTimeFormatter.ofPattern("yyyyMMddHHmm"));
     private static final List<DateTimeFormatter> DATES = List.of(

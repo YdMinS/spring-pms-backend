@@ -34,6 +34,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /** FEATURE_2610_17 / D5 · D6 · D17 · D31 · D43: one 11st order row → order core + 11st mirror. */
@@ -189,5 +190,24 @@ class ElevenstOrderUpserterTest {
         verify(orderLineRepository).save(line.capture());
         assertThat(line.getValue().getStatus()).isEqualTo(OrderStatus.DELIVERED);
         assertThat(line.getValue().getOrderQty()).isEqualTo(2);
+    }
+
+    // ---- FEATURE_2610_17 / D67 ----
+
+    @Test
+    void reservedThenPaid_rawCodeMovesFrom201To202_butNeverBack() {
+        OrderLine paid = OrderLine.builder().id(1L).status(OrderStatus.PAID).orderQty(2).cancelQty(0).holdQty(0)
+                .build();
+        ElevenstOrderLine reserved = ElevenstOrderLine.builder().id(9L).orderLine(paid).platformStatus("201").build();
+        ElevenstOrderLine confirmed = reserved.toBuilder().platformStatus("202").build();
+        given(elevenstOrderLineRepository.findByMarketplaceAccount_IdAndOrdNoAndOrdPrdSeq(any(), any(), any()))
+                .willReturn(Optional.of(reserved), Optional.of(confirmed));
+
+        upserter.upsertRows(account, ElevenstOrderList.PAID, List.of(paidRow()));
+        upserter.upsertRows(account, ElevenstOrderList.RESERVED, List.of(paidRow()));
+
+        ArgumentCaptor<ElevenstOrderLine> saved = ArgumentCaptor.forClass(ElevenstOrderLine.class);
+        verify(elevenstOrderLineRepository, times(2)).save(saved.capture());
+        assertThat(saved.getAllValues()).extracting(ElevenstOrderLine::getPlatformStatus).containsExactly("202", "202");
     }
 }

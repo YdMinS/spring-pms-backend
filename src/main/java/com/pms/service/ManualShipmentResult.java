@@ -10,7 +10,8 @@ import java.util.List;
  *                       number {@code dlvNo} (FEATURE_2610_17 / D2)
  * @param mode           "CREATE" (new upload) | "UPDATE" (invoice update) — the server decides by status (D3); 11st is
  *                       always "CREATE" (no update API, D21)
- * @param sentLines      Coupang: dto count sent = option lines of the box · 11st: order lines of the delivery number
+ * @param sentLines      Coupang: dto count sent = option lines of the box · 11st: order lines of the delivery number,
+ *                       or the chosen lines of a {@code PARTIAL} / {@code SPLIT} send (FEATURE_2610_17 / D64)
  * @param succeeded      Coupang: responseList succeed=true count · 11st: 1 when the delivery number was accepted
  * @param failed         failure details (the marketplace's own wording, D6) — reuses {@link ShipmentConfirmResult.FailedBox}
  * @param resultStatus   local status after success ({@code "SHIPPED"} on a CREATE success, else null) — the client uses

@@ -365,6 +365,24 @@ class OrderAcknowledgeServiceImplTest {
         verify(coupangApiClient, never()).put(anyString(), anyString(), any());
     }
 
+    // ---- FEATURE_2610_17 / D67 ----
+
+    @Test
+    void elevenst_reservedSaleLine_isSkipped_andNever1634() {
+        MarketplaceAccount eleven = MarketplaceAccountFixture.elevenstStubBuilder("KEY").id(5L).build();
+        OrderLine reserved = line(eleven, "D1", "O1", "11", OrderStatus.PAID);
+        given(orderLineRepository.findWithAccountByIdIn(any())).willReturn(List.of(reserved));
+        ElevenstOrderLine mirror = ElevenstOrderLine.builder().orderLine(reserved).ordNo("O1").ordPrdSeq("1")
+                .prdNo("P1").platformStatus("201").build();
+        given(elevenstOrderLineRepository.findByOrderLine_IdIn(any())).willReturn(List.of(mirror));
+
+        OrderAcknowledgeResult result = service.acknowledge(request(11L));
+
+        verify(elevenstOrderActions, never()).acknowledge(any(), any(), any());
+        assertThat(result.skipped()).extracting(ShipmentConfirmResult.SkippedOrder::orderId).containsExactly("O1");
+        assertThat(result.succeeded()).isZero();
+    }
+
     // ---- FEATURE_2610_17 / D54 · D57 ----
 
     @Test

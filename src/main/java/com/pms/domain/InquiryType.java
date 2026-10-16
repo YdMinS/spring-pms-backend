@@ -17,5 +17,8 @@ public enum InquiryType {
     PRODUCT_QNA,
 
     /** Coupang: a case a Coupang agent handed to the seller · 11st: an urgent notice 「긴급문의」 (FEATURE_2610_17 / D26). */
-    CALL_CENTER
+    CALL_CENTER,
+
+    /** 11st only: a buyer's non-delivery report 6733 「상품 미도착」, handled by 6734 (FEATURE_2610_17 / D68). */
+    NON_DELIVERY
 }

@@ -16,6 +16,7 @@ import com.pms.service.ShipmentConfirmResult.SkippedOrder;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangCredentials;
 import com.pms.service.elevenst.ElevenstOrderActions;
+import com.pms.service.elevenst.ElevenstOrderList;
 import com.pms.service.elevenst.ElevenstRejectedException;
 import com.pms.service.reservation.InternalShipmentStageService;
 import lombok.RequiredArgsConstructor;
@@ -39,8 +40,8 @@ import java.util.stream.Collectors;
  *
  * Flow: dedupe line ids → expand with {@code findWithAccountByIdIn} → classify lines (other platform · no box =
  * unsupported, not paid = skipped) → Coupang: dedupe boxes per account → one PUT per account and chunk → sum the
- * responseList; 11st: one 1634 call per (delivery number, product number) group (D48) → write PREPARING back to the
- * succeeded boxes / groups (PLAN 2609_17 D3).
+ * responseList; 11st: reserved-sale lines (raw 201) are skipped (D67), then one 1634 call per (delivery number,
+ * product number) group (D48) → write PREPARING back to the succeeded boxes / groups (PLAN 2609_17 D3).
  *
  * ⚠️ Send failures are isolated per chunk (Coupang) / per group (11st) — only those boxes go to failed and the next
  *    chunk, group and account are still sent.
@@ -192,6 +193,9 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
         }
         if (!elevenstGroups.isEmpty()) {
             ElevenstAckOutcome elevenst = acknowledgeElevenst(elevenstGroups);
+            elevenst.reserved().stream()
+                    .filter(r -> skipped.stream().noneMatch(s -> s.orderId().equals(r.orderId())))
+                    .forEach(skipped::add);
             targetBoxes += elevenst.groups();
             succeeded += elevenst.succeeded();
             failed.addAll(elevenst.failed());
@@ -212,7 +216,8 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
      * 11st order confirmation (FEATURE_2610_17 / D20 · D48): within each delivery number, one 1634 call per product
      * number ({@code prdNo}); 11st confirms the other lines of that group with the same call, so every line of a
      * succeeded group becomes {@code PREPARING}. −3206 「이미 발주 처리 되었거나 발주 처리할 건이 없음」 counts as
-     * success. A failed group is reported with its delivery number and the next group is still sent.
+     * success. A failed group is reported with its delivery number and the next group is still sent. A reserved-sale
+     * line (raw 201) is never sent — its order comes back as skipped until [입고완료 처리] (D67).
      *
      * @param linesByAccountAndDlvNo paid 11st lines keyed by {@code accountId|dlvNo}
      */
@@ -225,6 +230,8 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
         int succeeded = 0;
         List<FailedBox> failed = new ArrayList<>();
         List<OrderLine> confirmed = new ArrayList<>();
+        List<SkippedOrder> reserved = new ArrayList<>();
+        Set<String> reservedOrders = new LinkedHashSet<>();
         for (List<OrderLine> dlvLines : linesByAccountAndDlvNo.values()) {
             MarketplaceAccount account = dlvLines.get(0).getOrder().getMarketplaceAccount();
             String dlvNo = dlvLines.get(0).getOrderShipment().getExternalShipmentId();
@@ -234,6 +241,14 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
                 ElevenstOrderLine mirror = mirrors.get(line.getId());
                 if (mirror == null) {
                     log.warn("11번가 발주처리 라인 제외 — 11번가 거울 행 없음: line={}", line.getId());
+                    continue;
+                }
+                // D67: a reserved-sale line (raw 201) waits for [입고완료 처리] — never confirmed, reported as skipped.
+                if (ElevenstOrderList.RESERVED.code().equals(mirror.getPlatformStatus())) {
+                    String orderId = line.getOrder().getExternalOrderId();
+                    if (reservedOrders.add(orderId)) {
+                        reserved.add(new SkippedOrder(orderId, line.getStatus().name(), null));
+                    }
                     continue;
                 }
                 String prdNo = mirror.getPrdNo() == null ? "" : mirror.getPrdNo();
@@ -262,7 +277,7 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
                 log.warn("11번가 발주처리 write-back 실패 (11번가 전송은 성공): {}", e.getMessage());
             }
         }
-        return new ElevenstAckOutcome(groups, succeeded, failed);
+        return new ElevenstAckOutcome(groups, succeeded, failed, reserved);
     }
 
     /**
@@ -278,8 +293,12 @@ public class OrderAcknowledgeServiceImpl implements OrderAcknowledgeService {
         return new FailedBox(dlvNo, "ERROR", e.getMessage());
     }
 
-    /** {@link #acknowledgeElevenst} result — groups sent · groups succeeded · failed groups. */
-    private record ElevenstAckOutcome(int groups, int succeeded, List<FailedBox> failed) {
+    /**
+     * {@link #acknowledgeElevenst} result — groups sent · groups succeeded · failed groups · reserved-sale orders left
+     * out (D67).
+     */
+    private record ElevenstAckOutcome(int groups, int succeeded, List<FailedBox> failed,
+                                      List<SkippedOrder> reserved) {
     }
 
     /** 박스 id → 그 박스 라인들의 배송 묶음 id. id 가 없는 묶음(저장 전)은 건너뛴다. */

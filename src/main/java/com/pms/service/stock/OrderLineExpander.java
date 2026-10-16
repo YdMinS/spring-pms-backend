@@ -80,11 +80,12 @@ public class OrderLineExpander {
     }
 
     /**
-     * 라인 묶음을 전개한다. 반환 Map 은 입력 순서를 보존하고 <b>모든 라인에 대해 항목이 있다</b> —
-     * 실패한 라인도 사유를 달고 들어 있다.
+     * Expands a batch of lines. The returned map keeps the input order and <b>has an entry for every line</b> — a
+     * failed line is in it too, with its reason.
      *
-     * @param lines     전개 대상 (같은 라인이 중복되면 마지막 것이 남는다)
-     * @param unitCount 라인당 배수 — 출고는 {@code orderQty}, 구매목록은 {@code purchasableQty()}
+     * @param lines     lines to expand (a repeated line keeps the last one)
+     * @param unitCount multiplier per line — stock out uses {@code orderQty}, the purchase list
+     *                  {@code purchasableQty()}, an 11st split invoice the quantity it carries (FEATURE_2610_17 / D64)
      */
     public Map<Long, LineExpansion> expand(Collection<OrderLine> lines, ToIntFunction<OrderLine> unitCount) {
         if (lines == null || lines.isEmpty()) {

@@ -93,6 +93,8 @@ class ShipmentConfirmServiceImplTest {
     private InternalShipmentStageService internalShipmentStageService;
     @Mock
     private ElevenstOrderActions elevenstOrderActions;
+    @Mock
+    private ElevenstManualShipper elevenstManualShipper;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private ShipmentConfirmServiceImpl service;
@@ -105,7 +107,7 @@ class ShipmentConfirmServiceImplTest {
         service = new ShipmentConfirmServiceImpl(
                 coupangApiClient, coupangProperties, orderLineRepository, coupangOrderLineRepository,
                 marketplaceAccountRepository, carrierCodeService, objectMapper, orderUpserter,
-                shipmentParcelRecorder, orderAcknowledgeService, internalShipmentStageService, elevenstOrderActions);
+                shipmentParcelRecorder, orderAcknowledgeService, internalShipmentStageService, elevenstOrderActions, elevenstManualShipper);
         // vendorItemId 는 core 가 아니라 쿠팡 거울에 있다(2609_26 / 04 §3-3) — 배치 조회를 그대로 흉내낸다.
         lenient().when(coupangOrderLineRepository.findByOrderLine_IdIn(anyList()))
                 .thenAnswer(invocation -> {

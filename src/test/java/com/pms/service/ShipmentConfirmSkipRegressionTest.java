@@ -83,7 +83,7 @@ class ShipmentConfirmSkipRegressionTest {
         service = new ShipmentConfirmServiceImpl(
                 coupangApiClient, coupangProperties, orderLineRepository, coupangOrderLineRepository,
                 marketplaceAccountRepository, carrierCodeService, new ObjectMapper(), orderUpserter,
-                shipmentParcelRecorder, orderAcknowledgeService, internalShipmentStageService, elevenstOrderActions);
+                shipmentParcelRecorder, orderAcknowledgeService, internalShipmentStageService, elevenstOrderActions, null);
 
         Seller seller = Seller.builder().id(1L).sellerName("셀러A").businessRegistration("123-45-67890").build();
         account = MarketplaceAccountFixture.coupangStubBuilder("A001", null)

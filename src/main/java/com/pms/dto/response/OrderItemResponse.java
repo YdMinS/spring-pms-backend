@@ -54,4 +54,7 @@ public class OrderItemResponse {
     private BigDecimal discountAmount;          // 총 할인
     private BigDecimal platformDiscountAmount;  // 플랫폼 부담 할인
     // raw(JSON 원본)는 응답에서 제외 — 목록 가벼움 유지
+    private boolean visitPickup;        // 11st visit-pickup order (raw visitDlvYn = Y) — FEATURE_2610_17 / D66
+    private boolean reservedSale;       // 11st reserved-sale paid order (raw code 201) — FEATURE_2610_17 / D67
+    private boolean stockConfirmSent;   // 11st reserved-sale [입고완료 처리] already sent — FEATURE_2610_17 / D67
 }

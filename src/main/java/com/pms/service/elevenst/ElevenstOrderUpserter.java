@@ -132,6 +132,9 @@ public class ElevenstOrderUpserter {
                             ElevenstOrderLine mirror) {
         OrderLine line = mirror.getOrderLine();
         boolean forward = rank(list.status()) > rank(line.getStatus());
+        // D67: the raw code moves forward along the list order too — 201 → 202 keeps the neutral PAID.
+        ElevenstOrderList current = ElevenstOrderList.ofCode(mirror.getPlatformStatus());
+        boolean codeForward = current == null || list.ordinal() > current.ordinal();
         OrderLine.OrderLineBuilder updated = line.toBuilder();
         if (forward) {
             updated.status(list.status());
@@ -144,9 +147,9 @@ public class ElevenstOrderUpserter {
                             : resolveOption(account, row));
         }
         orderLineRepository.save(updated.build());
-        if (forward || list.createsLines()) {
+        if (codeForward || list.createsLines()) {
             ElevenstOrderLine.ElevenstOrderLineBuilder mirrorUpdate = mirror.toBuilder();
-            if (forward) {
+            if (codeForward) {
                 mirrorUpdate.platformStatus(list.code());
             }
             if (list.createsLines()) {

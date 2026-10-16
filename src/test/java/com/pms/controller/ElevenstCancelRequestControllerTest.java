@@ -27,7 +27,7 @@ class ElevenstCancelRequestControllerTest extends BaseIntegrationTest {
     @Test
     void list_userRole_returns200() throws Exception {
         given(cancelRequestService.listOpen(10L)).willReturn(List.of(new ElevenstCancelRequestResponse(
-                7L, 2, "품절/재고없음 — 다른 데서 샀어요", LocalDateTime.of(2026, 10, 15, 10, 0))));
+                7L, 2, "품절/재고없음 — 다른 데서 샀어요", LocalDateTime.of(2026, 10, 15, 10, 0), false)));
 
         mockMvc.perform(get("/api/orders/10/elevenst-cancel-requests")
                         .header("Authorization", "Bearer " + userToken))

@@ -16,7 +16,10 @@ public interface ElevenstOrderLineRepository extends JpaRepository<ElevenstOrder
     Optional<ElevenstOrderLine> findByMarketplaceAccount_IdAndOrdNoAndOrdPrdSeq(Long accountId, String ordNo,
                                                                                 String ordPrdSeq);
 
-    /** Mirror rows of these order lines in one query (response mapping · purchase list · shipment). */
+    /**
+     * Mirror rows of these order lines in one query (response mapping · purchase list · shipment · order confirmation ·
+     * cancel · the seller actions of FEATURE_2610_17 / D61 ~ D67).
+     */
     List<ElevenstOrderLine> findByOrderLine_IdIn(Collection<Long> orderLineIds);
 
     Optional<ElevenstOrderLine> findByOrderLine_Id(Long orderLineId);

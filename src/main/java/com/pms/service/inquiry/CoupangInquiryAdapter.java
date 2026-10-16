@@ -58,6 +58,9 @@ public class CoupangInquiryAdapter implements InquirySyncAdapter {
     /** ⚠️ 교환 클레임({@code yyyy-MM-dd'T'HH:mm:ss})과 다르다 — 문의 조회는 날짜까지다. */
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
+    /** The two Coupang types — {@code NON_DELIVERY} is 11st only (FEATURE_2610_17 / D68). */
+    static final List<InquiryType> COUPANG_TYPES = List.of(InquiryType.PRODUCT_QNA, InquiryType.CALL_CENTER);
+
     private final CoupangApiClient coupangApiClient;
     private final CoupangProperties coupangProperties;
     private final ObjectMapper objectMapper;
@@ -83,7 +86,7 @@ public class CoupangInquiryAdapter implements InquirySyncAdapter {
         int upserted = 0;
         RuntimeException failure = null;
 
-        for (InquiryType type : InquiryType.values()) {
+        for (InquiryType type : COUPANG_TYPES) {
             long startedAt = System.currentTimeMillis();
             int typePages = 0;
             int typeUpserted = 0;

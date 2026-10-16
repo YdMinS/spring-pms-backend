@@ -34,12 +34,15 @@ public interface ShipmentConfirmService {
 
     /**
      * Sends the invoice the user picked (carrier + number) for the <b>box</b> of one order line — upload or update
-     * (Coupang) · upload only (11st). Other boxes of the same order are untouched (PLAN 2609_11 D1).
+     * (Coupang) · upload only (11st). Other boxes of the same order are untouched (PLAN 2609_11 D1). An 11st
+     * {@code PARTIAL} / {@code SPLIT} request sends only its chosen lines (FEATURE_2610_17 / D64).
      *
-     * @param request anchor line id · carrier code · invoice number
+     * @param request anchor line id · carrier code · invoice number (+ 11st {@code mode} · {@code orderItemIds} ·
+     *                {@code splits}, D64)
      * @return send result (mode · success / failure detail · local status)
      * @throws IllegalArgumentException no line · neither COUPANG nor ELEVENST · no externalBoxId · carrier code not
-     *                                  registered · 11st paid (D20) or already shipped (D21) (→ 400)
+     *                                  registered · 11st paid (D20) or already shipped (D21) · 11st PARTIAL / SPLIT
+     *                                  rule (D64, R19) (→ 400)
      */
     ManualShipmentResult confirmManual(ManualShipmentRequest request);
 

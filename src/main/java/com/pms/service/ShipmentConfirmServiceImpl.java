@@ -134,6 +134,8 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
     private final InternalShipmentStageService internalShipmentStageService;
     /** FEATURE_2610_17 / D2: 11st shipping 1888 (one call per delivery number). */
     private final ElevenstOrderActions elevenstOrderActions;
+    /** FEATURE_2610_17 / D64: 11st partial (1636) and split (6791) single shipments. */
+    private final ElevenstManualShipper elevenstManualShipper;
 
     @Override
     public ShipmentConfirmResult confirm(MultipartFile file) {
@@ -724,6 +726,7 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
      * Single 11st invoice (FEATURE_2610_17 / D2 · D20 · D21): only a {@code PREPARING} line, one 1888 call for its
      * delivery number with the carrier the screen chose. Paid → 400 (D20), already shipped → 400 (D21, no update
      * API). A rejected call comes back as one failed box (no exception — same shape as the Coupang path).
+     * {@code PARTIAL} · {@code SPLIT} go to {@link ElevenstManualShipper} after the same checks (D64).
      */
     private ManualShipmentResult confirmManualElevenst(ManualShipmentRequest request, OrderLine anchor,
                                                        MarketplaceAccount account, String invoiceNumber) {
@@ -740,6 +743,10 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
         String externalOrderId = anchor.getOrder().getExternalOrderId();
         String carrierCode = carrierCodeService.validateDeliveryCompanyCode(request.deliveryCompanyCode(),
                 Platform.ELEVENST);
+        if (ManualShipmentRequest.MODE_PARTIAL.equals(request.mode())
+                || ManualShipmentRequest.MODE_SPLIT.equals(request.mode())) {
+            return elevenstManualShipper.ship(request, anchor, account, carrierCode, invoiceNumber);
+        }
         List<OrderLine> lines = orderLineRepository.findByExternalOrderId(externalOrderId).stream()
                 .filter(l -> l.getOrder().getMarketplaceAccount().getId().equals(account.getId()))
                 .filter(l -> dlvNo.equals(boxIdOf(l)))

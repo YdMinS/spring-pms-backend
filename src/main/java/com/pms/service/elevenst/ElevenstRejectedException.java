@@ -6,7 +6,8 @@ import org.springframework.http.HttpStatus;
 /**
  * 11st answered an action call with a non-success {@code result_code} (FEATURE_2610_17). Same 502 and same message
  * as before ({@code result_text (result_code)}); it also carries the two raw values so a caller that reports per
- * group can show them as they came — the order-confirmation {@code FailedBox} (D54).
+ * group or line can show them as they came — the order-confirmation {@code FailedBox} (D54), the partial / split
+ * shipment {@code FailedBox} (D64) and the sale-refusal {@code FailedLine} (D61).
  */
 public class ElevenstRejectedException extends BusinessException {
 

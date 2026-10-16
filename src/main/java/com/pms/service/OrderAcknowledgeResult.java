@@ -12,7 +12,8 @@ import java.util.List;
  *                       (delivery number, product number) groups (FEATURE_2610_17 / D48)
  * @param succeeded      succeeded boxes (Coupang responseList succeed=true · 11st groups accepted)
  * @param failed         failed box details — the marketplace's resultCode / message as given (D15)
- * @param skipped        <b>orders</b> not sent because not paid (D2, not lines). status = the neutral status judged;
+ * @param skipped        <b>orders</b> not sent because not paid (D2, not lines) or an 11st reserved-sale order still
+ *                       waiting for [입고완료 처리] (FEATURE_2610_17 / D67). status = the neutral status judged;
  *                       reason = null (the acknowledge screen has no reason column, FEATURE_2610_17 / D47)
  * @param unsupported    order numbers that cannot be sent: neither COUPANG nor ELEVENST, or no externalBoxId (D10)
  * @param byPlatform     the same send split per marketplace — only marketplaces that had something to send, order

@@ -1,13 +1,14 @@
 package com.pms.service.elevenst;
 
+import com.pms.dto.request.ElevenstCancelFaultRejectRequest;
 import com.pms.dto.request.ElevenstCancelRejectRequest;
 import com.pms.dto.response.ElevenstCancelRequestResponse;
 
 import java.util.List;
 
 /**
- * The order detail's 11st cancel requests (FEATURE_2610_17 / D19 · D37 · D38 · D40): list the open ones, approve
- * (1640) or reject (1641). Approve and reject cannot be undone on 11st.
+ * The order detail's 11st cancel requests (FEATURE_2610_17 / D19 · D37 · D38 · D40 · D62): list the open ones,
+ * approve (1640), reject (1641) or refuse a seller-fault request (1745). None of them can be undone on 11st.
  */
 public interface ElevenstCancelRequestService {
 
@@ -24,4 +25,12 @@ public interface ElevenstCancelRequestService {
      * @throws IllegalArgumentException carrier not in the 11st list · invoice of 10 characters or fewer (→ 400)
      */
     void reject(Long requestId, ElevenstCancelRejectRequest request);
+
+    /**
+     * [책임사유 오류로 거부] (1745, D62) — the same delivery fields as {@link #reject} plus the refuse code and text.
+     *
+     * @throws IllegalArgumentException refuse code not in the list · blank or too long text · carrier not in the 11st
+     *                                  list · invoice of 10 characters or fewer (→ 400)
+     */
+    void rejectFault(Long requestId, ElevenstCancelFaultRejectRequest request);
 }

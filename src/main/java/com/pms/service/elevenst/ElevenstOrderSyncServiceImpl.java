@@ -21,8 +21,9 @@ import java.util.Map;
  * {@link ElevenstOrderSyncService} implementation (FEATURE_2610_17 / D29 windows).
  *
  * <ul>
- *   <li>Orders: last 14 days as two 7-day windows (11st order lists accept 7 days at most) — QUICK = 1876 paid ·
- *       1635 preparing; RECONCILE adds 6897 shipping · 1727 delivered. The window ends now (KST).</li>
+ *   <li>Orders: last 14 days as two 7-day windows (11st order lists accept 7 days at most) — QUICK = 1772 reserved
+ *       paid · 1876 paid · 1635 preparing; RECONCILE adds 6897 shipping · 1727 delivered. The window ends now (KST).
+ *       1772 goes first so 1876 wins when a line is in both (D67 · D69).</li>
  *   <li>Cancels: 1639 · 1642 · 1724 over the last 14 days in one window.</li>
  * </ul>
  *
@@ -40,7 +41,7 @@ public class ElevenstOrderSyncServiceImpl implements ElevenstOrderSyncService {
     static final int ORDER_WINDOW_DAYS = 7;
 
     private static final List<ElevenstOrderList> QUICK_LISTS =
-            List.of(ElevenstOrderList.PAID, ElevenstOrderList.PREPARING);
+            List.of(ElevenstOrderList.RESERVED, ElevenstOrderList.PAID, ElevenstOrderList.PREPARING);
     private static final List<ElevenstOrderList> RECONCILE_LISTS = List.of(ElevenstOrderList.values());
 
     private final ElevenstOrderApi orderApi;

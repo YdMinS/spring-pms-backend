@@ -5,13 +5,16 @@ import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
+import com.pms.exception.BusinessException;
 import com.pms.service.coupang.SyncWindow;
+import com.pms.service.elevenst.ElevenstApiClient;
 import com.pms.service.elevenst.ElevenstOrderApi;
 import com.pms.service.elevenst.ElevenstPaths;
 import com.pms.service.elevenst.ElevenstTimes;
 import com.pms.service.elevenst.ElevenstXml;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.w3c.dom.Element;
 
@@ -20,9 +23,11 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Stream;
 
 /**
- * 11st customer inquiry load (FEATURE_2610_17 / D16 · D26 · D29 · D44 · D45).
+ * 11st customer inquiry load (FEATURE_2610_17 / D16 · D26 · D29 · D44 · D45 · D68 · D69).
  *
  * <ul>
  *   <li>Product Q&A 1626 → {@code PRODUCT_QNA}; status = {@code answerYn} (Y answered, else unanswered); the
@@ -32,6 +37,9 @@ import java.util.Map;
  *   <li>Window: the last 7 days (today − 6 ~ today, both ends included) — Q&A once, urgent notices once per open
  *       status 01 · 02 · 04. The nightly round also reads the closed statuses 03 · 05 · 06 over the last 30 days
  *       (today − 29 ~ today), one call per status (D29 · D50 · D51).</li>
+ *   <li>Non-delivery reports 6733 → {@code NON_DELIVERY}, every round: shipped date ({@code shDateType} 03) over the
+ *       last 30 days (today − 29 ~ today), no query. Status = {@code sellerDtlsRsn} empty → unanswered, filled →
+ *       answered with that handling as the one reply (D68 · D69).</li>
  * </ul>
  * Like the Coupang adapter, one type failing does not stop the other; the failure is rethrown at the end so the
  * caller does not stamp {@code lastInquirySyncAt}. STALE sweep first ({@link InquiryStaleSweeper}).
@@ -50,8 +58,15 @@ public class ElevenstInquiryAdapter implements InquirySyncAdapter {
     /** D51: finished statuses — nightly round only. */
     static final List<String> CLOSED_ALIMI_STATUSES = List.of("03", "05", "06");
     private static final String URGENT_INQUIRY = "10";
+    /** D68: 6733 searched by shipped date. */
+    static final String NON_DELIVERY_DATE_TYPE = "03";
+    /** D69: the non-delivery window — 30 days with both ends included. */
+    static final int NON_DELIVERY_WINDOW_DAYS_BACK = 29;
+    private static final String NON_DELIVERY_SENTENCE = "고객이 상품을 받지 못했다고 신고했습니다.";
 
     private final ElevenstOrderApi orderApi;
+    /** D68: 6733 answers with {@code resultCode}, which {@link ElevenstOrderApi#listByDay} does not check. */
+    private final ElevenstApiClient client;
     private final InquiryUpserter inquiryUpserter;
     private final InquiryStaleSweeper inquiryStaleSweeper;
 
@@ -105,6 +120,16 @@ public class ElevenstInquiryAdapter implements InquirySyncAdapter {
                 failure = e;
             }
         }
+        calls++;
+        try {
+            for (Element row : nonDeliveryRows(account, to.minusDays(NON_DELIVERY_WINDOW_DAYS_BACK), to)) {
+                inquiryUpserter.upsert(account, nonDelivery(ElevenstOrderApi.fields(row), now));
+                upserted++;
+            }
+        } catch (RuntimeException e) {
+            log.warn("[11st] non-delivery sync failed: account={}", account.getId(), e);
+            failure = e;
+        }
         if (failure != null) {
             throw failure;
         }
@@ -151,6 +176,72 @@ public class ElevenstInquiryAdapter implements InquirySyncAdapter {
         return new InquiryRecord(InquiryType.CALL_CENTER, id, text(fields, "ordPrdSeq"), text(fields, "ordNo"), null,
                 text(fields, "prdNm"), content(text(fields, "emerNtceSubject"), text(fields, "emerCtnt")), null,
                 urgentStatus(status), status == null ? "" : status, orNow(inquiredAt, now), null, replies);
+    }
+
+    /** 6733 rows; a negative {@code resultCode} is a failure like a negative {@code result_code} (D68). */
+    private List<Element> nonDeliveryRows(MarketplaceAccount account, LocalDate from, LocalDate to) {
+        byte[] raw = client.get(ElevenstPaths.fill(ElevenstPaths.NON_DELIVERY_LIST, Map.of(
+                "shDateType", NON_DELIVERY_DATE_TYPE,
+                "start", ElevenstTimes.DAY.format(from),
+                "end", ElevenstTimes.DAY.format(to))), account);
+        String code = ElevenstXml.firstText(ElevenstXml.parseOrNull(raw), "resultCode");
+        if (code != null && code.startsWith("-")) {
+            throw new BusinessException(ElevenstXml.messageOf(raw), HttpStatus.BAD_GATEWAY);
+        }
+        return ElevenstOrderApi.rowElements(raw, "nonDlvSeq");
+    }
+
+    /**
+     * One 6733 row → record (D68). Content = our own sentence plus the filled parts of quantity · shipped time ·
+     * carrier and invoice; name, address, phone and amount fields are not kept (D7 · D43).
+     */
+    static InquiryRecord nonDelivery(Map<String, String> row, LocalDateTime now) {
+        String id = text(row, "nonDlvSeq");
+        String handled = text(row, "sellerDtlsRsn");
+        boolean answered = handled != null;
+        LocalDateTime answeredAt = answered ? ElevenstTimes.parse(text(row, "updateDt")) : null;
+        List<InquiryRecord.ReplyRecord> replies = answered
+                ? List.of(new InquiryRecord.ReplyRecord(id + "-answer", null, InquiryAuthorRole.SELLER, null,
+                        handledLine(handled, text(row, "resendDlvEtprsCdNm"), text(row, "resendInvcNo")), null,
+                        answeredAt))
+                : List.of();
+        String product = text(row, "prdNm");
+        String option = text(row, "optNm");
+        String itemName = (product != null && option != null) ? product + " / " + option : product;
+        String status = text(row, "nonDlvStatNm");
+        return new InquiryRecord(InquiryType.NON_DELIVERY, id, text(row, "ordPrdSeq"), text(row, "ordNo"), null,
+                itemName, nonDeliveryContent(row), null,
+                answered ? InquiryStatus.ANSWERED : InquiryStatus.UNANSWERED, status == null ? "" : status,
+                orNow(ElevenstTimes.parse(text(row, "nonDlvReqDt")), now), answeredAt, replies);
+    }
+
+    /** 「고객이 상품을 받지 못했다고 신고했습니다. 수량 {ordQty}개 · 발송 {sndEndDt} · {dlvEtprsNm} {invcNo}」, empty parts left out. */
+    static String nonDeliveryContent(Map<String, String> row) {
+        List<String> parts = new ArrayList<>();
+        String qty = text(row, "ordQty");
+        if (qty != null) {
+            parts.add("수량 " + qty + "개");
+        }
+        String sent = text(row, "sndEndDt");
+        if (sent != null) {
+            parts.add("발송 " + sent);
+        }
+        String parcel = String.join(" ", Stream.of(text(row, "dlvEtprsNm"), text(row, "invcNo"))
+                .filter(Objects::nonNull).toList());
+        if (!parcel.isEmpty()) {
+            parts.add(parcel);
+        }
+        return parts.isEmpty() ? NON_DELIVERY_SENTENCE : NON_DELIVERY_SENTENCE + " " + String.join(" · ", parts);
+    }
+
+    /** 「{sellerDtlsRsn}」 + for a re-shipping 「 (재발송 {carrier} {invoice})」 (D68). */
+    static String handledLine(String handled, String carrier, String invoice) {
+        if (carrier == null && invoice == null) {
+            return handled;
+        }
+        String parcel = String.join(" ", Stream.of(carrier, invoice)
+                .filter(Objects::nonNull).toList());
+        return handled + " (재발송 " + parcel + ")";
     }
 
     /** D44 · D45: 01 · 02 · 04 → unanswered, 03 · 05 → answered, 06 → closed, anything else → answered. */

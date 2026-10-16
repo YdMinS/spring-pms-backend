@@ -29,7 +29,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-/** FEATURE_2610_17 / D29: which lists a round reads and how failures are recorded (D10 · D11). */
+/** FEATURE_2610_17 / D29 · D69: which lists a round reads and how failures are recorded (D10 · D11). */
 @ExtendWith(MockitoExtension.class)
 class ElevenstOrderSyncServiceImplTest {
 
@@ -53,9 +53,10 @@ class ElevenstOrderSyncServiceImplTest {
     }
 
     @Test
-    void quick_readsPaidAndPreparingTwiceEach_andThreeCancelLists() {
+    void quick_readsReservedPaidAndPreparingTwiceEach_andThreeCancelLists() {
         service.sync(account, OrderSyncPreset.QUICK, false);
 
+        verify(orderApi, times(2)).listByMinute(eq(account), eq(ElevenstPaths.ORDERS_RESERVED), eq("ordPrdSeq"), any(), any());
         verify(orderApi, times(2)).listByMinute(eq(account), eq(ElevenstPaths.ORDERS_PAID), eq("ordPrdSeq"), any(), any());
         verify(orderApi, times(2)).listByMinute(eq(account), eq(ElevenstPaths.ORDERS_PREPARING), eq("ordPrdSeq"), any(), any());
         verify(orderApi, never()).listByMinute(any(), eq(ElevenstPaths.ORDERS_SHIPPING), anyString(), any(), any());

@@ -105,7 +105,7 @@ class ShipmentConfirmParcelTest {
         service = new ShipmentConfirmServiceImpl(
                 coupangApiClient, coupangProperties, orderLineRepository, coupangOrderLineRepository,
                 marketplaceAccountRepository, carrierCodeService, objectMapper, orderUpserter,
-                new ShipmentParcelRecorder(shipmentParcelRepository), orderAcknowledgeService, internalShipmentStageService, elevenstOrderActions);
+                new ShipmentParcelRecorder(shipmentParcelRepository), orderAcknowledgeService, internalShipmentStageService, elevenstOrderActions, null);
 
         account = account();
 

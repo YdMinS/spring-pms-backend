@@ -2,6 +2,7 @@ package com.pms.service.inquiry;
 
 import com.pms.domain.CustomerInquiry;
 import com.pms.domain.CustomerInquiryReply;
+import com.pms.dto.request.InquiryReplyRequest;
 import com.pms.dto.response.CustomerInquiryResponse;
 import com.pms.dto.response.ReplyCapability;
 import com.pms.exception.BusinessException;
@@ -50,7 +51,7 @@ public class InquiryReplyServiceImpl implements InquiryReplyService {
     private final CustomerInquiryReplyRepository customerInquiryReplyRepository;
 
     @Override
-    public CustomerInquiryResponse reply(Long inquiryId, String content) {
+    public CustomerInquiryResponse reply(Long inquiryId, InquiryReplyRequest request) {
         CustomerInquiry inquiry = customerInquiryRepository.findWithAccountById(inquiryId)
                 .orElseThrow(() -> new ResourceNotFoundException("Inquiry", inquiryId));
 
@@ -65,8 +66,9 @@ public class InquiryReplyServiceImpl implements InquiryReplyService {
                 throw new IllegalArgumentException(capability.reason());
             }
 
-            // 검증·전송·저장 모두 strip 한 같은 값을 쓴다 — 앞뒤 공백만 다른 중복 답변을 만들지 않는다.
-            String body = (content == null) ? "" : content.strip();
+            // Check, send and store all use the same stripped value (the 11st non-delivery form stores it inside its
+            // record line) — no duplicate reply that differs only in leading / trailing spaces.
+            String body = (request.content() == null) ? "" : request.content().strip();
             if (body.length() < capability.minLength() || body.length() > capability.maxLength()) {
                 throw new IllegalArgumentException(String.format("답변은 %d자 이상 %d자 이하로 입력해 주세요.",
                         capability.minLength(), capability.maxLength()));
@@ -76,8 +78,18 @@ public class InquiryReplyServiceImpl implements InquiryReplyService {
                     // 정책 1순위에서 이미 걸러진다 — 여기 도달하면 정책과 어댑터 목록이 어긋난 것이다.
                     .orElseThrow(() -> new IllegalArgumentException("이 채널은 아직 답변 전송을 지원하지 않습니다."));
 
-            send(adapter, inquiry, body, capability.parentReplyId());
-            inquiryReplyRecorder.record(inquiryId, body);
+            // FEATURE_2610_17 / D68: the non-delivery form also sends a reason (and a re-shipping invoice) and
+            // records 「{reason name} — {detail}」 instead of the body alone.
+            InquiryReplyPolicy.NonDeliveryInput nonDelivery = ReplyCapability.FORM_NON_DELIVERY.equals(capability.form())
+                    ? inquiryReplyPolicy.nonDelivery(inquiry, body, request.reasonCode(), request.carrierCode(),
+                            request.invoiceNumber())
+                    : null;
+            InquiryReplyAdapter.ReplyCommand command = (nonDelivery == null)
+                    ? new InquiryReplyAdapter.ReplyCommand(body, capability.parentReplyId())
+                    : new InquiryReplyAdapter.ReplyCommand(body, null, nonDelivery.reasonCode(),
+                            nonDelivery.carrierCode(), nonDelivery.invoiceNumber());
+            send(adapter, inquiry, command);
+            inquiryReplyRecorder.record(inquiryId, nonDelivery == null ? body : nonDelivery.recordText());
             log.info("고객문의 답변 전송 성공: inquiry={} type={} account={} length={}",
                     inquiryId, inquiry.getInquiryType(), inquiry.getMarketplaceAccount().getId(), body.length());
         } finally {
@@ -90,18 +102,18 @@ public class InquiryReplyServiceImpl implements InquiryReplyService {
     }
 
     /**
-     * 전송. 실패는 두 가지로 <b>갈라서</b> 올린다.
+     * Send. Failures go up <b>split</b> two ways.
      *
      * <ul>
-     *   <li>{@link InquiryReplyFailedException} = 쿠팡이 받고 거절함 → 400 (본문을 고쳐 재시도)</li>
-     *   <li>그 밖의 예외(타임아웃·네트워크) = <b>성공 여부 불명</b> → 502. 로컬은 건드리지 않는다 —
-     *       재전송하면 중복 답변이 될 수 있어 다음 동기화 결과를 보게 안내한다</li>
+     *   <li>{@link InquiryReplyFailedException} = the marketplace received it and refused → 400 (fix the body and
+     *       retry)</li>
+     *   <li>any other exception (timeout · network) = <b>success unknown</b> → 502. Local data is untouched — a resend
+     *       could duplicate the reply, so the user is told to check the next sync</li>
      * </ul>
      */
-    private void send(InquiryReplyAdapter adapter, CustomerInquiry inquiry, String content, String parentReplyId) {
+    private void send(InquiryReplyAdapter adapter, CustomerInquiry inquiry, InquiryReplyAdapter.ReplyCommand command) {
         try {
-            adapter.reply(inquiry.getMarketplaceAccount(), inquiry,
-                    new InquiryReplyAdapter.ReplyCommand(content, parentReplyId));
+            adapter.reply(inquiry.getMarketplaceAccount(), inquiry, command);
         } catch (InquiryReplyFailedException e) {
             throw e;
         } catch (RuntimeException e) {

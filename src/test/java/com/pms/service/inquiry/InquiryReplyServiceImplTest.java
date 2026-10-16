@@ -6,6 +6,7 @@ import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
+import com.pms.dto.request.InquiryReplyRequest;
 import com.pms.dto.response.CustomerInquiryResponse;
 import com.pms.dto.response.ReplyCapability;
 import com.pms.exception.BusinessException;
@@ -79,7 +80,7 @@ class InquiryReplyServiceImplTest {
     void reply_unknownInquiry_throwsNotFound() {
         given(customerInquiryRepository.findWithAccountById(999L)).willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.reply(999L, "내일 출고 예정입니다."))
+        assertThatThrownBy(() -> service.reply(999L, new InquiryReplyRequest("내일 출고 예정입니다.")))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
@@ -88,7 +89,7 @@ class InquiryReplyServiceImplTest {
         given(inquiryReplyPolicy.evaluate(any(), any()))
                 .willReturn(new ReplyCapability(false, "이미 답변한 문의입니다.", 1, 1000, true, null));
 
-        assertThatThrownBy(() -> service.reply(3L, "내일 출고 예정입니다."))
+        assertThatThrownBy(() -> service.reply(3L, new InquiryReplyRequest("내일 출고 예정입니다.")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("이미 답변한 문의입니다.");
 
@@ -101,7 +102,7 @@ class InquiryReplyServiceImplTest {
         given(inquiryReplyPolicy.evaluate(any(), any()))
                 .willReturn(new ReplyCapability(true, null, 2, 1000, true, "8123"));
 
-        assertThatThrownBy(() -> service.reply(3L, "  네  "))     // strip 후 1자 < minLength 2
+        assertThatThrownBy(() -> service.reply(3L, new InquiryReplyRequest("  네  ")))     // 1 character after strip < minLength 2
                 .isInstanceOf(IllegalArgumentException.class);
 
         verify(adapter, never()).reply(any(), any(), any());
@@ -114,7 +115,7 @@ class InquiryReplyServiceImplTest {
         given(inquiryQueryService.getInquiry(3L)).willReturn(response(
                 new ReplyCapability(false, "이미 답변한 문의입니다.", 1, 1000, true, null)));
 
-        CustomerInquiryResponse result = service.reply(3L, "  내일 출고 예정입니다.  ");
+        CustomerInquiryResponse result = service.reply(3L, new InquiryReplyRequest("  내일 출고 예정입니다.  "));
 
         ArgumentCaptor<InquiryReplyAdapter.ReplyCommand> command =
                 ArgumentCaptor.forClass(InquiryReplyAdapter.ReplyCommand.class);
@@ -138,7 +139,7 @@ class InquiryReplyServiceImplTest {
         willThrow(new InquiryReplyFailedException("이미 답변이 등록된 문의입니다."))
                 .given(adapter).reply(any(), any(), any());
 
-        assertThatThrownBy(() -> service.reply(3L, "내일 출고 예정입니다."))
+        assertThatThrownBy(() -> service.reply(3L, new InquiryReplyRequest("내일 출고 예정입니다.")))
                 .isInstanceOf(InquiryReplyFailedException.class)
                 .hasMessage("이미 답변이 등록된 문의입니다.");
 
@@ -154,7 +155,7 @@ class InquiryReplyServiceImplTest {
         willThrow(new RuntimeException("I/O error: read timed out"))
                 .given(adapter).reply(any(), any(), any());
 
-        assertThatThrownBy(() -> service.reply(3L, "내일 출고 예정입니다."))
+        assertThatThrownBy(() -> service.reply(3L, new InquiryReplyRequest("내일 출고 예정입니다.")))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("전송 결과를 확인하지 못했습니다. 다음 동기화 후 답변 여부를 확인해 주세요.")
                 .extracting(e -> ((BusinessException) e).getStatus())
@@ -173,13 +174,13 @@ class InquiryReplyServiceImplTest {
 
         // 전송이 진행되는 동안 같은 문의로 두 번째 요청이 들어온 상황을 재현한다.
         willAnswer(invocation -> {
-            assertThatThrownBy(() -> service.reply(3L, "두 번째 전송"))
+            assertThatThrownBy(() -> service.reply(3L, new InquiryReplyRequest("두 번째 전송")))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessage("이미 전송 중인 문의입니다.");
             return null;
         }).given(adapter).reply(any(), any(), any());
 
-        service.reply(3L, "내일 출고 예정입니다.");
+        service.reply(3L, new InquiryReplyRequest("내일 출고 예정입니다."));
 
         verify(adapter, times(1)).reply(any(), any(), any());
         verify(inquiryReplyRecorder, times(1)).record(anyLong(), anyString());
@@ -192,11 +193,11 @@ class InquiryReplyServiceImplTest {
         willThrow(new InquiryReplyFailedException("빈 본문입니다."))
                 .given(adapter).reply(any(), any(), any());
 
-        assertThatThrownBy(() -> service.reply(3L, "내일 출고 예정입니다."))
+        assertThatThrownBy(() -> service.reply(3L, new InquiryReplyRequest("내일 출고 예정입니다.")))
                 .isInstanceOf(InquiryReplyFailedException.class);
 
         // 선점 해제가 finally 에 있어야 사용자가 본문을 고쳐 재시도할 수 있다.
-        assertThatThrownBy(() -> service.reply(3L, "내일 출고 예정입니다."))
+        assertThatThrownBy(() -> service.reply(3L, new InquiryReplyRequest("내일 출고 예정입니다.")))
                 .isInstanceOf(InquiryReplyFailedException.class);
         verify(adapter, times(2)).reply(any(), any(), any());
     }
@@ -228,5 +229,25 @@ class InquiryReplyServiceImplTest {
     private com.pms.dto.response.CustomerInquiryReplyResponse replyResponse() {
         return new com.pms.dto.response.CustomerInquiryReplyResponse(101L, "local-abc", null,
                 InquiryAuthorRole.SELLER, null, "내일 출고 예정입니다.", null, NOW);
+    }
+
+    // ---- FEATURE_2610_17 / D68 ----
+
+    @Test
+    void reply_nonDeliveryForm_sendsTheReasonAndRecordsThePolicyLine() {
+        given(inquiryReplyPolicy.evaluate(any(), any())).willReturn(new ReplyCapability(true, null, 1, 200, true,
+                null, ReplyCapability.FORM_NON_DELIVERY, List.of()));
+        given(inquiryReplyPolicy.nonDelivery(any(), eq("오늘 다시 보냈습니다"), eq("102"), eq("00034"), eq("1234")))
+                .willReturn(new InquiryReplyPolicy.NonDeliveryInput("102", "00034", "1234",
+                        "재발송하였습니다. — 오늘 다시 보냈습니다 (재발송 CJ대한통운 1234)"));
+
+        service.reply(3L, new InquiryReplyRequest(" 오늘 다시 보냈습니다 ", "102", "00034", "1234"));
+
+        ArgumentCaptor<InquiryReplyAdapter.ReplyCommand> command =
+                ArgumentCaptor.forClass(InquiryReplyAdapter.ReplyCommand.class);
+        verify(adapter).reply(eq(account), any(), command.capture());
+        assertThat(command.getValue().reasonCode()).isEqualTo("102");
+        assertThat(command.getValue().invoiceNumber()).isEqualTo("1234");
+        verify(inquiryReplyRecorder).record(3L, "재발송하였습니다. — 오늘 다시 보냈습니다 (재발송 CJ대한통운 1234)");
     }
 }

@@ -16,6 +16,7 @@ import com.pms.repository.CustomerInquiryRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
+import com.pms.service.CarrierCodeService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,6 +35,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -64,7 +66,7 @@ class InquiryQueryServiceImplTest {
         // "지원하지 않는 채널" 로 내려오는 것까지 함께 고정된다(04).
         service = new InquiryQueryServiceImpl(customerInquiryRepository, customerInquiryReplyRepository,
                 orderLineRepository, productListingOptionRepository, marketplaceAccountRepository,
-                new InquiryTypeCatalog(), new InquiryReplyPolicy(List.of()));
+                new InquiryTypeCatalog(), new InquiryReplyPolicy(List.of(), mock(CarrierCodeService.class)));
     }
 
     @Test

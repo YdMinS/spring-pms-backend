@@ -4,6 +4,11 @@
 #   raw = the allow-listed fields of the order row only (D43): no address, phone, request text or member id.
 #   elevenst_cancel_request = one 11st cancel claim (ordPrdCnSeq). hold_qty / cancel_qty of the order line are
 #   re-summed from this table on every sync (D40). order_line_id stays NULL until the order line is loaded.
+#   elevenst_order_line.stock_confirm_sent_at = when [입고완료 처리] (1773) was sent for a reserved-sale line (D67).
+#   order_cancel_action also keeps the 11st sale refusal (1638): reason becomes nullable (11st rows leave it NULL,
+#   Coupang rows keep it — the server checks, D71) and reason_text holds the seller's text (D70). receipt_type widens
+#   20 -> 30 so the 21-character ELEVENST_SALE_REFUSAL fits (D70 value; MySQL rejects it at 20 — Data too long).
+#   ⚠️ The rollback re-adds NOT NULL on reason and narrows receipt_type back to 20 — it fails while 11st rows exist.
 # ⚠️ No boolean column -> the 006 BIT follow-up is not needed.
 databaseChangeLog:
 
@@ -112,3 +117,31 @@ databaseChangeLog:
               - column: { name: ord_prd_seq }
       rollback:
         - dropTable: { tableName: elevenst_cancel_request }
+
+  - changeSet:
+      id: 108-elevenst-order-line-stock-confirm
+      author: oclyx
+      comment: "FEATURE_2610_17 / D67: elevenst_order_line.stock_confirm_sent_at (reserved-sale stock confirm sent)."
+      changes:
+        - addColumn:
+            tableName: elevenst_order_line
+            columns:
+              - column: { name: stock_confirm_sent_at, type: TIMESTAMP }
+      rollback:
+        - dropColumn: { tableName: elevenst_order_line, columnName: stock_confirm_sent_at }
+
+  - changeSet:
+      id: 108-order-cancel-action-elevenst
+      author: oclyx
+      comment: "FEATURE_2610_17 / D70: order_cancel_action.reason nullable + reason_text + receipt_type 30 (11st sale refusal history)."
+      changes:
+        - dropNotNullConstraint: { tableName: order_cancel_action, columnName: reason, columnDataType: VARCHAR(40) }
+        - addColumn:
+            tableName: order_cancel_action
+            columns:
+              - column: { name: reason_text, type: VARCHAR(200) }
+        - modifyDataType: { tableName: order_cancel_action, columnName: receipt_type, newDataType: VARCHAR(30) }
+      rollback:
+        - modifyDataType: { tableName: order_cancel_action, columnName: receipt_type, newDataType: VARCHAR(20) }
+        - dropColumn: { tableName: order_cancel_action, columnName: reason_text }
+        - addNotNullConstraint: { tableName: order_cancel_action, columnName: reason, columnDataType: VARCHAR(40) }

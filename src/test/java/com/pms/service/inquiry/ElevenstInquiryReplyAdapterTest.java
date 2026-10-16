@@ -22,7 +22,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verify;
 
-/** FEATURE_2610_17 / D16 · D44 · D45: 1885 and 6982 bodies, success codes and failure wording. */
+/** FEATURE_2610_17 / D16 · D44 · D45 · D68: 1885, 6982 and 6734 bodies, success codes and failure wording. */
 @ExtendWith(MockitoExtension.class)
 class ElevenstInquiryReplyAdapterTest {
 
@@ -69,5 +69,37 @@ class ElevenstInquiryReplyAdapterTest {
         assertThatThrownBy(() -> adapter.reply(account, qna, new InquiryReplyAdapter.ReplyCommand("네", null)))
                 .isInstanceOf(InquiryReplyFailedException.class)
                 .hasMessage("개발 서버에서는 11번가를 부르지 않습니다");
+    }
+
+    // ---- FEATURE_2610_17 / D68 ----
+
+    @Test
+    void nonDelivery_resend_sendsTheParcelFieldsToTheOrderLinePath() {
+        CustomerInquiry report = CustomerInquiry.builder().inquiryType(InquiryType.NON_DELIVERY)
+                .externalInquiryId("N1").externalOrderId("O1").externalItemId("2").build();
+        given(client.put(eq("/rest/nondeliverys/nondeliverystatus/O1/2"), anyString(), eq(account))).willReturn(
+                "<Result><resultCode>0</resultCode><resultMessage>정상</resultMessage></Result>".getBytes(EUC_KR));
+
+        adapter.reply(account, report, new InquiryReplyAdapter.ReplyCommand("오늘 다시 보냈습니다", null, "102",
+                "00034", "123456789012"));
+
+        verify(client).put("/rest/nondeliverys/nondeliverystatus/O1/2", "<NonDelivery><nonDlvSeq>N1</nonDlvSeq>"
+                + "<sellerDtlsRsn>102</sellerDtlsRsn><sellerDtlsCont>오늘 다시 보냈습니다</sellerDtlsCont>"
+                + "<dlvMthdCd>01</dlvMthdCd><dlvEtprsCd>00034</dlvEtprsCd><invcNo>123456789012</invcNo>"
+                + "</NonDelivery>", account);
+    }
+
+    @Test
+    void nonDelivery_refusal_isAReplyFailureWithResultMessage() {
+        CustomerInquiry report = CustomerInquiry.builder().inquiryType(InquiryType.NON_DELIVERY)
+                .externalInquiryId("N1").externalOrderId("O1").externalItemId("2").build();
+        given(client.put(anyString(), anyString(), any())).willReturn(
+                "<Result><resultCode>-1</resultCode><resultMessage>처리할 수 없는 상태입니다</resultMessage></Result>"
+                        .getBytes(EUC_KR));
+
+        assertThatThrownBy(() -> adapter.reply(account, report,
+                new InquiryReplyAdapter.ReplyCommand("통화했습니다", null, "101", null, null)))
+                .isInstanceOf(InquiryReplyFailedException.class)
+                .hasMessage("처리할 수 없는 상태입니다");
     }
 }

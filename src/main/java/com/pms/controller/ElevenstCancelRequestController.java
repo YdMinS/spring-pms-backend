@@ -1,6 +1,7 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.ElevenstCancelFaultRejectRequest;
 import com.pms.dto.request.ElevenstCancelRejectRequest;
 import com.pms.dto.response.ElevenstCancelRequestResponse;
 import com.pms.service.elevenst.ElevenstCancelRequestService;
@@ -20,9 +21,9 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 11st cancel requests on the order detail (FEATURE_2610_17 / D19 · D37 · D38 · D40). Reading is open to every
- * authenticated user (like the order list); approve / reject are ADMIN only (they write to 11st and cannot be undone,
- * same as the other order write buttons).
+ * 11st cancel requests on the order detail (FEATURE_2610_17 / D19 · D37 · D38 · D40 · D62). Reading is open to
+ * every authenticated user (like the order list); approve / reject / fault refusal are ADMIN only (they write to
+ * 11st and cannot be undone, same as the other order write buttons).
  */
 @RestController
 @RequiredArgsConstructor
@@ -54,6 +55,16 @@ public class ElevenstCancelRequestController {
     public ResponseEntity<ResponseDTO<Void>> reject(@PathVariable Long id,
                                                     @Valid @RequestBody ElevenstCancelRejectRequest request) {
         cancelRequestService.reject(id, request);
+        return ResponseEntity.ok(ResponseDTO.success(null));
+    }
+
+    @PostMapping("/api/admin/elevenst-cancel-requests/{id}/reject-fault")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Refuse a seller-fault 11st cancel request (1745, FEATURE_2610_17 / D62)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<Void>> rejectFault(@PathVariable Long id,
+                                                         @Valid @RequestBody ElevenstCancelFaultRejectRequest request) {
+        cancelRequestService.rejectFault(id, request);
         return ResponseEntity.ok(ResponseDTO.success(null));
     }
 }

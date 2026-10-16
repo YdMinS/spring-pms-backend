@@ -6,6 +6,8 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.TenantId;
 import org.hibernate.type.SqlTypes;
 
+import java.time.LocalDateTime;
+
 /**
  * 11st order line extension — the 11st mirror of one {@link OrderLine} (FEATURE_2610_17 / D5, changeset 108).
  *
@@ -68,7 +70,7 @@ public class ElevenstOrderLine extends BaseEntity {
     @Column(name = "seller_stock_cd", length = 100)
     private String sellerStockCd;
 
-    /** Raw 11st status = the code of the list the row came from (202 · 301 · 401 · 501, D6). */
+    /** Raw 11st status = the code of the list the row came from (201 · 202 · 301 · 401 · 501, D6 · D67). */
     @Column(name = "platform_status", length = 30)
     private String platformStatus;
 
@@ -76,4 +78,11 @@ public class ElevenstOrderLine extends BaseEntity {
     @JdbcTypeCode(SqlTypes.LONGVARCHAR)
     @Column(name = "raw")
     private String raw;
+
+    /**
+     * When [입고완료 처리] (1773) was sent for a reserved-sale line (FEATURE_2610_17 / D67); null = not sent. The raw
+     * status stays 201 until the next sync reads the line from 1876 — this column only hides the button meanwhile.
+     */
+    @Column(name = "stock_confirm_sent_at")
+    private LocalDateTime stockConfirmSentAt;
 }

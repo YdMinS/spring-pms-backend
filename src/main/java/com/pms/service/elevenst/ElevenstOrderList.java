@@ -8,9 +8,13 @@ import com.pms.domain.OrderStatus;
  *
  * <p>{@code createsLines} = the row carries quantity and amounts, so a new order line can be made from it. The
  * shipping and delivered lists only move lines that already exist.
+ * <p>The declaration order is the 11st status order (FEATURE_2610_17 / D67): a raw code only moves forward along it,
+ * so 1772 (201) never pulls back a line that 1876 (202) already saw.
  */
 public enum ElevenstOrderList {
 
+    /** 1772 — code 201 「예약결제완료」; stored as paid, the raw code keeps it out of [발주처리] (D67). */
+    RESERVED(ElevenstPaths.ORDERS_RESERVED, "201", OrderStatus.PAID, true),
     /** 1876 — code 202 「결제완료」. */
     PAID(ElevenstPaths.ORDERS_PAID, "202", OrderStatus.PAID, true),
     /** 1635 — code 301 「발주확인」 (preparing). */
@@ -47,5 +51,15 @@ public enum ElevenstOrderList {
 
     public boolean createsLines() {
         return createsLines;
+    }
+
+    /** The list whose raw code is {@code code}; null for an unknown code. */
+    public static ElevenstOrderList ofCode(String code) {
+        for (ElevenstOrderList list : values()) {
+            if (list.code.equals(code)) {
+                return list;
+            }
+        }
+        return null;
     }
 }

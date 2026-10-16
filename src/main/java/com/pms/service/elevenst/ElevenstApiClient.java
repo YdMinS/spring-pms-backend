@@ -57,6 +57,11 @@ public class ElevenstApiClient {
         return execute(HttpMethod.GET, null, URI.create(properties.getBaseUrl() + encodedPath), null, account);
     }
 
+    /** POST without a body to a path whose segments are already percent-encoded (FEATURE_2610_17 / D66 — 7052). */
+    public byte[] postPreEncoded(String encodedPath, MarketplaceAccount account) {
+        return execute(HttpMethod.POST, null, URI.create(properties.getBaseUrl() + encodedPath), null, account);
+    }
+
     public byte[] post(String path, String xmlBody, MarketplaceAccount account) {
         return execute(HttpMethod.POST, path, null, xmlBody, account);
     }

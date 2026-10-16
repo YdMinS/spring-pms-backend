@@ -2,12 +2,16 @@ package com.pms.service.elevenst;
 
 import com.pms.domain.ElevenstCancelRequest;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.OrderLine;
+import com.pms.domain.OrderStatus;
 import com.pms.domain.Platform;
+import com.pms.dto.request.ElevenstCancelFaultRejectRequest;
 import com.pms.dto.request.ElevenstCancelRejectRequest;
 import com.pms.dto.response.ElevenstCancelRequestResponse;
 import com.pms.exception.BusinessException;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.ElevenstCancelRequestRepository;
+import com.pms.repository.OrderLineRepository;
 import com.pms.service.CarrierCodeService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -28,7 +32,7 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
-/** FEATURE_2610_17 / D19 · D37 · D38 · D40 · D41. */
+/** FEATURE_2610_17 / D19 · D37 · D38 · D40 · D41 · D62. */
 @ExtendWith(MockitoExtension.class)
 class ElevenstCancelRequestServiceImplTest {
 
@@ -36,6 +40,8 @@ class ElevenstCancelRequestServiceImplTest {
     @Mock private ElevenstCancelRequestUpserter cancelRequestUpserter;
     @Mock private ElevenstOrderActions elevenstOrderActions;
     @Mock private CarrierCodeService carrierCodeService;
+    @Mock private OrderLineRepository orderLineRepository;
+    @Mock private ElevenstSellerActions elevenstSellerActions;
     @InjectMocks private ElevenstCancelRequestServiceImpl service;
 
     private final MarketplaceAccount account = MarketplaceAccountFixture.elevenstStubBuilder("KEY").id(5L).build();
@@ -98,5 +104,45 @@ class ElevenstCancelRequestServiceImplTest {
 
         verify(elevenstOrderActions).rejectCancel(account, open, "00034", "612345678901", LocalDate.of(2026, 10, 14));
         verify(cancelRequestUpserter).markRejected(7L);
+    }
+
+    // ---- FEATURE_2610_17 / D62 ----
+
+    @Test
+    void listOpen_faultRejectable_onlyForABuyerRequestOnAPaidLine() {
+        ElevenstCancelRequest buyer = claim("01").toBuilder().id(8L).requestedBy("01").build();
+        given(cancelRequestRepository.findByOrderLine_IdInAndPlatformStatus(List.of(10L), "01"))
+                .willReturn(List.of(claim("01"), buyer));
+        given(orderLineRepository.findById(10L))
+                .willReturn(Optional.of(OrderLine.builder().id(10L).status(OrderStatus.PAID).build()));
+
+        List<ElevenstCancelRequestResponse> open = service.listOpen(10L);
+
+        assertThat(open).extracting(ElevenstCancelRequestResponse::faultRejectable).containsExactly(false, true);
+    }
+
+    @Test
+    void rejectFault_sendsCodeTextAndInvoice_thenMarksRejected() {
+        ElevenstCancelRequest open = claim("01");
+        given(cancelRequestRepository.findWithAccountById(7L)).willReturn(Optional.of(open));
+        given(carrierCodeService.validateDeliveryCompanyCode("00034", Platform.ELEVENST)).willReturn("00034");
+
+        service.rejectFault(7L, new ElevenstCancelFaultRejectRequest("02", " 이미 보냈습니다 ", "00034",
+                "6123-4567-8901", LocalDate.of(2026, 10, 14)));
+
+        verify(elevenstSellerActions).rejectCancelFault(account, open, "00034", "612345678901",
+                LocalDate.of(2026, 10, 14), "02", "이미 보냈습니다");
+        verify(cancelRequestUpserter).markRejected(7L);
+    }
+
+    @Test
+    void rejectFault_unknownCode_is400_beforeCalling11st() {
+        given(cancelRequestRepository.findWithAccountById(7L)).willReturn(Optional.of(claim("01")));
+
+        assertThatThrownBy(() -> service.rejectFault(7L, new ElevenstCancelFaultRejectRequest("09", "사유", "00034",
+                "612345678901", null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("거부 사유를 선택하세요");
+        verify(elevenstSellerActions, never()).rejectCancelFault(any(), any(), any(), any(), any(), any(), any());
     }
 }

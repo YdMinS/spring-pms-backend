@@ -10,6 +10,8 @@ import com.pms.dto.response.OrderMonthResponse;
 import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.OrderRepository;
+import com.pms.service.elevenst.ElevenstOrderList;
+import com.pms.service.elevenst.ElevenstRawFields;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -143,6 +145,11 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 .lineAmount(line.getLineAmount())
                 .discountAmount(line.getDiscountAmount())
                 .platformDiscountAmount(line.getPlatformDiscountAmount())
+                // FEATURE_2610_17 / D66 · D67: 11st only — false for every other line.
+                .visitPickup(ElevenstRawFields.yes(elevenstMirror, "visitDlvYn"))
+                .reservedSale(elevenstMirror != null
+                        && ElevenstOrderList.RESERVED.code().equals(elevenstMirror.getPlatformStatus()))
+                .stockConfirmSent(elevenstMirror != null && elevenstMirror.getStockConfirmSentAt() != null)
                 .build();
     }
 }

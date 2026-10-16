@@ -77,6 +77,32 @@ public final class ElevenstPaths {
     public static final String EXCHANGE_REJECT =
             "/rest/claimservice/exchangereqreject/{ordNo}/{ordPrdSeq}/{clmReqSeq}/{refsRsnCd}/{refsRsn}";
 
+    // ---- seller actions (FEATURE_2610_17 / D60 · D61~D68) ----
+    /** 1772 reserved-sale paid orders (D67 — the code 201 list). */
+    public static final String ORDERS_RESERVED = "/rest/ordservices/reservatecomplete/{start}/{end}";
+    /** 1773 reserved-sale stock arrived (D67). */
+    public static final String STOCK_CONFIRM = "/rest/ordservices/saleconfirm/{ordNo}/{ordPrdSeq}";
+    /** 1638 sale refusal — the seller cancels the whole order line first (D61). */
+    public static final String REJECT_ORDER =
+            "/rest/claimservice/reqrejectorder/{ordNo}/{ordPrdSeq}/{ordCnRsnCd}/{ordCnDtlsRsn}";
+    /** 1745 reject a seller-fault cancel request (D62; same delivery fields as 1641). */
+    public static final String CANCEL_REJECT_FAULT = "/rest/claimservice/cancelreqrejectNEW/{ordNo}/{ordPrdSeq}"
+            + "/{ordPrdCnSeq}/{dlvMthdCd}/{sendDt}/{dlvEtprsCd}/{invcNo}/{ordCnRefsRsnCd}/{ordCnReqRsn}";
+    /** 6728 shipping-delay notice (POST XML {@code DeliveryDelayGuideRequest}, D63). */
+    public static final String DELIVERY_DELAY = "/rest/ordservices/deliveryDelayGuide";
+    /** 1636 partial shipping — some lines of a delivery (D64). */
+    public static final String SHIP_PARTIAL = "/rest/ordservices/reqdelivery/{sendDt}/{dlvMthdCd}/{dlvEtprsCd}/{invcNo}"
+            + "/{dlvNo}/{partDlvYn}/{ordNo}/{ordPrdSeq}";
+    /** 6791 one line over several invoices (D64). */
+    public static final String SHIP_SPLIT = "/rest/ordservices/reqdelivery/{sendDt}/{dlvMthdCd}/{dlvEtprsCd}/{invcNo}"
+            + "/{dlvNo}/{dlvQty}/{ordNo}/{ordPrdSeq}/{invcAddData}";
+    /** 7052 visit pickup done — shipped and delivered in one call (POST, values in the path, D66). */
+    public static final String VISIT_PICKUP = "/rest/ordservices/visitdlvend/{dlvNo}/{ordNo}/{visitDlvCertCode}";
+    /** 6733 non-delivery reports ({@code shDateType} 03 = shipped date, {@code yyyyMMdd}, D68). */
+    public static final String NON_DELIVERY_LIST = "/rest/nondeliverys/nondeliverylist/{shDateType}/{start}/{end}";
+    /** 6734 non-delivery handling (PUT XML {@code NonDelivery}, D68). */
+    public static final String NON_DELIVERY_PROCESS = "/rest/nondeliverys/nondeliverystatus/{ordNo}/{ordPrdSeq}";
+
     // ---- inquiries (D16 · D26 · D44) ----
     /** 1626 product Q&A list ({@code yyyyMMdd} window, answerStatus 00 = all). */
     public static final String QNA_LIST = "/rest/prodqnaservices/prodqnalist/{start}/{end}/{answerStatus}";
