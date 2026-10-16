@@ -778,10 +778,6 @@ public class CoupangListingAdapter implements ListingChannel {
         Map<String, List<String>> usableByAttr = schema.attributes().stream()
                 .filter(a -> a.usableUnits() != null && !a.usableUnits().isEmpty())
                 .collect(Collectors.toMap(CategoryAttribute::name, CategoryAttribute::usableUnits, (a, b) -> a));
-        // 총 수량 is derived (개당 수량 × 수량). Approved tea listings carry none, so send it only where the
-        // category makes it MANDATORY.
-        boolean grandTotalRequired = schema.attributes().stream()
-                .anyMatch(a -> GRAND_TOTAL_QUANTITY.equals(a.name()) && a.required());
 
         // 63: bundleType = product-level SINGLE (single composition) / AB (mixed composition). Determined once
         // (loop-invariant local boolean, no N+1) by the master's component count. AB forbids attributes entirely.
@@ -850,10 +846,8 @@ public class CoupangListingAdapter implements ListingChannel {
             if (!bundle) {
                 Map<String, String> attrs = withConsistentGrandTotal(
                         mergedAttributes(masterAttributes, mo, option));
-                if (!grandTotalRequired && attrs.containsKey(GRAND_TOTAL_QUANTITY)) {
-                    attrs = new LinkedHashMap<>(attrs);
-                    attrs.remove(GRAND_TOTAL_QUANTITY);
-                }
+                // A stored 총 수량 is always sent: the meta can mark it OPTIONAL while Coupang still rejects an
+                // update without it ("필수 옵션이(총 수량) 입력되지 않았습니다", 2026-10-16) — same as 수량 (2026-10-09).
                 if (!attrs.isEmpty()) {
                     item.put("attributes", toAttributes(attrs, unitByAttr, usableByAttr));
                 }
