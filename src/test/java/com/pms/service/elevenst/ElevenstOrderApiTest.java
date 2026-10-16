@@ -76,6 +76,15 @@ class ElevenstOrderApiTest {
     }
 
     @Test
+    void negativeResultCode_withNoDataText_isAnEmptyList() {
+        given(client.get(any(), eq(account))).willReturn(xml(
+                "<s2:orders xmlns:s2=\"x\"><result_code>-1</result_code>"
+                        + "<result_text>해당건이 없습니다.</result_text></s2:orders>"));
+
+        assertThat(api.listByMinute(account, ElevenstPaths.CANCEL_REQUESTS, "ordPrdCnSeq", FROM, TO)).isEmpty();
+    }
+
+    @Test
     void fullList_isSplitInHalf_D30() {
         StringBuilder full = new StringBuilder("<orders>");
         for (int i = 0; i < ElevenstOrderApi.MAX_ROWS; i++) {
