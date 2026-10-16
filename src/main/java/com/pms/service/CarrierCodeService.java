@@ -33,12 +33,13 @@ public interface CarrierCodeService {
     String resolveDeliveryCompanyCode(Platform platform);
 
     /**
-     * 단건 발송처리 드롭다운용 택배사 목록.
+     * Carrier list for the single-shipment dropdown (also the carrier name of the 11st non-delivery record line,
+     * FEATURE_2610_17 / D68).
      *
-     * <p>코드표는 {@link com.pms.domain.CarrierCatalog}(플랫폼 × 코드 × 이름, PLAN 2609_37 D1)에서
-     * 온다 — 그 플랫폼의 카탈로그 전량을 {@code display_order} 순으로 주고, 택배사 관리에 등록해 둔
-     * 코드는 {@code registered=true} 로 맨 위에 온다. 카탈로그가 빈 플랫폼(아직 시드하지 않은 마켓)은
-     * 등록된 활성 택배사만 준다 (없으면 빈 리스트 — 예외 아님, 2609_11 D16 · 2609_37 D9).
+     * <p>The code table comes from {@link com.pms.domain.CarrierCatalog} (platform × code × name, PLAN 2609_37 D1) —
+     * the platform's whole catalog in {@code display_order}, with codes registered in carrier management first as
+     * {@code registered=true}. A platform with an empty catalog (a market not seeded yet) gets only the registered
+     * active carriers (none → empty list, not an exception — 2609_11 D16 · 2609_37 D9).
      */
     List<CarrierOption> findOptions(Platform platform);
 

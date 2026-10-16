@@ -147,7 +147,7 @@ class CoupangClaimActionAdapterTest {
                 claim(3L, "VENDOR_WAREHOUSE_CONFIRM", 1));
 
         ClaimActionOutcome outcome = adapter.execute(account(), siblings,
-                new ClaimActionCommand(ClaimAction.RETURN_APPROVE, null, null, null, null));
+                new ClaimActionCommand(ClaimAction.RETURN_APPROVE, null, null, null, null, null));
 
         ArgumentCaptor<String> path = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
@@ -171,7 +171,7 @@ class CoupangClaimActionAdapterTest {
 
         adapter.execute(account(), List.of(claim(1L, "RETURNS_UNCHECKED", 1)),
                 new ClaimActionCommand(ClaimAction.RETURN_COLLECT_INVOICE,
-                        "CJGLS", "123456789012", null, null));
+                        "CJGLS", "123456789012", null, null, null));
 
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
         verify(coupangApiClient).post(anyString(), body.capture(), any());
@@ -191,7 +191,7 @@ class CoupangClaimActionAdapterTest {
                 .willReturn("{\"code\":200,\"message\":\"OK\"}");
 
         ClaimActionOutcome outcome = adapter.execute(account(), List.of(claim(1L, "RETURNS_UNCHECKED", 1)),
-                new ClaimActionCommand(ClaimAction.RETURN_RECEIVE_CONFIRM, null, null, null, null));
+                new ClaimActionCommand(ClaimAction.RETURN_RECEIVE_CONFIRM, null, null, null, null, null));
 
         // put() 으로 우회하면 서명은 통과하고 쿠팡이 405 를 준다(D11).
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
@@ -207,7 +207,7 @@ class CoupangClaimActionAdapterTest {
                 .willReturn("{\"code\":400,\"message\":\"이미 등록된 운송장입니다\"}");
 
         ClaimActionOutcome outcome = adapter.execute(account(), List.of(claim(1L, "RETURNS_UNCHECKED", 1)),
-                new ClaimActionCommand(ClaimAction.RETURN_RECEIVE_CONFIRM, null, null, null, null));
+                new ClaimActionCommand(ClaimAction.RETURN_RECEIVE_CONFIRM, null, null, null, null, null));
 
         // HTTP 200 이어도 바디 code 로 판정하고, 원문은 번역 없이 그대로 실어야 한다(D15).
         assertThat(outcome.succeeded()).isFalse();
@@ -314,7 +314,7 @@ class CoupangClaimActionAdapterTest {
                         + "[{\"deliveryCompanyCode\":\"CJGLS\",\"invoiceNumber\":\"123456789012\"}]}}");
 
         ClaimActionOutcome outcome = adapter.execute(account(), List.of(localInvoiceClaim()),
-                new ClaimActionCommand(ClaimAction.RETURN_COLLECT_INVOICE_RESEND, null, null, null, null));
+                new ClaimActionCommand(ClaimAction.RETURN_COLLECT_INVOICE_RESEND, null, null, null, null, null));
 
         assertThat(outcome.succeeded()).isTrue();       // 서비스가 출처를 PLATFORM 으로 맞춰 버튼을 닫는다
         verify(coupangApiClient, never()).post(anyString(), anyString(), any());
@@ -332,7 +332,7 @@ class CoupangClaimActionAdapterTest {
         // 🔴 요청에 다른 번호가 실려 와도 무시하고 저장된 값을 보낸다(D5 가 막은 '수정' 방지).
         adapter.execute(account(), List.of(localInvoiceClaim()),
                 new ClaimActionCommand(ClaimAction.RETURN_COLLECT_INVOICE_RESEND,
-                        "HANJIN", "999999999999", null, null));
+                        "HANJIN", "999999999999", null, null, null));
 
         ArgumentCaptor<String> path = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
@@ -396,7 +396,7 @@ class CoupangClaimActionAdapterTest {
         given(coupangApiClient.patch(anyString(), anyString(), any())).willReturn("{\"code\":200}");
 
         adapter.execute(account(), List.of(exchangeClaim("PROGRESS", "CompleteCollect")),
-                new ClaimActionCommand(ClaimAction.EXCHANGE_RECEIVE_CONFIRM, null, null, null, null));
+                new ClaimActionCommand(ClaimAction.EXCHANGE_RECEIVE_CONFIRM, null, null, null, null, null));
 
         ArgumentCaptor<String> path = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
@@ -416,7 +416,7 @@ class CoupangClaimActionAdapterTest {
         given(coupangApiClient.patch(anyString(), anyString(), any())).willReturn("{\"code\":200}");
 
         ClaimActionOutcome outcome = adapter.execute(account(), List.of(exchangeClaim("RECEIPT", null)),
-                new ClaimActionCommand(ClaimAction.EXCHANGE_REJECT, null, null, null, "SOLDOUT"));
+                new ClaimActionCommand(ClaimAction.EXCHANGE_REJECT, null, null, null, "SOLDOUT", null));
 
         ArgumentCaptor<String> path = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
@@ -440,7 +440,7 @@ class CoupangClaimActionAdapterTest {
         given(coupangProperties.getExchangeRejectionPath()).willReturn(EXCHANGE_REJECTION_PATH);
 
         assertThatThrownBy(() -> adapter.execute(account(), List.of(exchangeClaim("RECEIPT", null)),
-                new ClaimActionCommand(ClaimAction.EXCHANGE_REJECT, null, null, null, "ETC")))
+                new ClaimActionCommand(ClaimAction.EXCHANGE_REJECT, null, null, null, "ETC", null)))
                 .isInstanceOf(IllegalArgumentException.class);
 
         verify(coupangApiClient, never()).patch(anyString(), anyString(), any());
@@ -455,7 +455,7 @@ class CoupangClaimActionAdapterTest {
 
         adapter.execute(account(), List.of(exchangeClaim("RECEIPT", "BeforeDirection")),
                 new ClaimActionCommand(ClaimAction.EXCHANGE_COLLECT_INVOICE,
-                        "CJGLS", "123456789012", null, null));
+                        "CJGLS", "123456789012", null, null, null));
 
         ArgumentCaptor<String> path = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
@@ -482,7 +482,7 @@ class CoupangClaimActionAdapterTest {
         OrderClaim claim = exchangeClaim("PROGRESS", "CompleteCollect");
         adapter.execute(account(), List.of(claim),
                 new ClaimActionCommand(ClaimAction.EXCHANGE_RESHIP_INVOICE,
-                        "CJGLS", "123456789012", null, null));
+                        "CJGLS", "123456789012", null, null, null));
 
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
         verify(coupangApiClient).post(anyString(), body.capture(), any());
@@ -517,7 +517,7 @@ class CoupangClaimActionAdapterTest {
             assertThatThrownBy(() -> adapter.execute(account(),
                     List.of(exchangeClaim("PROGRESS", "CompleteCollect")),
                     new ClaimActionCommand(ClaimAction.EXCHANGE_RESHIP_INVOICE,
-                            "CJGLS", "123456789012", null, null)))
+                            "CJGLS", "123456789012", null, null, null)))
                     .isInstanceOf(IllegalArgumentException.class);
         }
         verify(coupangApiClient, never()).post(anyString(), anyString(), any());
@@ -533,7 +533,7 @@ class CoupangClaimActionAdapterTest {
 
         adapter.execute(account(), List.of(exchangeClaim("PROGRESS", "CompleteCollect")),
                 new ClaimActionCommand(ClaimAction.EXCHANGE_RESHIP_INVOICE,
-                        "CJGLS", "123456789012", null, null));
+                        "CJGLS", "123456789012", null, null, null));
 
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
         verify(coupangApiClient).post(anyString(), body.capture(), any());

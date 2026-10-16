@@ -19,6 +19,10 @@ import com.pms.repository.OrderLineRepository;
 import com.pms.repository.OrderShipmentRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.OrderUpserter;
+import com.pms.service.elevenst.ElevenstOrderApi;
+import com.pms.service.elevenst.ElevenstOrderList;
+import com.pms.service.elevenst.ElevenstOrderUpserter;
+import com.pms.service.elevenst.ElevenstPaths;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -32,7 +36,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.io.ByteArrayInputStream;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -64,6 +70,10 @@ class ShippingLabelServiceImplTest {
     private OrderUpserter orderUpserter;
     @Mock
     private OrderShipmentRepository orderShipmentRepository;
+    @Mock
+    private ElevenstOrderApi elevenstOrderApi;
+    @Mock
+    private ElevenstOrderUpserter elevenstOrderUpserter;
 
     private ShippingLabelServiceImpl service;
     private MarketplaceAccount coupangAccount;
@@ -80,7 +90,7 @@ class ShippingLabelServiceImplTest {
 
         service = new ShippingLabelServiceImpl(
                 coupangApiClient, props, marketplaceAccountRepository, new ObjectMapper(),
-                orderLineRepository, orderUpserter, orderShipmentRepository);
+                orderLineRepository, orderUpserter, orderShipmentRepository, elevenstOrderApi, elevenstOrderUpserter);
     }
 
     @Test
@@ -418,5 +428,45 @@ class ShippingLabelServiceImplTest {
                 .orderedAt(LocalDate.now(ZoneId.of("Asia/Seoul")).minusDays(paidDaysAgo).atTime(10, 0)).build();
         return OrderShipment.builder().id(77L).order(order).externalShipmentId(boxId)
                 .internalStage(InternalShipmentStage.INTERNAL_PREPARING).build();
+    }
+
+    // ---- FEATURE_2610_17 / D2 · D42 ----
+
+    @Test
+    void collectRows_elevenst_mapsPreparingRowsByD42_andCallsSevenDayWindows() {
+        Seller seller = Seller.builder().id(2L).sellerName("셀러B").businessRegistration("222-22-22222").build();
+        MarketplaceAccount eleven = MarketplaceAccountFixture.elevenstStubBuilder("KEY").id(5L).seller(seller).build();
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(eleven));
+        Map<String, String> row = new LinkedHashMap<>();
+        row.put("ordNo", "201");
+        row.put("ordPrdSeq", "1");
+        row.put("dlvNo", "D9");
+        row.put("prdNm", "양말");
+        row.put("prdStckNo", "STK-1");
+        row.put("ordQty", "2");
+        row.put("rcvrNm", "김철수");
+        row.put("rcvrPrtblNo", "");
+        row.put("rcvrTlphn", "02-123-4567");
+        row.put("rcvrMailNo", "06133");
+        row.put("rcvrBaseAddr", "서울시 강남구");
+        row.put("rcvrDtlsAddr", "101호");
+        row.put("ordDlvReqCont", "문 앞");
+        given(elevenstOrderApi.listByMinute(eq(eleven), eq(ElevenstPaths.ORDERS_PREPARING), eq("ordPrdSeq"), any(), any()))
+                .willReturn(List.of(row));
+
+        List<ShippingLabelRow> rows = service.collectRows(null);
+
+        // instruct-days 14 → two 7-day calls; the same row from both calls is listed once.
+        verify(elevenstOrderApi, times(2)).listByMinute(eq(eleven), eq(ElevenstPaths.ORDERS_PREPARING), eq("ordPrdSeq"), any(), any());
+        verify(elevenstOrderUpserter, times(2)).upsertRows(eq(eleven), eq(ElevenstOrderList.PREPARING), any());
+        assertThat(rows).hasSize(1);
+        ShippingLabelRow r = rows.get(0);
+        assertThat(r.receiverPhone()).isEqualTo("02-123-4567");      // mobile blank → phone
+        assertThat(r.address()).isEqualTo("서울시 강남구 101호");
+        assertThat(r.postCode()).isEqualTo("06133");
+        assertThat(r.quantity()).isEqualTo(2);
+        assertThat(r.vendorItemId()).isEqualTo("STK-1");
+        assertThat(r.shipmentBoxId()).isEqualTo("D9");
+        assertThat(r.platform()).isEqualTo("ELEVENST");
     }
 }

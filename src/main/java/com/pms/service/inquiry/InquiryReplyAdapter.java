@@ -32,11 +32,20 @@ public interface InquiryReplyAdapter {
     void reply(MarketplaceAccount account, CustomerInquiry inquiry, ReplyCommand command);
 
     /**
-     * 전송 명령.
+     * Send command.
      *
-     * @param content       strip 된 본문 — 검증·전송·저장이 <b>같은 값</b>을 쓴다
-     * @param parentReplyId 고객센터 전용 상위 답변 식별자. <b>정책이 고른 값</b>이다
+     * @param content       the stripped body — check, send and store all use <b>the same value</b>
+     * @param parentReplyId call-center only parent reply id. It is <b>the value the policy picked</b>
+     * @param reasonCode    11st non-delivery only: the handling reason 101~104 (FEATURE_2610_17 / D68)
+     * @param carrierCode   11st non-delivery reason 102 only: the 11st carrier code; null otherwise
+     * @param invoiceNumber 11st non-delivery reason 102 only: the normalized invoice number; null otherwise
      */
-    record ReplyCommand(String content, String parentReplyId) {
+    record ReplyCommand(String content, String parentReplyId, String reasonCode, String carrierCode,
+                        String invoiceNumber) {
+
+        /** A plain text reply. */
+        public ReplyCommand(String content, String parentReplyId) {
+            this(content, parentReplyId, null, null, null);
+        }
     }
 }

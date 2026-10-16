@@ -3,17 +3,19 @@ package com.pms.service;
 import java.util.List;
 
 /**
- * 발송처리(송장업로드) 결과 집계 DTO.
+ * Result of a shipment confirm (invoice upload) run.
  *
- * external*Id 는 저장 시 String 이므로 결과 리포트({@link FailedBox#shipmentBoxId}, {@link #unmatched})도
- * String 을 유지한다(요청 바디만 Long 으로 변환).
+ * external*Id values are stored as String, so the report ({@link FailedBox#shipmentBoxId}, {@link #unmatched}) keeps
+ * String as well (only the Coupang request body converts them to Long).
  *
- * @param totalRows     파싱된 데이터 행 수(공백행 제외)
- * @param matchedOrders 전송 대상으로 확정된 주문 수 — 스킵분 제외, 폴백 확정분 포함(COUPANG 계정만)
- * @param unmatched     비-COUPANG 이거나, 주문 라인도 없고 쿠팡 폴백(PLAN 송장시트 D16)으로도 확정하지 못한 orderId
- * @param succeeded     성공 박스 수(응답 responseList succeed=true 집계)
- * @param failed        실패 상세
- * @param skipped       이미 발송된(배송지시 이상) 라인뿐이라 전송하지 않은 주문 (PLAN 2609_07 D1·D7)
+ * @param totalRows     parsed data rows (blank rows excluded)
+ * @param matchedOrders orders confirmed as send targets — skipped orders excluded, fallback-confirmed orders included
+ *                      (COUPANG and ELEVENST accounts, FEATURE_2610_17 / D2)
+ * @param unmatched     orderIds of another platform, or with no order line that the Coupang fallback (shipping-label
+ *                      PLAN D16) could not confirm either
+ * @param succeeded     succeeded boxes (Coupang responseList succeed=true count · 11st delivery numbers sent)
+ * @param failed        failure details
+ * @param skipped       orders not sent, each with its reason (PLAN 2609_07 D1·D7 · FEATURE_2610_17 / D47)
  */
 public record ShipmentConfirmResult(
         int totalRows,
@@ -23,15 +25,23 @@ public record ShipmentConfirmResult(
         List<FailedBox> failed,
         List<SkippedOrder> skipped) {
 
+    /** D47: reason of every skipped row except the 11st paid ones (the wording the screen showed before). */
+    public static final String ALREADY_SHIPPED_REASON = "이미 발송처리된 상태입니다.";
+    /** D47: reason of an 11st order still waiting for [발주처리] (D2 · D20). */
+    public static final String ELEVENST_ACKNOWLEDGE_FIRST_REASON = "11번가에서 발주처리를 먼저 해 주세요.";
+
     /** 실패 박스 상세. */
     public record FailedBox(String shipmentBoxId, String resultCode, String message) {
     }
 
     /**
-     * 전송 제외 주문. {@code status} 는 판정에 실제로 쓴 값 = <b>중립 상태</b>({@code OrderStatus} 이름,
-     * 예 {@code SHIPPED}) — 한글 라벨 변환은 클라이언트 몫이다(PLAN 2609_07 D9).
-     * 상태가 다른 박스가 섞였으면 <b>첫 라인의 상태</b>.
+     * An order left out of sending. {@code status} = the value actually judged = <b>neutral status</b>
+     * ({@code OrderStatus} name, e.g. {@code SHIPPED}) — the Korean label is the client's job (PLAN 2609_07 D9).
+     * Mixed boxes report <b>the first line's status</b>.
+     *
+     * <p>{@code reason} (FEATURE_2610_17 / D47) = the sentence the result-file screen shows per row; null on the
+     * order-acknowledge result, whose screen has no reason column.
      */
-    public record SkippedOrder(String orderId, String status) {
+    public record SkippedOrder(String orderId, String status, String reason) {
     }
 }

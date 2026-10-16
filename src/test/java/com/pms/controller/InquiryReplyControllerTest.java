@@ -17,7 +17,6 @@ import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
@@ -43,7 +42,7 @@ class InquiryReplyControllerTest extends BaseIntegrationTest {
                         .content("{\"content\":\"내일 출고 예정입니다.\"}"))
                 .andExpect(status().isUnauthorized());
 
-        verify(inquiryReplyService, never()).reply(anyLong(), anyString());
+        verify(inquiryReplyService, never()).reply(anyLong(), any());
     }
 
     @Test
@@ -54,7 +53,7 @@ class InquiryReplyControllerTest extends BaseIntegrationTest {
                         .content("{\"content\":\"내일 출고 예정입니다.\"}"))
                 .andExpect(status().isForbidden());
 
-        verify(inquiryReplyService, never()).reply(anyLong(), anyString());
+        verify(inquiryReplyService, never()).reply(anyLong(), any());
     }
 
     @Test
@@ -65,7 +64,7 @@ class InquiryReplyControllerTest extends BaseIntegrationTest {
                         .content("{\"content\":\"   \"}"))
                 .andExpect(status().isBadRequest());
 
-        verify(inquiryReplyService, never()).reply(anyLong(), anyString());
+        verify(inquiryReplyService, never()).reply(anyLong(), any());
     }
 
     @Test

@@ -55,7 +55,7 @@ public class ClaimSyncServiceImpl implements ClaimSyncService {
         MarketplaceAccount account = marketplaceAccountRepository.findById(accountId)
                 .orElseThrow(() -> new ResourceNotFoundException("MarketplaceAccount", accountId));
 
-        if (!Platform.COUPANG.equals(account.getPlatform())) {
+        if (!Platform.COUPANG.equals(account.getPlatform()) && !Platform.ELEVENST.equals(account.getPlatform())) {
             throw new IllegalArgumentException(
                     "클레임 조회를 지원하지 않는 채널입니다: " + account.getPlatform());
         }
@@ -63,8 +63,9 @@ public class ClaimSyncServiceImpl implements ClaimSyncService {
         AccountSyncLock.Lease lease =
                 accountSyncLock.tryAcquire(AccountSyncLock.SyncWork.ORDER, account.getId());
         if (lease == null) {
-            // 🔴 쿠팡을 치지 않고 즉시 돌려준다. 기록기도 부르지 않는다 — 건너뛴 회차는 성공도 실패도
-            // 아니라서, 기록하면 "마지막 동기화" 시각이 실제로 조회하지 않은 시각으로 밀린다.
+            // 🔴 Returns at once without calling the marketplace (Coupang · 11st). The recorder is not called
+            // either — a skipped round is neither success nor failure, and recording it would push the "last
+            // sync" time to a moment nothing was read.
             log.info("Claim sync skipped (already running): account={} heldSec={}",
                     account.getId(),
                     accountSyncLock.heldSeconds(AccountSyncLock.SyncWork.ORDER, account.getId()));
@@ -78,6 +79,22 @@ public class ClaimSyncServiceImpl implements ClaimSyncService {
         }
     }
 
+    /**
+     * 11st claim-only round (FEATURE_2610_17 / D15): the 11st adapter loads returns and exchanges in one call; a
+     * failure propagates (same D15-1 contract as the Coupang path). The tenant is already set by the caller.
+     */
+    private ClaimSyncResponse syncElevenst(MarketplaceAccount account) {
+        claimSyncAdapters.stream()
+                .filter(a -> a.platform().equals(account.getPlatform()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "클레임 조회를 지원하지 않는 채널입니다: " + account.getPlatform()))
+                .syncExchanges(account);
+        syncStatusRecorder.recordClaimSyncCompleted(account.getId());
+        log.info("Claim-only sync (11st): account={}", account.getId());
+        return new ClaimSyncResponse(account.getId(), false, LocalDateTime.now());
+    }
+
     /** 락을 쥔 상태의 본문. 순서는 {@code OrderSyncFacadeImpl#syncOneLocked} 의 클레임 구간 그대로다. */
     private ClaimSyncResponse syncLocked(MarketplaceAccount account) {
         // 저장되는 클레임이 이 계정의 테넌트로 들어가게 한다(문의 경로와 같은 이유·같은 방식).
@@ -86,6 +103,10 @@ public class ClaimSyncServiceImpl implements ClaimSyncService {
         Long previousTenant = TenantContext.get();
         try {
             TenantContext.set(account.getTenantId());
+
+            if (Platform.ELEVENST.equals(account.getPlatform())) {
+                return syncElevenst(account);
+            }
 
             // 🔴 신규 반품 적재가 취소 보정 응답에 얹혀 있다(2609_18 D15) — 빼면 반품이 안 들어온다.
             coupangReturnSyncService.syncCancels(account);

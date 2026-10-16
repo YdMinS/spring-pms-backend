@@ -8,9 +8,12 @@ package com.pms.domain;
  */
 public enum CollectInvoiceSource {
 
-    /** 동기화가 쿠팡 응답에서 읽어온 값 — 마켓에도 붙어 있다. */
+    /** Read from the marketplace response by the sync (Coupang · 11st) — it is on the marketplace too. */
     PLATFORM,
 
-    /** 쿠팡이 등록을 거절해 우리 장부에만 남긴 값(D6) — [쿠팡에 다시 보내기] 대상(D7). */
+    /**
+     * The marketplace rejected the registration and only our ledger kept it (D6) — the resend target (D7):
+     * [쿠팡에 다시 보내기] on Coupang, [마켓에 다시 보내기] on 11st (FEATURE_2610_17 / D22).
+     */
     LOCAL
 }

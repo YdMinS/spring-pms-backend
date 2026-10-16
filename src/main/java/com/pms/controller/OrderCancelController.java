@@ -22,12 +22,14 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 발송 전 주문 취소 컨트롤러 (ADMIN 전용, PLAN 2609_25 D11).
+ * Seller cancel controller before shipping (ADMIN only, PLAN 2609_25 D11).
  *
- * 주문 상세에서 고른 라인×수량을 쿠팡 취소 API 로 보낸다 — 결제완료는 즉시취소, 상품준비중은 출고중지다.
- * 발주처리 컨트롤러와 분리한다 — 같은 ADMIN 등급이지만 쓰기의 성격이 다르다(전환 vs 취소).
+ * Sends the lines × quantity picked on the order detail to the Coupang cancel API — paid becomes an instant cancel,
+ * preparing a shipment stop; an 11st line goes to the 11st sale refusal 1638 of the whole line (FEATURE_2610_17 /
+ * D61). Kept apart from the order-confirmation controller — same ADMIN level, different kind of write (transition vs
+ * cancel).
  *
- * ⚠️ 되돌릴 수 없고 쿠팡 판매자 점수가 하락한다. 확인 다이얼로그는 클라이언트 계약이다(D13).
+ * ⚠️ Cannot be undone and lowers the marketplace seller score. The confirm dialog is the client contract (D13 · D61).
  */
 @RestController
 @RequestMapping("/api/admin/orders")
@@ -52,11 +54,13 @@ public class OrderCancelController {
     @PostMapping("/cancel")
     @Operation(summary = "Cancel order lines before shipment",
             description = "Selected lines x quantity → account/order/box grouping → Coupang cancel API "
-                    + "(ACCEPT=immediate cancel, INSTRUCT=stop shipment). Irreversible.")
+                    + "(ACCEPT=immediate cancel, INSTRUCT=stop shipment); 11st lines → 11st sale refusal of the "
+                    + "whole line (reasonCode + reasonText). Irreversible.")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponse(responseCode = "200", description = "Cancel result (cancelled/failed/skipped/unsupported)")
     @ApiResponse(responseCode = "400", description = "Empty selection, duplicated line, quantity over the "
-            + "cancellable amount, or no order line found")
+            + "cancellable amount, no order line found, or a missing / unlisted reason (Coupang reason · 11st "
+            + "reasonCode · reasonText 1~200, FEATURE_2610_17 / D71)")
     @ApiResponse(responseCode = "401", description = "Authentication required")
     @ApiResponse(responseCode = "403", description = "Permission denied (ADMIN role required)")
     public ResponseEntity<ResponseDTO<OrderCancelResult>> cancel(

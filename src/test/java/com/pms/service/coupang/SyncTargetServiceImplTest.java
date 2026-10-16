@@ -22,7 +22,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 /**
- * SyncTargetServiceImpl — 대상 필터(활성 COUPANG)와 셀러 스코프 쿼리 선택 검증.
+ * SyncTargetServiceImpl — target filter (active COUPANG / ELEVENST, FEATURE_2610_17 / D9) and the seller-scoped query.
  */
 @ExtendWith(MockitoExtension.class)
 class SyncTargetServiceImplTest {
@@ -71,5 +71,16 @@ class SyncTargetServiceImplTest {
         assertThat(targets).hasSize(1);
         verify(marketplaceAccountRepository).findBySeller_IdAndIsActiveTrue(7L);
         verify(marketplaceAccountRepository, never()).findByIsActiveTrue();
+    }
+
+    /** FEATURE_2610_17 / D9: an 11st channel is listed like a Coupang one. */
+    @Test
+    void list_includesElevenst() {
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(
+                account(1L, Platform.COUPANG, "셀러A"),
+                account(4L, Platform.ELEVENST, "셀러D")));
+
+        assertThat(service.list(null)).extracting(SyncTargetResponse::getPlatform)
+                .containsExactly("COUPANG", "ELEVENST");
     }
 }

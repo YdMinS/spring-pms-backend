@@ -12,13 +12,14 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 
 /**
- * {@link SyncTargetService} 구현.
+ * {@link SyncTargetService} implementation.
  *
- * 대상 필터는 {@link OrderSyncFacadeImpl} 의 syncEach 와 <b>동일 기준</b>(활성 + COUPANG)이다 —
- * 여기서 나오지 않은 계정은 동기화되지도 않으므로 진행률 분모가 실제와 일치한다.
+ * The target filter is the <b>same rule</b> as {@link OrderSyncFacadeImpl}'s manual syncEach (active + COUPANG or
+ * ELEVENST, FEATURE_2610_17 / D9) — an account not listed here is not synced either, so the progress denominator
+ * matches reality.
  *
- * 매핑은 자격증명을 제외한 필드만 옮긴다({@link SyncTargetResponse} 주석 참고).
- * seller 는 두 finder 모두 {@code @EntityGraph} 로 eager fetch 하므로 LazyInit 위험이 없다.
+ * The mapping copies every field except credentials (see the {@link SyncTargetResponse} comment).
+ * Both finders fetch the seller eagerly with {@code @EntityGraph}, so there is no LazyInit risk.
  */
 @Service
 @RequiredArgsConstructor
@@ -34,7 +35,8 @@ public class SyncTargetServiceImpl implements SyncTargetService {
                 : marketplaceAccountRepository.findBySeller_IdAndIsActiveTrue(sellerId);
 
         return accounts.stream()
-                .filter(account -> Platform.COUPANG.equals(account.getPlatform()))
+                .filter(account -> Platform.COUPANG.equals(account.getPlatform())
+                        || Platform.ELEVENST.equals(account.getPlatform()))
                 .map(this::toResponse)
                 .toList();
     }

@@ -8,28 +8,29 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 클레임(반품·교환) 응답 DTO — GET /api/claims, GET /api/claims/{id} (FEATURE_2609_18).
+ * Claim (return · exchange) response DTO — GET /api/claims, GET /api/claims/{id} (FEATURE_2609_18).
  *
- * {@code platform} 은 처리 액션이 붙기 전인 지금부터 내려보낸다(D5) — 나중에 추가하면 클라이언트 3개를
- * 다시 건드려야 한다. {@code availableActions} 는 실제 액션을 보고 확정했다(FEATURE_2609_21 D1):
- * <b>서버가 내려주고 UI 는 렌더만 한다</b>. 판정의 진입점은 {@code ClaimActionService} 하나이며
- * ({@code ClaimQueryServiceImpl} 은 어댑터를 직접 들지 않는다), 액션이 없는 상태·미지원 플랫폼·
- * 비-ADMIN 사용자에게는 <b>빈 목록</b>이다(예외 아님).
+ * {@code platform} is sent from now on, before claim actions exist (D5) — adding it later would touch the three
+ * clients again. {@code availableActions} was settled against the real actions (FEATURE_2609_21 D1): <b>the server
+ * sends them and the UI only renders</b>. The single entry of the decision is {@code ClaimActionService}
+ * ({@code ClaimQueryServiceImpl} holds no adapter itself); a status without actions, an unsupported platform and a
+ * non-ADMIN user get an <b>empty list</b> (not an exception).
  *
- * {@code collectStatus} 는 교환 회수상태 <b>원문</b>(정규화하지 않는다)이다 — 화면이 이걸 보여주면
- * 사용자가 <b>왜 재발송 버튼이 아직 없는지</b>를 스스로 안다. 한글 라벨은 서버가 만들지 않는다
- * (값 집합이 미확정이라 {@code faultType} 과 같은 규칙: 아는 값만 라벨링하고 나머지는 원문 노출).
+ * {@code collectStatus} is the exchange pickup status <b>as given</b> (not normalized) — shown on screen, the user
+ * can tell <b>why the re-ship button is not there yet</b>. The server makes no Korean label (the value set is not
+ * settled, so the {@code faultType} rule applies: label only known values, show the rest as given).
  *
- * {@code collect*} 는 회수(고객→판매자), {@code reship*} 는 재발송(판매자→고객) 송장이다 —
- * 방향이 다르므로 한 쌍으로 합치지 말 것. 재발송은 교환에만 채워진다.
+ * {@code collect*} is the pickup invoice (customer → seller), {@code reship*} the re-ship invoice (seller →
+ * customer) — opposite directions, do not merge them into one pair. Re-ship is filled for exchanges only.
  *
- * {@code collectInvoiceSource} = {@code PLATFORM}(동기화가 쿠팡에서 읽어온 값) / {@code LOCAL}
- * (쿠팡이 거절해 우리만 기록 → [쿠팡에 다시 보내기] 대상) / {@code null}(출처 불명인 기존 행,
- * 플랫폼 값으로 취급). {@code returnDeliveryType} 은 회수종류 <b>원문</b>이며 화면이 「고객이 직접
- * 보낸 건이라 넣을 송장이 없습니다」 안내를 그리는 근거다(FEATURE_2609_70 / D3·D12).
+ * {@code collectInvoiceSource} = {@code PLATFORM} (read from the marketplace by the sync) / {@code LOCAL} (the
+ * marketplace rejected it and only we recorded it → the resend target, [쿠팡에 다시 보내기] / [마켓에 다시 보내기],
+ * FEATURE_2610_17 / D22) / {@code null} (an older row of unknown source, treated as the platform value).
+ * {@code returnDeliveryType} is the pickup type <b>as given</b> and the basis of the screen notice
+ * 「고객이 직접 보낸 건이라 넣을 송장이 없습니다」 (FEATURE_2609_70 / D3·D12).
  *
- * {@code orderItemId} 가 null 이면 주문 라인 미연결(D12) — 화면은 {@code linked} 로 배지를 띄우고
- * {@code itemName} 으로 최소 정보를 보여준다.
+ * A null {@code orderItemId} means the claim is not linked to an order line (D12) — the screen shows the badge from
+ * {@code linked} and the minimum info from {@code itemName}.
  */
 public record OrderClaimResponse(
         Long id,

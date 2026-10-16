@@ -3,6 +3,7 @@ package com.pms.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
+import com.pms.domain.ElevenstOrderLine;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Order;
 import com.pms.domain.OrderLine;
@@ -12,8 +13,11 @@ import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.dto.request.OrderAcknowledgeRequest;
 import com.pms.fixture.MarketplaceAccountFixture;
+import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.elevenst.ElevenstOrderActions;
+import com.pms.service.elevenst.ElevenstRejectedException;
 import com.pms.service.reservation.InternalShipmentStageService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,6 +33,7 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -36,6 +41,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -60,6 +67,10 @@ class OrderAcknowledgeServiceImplTest {
     private OrderLineRepository orderLineRepository;
     @Mock
     private InternalShipmentStageService internalShipmentStageService;
+    @Mock
+    private ElevenstOrderActions elevenstOrderActions;
+    @Mock
+    private ElevenstOrderLineRepository elevenstOrderLineRepository;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private OrderAcknowledgeServiceImpl service;
@@ -67,7 +78,8 @@ class OrderAcknowledgeServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new OrderAcknowledgeServiceImpl(
-                coupangApiClient, coupangProperties, orderLineRepository, objectMapper, internalShipmentStageService);
+                coupangApiClient, coupangProperties, orderLineRepository, objectMapper, internalShipmentStageService,
+                elevenstOrderActions, elevenstOrderLineRepository);
     }
 
     @Test
@@ -321,5 +333,84 @@ class OrderAcknowledgeServiceImplTest {
                     .append("\",\"succeed\":true,\"resultCode\":\"OK\",\"resultMessage\":\"\"}");
         }
         return "{\"code\":200,\"data\":{\"responseList\":[" + list + "]}}";
+    }
+
+    // ---- FEATURE_2610_17 / D20 · D48 ----
+
+    @Test
+    void elevenst_oneCallPerDeliveryAndProduct_andSucceededGroupBecomesPreparing() {
+        MarketplaceAccount eleven = MarketplaceAccountFixture.elevenstStubBuilder("KEY").id(5L).build();
+        OrderLine a = line(eleven, "D1", "O1", "11", OrderStatus.PAID);
+        OrderLine b = line(eleven, "D1", "O2", "12", OrderStatus.PAID);   // same delivery number, same product
+        OrderLine c = line(eleven, "D1", "O3", "13", OrderStatus.PAID);   // same delivery number, other product
+        given(orderLineRepository.findWithAccountByIdIn(any())).willReturn(List.of(a, b, c));
+        ElevenstOrderLine ma = ElevenstOrderLine.builder().orderLine(a).ordNo("O1").ordPrdSeq("1").prdNo("P1").build();
+        ElevenstOrderLine mb = ElevenstOrderLine.builder().orderLine(b).ordNo("O2").ordPrdSeq("1").prdNo("P1").build();
+        ElevenstOrderLine mc = ElevenstOrderLine.builder().orderLine(c).ordNo("O3").ordPrdSeq("1").prdNo("P2").build();
+        given(elevenstOrderLineRepository.findByOrderLine_IdIn(any())).willReturn(List.of(ma, mb, mc));
+        // lenient: the other group's call takes different arguments on purpose.
+        lenient().doThrow(new IllegalStateException("11번가 거절")).when(elevenstOrderActions).acknowledge(eleven, mc, "D1");
+
+        OrderAcknowledgeResult result = service.acknowledge(request(11L, 12L, 13L));
+
+        verify(elevenstOrderActions).acknowledge(eleven, ma, "D1");
+        verify(elevenstOrderActions, never()).acknowledge(eleven, mb, "D1");
+        assertThat(result.targetBoxes()).isEqualTo(2);
+        assertThat(result.succeeded()).isEqualTo(1);
+        assertThat(result.failed()).extracting(f -> f.shipmentBoxId()).containsExactly("D1");
+        ArgumentCaptor<List<OrderLine>> saved = ArgumentCaptor.forClass(List.class);
+        verify(orderLineRepository).saveAll(saved.capture());
+        assertThat(saved.getValue()).extracting(OrderLine::getId).containsExactly(11L, 12L);
+        assertThat(saved.getValue()).extracting(OrderLine::getStatus).containsOnly(OrderStatus.PREPARING);
+        verify(coupangApiClient, never()).put(anyString(), anyString(), any());
+    }
+
+    // ---- FEATURE_2610_17 / D67 ----
+
+    @Test
+    void elevenst_reservedSaleLine_isSkipped_andNever1634() {
+        MarketplaceAccount eleven = MarketplaceAccountFixture.elevenstStubBuilder("KEY").id(5L).build();
+        OrderLine reserved = line(eleven, "D1", "O1", "11", OrderStatus.PAID);
+        given(orderLineRepository.findWithAccountByIdIn(any())).willReturn(List.of(reserved));
+        ElevenstOrderLine mirror = ElevenstOrderLine.builder().orderLine(reserved).ordNo("O1").ordPrdSeq("1")
+                .prdNo("P1").platformStatus("201").build();
+        given(elevenstOrderLineRepository.findByOrderLine_IdIn(any())).willReturn(List.of(mirror));
+
+        OrderAcknowledgeResult result = service.acknowledge(request(11L));
+
+        verify(elevenstOrderActions, never()).acknowledge(any(), any(), any());
+        assertThat(result.skipped()).extracting(ShipmentConfirmResult.SkippedOrder::orderId).containsExactly("O1");
+        assertThat(result.succeeded()).isZero();
+    }
+
+    // ---- FEATURE_2610_17 / D54 · D57 ----
+
+    @Test
+    void mixedSelection_sendsBothMarkets_andSplitsTheResultPerPlatform() {
+        MarketplaceAccount coupang = account(1L, Platform.COUPANG, "A001");
+        MarketplaceAccount eleven = MarketplaceAccountFixture.elevenstStubBuilder("KEY").id(5L).build();
+        OrderLine c1 = line(coupang, "302012345678", "4000019469460", "1", OrderStatus.PAID);
+        OrderLine e1 = line(eleven, "D9", "O9", "21", OrderStatus.PAID);
+        given(orderLineRepository.findWithAccountByIdIn(any())).willReturn(List.of(c1, e1));
+        given(coupangProperties.getAcknowledgementPath()).willReturn(ACK_PATH);
+        given(coupangApiClient.put(anyString(), anyString(), any())).willReturn(responseAllSuccess("302012345678"));
+        ElevenstOrderLine m1 = ElevenstOrderLine.builder().orderLine(e1).ordNo("O9").ordPrdSeq("1").prdNo("P9").build();
+        given(elevenstOrderLineRepository.findByOrderLine_IdIn(any())).willReturn(List.of(m1));
+        doThrow(new ElevenstRejectedException("취소된 주문 (-3211)", "-3211", "취소된 주문"))
+                .when(elevenstOrderActions).acknowledge(eleven, m1, "D9");
+
+        OrderAcknowledgeResult result = service.acknowledge(request(1L, 21L));
+
+        assertThat(result.targetBoxes()).isEqualTo(2);
+        assertThat(result.succeeded()).isEqualTo(1);
+        assertThat(result.byPlatform()).extracting(OrderAcknowledgeResult.PlatformResult::platform)
+                .containsExactly(Platform.COUPANG, Platform.ELEVENST);
+        assertThat(result.byPlatform().get(0).succeeded()).isEqualTo(1);
+        assertThat(result.byPlatform().get(0).failed()).isEmpty();
+        assertThat(result.byPlatform().get(1).succeeded()).isZero();
+        assertThat(result.byPlatform().get(1).failed())
+                .extracting(ShipmentConfirmResult.FailedBox::shipmentBoxId, ShipmentConfirmResult.FailedBox::resultCode,
+                        ShipmentConfirmResult.FailedBox::message)
+                .containsExactly(tuple("D9", "-3211", "취소된 주문"));
     }
 }

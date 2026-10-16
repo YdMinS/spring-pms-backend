@@ -8,18 +8,19 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 파서 → {@code InquiryUpserter} 사이의 플랫폼 중립 전달 객체 (FEATURE_2609_23 / D3).
+ * Platform-neutral transfer object between a parser and {@code InquiryUpserter} (FEATURE_2609_23 / D3).
  *
- * 파서는 유형별로 <b>완전히 분리</b>돼 있지만(응답 스키마가 한 필드도 겹치지 않는다) 반환 타입은
- * 이것 하나다 — 저장 형태만 같게 맞추는 것이 D1·D3 의 핵심이다.
+ * Parsers are <b>fully separate</b> per type (the response schemas share not one field), but they all return this
+ * one type — keeping only the stored shape the same is the core of D1·D3. 11st fills it from Q&A 1626 and urgent
+ * notices 1796 (FEATURE_2610_17 / D16 · D26).
  *
- * <p>🔴 구매자 연락처·이메일 필드를 추가하지 말 것(D13). 고객센터 응답에는 실려 오지만 담지 않는다.
+ * <p>🔴 Do not add buyer phone / email fields (D13). Call-center (and 11st) responses carry them, but they are not kept.
  *
- * @param externalOrderId  nullable — 주문 없는 상품문의가 정상이다 (D14)
- * @param externalProductId nullable — sellerProductId, 상품문의 전용
- * @param itemName         nullable — 상품문의에는 없어서 셀 연결(D15) 때 채운다
- * @param category         nullable — receiptCategory 원문, 고객센터 전용
- * @param platformStatus   원문 상태 (정규화 손실 없이 보존, D7)
+ * @param externalOrderId   nullable — a product Q&A without an order is normal (D14)
+ * @param externalProductId nullable — product Q&A only: Coupang sellerProductId · 11st prdNo ({@code brdInfoClfNo})
+ * @param itemName          nullable — Coupang product Q&A has none and is filled by the cell link (D15); 11st sends prdNm
+ * @param category          nullable — Coupang call-center receiptCategory raw value; 11st leaves it null
+ * @param platformStatus    raw status (kept without normalization loss, D7)
  */
 public record InquiryRecord(
         InquiryType type,

@@ -3,6 +3,8 @@ package com.pms.repository;
 import com.pms.domain.ProductListingOption;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.Collection;
@@ -48,6 +50,20 @@ public interface ProductListingOptionRepository extends JpaRepository<ProductLis
      * @return true if exists, false otherwise
      */
     boolean existsByPlatformOptionId(String platformOptionId);
+
+    /**
+     * The option an 11st order line was sold as (FEATURE_2610_17 / D17): our option id read from the order's
+     * {@code sellerStockCd}, accepted only when it belongs to an 11st listing of the same sales channel (the
+     * account's seller) whose 11st product number is the order's {@code prdNo}.
+     *
+     * @return empty when the id belongs to another channel, another platform or another 11st product
+     */
+    @Query("select o from ProductListingOption o join o.productListing l, MarketplaceAccount a "
+            + "where o.id = :optionId and a.id = :accountId and l.seller = a.seller "
+            + "and l.platform = com.pms.domain.Platform.ELEVENST and l.platformProductId = :prdNo")
+    Optional<ProductListingOption> findElevenstOrderOption(@Param("optionId") Long optionId,
+                                                           @Param("accountId") Long accountId,
+                                                           @Param("prdNo") String prdNo);
 
     /**
      * Delete all options for a specific product listing.

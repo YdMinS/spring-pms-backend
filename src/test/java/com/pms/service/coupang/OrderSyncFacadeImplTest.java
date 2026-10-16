@@ -1,6 +1,7 @@
 package com.pms.service.coupang;
 
 import com.pms.config.CoupangProperties;
+import com.pms.config.ElevenstProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.exception.ResourceNotFoundException;
@@ -9,6 +10,7 @@ import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.security.TenantContext;
 import com.pms.service.claim.ClaimOrderBackfillService;
 import com.pms.service.claim.ClaimSyncAdapter;
+import com.pms.service.elevenst.ElevenstOrderSyncService;
 import com.pms.service.inquiry.InquirySyncAdapter;
 import com.pms.service.coupang.CoupangOrderSyncService.SyncResult;
 import com.pms.service.coupang.CoupangReturnSyncService.CancelSyncResult;
@@ -65,6 +67,12 @@ class OrderSyncFacadeImplTest {
 
     @Mock private InquirySyncAdapter inquirySyncAdapter;
 
+    /** FEATURE_2610_17 / D11 — the 11st round the facade hands an 11st account to. */
+    @Mock private ElevenstOrderSyncService elevenstOrderSyncService;
+
+    /** D10 — real instance so a test can switch 11st calls off. */
+    private final ElevenstProperties elevenstProperties = new ElevenstProperties();
+
     private static final Instant LOCK_T0 = Instant.parse("2026-09-15T00:00:00Z");
 
     /**
@@ -94,7 +102,7 @@ class OrderSyncFacadeImplTest {
         facade = new OrderSyncFacadeImpl(marketplaceAccountRepository, coupangProperties,
                 coupangOrderSyncService, coupangReturnSyncService, syncStatusRecorder,
                 claimOrderBackfillService, claimSyncAdapters, inquirySyncAdapters,
-                new SameThreadExecutorService(), accountSyncLock);
+                new SameThreadExecutorService(), accountSyncLock, elevenstOrderSyncService, elevenstProperties);
     }
 
     @AfterEach
@@ -750,5 +758,49 @@ class OrderSyncFacadeImplTest {
 
         verify(coupangOrderSyncService, never()).syncAccount(any(), any(SyncWindow.class));
         assertThat(result.skippedAccounts()).isEqualTo(1);
+    }
+
+    // ---- FEATURE_2610_17 / D9 · D10 · D11 ----
+
+    private MarketplaceAccount elevenstAccount(Long id) {
+        return MarketplaceAccountFixture.elevenstStubBuilder("KEY-" + id).id(id).tenantId(1L).build();
+    }
+
+    @Test
+    void sync_elevenstAccount_runsElevenstRound_andNoCoupangStep() {
+        MarketplaceAccount acc = elevenstAccount(5L);
+        given(marketplaceAccountRepository.findById(5L)).willReturn(Optional.of(acc));
+        given(elevenstOrderSyncService.sync(acc, OrderSyncPreset.QUICK, false))
+                .willReturn(new OrderSyncResult(null, 2, 1, 0, 0));
+
+        OrderSyncResult result = facade.sync(5L);
+
+        assertThat(result.newOrders()).isEqualTo(2);
+        verify(elevenstOrderSyncService).sync(acc, OrderSyncPreset.QUICK, false);
+        verifyNoInteractions(coupangOrderSyncService, coupangReturnSyncService, claimOrderBackfillService);
+    }
+
+    @Test
+    void scheduledRound_skipsElevenst_whenOutboundDisabled() {
+        elevenstProperties.setOutboundEnabled(false);
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(elevenstAccount(5L)));
+
+        OrderSyncResult result = facade.syncAll(OrderSyncPreset.QUICK);
+
+        assertThat(result.skippedAccounts()).isZero();
+        verifyNoInteractions(elevenstOrderSyncService, syncStatusRecorder);
+    }
+
+    @Test
+    void manualRound_runsElevenst_evenWhenOutboundDisabled() {
+        elevenstProperties.setOutboundEnabled(false);
+        MarketplaceAccount acc = elevenstAccount(5L);
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(acc));
+        given(elevenstOrderSyncService.sync(acc, OrderSyncPreset.QUICK, false))
+                .willReturn(new OrderSyncResult(null, 0, 0, 0, 0));
+
+        facade.syncAll();
+
+        verify(elevenstOrderSyncService).sync(acc, OrderSyncPreset.QUICK, false);
     }
 }

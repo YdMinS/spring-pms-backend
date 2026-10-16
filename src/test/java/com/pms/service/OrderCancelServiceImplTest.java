@@ -6,6 +6,7 @@ import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderCancelAction;
 import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.ElevenstOrderLine;
 import com.pms.domain.OrderCancelReason;
 import com.pms.domain.Order;
 import com.pms.domain.OrderLine;
@@ -16,10 +17,13 @@ import com.pms.domain.Seller;
 import com.pms.dto.request.OrderCancelRequest;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CoupangOrderLineRepository;
+import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.OrderCancelActionRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangOrderStatus;
+import com.pms.service.elevenst.ElevenstRejectedException;
+import com.pms.service.elevenst.ElevenstSellerActions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,6 +40,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -68,6 +73,10 @@ class OrderCancelServiceImplTest {
     private CoupangOrderLineRepository coupangOrderLineRepository;
     @Mock
     private OrderCancelActionRepository orderCancelActionRepository;
+    @Mock
+    private ElevenstSellerActions elevenstSellerActions;
+    @Mock
+    private ElevenstOrderLineRepository elevenstOrderLineRepository;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private OrderCancelServiceImpl service;
@@ -75,7 +84,8 @@ class OrderCancelServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new OrderCancelServiceImpl(coupangApiClient, coupangProperties,
-                orderLineRepository, coupangOrderLineRepository, orderCancelActionRepository, objectMapper);
+                orderLineRepository, coupangOrderLineRepository, orderCancelActionRepository, objectMapper,
+                elevenstSellerActions, elevenstOrderLineRepository);
     }
 
     @AfterEach
@@ -166,7 +176,7 @@ class OrderCancelServiceImplTest {
         assertThat(result.unsupported()).extracting(OrderCancelResult.SkippedLine::orderItemId)
                 .containsExactly(11L, 12L);
         assertThat(result.unsupported().get(0).reason())
-                .isEqualTo("쿠팡 주문이 아니거나 배송번호가 없습니다");
+                .isEqualTo("쿠팡 · 11번가 주문이 아니거나 배송번호가 없습니다");
     }
 
     @Test
@@ -335,6 +345,7 @@ class OrderCancelServiceImplTest {
         assertThat(rows).allSatisfy(row -> {
             assertThat(row.getReason()).isEqualTo(OrderCancelReason.WRONG_PRICE);
             assertThat(row.getPlatformReasonCode()).isEqualTo("CCPRER");
+            assertThat(row.getReasonText()).isNull();
             assertThat(row.getCreatedBy()).isEqualTo("admin@oclyx.com");
             // 🔴 이력의 status_at_send 는 플랫폼 원문이다(PLAN D1) — 중립 이름을 넣으면 한 컬럼에 두 어휘가 섞인다.
             assertThat(row.getStatusAtSend()).isEqualTo("ACCEPT");
@@ -344,6 +355,86 @@ class OrderCancelServiceImplTest {
         assertThat(rows.get(0).getReceiptId()).isEqualTo("90001");
         assertThat(rows.get(1).isSucceeded()).isFalse();
         assertThat(rows.get(1).getReceiptType()).isNull();
+    }
+
+    // ---- FEATURE_2610_17 / D61: 11st sale refusal ----
+
+    @Test
+    void elevenstLine_goesTo1638AsAWholeLine_andIsReportedWithZeroQuantity() {
+        MarketplaceAccount eleven = MarketplaceAccountFixture.elevenstStubBuilder("KEY").id(9L).build();
+        OrderLine line = line(21L, eleven, "D1", "O1", "P1", OrderStatus.PAID, 3, 0, 0);
+        ElevenstOrderLine mirror = ElevenstOrderLine.builder().orderLine(line).ordNo("O1").ordPrdSeq("1").build();
+        given(orderLineRepository.findWithAccountByIdIn(any())).willReturn(List.of(line));
+        given(elevenstOrderLineRepository.findByOrderLine_IdIn(List.of(21L))).willReturn(List.of(mirror));
+        given(elevenstSellerActions.rejectOrder(eleven, mirror, "08", "전 옵션 품절"))
+                .willReturn(new ElevenstSellerActions.Outcome("0", "정상 처리"));
+
+        OrderCancelResult result = service.cancel(new OrderCancelRequest(List.of(line(21L, 1)), null, "08",
+                " 전 옵션 품절 "));
+
+        verify(elevenstSellerActions).rejectOrder(eleven, mirror, "08", "전 옵션 품절");
+        verify(coupangApiClient, never()).post(anyString(), anyString(), any());
+        assertThat(result.cancelled()).extracting(OrderCancelResult.CancelledLine::cancelledQty,
+                OrderCancelResult.CancelledLine::receiptType)
+                .containsExactly(tuple(0, "ELEVENST_SALE_REFUSAL"));
+    }
+
+    @Test
+    void elevenstLine_withAReasonCodeOutsideTheList_is400_andNothingIsSent_D71() {
+        MarketplaceAccount eleven = MarketplaceAccountFixture.elevenstStubBuilder("KEY").id(9L).build();
+        OrderLine line = line(21L, eleven, "D1", "O1", "P1", OrderStatus.PREPARING, 1, 0, 0);
+        given(orderLineRepository.findWithAccountByIdIn(any())).willReturn(List.of(line));
+
+        assertThatThrownBy(() -> service.cancel(new OrderCancelRequest(List.of(line(21L, 1)),
+                OrderCancelReason.OUT_OF_STOCK, "05", "품절")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("취소 사유를 선택하세요");
+        verify(elevenstSellerActions, never()).rejectOrder(any(), any(), any(), any());
+        verify(orderCancelActionRepository, never()).save(any());
+    }
+
+    @Test
+    void coupangLine_withoutReason_is400_andNothingIsSent_D71() {
+        MarketplaceAccount account = account(1L, Platform.COUPANG, "A001", "wing-user");
+        OrderLine line = line(11L, account, "700001", "300001", "5001", OrderStatus.PAID, 1, 0, 0);
+        given(orderLineRepository.findWithAccountByIdIn(any())).willReturn(List.of(line));
+
+        assertThatThrownBy(() -> service.cancel(request(null, line(11L, 1))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("취소 사유를 선택하세요");
+        verify(coupangApiClient, never()).post(anyString(), anyString(), any());
+        verify(orderCancelActionRepository, never()).save(any());
+    }
+
+    @Test
+    void elevenstSaleRefusal_successAndFailure_eachLeaveOneHistoryRow_D70() {
+        MarketplaceAccount eleven = MarketplaceAccountFixture.elevenstStubBuilder("KEY").id(9L).build();
+        OrderLine ok = line(21L, eleven, "D1", "O1", "P1", OrderStatus.PAID, 3, 1, 0);
+        OrderLine refused = line(22L, eleven, "D2", "O2", "P2", OrderStatus.PAID, 1, 0, 0);
+        ElevenstOrderLine okMirror = ElevenstOrderLine.builder().orderLine(ok).ordNo("O1").ordPrdSeq("1")
+                .platformStatus("202").build();
+        ElevenstOrderLine refusedMirror = ElevenstOrderLine.builder().orderLine(refused).ordNo("O2").ordPrdSeq("1")
+                .platformStatus("201").build();
+        given(orderLineRepository.findWithAccountByIdIn(any())).willReturn(List.of(ok, refused));
+        given(elevenstOrderLineRepository.findByOrderLine_IdIn(List.of(21L, 22L)))
+                .willReturn(List.of(okMirror, refusedMirror));
+        given(elevenstSellerActions.rejectOrder(eleven, okMirror, "08", "품절"))
+                .willReturn(new ElevenstSellerActions.Outcome("0", "정상 처리"));
+        willThrow(new ElevenstRejectedException("거절 (-21004)", "-21004", "거절"))
+                .given(elevenstSellerActions).rejectOrder(eleven, refusedMirror, "08", "품절");
+
+        service.cancel(new OrderCancelRequest(List.of(line(21L, 1), line(22L, 1)), null, "08", "품절"));
+
+        ArgumentCaptor<OrderCancelAction> captor = ArgumentCaptor.forClass(OrderCancelAction.class);
+        verify(orderCancelActionRepository, times(2)).save(captor.capture());
+        assertThat(captor.getAllValues()).extracting(OrderCancelAction::getReason,
+                        OrderCancelAction::getPlatformReasonCode, OrderCancelAction::getReasonText,
+                        OrderCancelAction::getQuantity, OrderCancelAction::getStatusAtSend,
+                        OrderCancelAction::isSucceeded, OrderCancelAction::getReceiptType,
+                        OrderCancelAction::getResultCode, OrderCancelAction::getResultMessage)
+                .containsExactly(
+                        tuple(null, "08", "품절", 2, "202", true, "ELEVENST_SALE_REFUSAL", "0", "정상 처리"),
+                        tuple(null, "08", "품절", 1, "201", false, "ELEVENST_SALE_REFUSAL", "-21004", "거절"));
     }
 
     // ── 헬퍼 ──────────────────────────────────────────────────────────────

@@ -52,10 +52,11 @@ public class ClaimActionServiceImpl implements ClaimActionService {
     private static final String ROLE_ADMIN = "ROLE_ADMIN";
 
     /**
-     * 쿠팡이 거절해도 <b>우리 장부에 기록하고 200 으로</b> 돌려주는 액션 (FEATURE_2609_70 / D6).
+     * Actions that <b>record in our ledger and return 200</b> even when the marketplace (Coupang · 11st) rejects
+     * them (FEATURE_2609_70 / D6 · FEATURE_2610_17 / D22).
      *
-     * <p>🔴 이 집합 밖의 액션은 기존대로 {@link ClaimActionFailedException}(→502)이다 —
-     * 승인·거부가 실패했는데 200 을 주면 "됐다"고 읽힌다.
+     * <p>🔴 Every action outside this set stays {@link ClaimActionFailedException} (→ 502) — a 200 for a failed
+     * approve or reject reads as "done".
      */
     private static final Set<ClaimAction> COLLECT_INVOICE_ACTIONS = EnumSet.of(
             ClaimAction.RETURN_COLLECT_INVOICE, ClaimAction.RETURN_COLLECT_INVOICE_RESEND);
@@ -120,7 +121,7 @@ public class ClaimActionServiceImpl implements ClaimActionService {
         String invoiceNumber = InvoiceNumbers.normalize(request.invoiceNumber());
         String summary = summarize(request, siblings, invoiceNumber);
         ClaimActionCommand command = new ClaimActionCommand(action, request.deliveryCompanyCode(),
-                invoiceNumber, request.regNumber(), request.rejectCode());
+                invoiceNumber, request.regNumber(), request.rejectCode(), request.reasonText());
 
         ClaimActionOutcome outcome;
         try {
@@ -153,7 +154,7 @@ public class ClaimActionServiceImpl implements ClaimActionService {
                     outcome.succeeded() ? CollectInvoiceSource.PLATFORM : CollectInvoiceSource.LOCAL);
             log.info("회수 송장 액션 완료: claim={} action={} receipt={} lines={} localRecordOnly={}",
                     claim.getId(), action, claim.getExternalClaimId(), siblings.size(), localRecordOnly);
-            return response;                    // 🔴 쿠팡이 거절해도 예외를 던지지 않는다 → HTTP 200
+            return response;                    // 🔴 No exception even when the marketplace rejects → HTTP 200
         }
 
         if (!outcome.succeeded()) {

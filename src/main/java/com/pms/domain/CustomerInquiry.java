@@ -9,29 +9,31 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 고객문의 헤더 (FEATURE_2609_23 / PLAN §3 · D1).
+ * Customer inquiry header (FEATURE_2609_23 / PLAN §3 · D1).
  *
- * 유형이 다른 두 문의(상품문의 · 고객센터문의)를 <b>단일 테이블</b>에 담는다(D1). 두 쿠팡 응답은 한
- * 필드도 겹치지 않지만 사용자가 하는 일은 같아서, 실제로 다른 것은 파싱과 전송뿐이다 — 테이블을
- * 유형·플랫폼마다 나누면 조회·화면·서비스가 그 수만큼 늘어난다({@link OrderClaim} 과 같은 판단).
+ * Inquiries of two different types (product Q&A · call-center) live in <b>one table</b> (D1). The two Coupang responses
+ * share not one field, but the user does the same thing with both, so only parsing and sending differ — splitting the
+ * table per type or platform would multiply queries, screens and services by that count (same reasoning as
+ * {@link OrderClaim}). 11st product Q&A and urgent notices use the same two types (FEATURE_2610_17 / D16 · D26).
  *
- * <p>채널은 새 엔티티가 아니라 {@link MarketplaceAccount} 그대로다(D2). UNIQUE(marketplace_account_id,
- * inquiry_type, external_inquiry_id) 로 멱등 upsert 되며, {@code inquiry_type} 이 키에 <b>있어야 한다</b> —
- * 상품문의 {@code inquiryId} 와 고객센터 {@code inquiryId} 는 다른 시퀀스라 같은 숫자가 겹칠 수 있다.
+ * <p>The channel is not a new entity but {@link MarketplaceAccount} itself (D2). Idempotent upsert by
+ * UNIQUE(marketplace_account_id, inquiry_type, external_inquiry_id), and {@code inquiry_type} <b>must</b> be in the key —
+ * product-Q&A {@code inquiryId} and call-center {@code inquiryId} are separate sequences and can collide.
  *
- * <p>주문 연결은 {@code external_order_id} <b>1건</b>만 저장한다(D14). 상품문의 {@code orderIds} 가
- * 2건 이상이면 첫 건만 쓰고 경고만 남긴다. 매칭에 실패해도 문의는 저장하고 {@code orderLine} 만
- * null 로 둔다(D15) — 상품문의는 애초에 주문 없는 질문이 다수라 미연결이 정상이며, 그때 우측 패널이
- * 상품 정보라도 보여주도록 {@code external_item_id}(vendorItemId)로 {@link ProductListing} 을 잇는다.
+ * <p>Only <b>one</b> {@code external_order_id} is stored for the order link (D14). When a product Q&A has 2+
+ * {@code orderIds} the first is used with a warning. A failed match still stores the inquiry with {@code orderLine}
+ * null (D15) — most product questions have no order, so no link is normal, and the right panel then still shows the
+ * product: {@link ProductListing} is linked by {@code external_item_id} (Coupang vendorItemId) or by the 11st product
+ * number ({@code external_product_id}, FEATURE_2610_17 / D16).
  *
- * <p>🔴 PII 를 저장하지 않는다(D13) — {@code buyerPhone}·{@code buyerEmail} 컬럼을 추가하지 말 것.
- * 고객센터 응답에는 구매자 연락처가 실려 오지만 파싱조차 하지 않는다. 쿠팡 상담사 이름
- * ({@code receptionistName})은 고객 PII 가 아니라 답변 행에 저장한다.
+ * <p>🔴 No PII is stored (D13) — do not add {@code buyerPhone} · {@code buyerEmail} columns.
+ * Call-center responses carry the buyer's contact, but it is not even parsed. The Coupang agent's name
+ * ({@code receptionistName}) is not customer PII and is stored on the reply row.
  *
- * <p>⚠️ {@link #replies} 는 <b>목록 조회에서 fetch 하지 않는다</b>(PLAN §3) — 상세만 스레드를 그린다.
- * 쓰기 경로({@code InquiryUpserter})도 이 컬렉션을 건드리지 않고 {@code CustomerInquiryReplyRepository}
- * 로만 다룬다: 초기화되지 않은 컬렉션이라야 {@code toBuilder()} 재조립 + {@code save()} 가
- * orphanRemoval 컬렉션을 갈아끼우지 않는다.
+ * <p>⚠️ {@link #replies} is <b>not fetched by the list query</b> (PLAN §3) — only the detail draws the thread.
+ * The write path ({@code InquiryUpserter}) does not touch this collection either and goes through
+ * {@code CustomerInquiryReplyRepository} only: only an uninitialized collection keeps {@code toBuilder()} +
+ * {@code save()} from replacing the orphanRemoval collection.
  */
 @Entity
 @Table(name = "customer_inquiry",
@@ -67,20 +69,20 @@ public class CustomerInquiry extends BaseEntity {
     private InquiryType inquiryType;
 
     @Column(name = "external_inquiry_id", nullable = false, length = 100)
-    private String externalInquiryId;               // 쿠팡 inquiryId (유형마다 다른 시퀀스)
+    private String externalInquiryId;               // Coupang inquiryId (one sequence per type) · 11st brdInfoNo / emerNtceSeq
 
     @Column(name = "external_item_id", length = 100)
-    private String externalItemId;                  // vendorItemId (고객센터는 배열 → 첫 값)
+    private String externalItemId;                  // Coupang vendorItemId (call center: array → first) · 11st ordPrdSeq (urgent notice)
 
     @Column(name = "external_order_id", length = 100)
     private String externalOrderId;                 // nullable — 주문 없는 상품문의가 정상이다 (D14)
 
     @Column(name = "external_product_id", length = 100)
-    private String externalProductId;               // sellerProductId — 상품문의 전용
+    private String externalProductId;               // product Q&A only: Coupang sellerProductId · 11st prdNo (brdInfoClfNo)
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "product_listing_id")
-    private ProductListing productListing;          // vendorItemId 로 연결한 셀 (D15) — 실패 시 null
+    private ProductListing productListing;          // cell linked by Coupang vendorItemId / 11st prdNo (D15 · FEATURE_2610_17 / D16) — null on failure
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "order_line_id")
@@ -100,10 +102,10 @@ public class CustomerInquiry extends BaseEntity {
     private InquiryStatus status;                   // 정규화 상태 (§3.1)
 
     @Column(name = "platform_status", nullable = false, length = 50)
-    private String platformStatus;                  // 원문 (ANSWERED / progress/requestAnswer ...)
+    private String platformStatus;                  // raw (Coupang ANSWERED / progress/requestAnswer ... · 11st Y·N / emerNtceCrntCd)
 
     @Column(name = "inquired_at", nullable = false)
-    private LocalDateTime inquiredAt;               // 쿠팡 inquiryAt — 슬라이스(D8)·정렬의 기준
+    private LocalDateTime inquiredAt;               // Coupang inquiryAt · 11st createDt — base of the slices (D8) and sorting
 
     @Column(name = "answered_at")
     private LocalDateTime answeredAt;

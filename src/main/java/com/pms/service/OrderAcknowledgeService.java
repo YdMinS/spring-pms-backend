@@ -3,24 +3,28 @@ package com.pms.service;
 import com.pms.dto.request.OrderAcknowledgeRequest;
 
 /**
- * 발주처리 레그: 선택한 주문 라인 → 박스 dedupe → 쿠팡 발주처리(결제완료→상품준비중) 전송.
+ * Order-confirmation leg: chosen order lines → box dedupe → marketplace order confirmation (paid → preparing) —
+ * Coupang acknowledgement and 11st 1634 (FEATURE_2610_17 / D20 · D48).
  *
- * <p>일괄(목록 체크)과 개별(주문 상세 버튼)이 <b>같은 메서드</b>를 쓴다(PLAN 2609_17 D6).
- * 조회는 읽기 전용. 단, 성공한 박스의 {@code status} 만 {@code INSTRUCT} 로 갱신한다(D3) —
- * 그 외 필드·행은 동기화({@code OrderSyncFacade}) 전담.
+ * <p>Bulk (list check) and single (order-detail button) use <b>the same method</b> (PLAN 2609_17 D6).
+ * Reads only, except the {@code status} of the succeeded boxes, which becomes {@code PREPARING} (D3) —
+ * every other field and row belongs to the sync ({@code OrderSyncFacade}).
  *
- * ⚠️ <b>이 서비스를 자동으로 호출하지 말 것</b>(2609_17 D4). 자동 호출의 예외는 <b>사용자가 만든 예약 발송의 실행</b>(FEATURE_2609_75 / D6)뿐이다 —
- *    [지금 발송]의 내부 단계 분기(D27)는 사용자가 누른 즉시 호출이라 자동 호출이 아니다. 동기화·다른 스케줄러·다른 서비스는 여전히 부르지 않는다.
- * ⚠️ 발주처리는 <b>되돌릴 수 없다</b> — 쿠팡에 INSTRUCT→ACCEPT 전환 API 가 없다.
+ * ⚠️ <b>Never call this service automatically</b> (2609_17 D4). The only automatic caller is <b>the run of a
+ *    reservation the user made</b> (FEATURE_2609_75 / D6) — the internal-stage branch of [지금 발송] (D27) is a call the
+ *    user pressed, not an automatic one. The sync, other schedulers and other services still never call it.
+ * ⚠️ Order confirmation <b>cannot be undone</b> — Coupang has no INSTRUCT→ACCEPT API, and after an 11st confirmation the
+ *    buyer can no longer cancel alone.
  */
 public interface OrderAcknowledgeService {
 
     /**
-     * 선택한 라인들이 속한 박스를 계정별로 묶어 쿠팡 발주처리 API 로 보내고 결과를 집계한다.
+     * Groups the boxes of the chosen lines per account, sends them to the marketplace confirmation API (Coupang per
+     * box chunk · 11st per delivery number and product number) and sums the results.
      *
-     * @param request 사용자가 체크한 order_line id 목록(1~500)
-     * @return 전개/전송/집계 결과
-     * @throws IllegalArgumentException 유효한 라인이 하나도 없을 때(→ 400)
+     * @param request order_line ids the user checked (1~500)
+     * @return expand / send / sum result
+     * @throws IllegalArgumentException when not one valid line exists (→ 400)
      */
     OrderAcknowledgeResult acknowledge(OrderAcknowledgeRequest request);
 

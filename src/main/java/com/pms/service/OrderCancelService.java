@@ -6,25 +6,32 @@ import com.pms.service.claim.ActionChoice;
 import java.util.List;
 
 /**
- * 발송 전 주문 취소 레그: 선택한 라인×수량 → 계정·주문·박스 그룹 → 쿠팡 취소 API 전송 (FEATURE_2609_25).
+ * Seller cancel before shipping: chosen lines × quantity → account · order · box groups → the Coupang cancel API
+ * (FEATURE_2609_25); an 11st line goes to the 11st sale refusal 1638 of the whole line instead (FEATURE_2610_17 /
+ * D61).
  *
- * <p>결제완료(ACCEPT)는 <b>즉시취소</b>, 상품준비중(INSTRUCT)은 <b>출고중지</b>가 된다 — 어느 쪽인지는
- * 쿠팡 응답의 {@code receiptType} 이 알려주고, 그 값에 따라 로컬 write-back 컬럼이 갈린다(PLAN 2609_25 D7).
+ * <p>Coupang: paid (ACCEPT) becomes an <b>instant cancel</b>, preparing (INSTRUCT) a <b>shipment stop</b> — which one
+ * the Coupang response's {@code receiptType} tells, and the local write-back column follows it (PLAN 2609_25 D7).
+ * 11st: the line is not written here — the next sync reads the cancel (D14).
  *
- * ⚠️ <b>이 서비스를 자동으로 호출하지 말 것</b>(D12). 동기화·스케줄러·다른 서비스가 부르면 "무엇을
- *    취소할지는 판매자가 정한다"는 결정이 깨진다. 호출자는 컨트롤러 하나뿐이다.
- * ⚠️ 취소는 <b>되돌릴 수 없고</b> 쿠팡 판매자 점수(주문이행)를 떨어뜨린다 — 확인 다이얼로그가 화면 계약이다(D13).
- * ⚠️ 발주처리({@link OrderAcknowledgeService})와 한 클래스에 두지 않는다 — 그쪽은 박스 단위·수량 없음,
- *    여기는 옵션 단위·수량 있음이라 그룹핑 규칙이 섞인다.
+ * ⚠️ <b>Never call this service automatically</b> (D12). If the sync, a scheduler or another service called it, the
+ *    decision "the seller decides what to cancel" would break. The only caller is the controller.
+ * ⚠️ A cancel <b>cannot be undone</b> and lowers the marketplace seller score (Coupang order fulfilment · 11st credit
+ *    score unless the reason is 「고객변심」) — the confirm dialog is the screen contract (D13 · D61).
+ * ⚠️ Not in one class with order confirmation ({@link OrderAcknowledgeService}) — that one is box unit without
+ *    quantity, this one option unit with quantity (11st: the whole line), and the grouping rules would mix.
  */
 public interface OrderCancelService {
 
     /**
-     * 선택한 라인들을 계정→주문→박스로 묶어 쿠팡 취소 API 로 보내고 결과를 집계한다.
+     * Groups the chosen Coupang lines by account → order → box and sends them to the Coupang cancel API; 11st lines go
+     * one by one to the 11st sale refusal (1638, whole line — FEATURE_2610_17 / D61). Results are collected per line.
      *
-     * @param request 취소할 라인×수량 목록(1~50)과 사유
-     * @return 라인 단위 결과 4종(cancelled/failed/skipped/unsupported)
-     * @throws IllegalArgumentException 라인 id 중복 · 유효한 라인 없음 · 취소 가능 수량 초과(→ 400, 전송 전)
+     * @param request lines × quantity (1~50) and the reason (Coupang {@code reason} · 11st {@code reasonCode} +
+     *                {@code reasonText})
+     * @return the four per-line result lists (cancelled / failed / skipped / unsupported)
+     * @throws IllegalArgumentException duplicate line id · no valid line · quantity over the cancellable count ·
+     *                                  missing reason (→ 400, before sending)
      */
     OrderCancelResult cancel(OrderCancelRequest request);
 

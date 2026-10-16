@@ -8,20 +8,22 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * 주문 라인 응답 DTO (GET /api/orders).
+ * Order line response DTO (GET /api/orders).
  *
- * <p>주문 3층(orders → order_shipment → order_line)과 쿠팡 거울(coupang_order_line)을 화면 한 줄로 접는다.
- * raw(JSON 원본)·민감정보는 제외해 목록을 가볍게 유지하고, 파생값 purchasableQty(발주가능수량)를 미리
- * 계산해 노출한다. 고객 <b>이름</b>(주문자·수취인)만 포함한다(FEATURE_2609_06 / D5) — 연락처·주소는 애초에 저장하지 않는다.
+ * <p>Folds the three order layers (orders → order_shipment → order_line) and the platform mirror
+ * ({@code coupang_order_line} · {@code elevenst_order_line}, FEATURE_2610_17 / D5) into one screen row. raw (the
+ * original payload) and sensitive data are left out to keep the list light, and the derived purchasableQty is
+ * computed ahead. Only customer <b>names</b> (orderer · receiver) are included (FEATURE_2609_06 / D5) — contacts and
+ * addresses are never stored in the first place.
  *
- * <p>🔴 {@code status} 는 <b>중립 상태</b>({@code OrderStatus} 이름)다 — 쿠팡 원문은 {@code platformStatus}
- * 로 따로 내려간다(FEATURE_2609_26 / PLAN D4). 라벨은 클라이언트가 중립 값으로 만든다.
- * <p>🔴 {@code effectiveStatus} 는 <b>없앴다</b> — {@code status} 가 전량취소를 {@code CANCELLED} 로
- * 표현한다(PLAN D26, 판정은 서버 소유). {@code cancelled} 는 배지·필터용으로 남긴다.
+ * <p>🔴 {@code status} is the <b>neutral status</b> ({@code OrderStatus} name) — the marketplace's original goes
+ * separately as {@code platformStatus} (FEATURE_2609_26 / PLAN D4). Clients build labels from the neutral value.
+ * <p>🔴 {@code effectiveStatus} is <b>gone</b> — {@code status} expresses a full cancel as {@code CANCELLED}
+ * (PLAN D26, the server owns the decision). {@code cancelled} stays for badges and filters.
  *
- * <p>⚠️ 이름은 {@code OrderItemResponse} 를 유지한다 — DTO 이름을 바꾸면 클라이언트 2개의 타입까지
- * 같이 흔들리는데 이 조각의 목적이 아니다.
- * <p>⚠️ 배송비는 담지 않는다 — 박스(order_shipment) 단위라 라인에 복제하면 합계가 중복된다.
+ * <p>⚠️ The name stays {@code OrderItemResponse} — renaming the DTO would shake the types of both clients, which
+ * is not this piece's purpose.
+ * <p>⚠️ No shipping fee — it is per box (order_shipment); copying it to lines would double the totals.
  */
 @Getter
 @AllArgsConstructor
@@ -32,7 +34,7 @@ public class OrderItemResponse {
     private String platform;
     private String externalOrderId;
     private String externalBoxId;       // = order_shipment.external_shipment_id (박스 없으면 null)
-    private String externalItemId;      // = coupang_order_line.vendor_item_id (옵션 매핑 검증용)
+    private String externalItemId;      // = coupang_order_line.vendor_item_id · elevenst_order_line.prd_stck_no (option mapping check)
     private String itemName;
     private String ordererName;         // 주문자 이름 (없으면 null)
     private String receiverName;        // 수취인 이름 (없으면 null)
@@ -52,4 +54,7 @@ public class OrderItemResponse {
     private BigDecimal discountAmount;          // 총 할인
     private BigDecimal platformDiscountAmount;  // 플랫폼 부담 할인
     // raw(JSON 원본)는 응답에서 제외 — 목록 가벼움 유지
+    private boolean visitPickup;        // 11st visit-pickup order (raw visitDlvYn = Y) — FEATURE_2610_17 / D66
+    private boolean reservedSale;       // 11st reserved-sale paid order (raw code 201) — FEATURE_2610_17 / D67
+    private boolean stockConfirmSent;   // 11st reserved-sale [입고완료 처리] already sent — FEATURE_2610_17 / D67
 }

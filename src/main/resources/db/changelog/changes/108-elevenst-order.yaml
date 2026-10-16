@@ -1,0 +1,147 @@
+# 11st order extension + 11st cancel requests (FEATURE_2610_17 / D5 · D40 · D43).
+#   elevenst_order_line = the 11st mirror of one order_line (1:1, UNIQUE order_line_id). It owns the 11st natural key
+#   (marketplace_account_id, ord_no, ord_prd_seq) — the neutral core gets no 11st column (2609_26 D2).
+#   raw = the allow-listed fields of the order row only (D43): no address, phone, request text or member id.
+#   elevenst_cancel_request = one 11st cancel claim (ordPrdCnSeq). hold_qty / cancel_qty of the order line are
+#   re-summed from this table on every sync (D40). order_line_id stays NULL until the order line is loaded.
+#   elevenst_order_line.stock_confirm_sent_at = when [입고완료 처리] (1773) was sent for a reserved-sale line (D67).
+#   order_cancel_action also keeps the 11st sale refusal (1638): reason becomes nullable (11st rows leave it NULL,
+#   Coupang rows keep it — the server checks, D71) and reason_text holds the seller's text (D70). receipt_type widens
+#   20 -> 30 so the 21-character ELEVENST_SALE_REFUSAL fits (D70 value; MySQL rejects it at 20 — Data too long).
+#   ⚠️ The rollback re-adds NOT NULL on reason and narrows receipt_type back to 20 — it fails while 11st rows exist.
+# ⚠️ No boolean column -> the 006 BIT follow-up is not needed.
+databaseChangeLog:
+
+  - changeSet:
+      id: 108-elevenst-order-line
+      author: oclyx
+      comment: "FEATURE_2610_17: elevenst_order_line (11st mirror of order_line, natural key account+ordNo+ordPrdSeq)."
+      changes:
+        - createTable:
+            tableName: elevenst_order_line
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: order_line_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: marketplace_account_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: ord_no, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: ord_prd_seq, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: prd_no, type: VARCHAR(100) }
+              - column: { name: prd_stck_no, type: VARCHAR(100) }
+              - column: { name: seller_stock_cd, type: VARCHAR(100) }
+              - column: { name: platform_status, type: VARCHAR(30) }
+              - column: { name: raw, type: CLOB }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_elevenst_orderline_tenant
+            baseTableName: elevenst_order_line
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_elevenst_orderline_line
+            baseTableName: elevenst_order_line
+            baseColumnNames: order_line_id
+            referencedTableName: order_line
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_elevenst_orderline_account
+            baseTableName: elevenst_order_line
+            baseColumnNames: marketplace_account_id
+            referencedTableName: marketplace_account
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            constraintName: uq_elevenst_order_line_line
+            tableName: elevenst_order_line
+            columnNames: order_line_id
+        - addUniqueConstraint:
+            constraintName: uq_elevenst_order_line
+            tableName: elevenst_order_line
+            columnNames: marketplace_account_id, ord_no, ord_prd_seq
+      rollback:
+        - dropTable: { tableName: elevenst_order_line }
+
+  - changeSet:
+      id: 108-elevenst-cancel-request
+      author: oclyx
+      comment: "FEATURE_2610_17 / D40: elevenst_cancel_request (one row per 11st cancel claim ordPrdCnSeq)."
+      changes:
+        - createTable:
+            tableName: elevenst_cancel_request
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: marketplace_account_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: order_line_id, type: BIGINT }
+              - column: { name: ord_no, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: ord_prd_seq, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: ord_prd_cn_seq, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: quantity, type: INT, constraints: { nullable: false } }
+              - column: { name: requested_by, type: VARCHAR(10) }
+              - column: { name: reason_code, type: VARCHAR(10) }
+              - column: { name: reason_text, type: VARCHAR(1000) }
+              - column: { name: requested_at, type: TIMESTAMP }
+              - column: { name: completed_at, type: TIMESTAMP }
+              - column: { name: platform_status, type: VARCHAR(20), constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_elevenst_cancelreq_tenant
+            baseTableName: elevenst_cancel_request
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_elevenst_cancelreq_account
+            baseTableName: elevenst_cancel_request
+            baseColumnNames: marketplace_account_id
+            referencedTableName: marketplace_account
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_elevenst_cancelreq_line
+            baseTableName: elevenst_cancel_request
+            baseColumnNames: order_line_id
+            referencedTableName: order_line
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            constraintName: uq_elevenst_cancel_request
+            tableName: elevenst_cancel_request
+            columnNames: marketplace_account_id, ord_prd_cn_seq
+        - createIndex:
+            tableName: elevenst_cancel_request
+            indexName: idx_elevenst_cancelreq_order
+            columns:
+              - column: { name: marketplace_account_id }
+              - column: { name: ord_no }
+              - column: { name: ord_prd_seq }
+      rollback:
+        - dropTable: { tableName: elevenst_cancel_request }
+
+  - changeSet:
+      id: 108-elevenst-order-line-stock-confirm
+      author: oclyx
+      comment: "FEATURE_2610_17 / D67: elevenst_order_line.stock_confirm_sent_at (reserved-sale stock confirm sent)."
+      changes:
+        - addColumn:
+            tableName: elevenst_order_line
+            columns:
+              - column: { name: stock_confirm_sent_at, type: TIMESTAMP }
+      rollback:
+        - dropColumn: { tableName: elevenst_order_line, columnName: stock_confirm_sent_at }
+
+  - changeSet:
+      id: 108-order-cancel-action-elevenst
+      author: oclyx
+      comment: "FEATURE_2610_17 / D70: order_cancel_action.reason nullable + reason_text + receipt_type 30 (11st sale refusal history)."
+      changes:
+        - dropNotNullConstraint: { tableName: order_cancel_action, columnName: reason, columnDataType: VARCHAR(40) }
+        - addColumn:
+            tableName: order_cancel_action
+            columns:
+              - column: { name: reason_text, type: VARCHAR(200) }
+        - modifyDataType: { tableName: order_cancel_action, columnName: receipt_type, newDataType: VARCHAR(30) }
+      rollback:
+        - modifyDataType: { tableName: order_cancel_action, columnName: receipt_type, newDataType: VARCHAR(20) }
+        - dropColumn: { tableName: order_cancel_action, columnName: reason_text }
+        - addNotNullConstraint: { tableName: order_cancel_action, columnName: reason, columnDataType: VARCHAR(40) }
