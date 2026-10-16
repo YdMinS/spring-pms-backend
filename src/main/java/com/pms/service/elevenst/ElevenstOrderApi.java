@@ -31,7 +31,8 @@ import java.util.Set;
  * (local name → trimmed text).
  *
  * <p><b>Errors</b>: a list carries {@code result_code} · {@code result_text} under its root; a negative code is an
- * error (→ 502 with 11st's text), 0 = 「조회된 결과가 없습니다」 (not an error).
+ * error (→ 502 with 11st's text), 0 = 「조회된 결과가 없습니다」 (not an error). A negative code whose text says there
+ * are no rows (claim lists) is also an empty list — see {@link #isNoData(String)}.
  *
  * <p><b>D30</b>: a minute-window list that comes back with {@value #MAX_ROWS} rows is split in half and called again;
  * a half shorter than one hour is not split further (warn log).
@@ -96,6 +97,9 @@ public class ElevenstOrderApi {
         }
         String code = ElevenstXml.firstText(doc, "result_code");
         if (code != null && code.startsWith("-")) {
+            if (isNoData(ElevenstXml.firstText(doc, "result_text"))) {
+                return List.of();
+            }
             throw new BusinessException(failureText(doc, raw), HttpStatus.BAD_GATEWAY);
         }
         Set<Element> rows = new LinkedHashSet<>();
@@ -105,6 +109,18 @@ public class ElevenstOrderApi {
             }
         }
         return List.copyOf(rows);
+    }
+
+    /**
+     * Claim lists (cancel · return · exchange) answer an empty window with a negative code and a "no rows" text
+     * (observed in prod: 「해당건이 없습니다」) instead of the order lists' 0 — that is an empty list, not an error.
+     */
+    static boolean isNoData(String text) {
+        if (text == null) {
+            return false;
+        }
+        String compact = text.replace(" ", "");
+        return compact.contains("해당건이없습니다") || compact.contains("조회된결과가없습니다");
     }
 
     /** Direct child elements of each row as local name → trimmed text (the first one wins on a repeated name). */
