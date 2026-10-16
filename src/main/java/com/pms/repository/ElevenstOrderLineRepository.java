@@ -20,4 +20,8 @@ public interface ElevenstOrderLineRepository extends JpaRepository<ElevenstOrder
     List<ElevenstOrderLine> findByOrderLine_IdIn(Collection<Long> orderLineIds);
 
     Optional<ElevenstOrderLine> findByOrderLine_Id(Long orderLineId);
+
+    /** Every mirror row of one 11st order (inquiry link by order number only — D16). */
+    @EntityGraph(attributePaths = {"orderLine"})
+    List<ElevenstOrderLine> findByMarketplaceAccount_IdAndOrdNo(Long accountId, String ordNo);
 }

@@ -5,13 +5,17 @@ import com.pms.domain.CustomerInquiryReply;
 import com.pms.domain.InquiryAuthorRole;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.ElevenstOrderLine;
 import com.pms.domain.OrderLine;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.repository.CustomerInquiryReplyRepository;
 import com.pms.repository.CustomerInquiryRepository;
 import com.pms.repository.CoupangOrderLineRepository;
+import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
+import com.pms.repository.ProductListingRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -27,14 +31,15 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * {@link InquiryRecord} → {@code customer_inquiry} 멱등 upsert + 주문·셀 연결 (FEATURE_2609_23).
+ * {@link InquiryRecord} → {@code customer_inquiry} idempotent upsert + order · cell link (FEATURE_2609_23).
  *
- * ⚠️ {@code REQUIRES_NEW} — 호출자({@code CoupangInquiryAdapter})는 외부 HTTP 루프라 트랜잭션이 없고,
- * 파사드 쪽 트랜잭션에 합류하면 문의 적재 실패가 주문·클레임까지 롤백시킨다({@code ClaimUpserter} 와 동형).
+ * ⚠️ {@code REQUIRES_NEW} — the callers ({@code CoupangInquiryAdapter} · {@code ElevenstInquiryAdapter},
+ * FEATURE_2610_17 / D16) are external HTTP loops without a transaction, and joining the facade's transaction would
+ * let an inquiry load failure roll back orders and claims too (same shape as {@code ClaimUpserter}).
  *
- * ⚠️ {@code CustomerInquiry.replies} 컬렉션을 <b>초기화하지 않는다</b> — 답변은 전부
- * {@link CustomerInquiryReplyRepository} 로 다룬다. 헤더를 {@code toBuilder()} 로 재조립해 저장하는데
- * 컬렉션이 초기화돼 있으면 orphanRemoval 컬렉션이 교체된 것으로 취급될 수 있다.
+ * ⚠️ The {@code CustomerInquiry.replies} collection is <b>never initialized</b> — replies are handled only through
+ * {@link CustomerInquiryReplyRepository}. The header is rebuilt with {@code toBuilder()} and saved; an initialized
+ * collection could be taken as a replaced orphanRemoval collection.
  */
 @Slf4j
 @Service
@@ -48,6 +53,9 @@ public class InquiryUpserter {
     private final CustomerInquiryReplyRepository customerInquiryReplyRepository;
     private final CoupangOrderLineRepository coupangOrderLineRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
+    /** FEATURE_2610_17 / D16: 11st inquiries link by order number and 11st product number. */
+    private final ElevenstOrderLineRepository elevenstOrderLineRepository;
+    private final ProductListingRepository productListingRepository;
 
     /**
      * 문의 1건을 저장한다. UNIQUE(account, inquiryType, inquiryId) 로 멱등이며, 값이 하나도 바뀌지
@@ -62,8 +70,10 @@ public class InquiryUpserter {
                         account.getId(), record.type(), record.externalInquiryId());
         LocalDateTime now = LocalDateTime.now();
 
-        ProductListingOption option = matchOption(record.externalItemId());
-        ProductListing listing = (option != null) ? option.getProductListing() : null;
+        boolean elevenst = account.getPlatform() == Platform.ELEVENST;
+        ProductListingOption option = elevenst ? null : matchOption(record.externalItemId());
+        ProductListing listing = elevenst ? elevenstListing(account, record)
+                : (option != null) ? option.getProductListing() : null;
         String itemName = itemName(record, option);
 
         CustomerInquiry inquiry;
@@ -149,6 +159,9 @@ public class InquiryUpserter {
      * 틀린 라인에 붙이느니 미연결이 낫다. 문의 자체는 그대로 저장된다.
      */
     private OrderLine matchOrderLine(MarketplaceAccount account, InquiryRecord record) {
+        if (account.getPlatform() == Platform.ELEVENST) {
+            return matchElevenstOrderLine(account, record);
+        }
         if (record.externalOrderId() == null || record.externalItemId() == null) {
             return null;
         }
@@ -164,6 +177,37 @@ public class InquiryUpserter {
                     account.getId(), record.externalOrderId(), record.externalItemId(), candidates.size());
         }
         return null;
+    }
+
+    /**
+     * 11st order line (FEATURE_2610_17 / D16): with {@code ordPrdSeq} (urgent notice) the exact line; with the order
+     * number only (Q&A {@code ordNoDe}) the line only when that order has exactly one — same "ambiguous → no link"
+     * rule as above.
+     */
+    private OrderLine matchElevenstOrderLine(MarketplaceAccount account, InquiryRecord record) {
+        if (record.externalOrderId() == null) {
+            return null;
+        }
+        if (record.externalItemId() != null) {
+            return elevenstOrderLineRepository
+                    .findByMarketplaceAccount_IdAndOrdNoAndOrdPrdSeq(account.getId(), record.externalOrderId(),
+                            record.externalItemId())
+                    .map(ElevenstOrderLine::getOrderLine)
+                    .orElse(null);
+        }
+        List<ElevenstOrderLine> lines =
+                elevenstOrderLineRepository.findByMarketplaceAccount_IdAndOrdNo(account.getId(), record.externalOrderId());
+        return lines.size() == 1 ? lines.get(0).getOrderLine() : null;
+    }
+
+    /** 11st listing of the same sales channel with this 11st product number (D16); none or several → no link. */
+    private ProductListing elevenstListing(MarketplaceAccount account, InquiryRecord record) {
+        if (record.externalProductId() == null) {
+            return null;
+        }
+        List<ProductListing> listings =
+                productListingRepository.findElevenstListings(account.getId(), record.externalProductId());
+        return listings.size() == 1 ? listings.get(0) : null;
     }
 
     /**

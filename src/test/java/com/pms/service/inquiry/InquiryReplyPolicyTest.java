@@ -138,6 +138,34 @@ class InquiryReplyPolicyTest {
         assertThat(capability.reason()).isEqualTo("판매자 답변이 요청된 문의가 아닙니다.");
     }
 
+    // ---- FEATURE_2610_17 / D27 · D44 · D45 ----
+
+    private static final InquiryReplyAdapter ELEVENST_ADAPTER = new InquiryReplyAdapter() {
+        @Override
+        public Platform platform() {
+            return Platform.ELEVENST;
+        }
+
+        @Override
+        public void reply(MarketplaceAccount account, CustomerInquiry inquiry, ReplyCommand command) {
+            throw new UnsupportedOperationException("the policy test sends nothing");
+        }
+    };
+
+    @Test
+    void evaluate_elevenstUrgentNoticeReRequested_canReplyWithMinLengthOne_noWingIdNeeded() {
+        InquiryReplyPolicy withElevenst = new InquiryReplyPolicy(List.of(COUPANG_ADAPTER, ELEVENST_ADAPTER));
+        MarketplaceAccount eleven = MarketplaceAccountFixture.elevenstStubBuilder("KEY").id(9L).build();
+        CustomerInquiry urgent = inquiry(InquiryType.CALL_CENTER, InquiryStatus.UNANSWERED, eleven).toBuilder()
+                .platform(Platform.ELEVENST).platformStatus("04").build();
+
+        ReplyCapability capability = withElevenst.evaluate(urgent, List.of());
+
+        assertThat(capability.canReply()).isTrue();
+        assertThat(capability.minLength()).isEqualTo(1);
+        assertThat(capability.parentReplyId()).isNull();
+    }
+
     private MarketplaceAccount account(String vendorUserId) {
         return MarketplaceAccountFixture.coupangStubBuilder(null, vendorUserId)
                 .id(7L).platform(Platform.COUPANG).accountAlias("쿠팡-메인").build();

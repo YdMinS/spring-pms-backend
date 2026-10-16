@@ -55,16 +55,16 @@ public class OrderClaim extends BaseEntity {
     private ClaimType claimType;
 
     @Column(name = "external_claim_id", nullable = false, length = 100)
-    private String externalClaimId;                 // 쿠팡 receiptId (교환은 exchangeId)
+    private String externalClaimId;                 // Coupang receiptId (exchange: exchangeId) · 11st clmReqSeq
 
     @Column(name = "external_order_id", nullable = false, length = 100)
-    private String externalOrderId;                 // 쿠팡 orderId
+    private String externalOrderId;                 // Coupang orderId · 11st ordNo
 
     @Column(name = "external_box_id", length = 100)
-    private String externalBoxId;                   // 쿠팡 shipmentBoxId (목록 응답에 없을 수 있다 — D22)
+    private String externalBoxId;                   // Coupang shipmentBoxId (may be missing in list responses — D22) · 11st: null
 
     @Column(name = "external_item_id", nullable = false, length = 100)
-    private String externalItemId;                  // 쿠팡 vendorItemId = 옵션ID
+    private String externalItemId;                  // Coupang vendorItemId = option id · 11st ordPrdSeq (FEATURE_2610_17 / D15)
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "order_line_id")
@@ -76,17 +76,17 @@ public class OrderClaim extends BaseEntity {
     private Integer orderItemMatchAttempts;         // 단건 주문조회 백필 시도 횟수 (04 가 증가시킨다)
 
     @Column(name = "item_name", length = 500)
-    private String itemName;                        // vendorItemName — 주문 미연결 시 화면 공백 방지
+    private String itemName;                        // Coupang vendorItemName · 11st optName — fills the screen when no order is linked
 
     @Column(nullable = false)
-    private Integer quantity;                       // cancelCount
+    private Integer quantity;                       // Coupang cancelCount · 11st clmReqQty
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private ClaimStatus status;                     // 정규화 상태 (§3.1)
 
     @Column(name = "platform_status", nullable = false, length = 30)
-    private String platformStatus;                  // 원문 (RU / UC / CC / PR ...)
+    private String platformStatus;                  // raw (Coupang RU / UC / CC / PR ... · 11st clmStat)
 
     /**
      * 교환 회수상태 원문 (BeforeDirection / CompleteCollect ...) — 교환 액션의 가능 조건이다
@@ -118,11 +118,13 @@ public class OrderClaim extends BaseEntity {
     private String collectCarrierCode;
 
     /**
-     * 회수 송장 값의 출처 (FEATURE_2609_70 / D12). null = 기존 행(출처 불명 → 플랫폼 값으로 취급).
+     * Source of the pickup-invoice value (FEATURE_2609_70 / D12). null = an existing row (source unknown → treated as
+     * the platform value).
      *
-     * <p>{@code LOCAL} 은 쿠팡이 등록을 거절해 우리 장부에만 남은 값이며 재전송 대상이다(D7).
-     * 🔴 동기화는 <b>플랫폼 값이 있을 때만</b> 이 값을 {@code PLATFORM} 으로 덮는다(D13) —
-     * 그러지 않으면 다음 회차가 우리 기록을 지운다.
+     * <p>{@code LOCAL} = the marketplace (Coupang · 11st, FEATURE_2610_17 / D22) rejected the registration and only
+     * our ledger kept it; it is the resend target (D7).
+     * 🔴 The sync overwrites it with {@code PLATFORM} <b>only when the platform has a value</b> (D13) — otherwise
+     * the next round would erase our record.
      */
     @Enumerated(EnumType.STRING)
     @Column(name = "collect_invoice_source", length = 20)
@@ -147,7 +149,7 @@ public class OrderClaim extends BaseEntity {
     private String requesterName;                   // D19 — 이름만
 
     @Column(name = "received_at", nullable = false)
-    private LocalDateTime receivedAt;               // 쿠팡 createdAt — 추적 슬라이스의 기준
+    private LocalDateTime receivedAt;               // Coupang createdAt · 11st reqDt — base of the tracking slices
 
     @Column(name = "platform_modified_at")
     private LocalDateTime platformModifiedAt;       // 쿠팡 modifiedAt

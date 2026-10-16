@@ -6,14 +6,14 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * 플랫폼 중립 클레임 상태 (FEATURE_2609_18 / PLAN §3.1 · D3).
+ * Platform-neutral claim status (FEATURE_2609_18 / PLAN §3.1 · D3).
  *
- * 화면·필터는 이 정규화 값으로만 동작해 플랫폼이 늘어도 바뀌지 않는다.
- * 원문 상태 코드는 정보 손실 없이 {@link OrderClaim#getPlatformStatus()} 에 그대로 보존한다.
+ * Screens and filters work on this normalized value only, so they do not change when a platform is added.
+ * The raw status code is kept losslessly in {@link OrderClaim#getPlatformStatus()}.
  *
- * <p>{@code REJECTED} 은 교환 전용이라 반품에는 부여되지 않지만, 교환 어댑터(06)가 같은 enum 을
- * 공유하므로 여기에 함께 둔다. {@code IN_PROGRESS}(입고완료)·{@code WITHDRAWN}(철회 종결)은 반품도 갖는다
- * (2609_21/01). {@code STALE} 은 로컬 전용(D11) — 미완결 추적(05)의 강제 종결이다.
+ * <p>{@code REJECTED}: Coupang gives it to exchanges only; 11st gives it to returns too (107 「반품거부」, FEATURE_2610_17 /
+ * D25). {@code IN_PROGRESS} (received / on hold) and {@code WITHDRAWN} (withdrawn, closed) apply to returns as well
+ * (2609_21/01). {@code STALE} is local only (D11) — the forced close of open-claim tracking (05).
  */
 @Slf4j
 public enum ClaimStatus {

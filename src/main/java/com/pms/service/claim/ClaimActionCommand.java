@@ -3,17 +3,19 @@ package com.pms.service.claim;
 import com.pms.domain.ClaimAction;
 
 /**
- * 어댑터에 전달되는 실행 요청 (FEATURE_2609_21 / PLAN D14).
+ * The execute request handed to an adapter (FEATURE_2609_21 / PLAN D14).
  *
- * <p>요청 DTO 를 그대로 넘기지 않는 이유 = 어댑터가 웹 계층 타입을 모르게 하기 위해서다.
+ * <p>Why not pass the request DTO = the adapter must not know web-layer types.
  *
- * @param deliveryCompanyCode 택배사 코드. {@code CarrierCodeService} 화이트리스트를 이미 통과한 값
- * @param regNumber           회수 송장의 선택 항목(등기번호)
- * @param rejectCode          거부 사유 코드(05 에서 사용)
+ * @param deliveryCompanyCode carrier code — a value that already passed the {@code CarrierCodeService} whitelist
+ * @param regNumber           optional field of the pickup invoice (registered-mail number)
+ * @param rejectCode          reject / hold reason code (used by 05 and the 11st reject / hold actions)
+ * @param reasonText          reason text of the 11st reject / hold actions (FEATURE_2610_17 / D34 · D39 ①)
  */
 public record ClaimActionCommand(ClaimAction action,
                                  String deliveryCompanyCode,
                                  String invoiceNumber,
                                  String regNumber,
-                                 String rejectCode) {
+                                 String rejectCode,
+                                 String reasonText) {
 }

@@ -344,7 +344,7 @@ class ClaimActionServiceImplTest {
         given(coupangApiClient.post(anyString(), anyString(), any())).willReturn("{\"code\":200}");
 
         service.execute(1L, new ClaimActionRequest(ClaimAction.RETURN_COLLECT_INVOICE,
-                "CJGLS", "1234-5678 9012", null, null));
+                "CJGLS", "1234-5678 9012", null, null, null));
 
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
         verify(coupangApiClient).post(anyString(), body.capture(), any());
@@ -392,7 +392,7 @@ class ClaimActionServiceImplTest {
 
     private ClaimActionRequest collectInvoiceRequest() {
         return new ClaimActionRequest(ClaimAction.RETURN_COLLECT_INVOICE,
-                "CJGLS", "123456789012", null, null);
+                "CJGLS", "123456789012", null, null, null);
     }
 
     /** 회수종류가 수기관리 + 송장 없음 = 회수 송장 등록이 열리는 반품 라인. */
@@ -415,7 +415,7 @@ class ClaimActionServiceImplTest {
     }
 
     private ClaimActionRequest approveRequest() {
-        return new ClaimActionRequest(ClaimAction.RETURN_APPROVE, null, null, null, null);
+        return new ClaimActionRequest(ClaimAction.RETURN_APPROVE, null, null, null, null, null);
     }
 
     private void authenticateAs(String role) {

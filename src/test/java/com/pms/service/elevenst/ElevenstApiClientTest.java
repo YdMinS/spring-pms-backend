@@ -90,4 +90,17 @@ class ElevenstApiClientTest {
                 .extracting(e -> ((BusinessException) e).getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY);
         verify(keyUsageRecorder, never()).touch(any());
     }
+
+    /** FEATURE_2610_17 / D39 ②: an already encoded path is sent as is (no second encoding of %). */
+    @Test
+    void getPreEncoded_keepsThePercentEncoding() {
+        server.expect(requestTo("https://api.11st.co.kr/rest/claimservice/returnreqreject/O1/1/C1/101/%BB%F3"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess("<ResultOrder><result_code>0</result_code></ResultOrder>".getBytes(EUC_KR),
+                        MediaType.APPLICATION_XML));
+
+        client.getPreEncoded("/rest/claimservice/returnreqreject/O1/1/C1/101/%BB%F3", account);
+
+        server.verify();
+    }
 }

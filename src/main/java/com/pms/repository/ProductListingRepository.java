@@ -120,6 +120,16 @@ public interface ProductListingRepository extends JpaRepository<ProductListing, 
     Optional<ProductListing> findByPlatformProductId(String platformProductId);
 
     /**
+     * The 11st listing of one sales channel with this 11st product number (FEATURE_2610_17 / D16 — Q&A link).
+     *
+     * @param accountId marketplace account id (seller + ELEVENST)
+     * @param prdNo     11st product number ({@code brdInfoClfNo})
+     */
+    @Query("select l from ProductListing l, MarketplaceAccount a where a.id = :accountId and l.seller = a.seller "
+            + "and l.platform = com.pms.domain.Platform.ELEVENST and l.platformProductId = :prdNo")
+    List<ProductListing> findElevenstListings(@Param("accountId") Long accountId, @Param("prdNo") String prdNo);
+
+    /**
      * Check if a product listing exists for the given platform product ID.
      *
      * @param platformProductId Platform's product ID

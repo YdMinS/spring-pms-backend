@@ -247,7 +247,7 @@ public class CoupangClaimActionAdapter implements ClaimActionAdapter {
                 ? EXCHANGE_REJECT_CHOICES
                 : List.of();
         return new ClaimActionOption(action, action.getLabel(), action.getRequires(),
-                choices, action.isIrreversible());
+                choices, action.isIrreversible(), null);
     }
 
     /**
@@ -341,7 +341,7 @@ public class CoupangClaimActionAdapter implements ClaimActionAdapter {
         }
 
         ClaimActionCommand stored = new ClaimActionCommand(ClaimAction.RETURN_COLLECT_INVOICE_RESEND,
-                anchor.getCollectCarrierCode(), invoiceNumber, null, null);
+                anchor.getCollectCarrierCode(), invoiceNumber, null, null, null);
         return post(path(coupangProperties.getReturnExchangeInvoicePath(), account, receiptId),
                 collectInvoiceBody(account, receiptId, stored, DELIVERY_TYPE_RETURN), account);
     }

@@ -47,6 +47,8 @@ public class InquiryReplyPolicy {
     /** 상품문의는 한 글자도 허용, 고객센터는 쿠팡이 2자 미만을 거절한다 — 유형별로 다르다. */
     private static final int MIN_LENGTH_PRODUCT_QNA = 1;
     private static final int MIN_LENGTH_CALL_CENTER = 2;
+    /** FEATURE_2610_17 / D27: 11st takes at least 1 character for both types. */
+    private static final int MIN_LENGTH_ELEVENST = 1;
 
     /** 되돌릴 수 없다(D17) — 쿠팡은 답변 수정·삭제 API 가 없다. 두 유형 모두 true. */
     private static final boolean ONCE = true;
@@ -60,7 +62,7 @@ public class InquiryReplyPolicy {
      */
     public ReplyCapability evaluate(CustomerInquiry inquiry, List<CustomerInquiryReply> replies) {
         InquiryType type = inquiry.getInquiryType();
-        int minLength = minLength(type);
+        int minLength = (inquiry.getPlatform() == Platform.ELEVENST) ? MIN_LENGTH_ELEVENST : minLength(type);
         String parentReplyId = parentReplyId(inquiry, replies);
 
         String reason = blockReason(inquiry, replies);
@@ -96,7 +98,7 @@ public class InquiryReplyPolicy {
         }
         // 2) replyBy 원천이 비어 있음 (D18). 전송 시점이 아니라 조회 시점에 잠근다.
         String wingUserId = wingUserId(account);
-        if (wingUserId == null || wingUserId.isBlank()) {
+        if (inquiry.getPlatform() == Platform.COUPANG && (wingUserId == null || wingUserId.isBlank())) {
             return "채널에 WING 사용자 ID가 없습니다. 판매자 > 채널 수정에서 입력해 주세요.";
         }
         // 3)·4) 상태. 답변은 미답변 건에서만 열린다.
@@ -106,9 +108,11 @@ public class InquiryReplyPolicy {
         if (inquiry.getStatus() == InquiryStatus.CLOSED || inquiry.getStatus() == InquiryStatus.STALE) {
             return "종료된 문의입니다.";
         }
-        // 5) 데이터 드리프트 방어 — §3.1 정의상 UNANSWERED 인 고객센터 건은 requestAnswer reply 를
-        //    반드시 갖는다. 여기서 걸리면 파서(01)나 상태 정규화가 어긋났다는 신호다.
-        if (inquiry.getInquiryType() == InquiryType.CALL_CENTER && requestAnswerReply(replies).isEmpty()) {
+        // 5) Drift guard — by §3.1 an UNANSWERED Coupang call-center inquiry always has a requestAnswer reply. Hitting
+        //    this means the parser (01) or the status normalization drifted. 11st urgent notices have no such reply
+        //    and skip the check (FEATURE_2610_17 / D44 · D45).
+        if (inquiry.getPlatform() == Platform.COUPANG && inquiry.getInquiryType() == InquiryType.CALL_CENTER
+                && requestAnswerReply(replies).isEmpty()) {
             log.warn("Call-center inquiry is UNANSWERED but has no requestAnswer reply — parser or status "
                     + "normalization drifted: inquiry={} platformStatus={}",
                     inquiry.getId(), inquiry.getPlatformStatus());
@@ -121,9 +125,9 @@ public class InquiryReplyPolicy {
         return (type == InquiryType.CALL_CENTER) ? MIN_LENGTH_CALL_CENTER : MIN_LENGTH_PRODUCT_QNA;
     }
 
-    /** 고객센터 전용 상위 답변 식별자. 상품문의는 항상 null 이다. */
+    /** Parent reply id of a Coupang call-center inquiry only; product Q&A and 11st are always null. */
     private String parentReplyId(CustomerInquiry inquiry, List<CustomerInquiryReply> replies) {
-        if (inquiry.getInquiryType() != InquiryType.CALL_CENTER) {
+        if (inquiry.getInquiryType() != InquiryType.CALL_CENTER || inquiry.getPlatform() != Platform.COUPANG) {
             return null;
         }
         return requestAnswerReply(replies)

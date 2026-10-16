@@ -94,7 +94,7 @@ public class ElevenstOrderSyncServiceImpl implements ElevenstOrderSyncService {
                     .filter(a -> a.platform().equals(account.getPlatform()))
                     .findFirst()
                     .ifPresent(a -> {
-                        a.syncInquiries(account);
+                        a.syncInquiries(account, preset == OrderSyncPreset.RECONCILE);
                         syncStatusRecorder.recordInquirySyncCompleted(account.getId());
                     });
         } catch (Exception e) {

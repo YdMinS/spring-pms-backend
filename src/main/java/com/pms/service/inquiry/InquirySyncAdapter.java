@@ -4,11 +4,12 @@ import com.pms.domain.Platform;
 import com.pms.domain.MarketplaceAccount;
 
 /**
- * 플랫폼별 고객문의 동기화 진입점 (FEATURE_2609_23 / PLAN D19 — seam 만 확보한다).
+ * Per-platform customer inquiry sync entry (FEATURE_2609_23 / PLAN D19 — the seam only). Implementations: Coupang ·
+ * 11st (FEATURE_2610_17 / D16).
  *
- * 계정 모델 추상화는 범위 밖이다({@code project_multimarket_extensibility_debt} 의 [HIGH] 3건은
- * 네이버 착수 직전에 갚는다). {@code ClaimSyncAdapter} 와 같은 모양으로 둔다 —
- * {@code platform()} 하나만 있고 {@code supports(account)}·{@code priority()} 는 구현이 1개인 지금 쓰이지 않는다.
+ * Abstracting the account model is out of scope ({@code project_multimarket_extensibility_debt}'s three [HIGH] items
+ * are paid right before Naver). Same shape as {@code ClaimSyncAdapter} — only {@code platform()}; callers pick the
+ * adapter whose platform matches the account, so {@code supports(account)} · {@code priority()} are not needed.
  */
 public interface InquirySyncAdapter {
 
@@ -22,6 +23,14 @@ public interface InquirySyncAdapter {
      * 호출자가 성공으로 보고 {@code lastInquirySyncAt} 을 갱신해 놓친 구간이 영구히 사라진다.
      */
     InquirySyncResult syncInquiries(MarketplaceAccount account);
+
+    /**
+     * The order-sync round's entry: {@code nightly} = the 3 a.m. RECONCILE round. Platforms with one window for every
+     * round ignore it (default); 11st reads its closed urgent notices only at night (FEATURE_2610_17 / D51).
+     */
+    default InquirySyncResult syncInquiries(MarketplaceAccount account, boolean nightly) {
+        return syncInquiries(account);
+    }
 
     /**
      * 회차 결과 — 로그·검증용.

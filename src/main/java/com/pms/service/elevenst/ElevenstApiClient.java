@@ -10,6 +10,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
+import java.net.URI;
+
 /**
  * Live client for the keyed 11st seller API (FEATURE_2610_13). Every call sends the account's key in the
  * {@code openapikey} header (D5) and an EUC-KR XML body; the raw response bytes are returned untouched
@@ -44,23 +46,34 @@ public class ElevenstApiClient {
     }
 
     public byte[] get(String path, MarketplaceAccount account) {
-        return execute(HttpMethod.GET, path, null, account);
+        return execute(HttpMethod.GET, path, null, null, account);
+    }
+
+    /**
+     * GET with a path whose segments are already percent-encoded (FEATURE_2610_17 / D39 ② — reason text sent as
+     * EUC-KR URL-encoded path segments). {@link #get} would encode the {@code %} a second time.
+     */
+    public byte[] getPreEncoded(String encodedPath, MarketplaceAccount account) {
+        return execute(HttpMethod.GET, null, URI.create(properties.getBaseUrl() + encodedPath), null, account);
     }
 
     public byte[] post(String path, String xmlBody, MarketplaceAccount account) {
-        return execute(HttpMethod.POST, path, xmlBody, account);
+        return execute(HttpMethod.POST, path, null, xmlBody, account);
     }
 
     public byte[] put(String path, String xmlBody, MarketplaceAccount account) {
-        return execute(HttpMethod.PUT, path, xmlBody, account);
+        return execute(HttpMethod.PUT, path, null, xmlBody, account);
     }
 
-    private byte[] execute(HttpMethod method, String path, String xmlBody, MarketplaceAccount account) {
+    private byte[] execute(HttpMethod method, String path, URI encodedUri, String xmlBody,
+                           MarketplaceAccount account) {
         if (!properties.isOutboundEnabled()) {
             throw new BusinessException(OUTBOUND_DISABLED_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
         }
         String apiKey = ElevenstCredentials.of(account).getApiKey();
-        RestClient.RequestBodySpec request = restClient.method(method).uri(path).header("openapikey", apiKey);
+        RestClient.RequestBodyUriSpec spec = restClient.method(method);
+        RestClient.RequestBodySpec request = (encodedUri != null ? spec.uri(encodedUri) : spec.uri(path))
+                .header("openapikey", apiKey);
         if (xmlBody != null) {
             request = request.contentType(XML_EUC_KR).body(ElevenstXml.document(xmlBody));
         }
