@@ -22,8 +22,8 @@ public interface ShoppingListItemRepository extends JpaRepository<ShoppingListIt
      */
     Optional<ShoppingListItem> findByOrderLine_IdAndProduct_Id(Long orderLineId, Long productId);
 
-    /** 수동 라인(order_line NULL) upsert 키 — product 당 1개 보장. */
-    Optional<ShoppingListItem> findByOrderLineIsNullAndProduct_Id(Long productId);
+    /** Manual line (order line NULL) upsert key — one per (product × seller) (FEATURE_2610_09 D16). */
+    Optional<ShoppingListItem> findByOrderLineIsNullAndProduct_IdAndSeller_Id(Long productId, Long sellerId);
 
     /**
      * 추출 전 주문 연결 라인의 autoQty 전체 리셋(=0). 출고/취소돼 더는 ACCEPT 가 아닌 주문 라인이
@@ -48,7 +48,8 @@ public interface ShoppingListItemRepository extends JpaRepository<ShoppingListIt
      * deleted, quantities are never summed (PLAN D8), or the purchase quantity would double.</p>
      *
      * <p>⚠️ Manual rows ({@code order_line_id} NULL) are absent from this set by construction — they are
-     * handled separately by the merge, which keeps the target's manual row and drops the source's.</p>
+     * handled separately by the merge, which keeps the target's manual row of the same seller and drops the
+     * source's (FEATURE_2610_09 D18).</p>
      */
     @Query("SELECT s.orderLine.id FROM ShoppingListItem s WHERE s.product.id = :productId AND s.orderLine IS NOT NULL")
     Set<Long> findOrderLineIdsByProductId(@Param("productId") Long productId);
@@ -56,7 +57,8 @@ public interface ShoppingListItemRepository extends JpaRepository<ShoppingListIt
     /** Every shopping list row of a product — the merge walks them one by one (row-wise, not bulk). */
     List<ShoppingListItem> findByProductId(Long productId);
 
-    /** Does this product already have a manual row (order line NULL)? Guards the "one manual row per
-     *  product" rule the service owns while a merge moves rows across products. */
-    boolean existsByOrderLineIsNullAndProduct_Id(Long productId);
+    /** Sellers that already have a manual row (order line NULL) on this product. Guards the "one manual row per
+     *  (product × seller)" rule the service owns while a merge moves rows across products (FEATURE_2610_09 D18). */
+    @Query("SELECT s.seller.id FROM ShoppingListItem s WHERE s.product.id = :productId AND s.orderLine IS NULL")
+    Set<Long> findManualSellerIdsByProductId(@Param("productId") Long productId);
 }

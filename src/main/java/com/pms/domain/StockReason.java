@@ -19,7 +19,10 @@ import java.util.Set;
  */
 public enum StockReason {
 
-    /** Bought from a supplier — the unit price is inherited from {@code purchase_record} (D8). */
+    /**
+     * Bought from a supplier — the unit price is inherited from {@code purchase_record} (D8). Without a
+     * record (stock link off, FEATURE_2610_09 D71 round 12 · 13) it follows the {@code OPENING} rule below.
+     */
     PURCHASE(StockMovementType.STOCK_IN),
 
     /**

@@ -9,13 +9,18 @@ import com.pms.domain.OrderStatus;
 import com.pms.domain.Platform;
 import com.pms.domain.Product;
 import com.pms.domain.ProductListingOption;
+import com.pms.domain.PurchaseCheck;
+import com.pms.domain.PurchaseCheckStatus;
 import com.pms.domain.PurchaseRecord;
 import com.pms.domain.Seller;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.ShoppingListItem;
 import com.pms.domain.StockMovementType;
 import com.pms.domain.StockReason;
+import com.pms.dto.request.ManualAdjustRequest;
 import com.pms.dto.request.ManualItemRequest;
+import com.pms.dto.request.ManualSellerRequest;
+import com.pms.dto.request.PurchaseCheckRequest;
 import com.pms.dto.request.PurchaseRecordRequest;
 import com.pms.dto.request.StockMovementRequest;
 import com.pms.dto.response.PurchaseLine;
@@ -23,6 +28,8 @@ import com.pms.dto.response.PurchaseListResponse;
 import com.pms.dto.response.PurchaseProductGroup;
 import com.pms.dto.response.PurchaseRecordResult;
 import com.pms.dto.response.PurchaseRecordView;
+import com.pms.dto.response.PurchaseShare;
+import com.pms.exception.BusinessException;
 import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.MarketplaceAccountRepository;
@@ -30,11 +37,13 @@ import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.listing.CellBomResolver;
 import com.pms.repository.ProductRepository;
+import com.pms.repository.PurchaseCheckRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.ShoppingListItemRepository;
 import com.pms.service.cost.CostPropagationService;
 import com.pms.service.stock.StockLedgerService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -43,6 +52,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -56,20 +67,24 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /**
- * PurchaseListServiceImpl 단위 테스트 — BOM 전개·멱등 추출·물품 단위 집계·입고 2원장·미매핑·수동 누적.
- * 프레임워크 검증(@NotNull 등)이나 단순 위임은 컨트롤러/통합 테스트로 미룬다.
+ * PurchaseListServiceImpl unit tests — BOM expansion · idempotent extract · (product × seller) share numbers and
+ * states · processing records · check-in ledgers · unmapped orders · manual lines.
+ * Framework validation (@NotNull and the like) and plain delegation are left to the controller / integration tests.
  */
 @ExtendWith(MockitoExtension.class)
 class PurchaseListServiceTest {
 
     @Mock private ShoppingListItemRepository shoppingListItemRepository;
     @Mock private PurchaseRecordRepository purchaseRecordRepository;
+    @Mock private PurchaseCheckRepository purchaseCheckRepository;
     @Mock private OrderLineRepository orderLineRepository;
     @Mock private CoupangOrderLineRepository coupangOrderLineRepository;
     @Mock private ElevenstOrderLineRepository elevenstOrderLineRepository;
@@ -81,13 +96,17 @@ class PurchaseListServiceTest {
     @Mock private StockLedgerService stockLedgerService;
     /** ① 기준가 갱신(2609_28 D4) — 이 테스트는 위임만 확인하고 조건은 CostPropagationServiceImplTest 가 본다. */
     @Mock private CostPropagationService costPropagationService;
+    @Mock private PurchaseSettingService purchaseSettingService;
     @Mock private CoupangProperties coupangProperties;
+    @Mock private Clock clock;
 
     @InjectMocks private PurchaseListServiceImpl service;
 
     private static final Long PRODUCT_ID = 100L;
     private static final Long SELLER_ID = 3L;
     private static final LocalDate TODAY = LocalDate.of(2026, 9, 9);
+    /** 2026-09-09 12:00 KST — today() of the service is the KST calendar day (FEATURE_2610_09 D67). */
+    private static final Instant NOW = Instant.parse("2026-09-09T03:00:00Z");
 
     private static final Seller SELLER_A =
             Seller.builder().id(SELLER_ID).sellerName("A상사").build();
@@ -126,6 +145,22 @@ class PurchaseListServiceTest {
     private PurchaseRecord record(Long id, Product p, Seller seller, int quantity, LocalDate on) {
         return PurchaseRecord.builder().id(id).product(p).seller(seller)
                 .purchasedOn(on).quantity(quantity).reflectToBasePrice(true).build();
+    }
+
+    @BeforeEach
+    void fixClock() {
+        lenient().when(clock.instant()).thenReturn(NOW);
+    }
+
+    private PurchaseCheck check(Long id, Product p, Seller seller, PurchaseCheckStatus status, int neededQty,
+                                LocalDate on) {
+        return PurchaseCheck.builder().id(id).product(p).seller(seller).status(status)
+                .neededQty(neededQty).checkedOn(on).build();
+    }
+
+    private ShoppingListItem manualLine(Long id, Product p, Seller seller, int qty) {
+        return ShoppingListItem.builder().id(id).orderLine(null).product(p).seller(seller)
+                .autoQty(0).manualQty(qty).build();
     }
 
     /** 조회 경로가 매번 부르는 3가지: 물품명 맵·채널 라벨 맵·미매핑 집계용 주문 라인. */
@@ -203,6 +238,31 @@ class PurchaseListServiceTest {
         assertThat(captor.getValue().getManualQty()).isEqualTo(4);   // 보존
     }
 
+    /** D85: a share that fell from above 0 to 0 during the extract gets a NEED_ZERO record dated today. */
+    @Test
+    void testExtractRecordsNeedZero() {
+        Product a = product(PRODUCT_ID, "A");
+        OrderLine line = paidLine(10L, 3);
+        ShoppingListItem before = ShoppingListItem.builder()
+                .id(1L).orderLine(line).product(a).autoQty(3).manualQty(0).build();
+        ShoppingListItem after = before.toBuilder().autoQty(0).build();
+
+        given(shoppingListItemRepository.findAll()).willReturn(List.of(before)).willReturn(List.of(after));
+        given(marketplaceAccountRepository.findAllById(any())).willReturn(List.of(ACCOUNT));
+        given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of());
+        given(purchaseCheckRepository.findByStatusAndCancelledAtIsNull(PurchaseCheckStatus.NEED_ZERO)).willReturn(List.of());
+        given(productRepository.getReferenceById(PRODUCT_ID)).willReturn(a);
+        given(sellerRepository.getReferenceById(SELLER_ID)).willReturn(SELLER_A);
+
+        service.extract();
+
+        ArgumentCaptor<PurchaseCheck> captor = ArgumentCaptor.forClass(PurchaseCheck.class);
+        verify(purchaseCheckRepository).save(captor.capture());
+        assertThat(captor.getValue().getStatus()).isEqualTo(PurchaseCheckStatus.NEED_ZERO);
+        assertThat(captor.getValue().getCheckedOn()).isEqualTo(TODAY);
+        assertThat(captor.getValue().getSeller()).isEqualTo(SELLER_A);
+    }
+
     @Test
     void extract_옵션미매핑_save호출안함() {
         OrderLine line = paidLine(10L, 3);
@@ -216,7 +276,7 @@ class PurchaseListServiceTest {
         verify(shoppingListItemRepository, never()).save(any());
     }
 
-    // --- 집계 (PLAN 2609_29 D6·D7·D8) ---
+    // --- Aggregation (PLAN 2609_29 D6 group key · D7 · D8; per-seller quantities: FEATURE_2610_09 D2 · D22) ---
 
     @Test
     void getList_잔여계산_잔여있으면그룹포함() {
@@ -230,7 +290,7 @@ class PurchaseListServiceTest {
         stubLookups(List.of(a), List.of(ACCOUNT));
         given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of());
 
-        PurchaseListResponse res = service.getList();
+        PurchaseListResponse res = service.getList(null);
 
         assertThat(res.items()).hasSize(1);
         assertThat(res.items().get(0).neededQty()).isEqualTo(8);
@@ -241,22 +301,23 @@ class PurchaseListServiceTest {
     @Test
     void testGroupCarriesProductBrand() {
         Product a = Product.builder().id(PRODUCT_ID).productName("A").brand("모모").build();
-        ShoppingListItem sli = ShoppingListItem.builder()
-                .id(1L).orderLine(null).product(a).autoQty(0).manualQty(2).build();
+        ShoppingListItem sli = manualLine(1L, a, SELLER_A, 2);
 
         given(shoppingListItemRepository.findAll()).willReturn(List.of(sli));
         given(purchaseRecordRepository.findByProduct_IdIn(List.of(PRODUCT_ID))).willReturn(List.of());
         stubLookups(List.of(a), List.of());
+        given(sellerRepository.findAllById(any())).willReturn(List.of(SELLER_A));
         given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of());
 
-        PurchaseProductGroup group = service.getList().items().get(0);
+        PurchaseProductGroup group = service.getList(null).items().get(0);
 
         assertThat(group.productName()).isEqualTo("A");
         assertThat(group.brand()).isEqualTo("모모");
     }
 
+    /** FEATURE_2610_09 D57: the numbers no longer move a row — fully bought but unchecked stays on the list, tagged. */
     @Test
-    void getList_잔여0이면그룹제외() {
+    void testCoveredButUncheckedStaysOnListWithTargetMet() {
         Product a = product(PRODUCT_ID, "A");
         ShoppingListItem sli = ShoppingListItem.builder()
                 .id(1L).orderLine(paidLine(10L, 5)).product(a).autoQty(5).manualQty(0).build();
@@ -267,12 +328,18 @@ class PurchaseListServiceTest {
         stubLookups(List.of(a), List.of(ACCOUNT));
         given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of());
 
-        assertThat(service.getList().items()).isEmpty();
+        PurchaseProductGroup group = service.getList(null).items().get(0);
+
+        assertThat(group.remainingQty()).isZero();
+        assertThat(group.shares()).singleElement().satisfies(share -> {
+            assertThat(share.state()).isEqualTo("OPEN");
+            assertThat(share.targetMet()).isTrue();
+        });
     }
 
-    /** D6: 판매자가 달라도 그룹은 물품 하나다 — "얼마를 더 사야 하나"가 흩어지면 안 된다. */
+    /** D2 · D6: a chosen seller sees only its share — numbers, shares and lines. */
     @Test
-    void testGroupKeyIsProductOnly() {
+    void testSellerFilterNarrowsNumbersAndLines() {
         Product a = product(PRODUCT_ID, "A");
         ShoppingListItem fromA = ShoppingListItem.builder()
                 .id(1L).orderLine(paidLine(10L, 3)).product(a).autoQty(3).manualQty(0).build();
@@ -280,74 +347,177 @@ class PurchaseListServiceTest {
                 .id(2L).orderLine(paidLine(11L, 5, ACCOUNT_B)).product(a).autoQty(5).manualQty(0).build();
 
         given(shoppingListItemRepository.findAll()).willReturn(List.of(fromA, fromB));
-        given(purchaseRecordRepository.findByProduct_IdIn(List.of(PRODUCT_ID))).willReturn(List.of());
+        given(purchaseRecordRepository.findByProduct_IdIn(List.of(PRODUCT_ID))).willReturn(List.of(
+                record(1L, a, SELLER_A, 1, TODAY),
+                record(2L, a, SELLER_B, 7, TODAY)));
         stubLookups(List.of(a), List.of(ACCOUNT, ACCOUNT_B));
         given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of());
 
-        List<PurchaseProductGroup> groups = service.getList().items();
+        PurchaseProductGroup group = service.getList(SELLER_B.getId()).items().get(0);
 
-        assertThat(groups).hasSize(1);
-        assertThat(groups.get(0).neededQty()).isEqualTo(8);       // 3 + 5
-        assertThat(groups.get(0).lines()).hasSize(2);
+        assertThat(group.neededQty()).isEqualTo(5);
+        assertThat(group.purchasedQty()).isEqualTo(7);
+        assertThat(group.remainingQty()).isEqualTo(-2);
+        assertThat(group.shares()).extracting(PurchaseShare::sellerId).containsExactly(SELLER_B.getId());
+        assertThat(group.lines()).extracting(PurchaseLine::itemId).containsExactly(2L);
     }
 
-    /** D6: 구매수량도 전체 기준 — A상사 구매분과 B상사 구매분을 합산한다. */
+    /** D22 · D58: in 「전체」 one seller's surplus never covers another's shortfall, and the three numbers subtract. */
     @Test
-    void testPurchasedQtyIsProductWide() {
+    void testAllViewAddsShortfallsOnly() {
         Product a = product(PRODUCT_ID, "A");
-        ShoppingListItem sli = ShoppingListItem.builder()
-                .id(1L).orderLine(paidLine(10L, 10)).product(a).autoQty(10).manualQty(0).build();
+        ShoppingListItem fromA = ShoppingListItem.builder()
+                .id(1L).orderLine(paidLine(10L, 5)).product(a).autoQty(5).manualQty(0).build();
+        ShoppingListItem fromB = ShoppingListItem.builder()
+                .id(2L).orderLine(paidLine(11L, 3, ACCOUNT_B)).product(a).autoQty(3).manualQty(0).build();
 
-        given(shoppingListItemRepository.findAll()).willReturn(List.of(sli));
+        given(shoppingListItemRepository.findAll()).willReturn(List.of(fromA, fromB));
         given(purchaseRecordRepository.findByProduct_IdIn(List.of(PRODUCT_ID))).willReturn(List.of(
-                record(1L, a, SELLER_A, 4, TODAY),
-                record(2L, a, SELLER_B, 3, TODAY)));
-        stubLookups(List.of(a), List.of(ACCOUNT));
+                record(1L, a, SELLER_B, 8, TODAY)));
+        stubLookups(List.of(a), List.of(ACCOUNT, ACCOUNT_B));
         given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of());
 
-        PurchaseProductGroup group = service.getList().items().get(0);
+        PurchaseProductGroup group = service.getList(null).items().get(0);
 
-        assertThat(group.purchasedQty()).isEqualTo(7);           // 4 + 3
-        assertThat(group.remainingQty()).isEqualTo(3);
+        assertThat(group.neededQty()).isEqualTo(8);       // 5 + 3
+        assertThat(group.purchasedQty()).isEqualTo(3);    // min(0, 5) + min(8, 3)
+        assertThat(group.remainingQty()).isEqualTo(5);    // A's shortfall only
+        assertThat(group.lines()).hasSize(2);
     }
 
-    /** D8: 주문 라인은 채널 3필드를 갖고, 수동 라인은 셋 다 null 이다(화면이 "수동"으로 그린다). */
+    /** D17: both lines carry the seller; a manual line keeps the channel fields null. */
     @Test
     void testLineHasChannelFields() {
         Product a = product(PRODUCT_ID, "A");
         ShoppingListItem ordered = ShoppingListItem.builder()
                 .id(1L).orderLine(paidLine(10L, 3)).product(a).autoQty(3).manualQty(0).build();
-        ShoppingListItem manual = ShoppingListItem.builder()
-                .id(2L).orderLine(null).product(a).autoQty(0).manualQty(2).build();
+        ShoppingListItem manual = manualLine(2L, a, SELLER_B, 2);
 
         given(shoppingListItemRepository.findAll()).willReturn(List.of(ordered, manual));
         given(purchaseRecordRepository.findByProduct_IdIn(List.of(PRODUCT_ID))).willReturn(List.of());
         stubLookups(List.of(a), List.of(ACCOUNT));
+        given(sellerRepository.findAllById(any())).willReturn(List.of(SELLER_B));
         given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of());
 
-        List<PurchaseLine> lines = service.getList().items().get(0).lines();
+        List<PurchaseLine> lines = service.getList(null).items().get(0).lines();
 
         assertThat(lines).extracting(PurchaseLine::source, PurchaseLine::marketplaceAccountId,
-                        PurchaseLine::sellerName, PurchaseLine::platform, PurchaseLine::neededQty)
+                        PurchaseLine::sellerId, PurchaseLine::sellerName, PurchaseLine::platform, PurchaseLine::neededQty)
                 .containsExactly(
-                        tuple("ORDER", 1L, "A상사", "COUPANG", 3),
-                        tuple("MANUAL", null, null, null, 2));
+                        tuple("ORDER", 1L, SELLER_ID, "A상사", "COUPANG", 3),
+                        tuple("MANUAL", null, 9L, "B상사", null, 2));
     }
 
-    /** D8 ④: 완료 판정의 기간 재료가 라인 기록이 아니라 물품 기록이 됐다. 판정 조건 자체는 그대로다(D21). */
+    /** D57 · D63: [매입 완료] moves the share to the completed tab, filtered by the check day. */
     @Test
-    void testCompletedUsesProductRecords() {
+    void testPurchasedCheckMovesToCompleted() {
         Product a = product(PRODUCT_ID, "A");
         ShoppingListItem sli = ShoppingListItem.builder()
                 .id(1L).orderLine(paidLine(10L, 5)).product(a).autoQty(5).manualQty(0).build();
 
         given(shoppingListItemRepository.findAll()).willReturn(List.of(sli));
-        given(purchaseRecordRepository.findByProduct_IdIn(List.of(PRODUCT_ID)))
-                .willReturn(List.of(record(1L, a, SELLER_A, 5, TODAY)));
+        given(purchaseRecordRepository.findByProduct_IdIn(List.of(PRODUCT_ID))).willReturn(List.of());
+        given(purchaseCheckRepository.findByProduct_IdInAndCancelledAtIsNull(List.of(PRODUCT_ID))).willReturn(List.of(
+                check(50L, a, SELLER_A, PurchaseCheckStatus.PURCHASED, 5, TODAY)));
         stubLookups(List.of(a), List.of(ACCOUNT));
+        given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of());
 
-        assertThat(service.getCompletedList(TODAY.minusDays(1), TODAY.plusDays(1))).hasSize(1);
-        assertThat(service.getCompletedList(TODAY.plusDays(5), TODAY.plusDays(9))).isEmpty();
+        assertThat(service.getList(null).items()).isEmpty();
+        List<PurchaseProductGroup> completed = service.getCompletedList(TODAY, TODAY, null);
+        assertThat(completed).singleElement().satisfies(group ->
+                assertThat(group.shares()).singleElement().satisfies(share -> {
+                    assertThat(share.state()).isEqualTo("PURCHASED");
+                    assertThat(share.checkId()).isEqualTo(50L);
+                    assertThat(share.checkedOn()).isEqualTo(TODAY);
+                }));
+        assertThat(service.getCompletedList(TODAY.plusDays(1), TODAY.plusDays(2), null)).isEmpty();
+    }
+
+    /** D60 · D82: more needed than written on the check → back to the list, out of the completed tab. */
+    @Test
+    void testCheckLapsesWhenNeedGrows() {
+        Product a = product(PRODUCT_ID, "A");
+        ShoppingListItem sli = ShoppingListItem.builder()
+                .id(1L).orderLine(paidLine(10L, 7)).product(a).autoQty(7).manualQty(0).build();
+
+        given(shoppingListItemRepository.findAll()).willReturn(List.of(sli));
+        given(purchaseRecordRepository.findByProduct_IdIn(List.of(PRODUCT_ID))).willReturn(List.of());
+        given(purchaseCheckRepository.findByProduct_IdInAndCancelledAtIsNull(List.of(PRODUCT_ID))).willReturn(List.of(
+                check(50L, a, SELLER_A, PurchaseCheckStatus.NOT_NEEDED, 5, TODAY)));
+        stubLookups(List.of(a), List.of(ACCOUNT));
+        given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of());
+
+        assertThat(service.getList(null).items()).hasSize(1);
+        assertThat(service.getCompletedList(null, null, null)).isEmpty();
+    }
+
+    /** D67: 「내일 매입」 sits in 「오늘 넘김」 on its check day and is back on the list the next day. */
+    @Test
+    void testTomorrowCountsOnItsDayOnly() {
+        Product a = product(PRODUCT_ID, "A");
+        Product b = product(200L, "B");
+        ShoppingListItem lineA = ShoppingListItem.builder()
+                .id(1L).orderLine(paidLine(10L, 2)).product(a).autoQty(2).manualQty(0).build();
+        ShoppingListItem lineB = ShoppingListItem.builder()
+                .id(2L).orderLine(paidLine(11L, 2)).product(b).autoQty(2).manualQty(0).build();
+
+        given(shoppingListItemRepository.findAll()).willReturn(List.of(lineA, lineB));
+        given(purchaseRecordRepository.findByProduct_IdIn(List.of(PRODUCT_ID, 200L))).willReturn(List.of());
+        given(purchaseCheckRepository.findByProduct_IdInAndCancelledAtIsNull(List.of(PRODUCT_ID, 200L))).willReturn(List.of(
+                check(50L, a, SELLER_A, PurchaseCheckStatus.TOMORROW, 2, TODAY),
+                check(51L, b, SELLER_A, PurchaseCheckStatus.TOMORROW, 2, TODAY.minusDays(1))));
+        stubLookups(List.of(a, b), List.of(ACCOUNT));
+        given(orderLineRepository.findRecentByStatus(eq(OrderStatus.PAID), any(LocalDateTime.class))).willReturn(List.of());
+
+        PurchaseListResponse res = service.getList(null);
+
+        assertThat(res.skippedToday()).extracting(PurchaseProductGroup::productId).containsExactly(PRODUCT_ID);
+        assertThat(res.skippedToday().get(0).shares().get(0).checkId()).isEqualTo(50L);
+        assertThat(res.items()).extracting(PurchaseProductGroup::productId).containsExactly(200L);
+    }
+
+    /** D78 · D81: 「전체」 completes a row only when every share is processed; the row's day is the latest one. */
+    @Test
+    void testAllViewNeedsEveryShareProcessed() {
+        Product a = product(PRODUCT_ID, "A");
+        ShoppingListItem fromA = ShoppingListItem.builder()
+                .id(1L).orderLine(paidLine(10L, 3)).product(a).autoQty(3).manualQty(0).build();
+        ShoppingListItem fromB = ShoppingListItem.builder()
+                .id(2L).orderLine(paidLine(11L, 4, ACCOUNT_B)).product(a).autoQty(4).manualQty(0).build();
+        PurchaseCheck doneA = check(50L, a, SELLER_A, PurchaseCheckStatus.PURCHASED, 3, TODAY.minusDays(2));
+
+        given(shoppingListItemRepository.findAll()).willReturn(List.of(fromA, fromB));
+        given(purchaseRecordRepository.findByProduct_IdIn(List.of(PRODUCT_ID))).willReturn(List.of());
+        given(purchaseCheckRepository.findByProduct_IdInAndCancelledAtIsNull(List.of(PRODUCT_ID)))
+                .willReturn(List.of(doneA))
+                .willReturn(List.of(doneA, check(51L, a, SELLER_B, PurchaseCheckStatus.NOT_NEEDED, 4, TODAY)));
+        stubLookups(List.of(a), List.of(ACCOUNT, ACCOUNT_B));
+
+        assertThat(service.getCompletedList(null, null, null)).isEmpty();          // B still open
+        List<PurchaseProductGroup> completed = service.getCompletedList(TODAY, TODAY, null);
+        assertThat(completed).singleElement().satisfies(group ->
+                assertThat(group.shares()).extracting(PurchaseShare::state)
+                        .containsExactly("PURCHASED", "NOT_NEEDED"));
+    }
+
+    /** D80: a share whose need has always been 0 is shown nowhere; one with a NEED_ZERO record is completed. */
+    @Test
+    void testZeroShareShownOnlyWithNeedZeroRecord() {
+        Product a = product(PRODUCT_ID, "A");
+        Product b = product(200L, "B");
+        ShoppingListItem zeroA = ShoppingListItem.builder()
+                .id(1L).orderLine(paidLine(10L, 2)).product(a).autoQty(0).manualQty(0).build();
+        ShoppingListItem zeroB = ShoppingListItem.builder()
+                .id(2L).orderLine(paidLine(11L, 2)).product(b).autoQty(0).manualQty(0).build();
+
+        given(shoppingListItemRepository.findAll()).willReturn(List.of(zeroA, zeroB));
+        given(purchaseRecordRepository.findByProduct_IdIn(List.of(PRODUCT_ID, 200L))).willReturn(List.of());
+        given(purchaseCheckRepository.findByProduct_IdInAndCancelledAtIsNull(List.of(PRODUCT_ID, 200L))).willReturn(List.of(
+                check(50L, b, SELLER_A, PurchaseCheckStatus.NEED_ZERO, 0, TODAY)));
+        stubLookups(List.of(a, b), List.of(ACCOUNT));
+
+        assertThat(service.getCompletedList(null, null, null))
+                .extracting(PurchaseProductGroup::productId).containsExactly(200L);
     }
 
     @Test
@@ -358,7 +528,7 @@ class PurchaseListServiceTest {
         given(coupangOrderLineRepository.findByOrderLine_IdIn(List.of(10L))).willReturn(List.of(mirror(line, "X")));
         given(productListingOptionRepository.findByPlatformOptionId("X")).willReturn(Optional.empty());
 
-        PurchaseListResponse res = service.getList();
+        PurchaseListResponse res = service.getList(null);
 
         assertThat(res.items()).isEmpty();
         assertThat(res.unmappedOrders()).hasSize(1);
@@ -377,7 +547,7 @@ class PurchaseListServiceTest {
                 ElevenstOrderLine.builder().id(1L).orderLine(line).ordNo("O11").ordPrdSeq("1")
                         .prdStckNo("STK-9").build()));
 
-        PurchaseListResponse res = service.getList();
+        PurchaseListResponse res = service.getList(null);
 
         assertThat(res.unmappedOrders()).hasSize(1);
         assertThat(res.unmappedOrders().get(0).externalItemId()).isEqualTo("STK-9");
@@ -407,12 +577,12 @@ class PurchaseListServiceTest {
     @Test
     void addManual_기존수동라인존재_manualQty누적_새행안만듦() {
         Product a = product(PRODUCT_ID, "A");
-        ShoppingListItem existing = ShoppingListItem.builder()
-                .id(7L).orderLine(null).product(a).autoQty(0).manualQty(4).build();
-        given(shoppingListItemRepository.findByOrderLineIsNullAndProduct_Id(PRODUCT_ID))
+        ShoppingListItem existing = manualLine(7L, a, SELLER_A, 4);
+        given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(SELLER_A));
+        given(shoppingListItemRepository.findByOrderLineIsNullAndProduct_IdAndSeller_Id(PRODUCT_ID, SELLER_ID))
                 .willReturn(Optional.of(existing));
 
-        service.addManual(new ManualItemRequest(PRODUCT_ID, 3));
+        service.addManual(new ManualItemRequest(PRODUCT_ID, SELLER_ID, 3));
 
         ArgumentCaptor<ShoppingListItem> captor = ArgumentCaptor.forClass(ShoppingListItem.class);
         verify(shoppingListItemRepository).save(captor.capture());
@@ -420,7 +590,70 @@ class PurchaseListServiceTest {
         verify(productRepository, never()).findById(anyLong());      // 신규 product 조회 없음
     }
 
-    // --- 입고 = 두 원장 (PLAN 2609_29 D1·D16·D17·D19) + 금액 (2609_28 D1~D3) ---
+    /** D14 · D26: moving a manual line onto a seller that already has one is refused — never merged. */
+    @Test
+    void testChangeManualSellerConflictIs409() {
+        Product a = product(PRODUCT_ID, "A");
+        given(shoppingListItemRepository.findById(7L)).willReturn(Optional.of(manualLine(7L, a, SELLER_A, 2)));
+        given(sellerRepository.findById(9L)).willReturn(Optional.of(SELLER_B));
+        given(shoppingListItemRepository.findByOrderLineIsNullAndProduct_IdAndSeller_Id(PRODUCT_ID, 9L))
+                .willReturn(Optional.of(manualLine(8L, a, SELLER_B, 5)));
+
+        assertThatThrownBy(() -> service.changeManualSeller(7L, new ManualSellerRequest(9L)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("B상사 몫 수동 줄이 이미 있습니다. 그 줄의 수량을 고치세요.");
+        verify(shoppingListItemRepository, never()).save(any());
+    }
+
+    /** D23 · D77: order lines cannot be edited, moved or deleted from the purchase list. */
+    @Test
+    void testManualOperationsRejectOrderLine() {
+        Product a = product(PRODUCT_ID, "A");
+        given(shoppingListItemRepository.findById(1L)).willReturn(Optional.of(ShoppingListItem.builder()
+                .id(1L).orderLine(paidLine(10L, 3)).product(a).autoQty(3).manualQty(0).build()));
+
+        assertThatThrownBy(() -> service.adjustManual(1L, new ManualAdjustRequest(2)))
+                .isInstanceOf(BusinessException.class).hasMessage("수동 줄만 바꿀 수 있습니다.");
+        assertThatThrownBy(() -> service.deleteManual(1L))
+                .isInstanceOf(BusinessException.class).hasMessage("수동 줄만 바꿀 수 있습니다.");
+        verify(shoppingListItemRepository, never()).delete(any());
+    }
+
+    /** D62: a new processing record cancels the share's previous screen-made one and keeps the current need. */
+    @Test
+    void testCheckCancelsPreviousAndWritesNeed() {
+        Product a = product(PRODUCT_ID, "A");
+        PurchaseCheck previous = check(40L, a, SELLER_A, PurchaseCheckStatus.TOMORROW, 3, TODAY);
+        given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(a));
+        given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(SELLER_A));
+        given(purchaseCheckRepository.findByProduct_IdAndSeller_IdAndCancelledAtIsNull(PRODUCT_ID, SELLER_ID))
+                .willReturn(List.of(previous));
+        given(shoppingListItemRepository.findByProductId(PRODUCT_ID)).willReturn(List.of(manualLine(7L, a, SELLER_A, 4)));
+
+        service.check(new PurchaseCheckRequest(PRODUCT_ID, SELLER_ID, PurchaseCheckStatus.PURCHASED));
+
+        ArgumentCaptor<PurchaseCheck> captor = ArgumentCaptor.forClass(PurchaseCheck.class);
+        verify(purchaseCheckRepository, times(2)).save(captor.capture());
+        assertThat(captor.getAllValues().get(0).getId()).isEqualTo(40L);
+        assertThat(captor.getAllValues().get(0).getCancelledAt()).isNotNull();
+        assertThat(captor.getAllValues().get(1).getStatus()).isEqualTo(PurchaseCheckStatus.PURCHASED);
+        assertThat(captor.getAllValues().get(1).getNeededQty()).isEqualTo(4);
+        assertThat(captor.getAllValues().get(1).getCheckedOn()).isEqualTo(TODAY);
+    }
+
+    /** D85: NEED_ZERO is written by the extract only — the screen can neither send nor cancel it. */
+    @Test
+    void testNeedZeroIsNotScreenMade() {
+        assertThatThrownBy(() -> service.check(
+                new PurchaseCheckRequest(PRODUCT_ID, SELLER_ID, PurchaseCheckStatus.NEED_ZERO)))
+                .isInstanceOf(BusinessException.class);
+        given(purchaseCheckRepository.findById(50L)).willReturn(Optional.of(
+                check(50L, product(PRODUCT_ID, "A"), SELLER_A, PurchaseCheckStatus.NEED_ZERO, 0, TODAY)));
+        assertThatThrownBy(() -> service.cancelCheck(50L)).isInstanceOf(BusinessException.class);
+        verify(purchaseCheckRepository, never()).save(any());
+    }
+
+    // --- Intake (PLAN 2609_29 D1·D16·D17; stock ledger only when linked: FEATURE_2610_09 D65) + amounts (2609_28 D1~D3) ---
 
     private PurchaseRecordRequest req(int quantity, String total, String unit,
                                       Boolean reflect, Boolean recordStock) {
@@ -431,6 +664,11 @@ class PurchaseListServiceTest {
     }
 
     private void stubAddPurchase() {
+        stubAddPurchase(true);
+    }
+
+    private void stubAddPurchase(boolean stockLinked) {
+        given(purchaseSettingService.isStockLinked()).willReturn(stockLinked);
         given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(product(PRODUCT_ID, "A")));
         given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(SELLER_A));
         given(purchaseRecordRepository.save(any(PurchaseRecord.class)))
@@ -526,6 +764,20 @@ class PurchaseListServiceTest {
         verify(stockLedgerService).record(any());
     }
 
+    /** D65 · D84: stock link off → purchase record only, and the record remembers it. */
+    @Test
+    void testAddPurchaseStockLinkOffSkipsStock() {
+        stubAddPurchase(false);
+
+        PurchaseRecordResult result = service.addPurchase(req(4, "12000", null, null, null));
+
+        ArgumentCaptor<PurchaseRecord> captor = ArgumentCaptor.forClass(PurchaseRecord.class);
+        verify(purchaseRecordRepository).save(captor.capture());
+        assertThat(captor.getValue().getStockLinked()).isFalse();
+        verify(stockLedgerService, never()).record(any());
+        assertThat(result.stockRecorded()).isFalse();
+    }
+
     @Test
     void testAddPurchaseStampsProductAndSeller() {
         PurchaseRecord saved = savedPurchase(req(3, "12000", null, null, null));
@@ -609,15 +861,15 @@ class PurchaseListServiceTest {
 
     // --- 최근 구매이력 (PLAN 2609_29 D9) ---
 
-    /** 판매자 무관 조회라 각 줄이 누구 것인지 보여야 한다. */
+    /** D7: sellerId null = every seller, so each row must show whose it is. */
     @Test
     void testRecentPurchasesIgnoreSeller() {
         Product a = product(PRODUCT_ID, "A");
-        given(purchaseRecordRepository.findRecentByProduct(eq(PRODUCT_ID), any())).willReturn(List.of(
+        given(purchaseRecordRepository.findRecentByProduct(eq(PRODUCT_ID), isNull(), any())).willReturn(List.of(
                 record(1L, a, SELLER_A, 3, TODAY),
                 record(2L, a, SELLER_B, 5, TODAY.minusDays(1))));
 
-        List<PurchaseRecordView> views = service.recentPurchases(PRODUCT_ID, 5);
+        List<PurchaseRecordView> views = service.recentPurchases(PRODUCT_ID, null, 5);
 
         assertThat(views).extracting(PurchaseRecordView::sellerName)
                 .containsExactly("A상사", "B상사");

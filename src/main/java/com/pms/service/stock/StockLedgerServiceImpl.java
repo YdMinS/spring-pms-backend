@@ -18,6 +18,7 @@ import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.StockMovementRepository;
+import com.pms.service.PurchaseSettingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -50,6 +51,7 @@ public class StockLedgerServiceImpl implements StockLedgerService {
     private final PurchaseRecordRepository purchaseRecordRepository;
     private final OrderClaimRepository orderClaimRepository;
     private final SellerRepository sellerRepository;
+    private final PurchaseSettingService purchaseSettingService;
 
     @Override
     @Transactional
@@ -112,7 +114,7 @@ public class StockLedgerServiceImpl implements StockLedgerService {
      *
      * <table>
      *   <tr><th>type</th><th>quantity</th><th>reason</th><th>required ref</th><th>forbidden ref</th></tr>
-     *   <tr><td>STOCK_IN</td><td>&gt; 0</td><td>required</td><td>PURCHASE -&gt; purchaseRecordId</td><td>claim</td></tr>
+     *   <tr><td>STOCK_IN</td><td>&gt; 0</td><td>required</td><td>PURCHASE -&gt; purchaseRecordId (while the stock link is on)</td><td>claim</td></tr>
      *   <tr><td>RETURN_IN</td><td>&gt; 0</td><td>none</td><td>orderClaimId</td><td>purchaseRecord</td></tr>
      *   <tr><td>DISPOSAL</td><td>&gt; 0 (stored negative)</td><td>required</td><td>-</td><td>all</td></tr>
      *   <tr><td>ADJUST</td><td>!= 0</td><td>required</td><td>-</td><td>all</td></tr>
@@ -167,7 +169,10 @@ public class StockLedgerServiceImpl implements StockLedgerService {
             throw new IllegalArgumentException("이 이동 유형은 주문·클레임을 참조할 수 없습니다");
         }
         if (type == StockMovementType.STOCK_IN) {
-            if (reason == StockReason.PURCHASE && request.purchaseRecordId() == null) {
+            // FEATURE_2610_09 D71 (round 12): with the stock link off, a PURCHASE check-in here is the
+            // stock screen's own entry and needs no purchase record. With it on, the record stays mandatory.
+            if (reason == StockReason.PURCHASE && request.purchaseRecordId() == null
+                    && purchaseSettingService.isStockLinked()) {
                 throw new IllegalArgumentException("구매기록을 선택하세요");
             }
         } else if (request.purchaseRecordId() != null) {
@@ -183,9 +188,12 @@ public class StockLedgerServiceImpl implements StockLedgerService {
     /**
      * Unit price per reason (D8).
      *
-     * <p>⚠️ {@code PURCHASE} copies the amount from the purchase ledger and <b>ignores the request
-     * value</b> — the money-side row is the source of truth. If that amount is unknown the movement
-     * is still stored with a null price; substituting 0 would silently claim the goods were free.
+     * <p>⚠️ {@code PURCHASE} with a purchase record copies the amount from the purchase ledger and
+     * <b>ignores the request value</b> — the money-side row is the source of truth. If that amount is
+     * unknown the movement is still stored with a null price; substituting 0 would silently claim the
+     * goods were free. Without a record (stock link off — {@code validate} rejects it while on,
+     * FEATURE_2610_09 D71 round 13) it follows the {@code OPENING} rule below: the typed price, else the
+     * registered price.
      *
      * <p>⚠️ {@code OPENING} falls back to the product's registered price when the request carries no
      * unit price — the snapshot the reason was designed around. It is a fallback, not a forced
@@ -199,7 +207,9 @@ public class StockLedgerServiceImpl implements StockLedgerService {
             return null;
         }
         return switch (request.reason()) {
-            case PURCHASE -> purchaseRecord == null ? null : purchaseRecord.getUnitPrice();
+            case PURCHASE -> purchaseRecord != null
+                    ? purchaseRecord.getUnitPrice()
+                    : (request.unitPrice() != null ? request.unitPrice() : product.getPrice());
             case FREE -> BigDecimal.ZERO;
             case OPENING -> request.unitPrice() != null ? request.unitPrice() : product.getPrice();
             default -> request.unitPrice();   // ETC (optional)
@@ -218,8 +228,8 @@ public class StockLedgerServiceImpl implements StockLedgerService {
      * <p>🔴 A RETURN_IN claim can be order-unmatched ({@code orderLine == null}), and then there is
      * nothing to derive from — the request must carry the seller instead.
      *
-     * <p>🔴 For a PURCHASE check-in the request seller must equal the purchase record's. If the two
-     * ledgers are allowed to disagree, nobody can decide afterwards which one was right.
+     * <p>🔴 For a PURCHASE check-in with a purchase record the request seller must equal the record's. If
+     * the two ledgers are allowed to disagree, nobody can decide afterwards which one was right.
      *
      * @throws IllegalArgumentException seller missing or contradicting the purchase record (-> 400)
      */
@@ -251,7 +261,8 @@ public class StockLedgerServiceImpl implements StockLedgerService {
     }
 
     private PurchaseRecord resolvePurchaseRecord(StockMovementRequest request, StockMovementType type) {
-        if (type != StockMovementType.STOCK_IN || request.reason() != StockReason.PURCHASE) {
+        if (type != StockMovementType.STOCK_IN || request.reason() != StockReason.PURCHASE
+                || request.purchaseRecordId() == null) {
             return null;
         }
         return purchaseRecordRepository.findById(request.purchaseRecordId())

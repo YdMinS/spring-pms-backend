@@ -19,12 +19,14 @@ import java.time.LocalDate;
  * (claim -> orderLine -> order -> marketplaceAccount -> seller) and the screen never asks.
  * It carries no {@code @NotNull} on purpose: the per-type rule is owned by the service, and an
  * annotation here would reject the derived case before the service ever sees it.
- * For {@code STOCK_IN + PURCHASE} it must equal the purchase record's seller — otherwise the money
- * ledger and the physical ledger disagree and nobody can tell later which one was right.
+ * For {@code STOCK_IN + PURCHASE} with a purchase record it must equal the record's seller — otherwise the
+ * money ledger and the physical ledger disagree and nobody can tell later which one was right.
  *
  * <p>⚠️ Not accepted here on purpose: {@code createdBy} (taken from the security context, D9),
  * {@code location} (resolved server-side, D16/D17) and {@code orderLineId} (STOCK_OUT only,
- * prompt 05). {@code unitPrice} is only honoured for {@code OPENING}.
+ * prompt 05). {@code unitPrice} is honoured for {@code OPENING}, {@code ETC} and a {@code PURCHASE}
+ * without a purchase record (stock link off, FEATURE_2610_09 D71 round 13); a {@code PURCHASE} with a
+ * record copies the record's price and {@code FREE} forces 0.
  *
  * <p>⚠️ This record has <b>no {@code @Builder}</b> — callers assemble it with positional arguments,
  * so the field ORDER below is part of the contract.

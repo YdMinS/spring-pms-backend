@@ -5,19 +5,23 @@ import lombok.*;
 import org.hibernate.annotations.TenantId;
 
 /**
- * 구매 필요 라인 (order_line × 구성품). "오늘 구매 목록"의 SSOT 라인.
+ * Purchase need line (order_line × component) — the source of truth of the purchase list.
  *
- * 한 주문 라인(옵션)을 BOM 전개하면 구성품마다 1행이 생긴다. order_line 이 NULL 이면 수동 추가 라인이다.
- * 라인 필요수량 = autoQty + manualQty. 화면은 product 로 합산해 보여준다.
+ * Expanding one order line (option) by its BOM yields one row per component. A NULL order_line is a manual line.
+ * Line needed quantity = autoQty + manualQty. Screens add lines up per product (and per seller, FEATURE_2610_09 D2).
  *
- * 추출(extract)은 멱등 upsert 다: 재추출 시 autoQty 만 갱신하고 manualQty / 연결된 purchase_record 는 보존한다.
- * 취소·환불대기·출고로 발주가능수량이 줄면 재추출에서 해당 라인 autoQty 가 자동으로 0 이 되어 목록에서 빠진다.
+ * The extract is an idempotent upsert: a re-extract replaces autoQty only and keeps manualQty.
+ * When cancellation, refund hold or shipping lowers the purchasable quantity, the re-extract sets that line's
+ * autoQty to 0; the row stays (FEATURE_2610_09 D80 — a share that fell to 0 shows as 「필요 0」).
  *
- * ⚠️ ddl-auto=validate(운영) → 아래 @Column 정의는 실제 shopping_list_item DDL 과 일치해야 한다.
- *    UNIQUE(order_line_id, product_id). 수동 라인(order_line_id NULL) 의 "product 당 1개" 는 서비스 계층이 보장한다.
+ * Seller of a line (FEATURE_2610_09 D16): an order line reads it from order -> account -> seller and keeps
+ * {@code seller} NULL; a manual line stores it in {@code seller}.
  *
- * @see com.pms.domain.PurchaseRecord 라인에 묶인 구매 이력
- * @see com.pms.domain.OrderLine 주문 라인(중립 core)
+ * ⚠️ ddl-auto=validate (prod) → the @Column definitions below must match the shopping_list_item DDL.
+ *    UNIQUE(order_line_id, product_id). "One manual line per (product × seller)" is owned by the service layer.
+ *
+ * @see com.pms.domain.PurchaseRecord purchase history per product × seller
+ * @see com.pms.domain.OrderLine order line (neutral core)
  */
 @Entity
 @Table(name = "shopping_list_item",
@@ -48,6 +52,11 @@ public class ShoppingListItem extends BaseEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "product_id", nullable = false)
     private Product product;
+
+    /** Seller a manual line is bought for (FEATURE_2610_09 D11 · D16). NULL on order lines. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "seller_id")
+    private Seller seller;
 
     /** 추출 자동값 = 발주가능수량 × 옵션당 구성수량. 수동 라인은 0. */
     @Column(name = "auto_qty", nullable = false)
