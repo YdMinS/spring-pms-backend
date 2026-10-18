@@ -5,6 +5,7 @@ import com.pms.domain.Product;
 import com.pms.domain.ProductImage;
 import com.pms.domain.ProductPurchasePlace;
 import com.pms.domain.PurchasePlace;
+import com.pms.domain.Seller;
 import com.pms.domain.ShoppingListItem;
 import com.pms.dto.request.MergeProductsRequest;
 import com.pms.dto.response.MergeProductsResponse;
@@ -289,6 +290,30 @@ class ProductMergeServiceTest {
         // The source row is deleted outright: the target's own 2 stays 2, it never becomes 5.
         verify(shoppingListItemRepository).delete(sourceRow);
         verify(shoppingListItemRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("A manual row collides only with the target's manual row of the same seller (FEATURE_2610_09 D18)")
+    void testMergeManualRowCollidesPerSeller() {
+        givenBothProductsExist();
+        givenSourceIsUnlinked();
+        givenSnapshotIsWritten();
+        ShoppingListItem manualOfSeller3 = shoppingRow(1L, null, 0).toBuilder()
+                .seller(Seller.builder().id(3L).build()).manualQty(2).build();
+        ShoppingListItem manualOfSeller9 = shoppingRow(2L, null, 0).toBuilder()
+                .seller(Seller.builder().id(9L).build()).manualQty(4).build();
+        given(shoppingListItemRepository.findManualSellerIdsByProductId(TARGET_ID)).willReturn(Set.of(3L));
+        given(shoppingListItemRepository.findByProductId(SOURCE_ID))
+                .willReturn(List.of(manualOfSeller3, manualOfSeller9));
+
+        service.merge(request(noFields(),
+                new MergeProductsRequest.TransferOptions(false, false, false, false, true, false, false)));
+
+        verify(shoppingListItemRepository).delete(manualOfSeller3);
+        ArgumentCaptor<ShoppingListItem> saved = ArgumentCaptor.forClass(ShoppingListItem.class);
+        verify(shoppingListItemRepository).save(saved.capture());
+        assertThat(saved.getValue().getSeller().getId()).isEqualTo(9L);
+        assertThat(saved.getValue().getProduct().getId()).isEqualTo(TARGET_ID);
     }
 
     // ---- fields and memo -------------------------------------------------------------------------

@@ -3,10 +3,12 @@ package com.pms.dto.response;
 import java.util.List;
 
 /**
- * "오늘 구매 목록" 화면 1회 응답.
- * items: 정상 매핑된 구성품 단위 집계(잔여>0만). unmappedOrders: 옵션 미등록/BOM 빈 주문.
+ * Purchase list tab, one response (FEATURE_2610_09 D57 · D67 · D78).
+ * items: rows with a share still to buy. skippedToday: rows whose remaining shares were all put off with
+ * 「내일 매입」 today (the 「오늘 넘김」 group). unmappedOrders: paid orders whose option is unregistered or whose BOM is empty.
  */
 public record PurchaseListResponse(
         List<PurchaseProductGroup> items,
+        List<PurchaseProductGroup> skippedToday,
         List<UnmappedOrder> unmappedOrders
 ) {}

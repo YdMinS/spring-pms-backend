@@ -95,7 +95,8 @@ public class StockMovement extends BaseEntity {
 
     /**
      * Cost carried by this movement (D8): OPENING = {@code Product.price} snapshot, FREE = 0,
-     * PURCHASE = copied from {@code purchase_record.unitPrice}.
+     * PURCHASE = copied from {@code purchase_record.unitPrice}; a PURCHASE without a purchase record (stock
+     * link off, FEATURE_2610_09 D71 round 13) = the typed price, else the {@code Product.price} snapshot.
      *
      * <p>null is a legitimate value meaning "amount unknown" — never substituted with 0.
      */
@@ -112,7 +113,10 @@ public class StockMovement extends BaseEntity {
     @JoinColumn(name = "order_claim_id")
     private OrderClaim orderClaim;
 
-    /** Required for STOCK_IN + PURCHASE — the money-side row this delivery fulfils. */
+    /**
+     * Required for STOCK_IN + PURCHASE while the stock link is on (off = may be null, FEATURE_2610_09 D71
+     * round 12) — the money-side row this delivery fulfils.
+     */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "purchase_record_id")
     private PurchaseRecord purchaseRecord;

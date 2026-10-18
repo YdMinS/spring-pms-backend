@@ -3,15 +3,16 @@ package com.pms.dto.response;
 import java.util.List;
 
 /**
- * 구성품(Product) 단위 집계 한 줄. remainingQty = neededQty − purchasedQty.
+ * One component (Product) row of the purchase list.
  *
- * <p>🔴 세 숫자는 모두 <b>전체 기준</b>이다 — 판매자로 쪼개지 않는다(PLAN 2609_29 D6).
- * 쪼개면 "얼마를 더 사야 하나"가 판매자 수만큼 흩어진다. 귀속이 어긋나면 재고 이관(별건)으로 맞춘다.
+ * <p>Seller chosen (FEATURE_2610_09 D2): the three numbers are that seller's share, {@code shares} holds that
+ * one share and {@code lines} only that seller's lines (D6). 「전체」 (D22 · D58): neededQty = sum of the shares,
+ * remainingQty = sum of each share's shortfall (one seller's surplus never covers another's), purchasedQty =
+ * sum of each share's purchase capped at its own need — so neededQty − purchasedQty = remainingQty.</p>
  *
- * <p>구매목록 탭은 remainingQty &gt; 0, 완료 탭은 remainingQty &lt;= 0 인 그룹만 담는다 — 응답 타입은 같다.
- * lines 는 그 product 에 기여한 모든 라인(주문 + 수동).
+ * <p>The numbers are display only; which list a row sits in comes from the shares' states (D57 · D78).</p>
  *
- * <p>brand 는 물품의 브랜드(없으면 null) — 매장에서 같은 이름의 다른 브랜드를 집지 않게 카드에 같이 보여준다.
+ * <p>brand = the product's brand (null when none) — shown so a same-named product of another brand is not picked up.</p>
  */
 public record PurchaseProductGroup(
         Long productId,
@@ -20,5 +21,6 @@ public record PurchaseProductGroup(
         int neededQty,
         int purchasedQty,
         int remainingQty,
+        List<PurchaseShare> shares,
         List<PurchaseLine> lines
 ) {}

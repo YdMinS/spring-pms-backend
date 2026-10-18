@@ -2,6 +2,8 @@ package com.pms.service;
 
 import com.pms.dto.request.ManualAdjustRequest;
 import com.pms.dto.request.ManualItemRequest;
+import com.pms.dto.request.ManualSellerRequest;
+import com.pms.dto.request.PurchaseCheckRequest;
 import com.pms.dto.request.PurchaseRecordRequest;
 import com.pms.dto.response.PurchaseListResponse;
 import com.pms.dto.response.PurchaseProductGroup;
@@ -12,55 +14,67 @@ import java.time.LocalDate;
 import java.util.List;
 
 /**
- * "오늘 구매 목록"(사입 리스트) 비즈니스 로직.
+ * Purchase list ("today's shopping list") business logic.
  *
- * <p>🔴 판매자 스코프가 없다(PLAN 2609_29 D11·D13). 툴바 드롭다운이 "보기 범위"와 "동기화 범위" 두 뜻을
- * 겸하면서 리셋 범위와 재적재 범위가 어긋나는 결함을 만들었다 — 조회·추출 모두 항상 전체다.
- * 판매자는 조회 축이 아니라 <b>입고 시 귀속</b>으로만 존재한다(D0).
+ * <p>🔴 The seller is a view filter, never a sync scope (FEATURE_2610_09 D1 · D19): the extract always covers every
+ * seller, and {@code sellerId} only narrows what a read returns. Numbers are per (product × seller) share (D2 · D22).
  *
- * <p>🔴 입고는 하나의 이벤트다(D1): {@link #addPurchase}가 purchase_record(돈)와 stock_movement(실물)를
- * <b>같은 트랜잭션</b>에서 쓴다. 따로 입력하게 하면 둘 중 하나가 반드시 빈다.
+ * <p>🔴 Which tab a row sits in is decided by the buyer's processing records, not by the numbers
+ * (D57 · D78 · D80): PURCHASED / NOT_NEEDED / NEED_ZERO → completed, TOMORROW (today) → 「오늘 넘김」, nothing → list.
  *
- * 주문 동기화는 order-sync 소관 — 여기선 적재된 order_line 만 사용한다.
- * 모든 구매 목록 작업은 이 서비스를 경유해야 한다(Controller 에서 Repository 직접 호출 금지).
+ * <p>🔴 A check-in is one event (PLAN 2609_29 D1): {@link #addPurchase} writes purchase_record (money) and, while the
+ * stock link setting is on, stock_movement (goods) in the <b>same transaction</b> (FEATURE_2610_09 D65).
+ *
+ * Order sync belongs to order-sync — this service only reads loaded order_line rows.
+ * Every purchase list operation goes through this service (no repository calls from the controller).
  *
  * @see com.pms.controller.PurchaseListController
  */
 public interface PurchaseListService {
 
     /**
-     * 결제완료 주문을 BOM 전개해 shopping_list_item.autoQty 를 멱등 재적재. manualQty/purchase_record 보존.
-     * 리셋도 재적재도 <b>전체</b>라 두 범위가 항상 일치한다(D11).
+     * Expand paid orders by BOM and re-load shopping_list_item.autoQty idempotently; manualQty and purchase_record
+     * stay. The reset and the reload both cover every seller (D19). Afterwards a share whose needed quantity fell
+     * from above 0 to 0 gets a NEED_ZERO record, and one that rose above 0 again has it cancelled (D85).
      */
     void extract();
 
-    /** 라인을 product 로 합산한 구매 목록(잔여>0) + 미매핑 주문. 저장 없음. */
-    PurchaseListResponse getList();
+    /** Purchase list tab: rows to buy + 「오늘 넘김」 rows + unmapped orders. {@code sellerId} null = 「전체」. */
+    PurchaseListResponse getList(Long sellerId);
 
     /**
-     * 구매 완료 목록(잔여<=0 && 구매>0)을 product 로 합산. 저장 없음.
-     * from/to: 구매일 기준 기간 필터(경계 포함). null=무제한.
-     *
-     * <p>응답 타입은 구매목록과 동일하다(D21) — 완료탭도 같은 토글(입고 카드·채널 칩·주문 줄)을 그린다.
+     * Completed tab: rows whose shares are all processed (D57 · D78), filtered by the processing day
+     * (D63 · D81 · D85). from/to inclusive, null = unbounded. {@code sellerId} null = 「전체」.
      */
-    List<PurchaseProductGroup> getCompletedList(LocalDate from, LocalDate to);
+    List<PurchaseProductGroup> getCompletedList(LocalDate from, LocalDate to, Long sellerId);
 
     /**
-     * 입고 1회 — 구매기록 저장 + (조건부) 재고 입고를 같은 트랜잭션에서 (D1·D17·D19).
-     * 음수 정정이거나 {@code recordStock=false} 면 재고는 기록하지 않고 결과로 알린다.
+     * One check-in — the purchase record, plus a stock check-in while the stock link setting is on (D65 · D84).
+     * A negative correction or {@code recordStock=false} skips stock; the result says so.
      *
-     * <p>매입가가 기준가를 움직이는 조건이면 {@code Product.price} 도 함께 갱신된다(2609_28 D4 ①,
-     * {@link com.pms.service.cost.CostPropagationService#updateBasePrice}). ⚠️ <b>셀 판매가는 여기서
-     * 바뀌지 않는다</b> — 그것은 사용자가 원가 파급을 확정할 때만 일어난다.
+     * <p>When the purchase price moves the base price, {@code Product.price} is updated too (2609_28 D4 ①). ⚠️ The
+     * channel selling prices do <b>not</b> change here — only when the user confirms the cost propagation.
      */
     PurchaseRecordResult addPurchase(PurchaseRecordRequest request);
 
-    /** 그 물품의 최근 구매이력 — <b>판매자 무관</b>, 최신순 limit 건 (D9). */
-    List<PurchaseRecordView> recentPurchases(Long productId, int limit);
+    /** Recent purchases of a product, newest first, {@code limit} rows; {@code sellerId} null = every seller (D7 · D25). */
+    List<PurchaseRecordView> recentPurchases(Long productId, Long sellerId, int limit);
 
-    /** 수동 라인 추가 또는 기존 수동 라인에 manualQty 누적(product 당 1개 보장). */
+    /** Add a manual line or accumulate into the (product × seller) manual line (D11 · D16). */
     void addManual(ManualItemRequest request);
 
-    /** 라인 manualQty 절대값 교체. */
+    /** Replace a manual line's manualQty (1 or more). Order lines → 400 (D23). */
     void adjustManual(Long itemId, ManualAdjustRequest request);
+
+    /** Move a manual line to another seller. Order lines → 400; that seller already has a manual line → 409 (D13 · D24 · D26). */
+    void changeManualSeller(Long itemId, ManualSellerRequest request);
+
+    /** Delete a manual line. Order lines → 400 (D77). */
+    void deleteManual(Long itemId);
+
+    /** [매입 완료] · [오늘 매입 안 함] on one share — cancels that share's previous screen-made record first (D57 · D61 · D62). */
+    void check(PurchaseCheckRequest request);
+
+    /** [완료 취소] · [되돌리기] — marks the record cancelled; NEED_ZERO → 400 (D62 · D67 · D79). */
+    void cancelCheck(Long checkId);
 }

@@ -99,8 +99,9 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
      * <p>⚠️ Correction rows ({@code quantity < 0}) are excluded: a reversed purchase is not something
      * that can arrive.
      *
-     * <p>⚠️ While D19 keeps {@code recordStock} on, every purchase is checked in at once and this
-     * query legitimately returns nothing. Empty is not broken.
+     * <p>⚠️ Purchases saved while the stock link setting was off ({@code stockLinked = false}) never wait here,
+     * even after the setting is turned on (FEATURE_2610_09 D71 ④ · D84). While the setting is on, every purchase is
+     * checked in at once and this query legitimately returns nothing. Empty is not broken.
      */
     @Query("""
             select new com.pms.dto.response.PurchaseCandidateView(
@@ -113,6 +114,7 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
               join r.product p
               join r.seller s
             where r.quantity > 0
+              and r.stockLinked = true
               and (:productId is null or p.id = :productId)
               and r.quantity > (select coalesce(sum(m2.quantity), 0L) from StockMovement m2
                                   where m2.purchaseRecord.id = r.id

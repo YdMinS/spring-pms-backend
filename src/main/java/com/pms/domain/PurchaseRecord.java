@@ -10,20 +10,22 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 
 /**
- * 매입 이력 (물품 × 판매자). 돈 쪽 원장.
+ * Purchase history (product × seller) — the money-side ledger.
  *
- * <p>🔴 주문 라인에 묶지 않는다(PLAN 2609_29 D3). 입고는 "이 주문 몫"이 아니라 "이 판매자가 이 물품을
- * 이만큼 들였다"이다 — 주문이 없거나(수동 보충) 취소돼 사라져도 매입 귀속은 남아야 정산이 선다.
+ * <p>🔴 Not tied to an order line (PLAN 2609_29 D3). A check-in means "this seller brought in this many of this
+ * product", not "this order's share" — the attribution must survive when there is no order (manual restock) or the
+ * order is cancelled, or settlement breaks.
  *
- * <p>물품 구매수량 = SUM(quantity) (전체 기준, 판매자로 쪼개지 않는다 — D6).
- * 잔여 = 필요수량 − 구매수량. 부분구매는 수량을 나눠 여러 행으로, 오입력 정정은 음수 행으로 쌓는다.
+ * <p>Purchased quantity on the purchase list = SUM(quantity) per (product × seller) (FEATURE_2610_09 D2 · D22).
+ * A partial purchase is split into several rows; a wrong entry is corrected with a negative row.
  *
- * <p>⚠️ 실물 쪽 원장은 {@link StockMovement} 다(D1). [입고] 1회가 두 원장을 같은 트랜잭션에서 쓴다 —
- * 여기만 저장하고 끝내면 "돈은 나갔는데 물건은 모르는" 행이 남는다.
+ * <p>⚠️ The physical-side ledger is {@link StockMovement} (D1). One [입고] writes both ledgers in one transaction
+ * while the stock link setting is on (FEATURE_2610_09 D65) — {@link #stockLinked} records which mode applied.
  *
- * <p>⚠️ ddl-auto=validate(운영) → 아래 @Column 정의는 실제 purchase_record DDL(changeset 077)과 일치해야 한다.
+ * <p>⚠️ ddl-auto=validate (prod) → the @Column definitions below must match the purchase_record DDL
+ * (changesets 077 · 109-4).
  *
- * @see com.pms.domain.StockMovement 실물 재고 원장
+ * @see com.pms.domain.StockMovement physical stock ledger
  */
 @Entity
 @Table(name = "purchase_record")
@@ -76,6 +78,14 @@ public class PurchaseRecord extends BaseEntity {
      */
     @Column(name = "reflect_to_base_price", nullable = false)
     private Boolean reflectToBasePrice;
+
+    /**
+     * Stock link setting when this purchase was saved (FEATURE_2610_09 D84). false = saved while the setting was
+     * off: it never shows in the check-in waiting list, even after the setting is turned on (D71 ④).
+     */
+    @Builder.Default
+    @Column(name = "stock_linked", nullable = false)
+    private Boolean stockLinked = Boolean.TRUE;
 
     /**
      * 이 매입이 {@code Product.price}(기준 원가)를 움직이는가 — <b>이 판정의 유일한 자리</b>
