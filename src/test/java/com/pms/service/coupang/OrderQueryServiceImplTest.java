@@ -10,11 +10,14 @@ import com.pms.domain.OrderLine;
 import com.pms.domain.OrderShipment;
 import com.pms.domain.OrderStatus;
 import com.pms.domain.Platform;
+import com.pms.domain.Product;
 import com.pms.dto.response.OrderItemResponse;
 import com.pms.dto.response.OrderMonthResponse;
 import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.OrderRepository;
+import com.pms.repository.ProductRepository;
+import com.pms.service.stock.OrderLineExpander;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -25,6 +28,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -48,6 +52,8 @@ class OrderQueryServiceImplTest {
     @Mock private CoupangOrderLineRepository coupangOrderLineRepository;
     @Mock private ElevenstOrderLineRepository elevenstOrderLineRepository;
     @Mock private CoupangProperties coupangProperties;
+    @Mock private OrderLineExpander orderLineExpander;
+    @Mock private ProductRepository productRepository;
     @InjectMocks private OrderQueryServiceImpl service;
 
     private OrderLine line(Long id, OrderStatus status, int orderQty, int cancelQty, int holdQty) {
@@ -318,5 +324,29 @@ class OrderQueryServiceImplTest {
 
         assertThat(r.getExternalItemId()).isEqualTo("STK-1");
         assertThat(r.getPlatformStatus()).isEqualTo("202");
+    }
+
+    /** Thumbnail = first BOM component; a line that fails to expand gets nulls (screen draws an empty box). */
+    @Test
+    void list_thumbnailIsFirstBomProduct() {
+        given(coupangProperties.getSyncDays()).willReturn(14);
+        OrderLine mapped = line(1L, OrderStatus.PAID, 1, 0, 0);
+        OrderLine unmapped = line(2L, OrderStatus.PAID, 1, 0, 0);
+        given(orderRepository.findRecentOrders(any(LocalDateTime.class))).willReturn(List.of(mapped, unmapped));
+        given(orderLineExpander.expand(anyList(), any())).willReturn(Map.of(
+                1L, new OrderLineExpander.LineExpansion(1L, List.of(
+                        new OrderLineExpander.ExpandedProduct(30L, "양말", 1),
+                        new OrderLineExpander.ExpandedProduct(31L, "장갑", 1)), null),
+                2L, new OrderLineExpander.LineExpansion(2L, List.of(),
+                        OrderLineExpander.Failure.UNMAPPED_OPTION)));
+        given(productRepository.findAllById(List.of(30L))).willReturn(List.of(
+                Product.builder().id(30L).productName("양말").imageUrl("https://img/30.jpg").build()));
+
+        List<OrderItemResponse> result = service.list(null, null, null);
+
+        assertThat(result.get(0).getThumbnailProductId()).isEqualTo(30L);
+        assertThat(result.get(0).getThumbnailImageUrl()).isEqualTo("https://img/30.jpg");
+        assertThat(result.get(1).getThumbnailProductId()).isNull();
+        assertThat(result.get(1).getThumbnailImageUrl()).isNull();
     }
 }

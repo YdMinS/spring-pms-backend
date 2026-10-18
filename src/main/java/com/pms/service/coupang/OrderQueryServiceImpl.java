@@ -5,21 +5,26 @@ import com.pms.domain.CoupangOrderLine;
 import com.pms.domain.ElevenstOrderLine;
 import com.pms.domain.OrderLine;
 import com.pms.domain.OrderStatus;
+import com.pms.domain.Product;
 import com.pms.dto.response.OrderItemResponse;
 import com.pms.dto.response.OrderMonthResponse;
 import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.OrderRepository;
+import com.pms.repository.ProductRepository;
 import com.pms.service.elevenst.ElevenstOrderList;
 import com.pms.service.elevenst.ElevenstRawFields;
+import com.pms.service.stock.OrderLineExpander;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -36,6 +41,9 @@ import java.util.stream.Collectors;
  * <p>🔴 The platform originals (vendorItemId · prdStckNo · platform_status) are not read again per line but
  * <b>once</b> per batch of line ids into a Map (FEATURE_2609_26 / 04 §3-3) — a back reference in core would leak
  * the platform into core and bring N+1 with it.
+ *
+ * <p>The row thumbnail is the first component product of the line's BOM ({@link OrderLineExpander} is the only
+ * place that knows the expansion) — products are read once per batch, not per line.
  */
 @Service
 @RequiredArgsConstructor
@@ -46,6 +54,8 @@ public class OrderQueryServiceImpl implements OrderQueryService {
     private final CoupangOrderLineRepository coupangOrderLineRepository;
     private final ElevenstOrderLineRepository elevenstOrderLineRepository;
     private final CoupangProperties coupangProperties;
+    private final OrderLineExpander orderLineExpander;
+    private final ProductRepository productRepository;
 
     @Override
     public List<OrderItemResponse> list(Long sellerId, LocalDate from, LocalDate to) {
@@ -54,8 +64,10 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 : period(sellerId, from, to);
         Map<Long, CoupangOrderLine> mirrors = mirrorsByLineId(lines);
         Map<Long, ElevenstOrderLine> elevenstMirrors = elevenstMirrorsByLineId(lines);
+        Map<Long, Product> thumbnails = thumbnailsByLineId(lines);
         return lines.stream()
-                .map(line -> toResponse(line, mirrors.get(line.getId()), elevenstMirrors.get(line.getId())))
+                .map(line -> toResponse(line, mirrors.get(line.getId()), elevenstMirrors.get(line.getId()),
+                        thumbnails.get(line.getId())))
                 .toList();
     }
 
@@ -111,7 +123,39 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 .collect(Collectors.toMap(m -> m.getOrderLine().getId(), Function.identity(), (a, b) -> a));
     }
 
-    private OrderItemResponse toResponse(OrderLine line, CoupangOrderLine mirror, ElevenstOrderLine elevenstMirror) {
+    /**
+     * Line id → thumbnail product (first BOM component). Lines that fail to expand have no entry — the screen
+     * draws an empty box. The unit count is irrelevant here, so every line counts as 1.
+     */
+    private Map<Long, Product> thumbnailsByLineId(List<OrderLine> lines) {
+        if (lines.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, Long> productIdByLine = new HashMap<>();
+        orderLineExpander.expand(lines, line -> 1).forEach((lineId, expansion) -> {
+            if (!expansion.failed() && !expansion.products().isEmpty()) {
+                productIdByLine.put(lineId, expansion.products().get(0).productId());
+            }
+        });
+        if (productIdByLine.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, Product> products = productRepository
+                .findAllById(productIdByLine.values().stream().filter(Objects::nonNull).distinct().toList())
+                .stream()
+                .collect(Collectors.toMap(Product::getId, Function.identity(), (a, b) -> a));
+        Map<Long, Product> byLine = new HashMap<>();
+        productIdByLine.forEach((lineId, productId) -> {
+            Product product = products.get(productId);
+            if (product != null) {
+                byLine.put(lineId, product);
+            }
+        });
+        return byLine;
+    }
+
+    private OrderItemResponse toResponse(OrderLine line, CoupangOrderLine mirror, ElevenstOrderLine elevenstMirror,
+                                         Product thumbnail) {
         var order = line.getOrder();
         // 전량취소는 저장되지 않는 파생값이라 여기서 만들어 낸다(PLAN D26).
         OrderStatus effective = line.effectiveStatus();
@@ -150,6 +194,8 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 .reservedSale(elevenstMirror != null
                         && ElevenstOrderList.RESERVED.code().equals(elevenstMirror.getPlatformStatus()))
                 .stockConfirmSent(elevenstMirror != null && elevenstMirror.getStockConfirmSentAt() != null)
+                .thumbnailProductId(thumbnail != null ? thumbnail.getId() : null)
+                .thumbnailImageUrl(thumbnail != null ? thumbnail.getImageUrl() : null)
                 .build();
     }
 }
