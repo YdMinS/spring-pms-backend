@@ -57,4 +57,8 @@ public class OrderItemResponse {
     private boolean visitPickup;        // 11st visit-pickup order (raw visitDlvYn = Y) — FEATURE_2610_17 / D66
     private boolean reservedSale;       // 11st reserved-sale paid order (raw code 201) — FEATURE_2610_17 / D67
     private boolean stockConfirmSent;   // 11st reserved-sale [입고완료 처리] already sent — FEATURE_2610_17 / D67
+    // Thumbnail = first component product of the line's master option BOM (product.image_url as stored).
+    // Both null when the line cannot be expanded (unmapped option · no master option · empty BOM).
+    private Long thumbnailProductId;
+    private String thumbnailImageUrl;
 }
