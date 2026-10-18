@@ -18,24 +18,27 @@ import java.util.List;
 public interface PurchaseRecordRepository extends JpaRepository<PurchaseRecord, Long> {
 
     /**
-     * 물품 묶음 단위로 구매 이력 일괄 조회 (그룹 집계용, PLAN 2609_29 D6).
-     *
-     * <p>🔴 판매자로 쪼개지 않는다 — 그룹의 구매수량은 전체 기준이다.
+     * Purchase records of the listed products in one query (purchase list grouping). The caller splits them per
+     * (product × seller) — FEATURE_2610_09 D2 · D22.
      */
     List<PurchaseRecord> findByProduct_IdIn(Collection<Long> productIds);
 
     /**
-     * 그 물품의 최근 구매이력 (PLAN 2609_29 D9). <b>판매자 조건이 없다</b> — 물품 기준 지연 조회다.
+     * Recent purchases of one product, newest first (PLAN 2609_29 D9 · FEATURE_2610_09 D7 · D25).
+     * {@code sellerId} null = every seller; a value keeps only that seller's rows, and the limit applies after it.
      *
-     * <p>{@code join fetch r.seller}: 각 줄에 판매자명을 붙여야 하는데(누구 것인지 보이지 않으면 못 읽는다)
-     * LAZY 프록시를 줄마다 깨우면 N+1 이 된다. ToOne fetch 라 limit 는 SQL 에서 적용된다.
+     * <p>{@code join fetch r.seller}: every row shows its seller name — waking the LAZY proxy per row would be N+1.
+     * A ToOne fetch, so the limit still runs in SQL.
      */
     @Query("""
             select r from PurchaseRecord r join fetch r.seller
             where r.product.id = :productId
+              and (:sellerId is null or r.seller.id = :sellerId)
             order by r.purchasedOn desc, r.id desc
             """)
-    List<PurchaseRecord> findRecentByProduct(@Param("productId") Long productId, Pageable pageable);
+    List<PurchaseRecord> findRecentByProduct(@Param("productId") Long productId,
+                                             @Param("sellerId") Long sellerId,
+                                             Pageable pageable);
 
     /**
      * 원가 스냅샷용 — 그 (물품 × 판매자) 의 <b>주문일 이전</b> 최근 매입 (FEATURE_2609_28 / PLAN D20).

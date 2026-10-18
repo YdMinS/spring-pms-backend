@@ -19,6 +19,7 @@ import com.pms.domain.Seller;
 import com.pms.domain.StockMovement;
 import com.pms.domain.StockMovementType;
 import com.pms.domain.StockReason;
+import com.pms.domain.TenantPurchaseSetting;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.CoupangOrderLineRepository;
@@ -35,6 +36,7 @@ import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.ShoppingListItemRepository;
 import com.pms.repository.StockMovementRepository;
+import com.pms.repository.TenantPurchaseSettingRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -46,7 +48,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -72,6 +76,7 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
     @Autowired private ShoppingListItemRepository shoppingListItemRepository;
     @Autowired private PurchaseRecordRepository purchaseRecordRepository;
     @Autowired private StockMovementRepository stockMovementRepository;
+    @Autowired private TenantPurchaseSettingRepository tenantPurchaseSettingRepository;
 
     private static final String PATH = "/api/admin/purchase-list";
 
@@ -157,9 +162,14 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.unmappedOrders").isEmpty());
     }
 
-    /** 🔴 D1 회귀: [입고] 1회가 두 원장을 쓴다. 하나만 남으면 "돈은 나갔는데 물건은 모르는" 행이 생긴다. */
+    /**
+     * 🔴 D1 regression: with the stock link on, one [입고] writes both ledgers. One without the other leaves a row
+     * where "the money went out but nobody knows about the goods" (FEATURE_2610_09 D65).
+     */
     @Test
     void testAddPurchaseCreatesStockMovement() throws Exception {
+        tenantPurchaseSettingRepository.save(TenantPurchaseSetting.builder().stockLinked(true).build());
+
         mockMvc.perform(post(PATH + "/purchases")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON).content(purchaseBody(4, ",\"totalAmount\":12000")))
@@ -179,6 +189,26 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
             // 단가는 구매기록에서 승계된다(D16) — 12000 / 4.
             assertThat(m.getUnitPrice()).isEqualByComparingTo("3000.0000");
         });
+    }
+
+    /** FEATURE_2610_09 D65 · D69 · D84: no setting row = off → purchase record only, marked not stock-linked. */
+    @Test
+    void testAddPurchaseWithStockLinkOffWritesNoStock() throws Exception {
+        mockMvc.perform(post(PATH + "/purchases")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(purchaseBody(4, "")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.stockRecorded").value(false));
+
+        stockMovementRepository.flush();
+        assertThat(stockMovementRepository.findAll()).isEmpty();
+        assertThat(purchaseRecordRepository.findAll()).singleElement()
+                .satisfies(r -> assertThat(r.getStockLinked()).isFalse());
+        // D71 ④: a purchase saved while off never waits for check-in.
+        mockMvc.perform(get("/api/admin/stock/purchase-candidates")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isEmpty());
     }
 
     @Test
@@ -229,7 +259,7 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isBadRequest());
     }
 
-    /** D9: 물품 기준·판매자 무관·최신순. 기본 5건. */
+    /** D9 · FEATURE_2610_09 D25: per product, newest first, 5 by default · with sellerId only that seller's rows, then 5. */
     @Test
     void testRecentPurchases() throws Exception {
         Seller other = sellerRepository.save(Seller.builder()
@@ -255,6 +285,13 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
                         .param("limit", "2").header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(2));
+
+        mockMvc.perform(get(PATH + "/purchases").param("productId", productId.toString())
+                        .param("sellerId", other.getId().toString())
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(3))
+                .andExpect(jsonPath("$.data[0].sellerName").value("다른셀러"));
     }
 
     @Test
@@ -267,8 +304,8 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
     }
 
     /**
-     * 🔴 D20 회귀: purchase-candidates 의 JPQL 이 깨지면 컨텍스트 로딩부터 실패한다.
-     * D19 로 입고가 항상 즉시 반영되므로 빈 배열이 정상이다.
+     * 🔴 D20 regression: a broken purchase-candidates JPQL fails context startup first.
+     * No purchase waits for check-in in this seed, so an empty array is correct.
      */
     @Test
     void testPurchaseCandidatesStillLoads() throws Exception {
@@ -278,25 +315,82 @@ class PurchaseListControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data").isArray());
     }
 
-    /** D21: 완료탭도 물품 단위 그룹 + 주문 줄을 그대로 낸다(응답 타입이 같다). */
+    /** FEATURE_2610_09 D57 · D63: [매입 완료] moves the row to the completed tab, dated the check day. */
     @Test
-    void testCompletedListStillGroupsByProduct() throws Exception {
+    void testCheckMovesRowToCompleted() throws Exception {
         mockMvc.perform(post(PATH + "/extract").header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk());
-        mockMvc.perform(post(PATH + "/purchases")
+        mockMvc.perform(post(PATH + "/checks")
                         .header("Authorization", "Bearer " + adminToken)
-                        .contentType(MediaType.APPLICATION_JSON).content(purchaseBody(6, "")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"productId\":" + productId + ",\"sellerId\":" + sellerId
+                                + ",\"status\":\"PURCHASED\"}"))
                 .andExpect(status().isOk());
 
+        mockMvc.perform(get(PATH).param("sellerId", sellerId.toString())
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items").isEmpty());
         mockMvc.perform(get(PATH + "/completed")
                         .param("from", LocalDate.now().minusDays(1).toString())
-                        .param("to", LocalDate.now().toString())
+                        .param("to", LocalDate.now().plusDays(1).toString())
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(1))
                 .andExpect(jsonPath("$.data[0].productName").value("양말A"))
-                .andExpect(jsonPath("$.data[0].remainingQty").value(0))
+                .andExpect(jsonPath("$.data[0].shares[0].state").value("PURCHASED"))
                 .andExpect(jsonPath("$.data[0].lines[0].sellerName").value("테스트셀러"));
+    }
+
+    @Test
+    void checks_권한_401_403() throws Exception {
+        String body = "{\"productId\":" + productId + ",\"sellerId\":" + sellerId + ",\"status\":\"PURCHASED\"}";
+        mockMvc.perform(post(PATH + "/checks").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post(PATH + "/checks").header("Authorization", "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+    }
+
+    /** FEATURE_2610_09 D11: a manual line without a seller is refused. */
+    @Test
+    void testAddManualRequiresSeller() throws Exception {
+        mockMvc.perform(post(PATH + "/manual")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"productId\":" + productId + ",\"quantity\":2}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    /** FEATURE_2610_09 D13 · D24 · D26 · D77: move to a free seller works, onto a taken seller is 409, delete removes. */
+    @Test
+    void testManualLineSellerChangeAndDelete() throws Exception {
+        Seller other = sellerRepository.save(Seller.builder()
+                .sellerName("다른셀러").businessRegistration("999-99-99999").build());
+        String addBody = "{\"productId\":" + productId + ",\"sellerId\":%d,\"quantity\":2}";
+        mockMvc.perform(post(PATH + "/manual").header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(addBody.formatted(sellerId)))
+                .andExpect(status().isCreated());
+        mockMvc.perform(post(PATH + "/manual").header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(addBody.formatted(other.getId())))
+                .andExpect(status().isCreated());
+        shoppingListItemRepository.flush();
+        Long mineId = shoppingListItemRepository
+                .findByOrderLineIsNullAndProduct_IdAndSeller_Id(productId, sellerId).orElseThrow().getId();
+
+        mockMvc.perform(patch(PATH + "/items/" + mineId + "/seller")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"sellerId\":" + other.getId() + "}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("다른셀러 몫 수동 줄이 이미 있습니다. 그 줄의 수량을 고치세요."));
+        mockMvc.perform(patch(PATH + "/items/" + mineId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"manualQty\":0}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(delete(PATH + "/items/" + mineId).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+        shoppingListItemRepository.flush();
+        assertThat(shoppingListItemRepository.findById(mineId)).isEmpty();
     }
 
     private Seller sellerOf() {

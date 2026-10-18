@@ -249,21 +249,21 @@ public class ProductMergeService {
      * source row is deleted and 🔴 <b>quantities are never summed</b> (PLAN D8), or the purchase quantity
      * doubles.
      *
-     * <p>⚠️ Manual rows carry no order line (their "one row per product" rule is owned by the service, not
-     * the constraint) — the target's manual row wins the same way.</p>
+     * <p>⚠️ Manual rows carry no order line (their "one row per (product × seller)" rule is owned by the service,
+     * not the constraint) — the target's manual row of the same seller wins the same way (FEATURE_2610_09 D18).</p>
      */
     private void moveShoppingListItems(Product target, Long sourceId,
                                        Map<String, Integer> moved, Map<String, Integer> dropped) {
         Set<Long> targetLines = new LinkedHashSet<>(
                 shoppingListItemRepository.findOrderLineIdsByProductId(target.getId()));
-        boolean targetHasManualRow =
-                shoppingListItemRepository.existsByOrderLineIsNullAndProduct_Id(target.getId());
+        Set<Long> targetManualSellers = new LinkedHashSet<>(
+                shoppingListItemRepository.findManualSellerIdsByProductId(target.getId()));
 
         int movedRows = 0;
         int droppedRows = 0;
         for (ShoppingListItem row : shoppingListItemRepository.findByProductId(sourceId)) {
             boolean collides = row.getOrderLine() == null
-                    ? targetHasManualRow
+                    ? targetManualSellers.contains(row.getSeller().getId())
                     : targetLines.contains(row.getOrderLine().getId());
             if (collides) {
                 shoppingListItemRepository.delete(row);
@@ -271,7 +271,7 @@ public class ProductMergeService {
             } else {
                 shoppingListItemRepository.save(row.toBuilder().product(target).build());
                 if (row.getOrderLine() == null) {
-                    targetHasManualRow = true;
+                    targetManualSellers.add(row.getSeller().getId());
                 } else {
                     targetLines.add(row.getOrderLine().getId());
                 }

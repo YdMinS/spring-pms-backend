@@ -17,6 +17,7 @@ import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.StockMovementRepository;
+import com.pms.service.PurchaseSettingService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -62,6 +63,7 @@ class StockLedgerServiceImplTest {
     @Mock private PurchaseRecordRepository purchaseRecordRepository;
     @Mock private OrderClaimRepository orderClaimRepository;
     @Mock private SellerRepository sellerRepository;
+    @Mock private PurchaseSettingService purchaseSettingService;
 
     @InjectMocks private StockLedgerServiceImpl service;
 
@@ -129,6 +131,42 @@ class StockLedgerServiceImplTest {
 
         // null means "amount unknown"; zero would claim the goods were free.
         assertThat(captureSaved().getUnitPrice()).isNull();
+    }
+
+    /** FEATURE_2610_09 D71 (round 12): stock link off -> a PURCHASE check-in needs no purchase record. */
+    @Test
+    void testStockInPurchaseWithoutRecordSavedWhenStockLinkOff() {
+        stubSave();
+        given(purchaseSettingService.isStockLinked()).willReturn(false);
+
+        service.record(stockIn(StockReason.PURCHASE, 3, null, null));
+
+        StockMovement saved = captureSaved();
+        assertThat(saved.getPurchaseRecord()).isNull();
+        assertThat(saved.getQuantity()).isEqualTo(3);
+        verify(purchaseRecordRepository, never()).findById(any());
+    }
+
+    /** FEATURE_2610_09 D71 (round 13): no record + no typed price -> the product's registered price, as OPENING. */
+    @Test
+    void testStockInPurchaseWithoutRecordFallsBackToProductPrice() {
+        stubSave();
+        given(purchaseSettingService.isStockLinked()).willReturn(false);
+
+        service.record(stockIn(StockReason.PURCHASE, 3, null, null));
+
+        assertThat(captureSaved().getUnitPrice()).isEqualByComparingTo("3000");
+    }
+
+    /** FEATURE_2610_09 D71 (round 12): stock link on -> the purchase record stays mandatory. */
+    @Test
+    void testStockInPurchaseWithoutRecordRejectedWhenStockLinkOn() {
+        given(purchaseSettingService.isStockLinked()).willReturn(true);
+
+        assertThatThrownBy(() -> service.record(stockIn(StockReason.PURCHASE, 3, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("구매기록을 선택하세요");
+        verify(stockMovementRepository, never()).save(any());
     }
 
     @Test

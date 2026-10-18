@@ -216,3 +216,5 @@ databaseChangeLog:
       file: db/changelog/changes/107-elevenst-channel-default.yaml
   - include:
       file: db/changelog/changes/108-elevenst-order.yaml
+  - include:
+      file: db/changelog/changes/109-purchase-seller-filter.yaml
