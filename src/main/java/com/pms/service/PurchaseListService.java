@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.PurchaseReceipt;
 import com.pms.dto.request.ManualAdjustRequest;
 import com.pms.dto.request.ManualItemRequest;
 import com.pms.dto.request.ManualSellerRequest;
@@ -56,6 +57,12 @@ public interface PurchaseListService {
      * channel selling prices do <b>not</b> change here — only when the user confirms the cost propagation.
      */
     PurchaseRecordResult addPurchase(PurchaseRecordRequest request);
+
+    /**
+     * {@link #addPurchase(PurchaseRecordRequest)} with the record linked to {@code receipt} — one line of a receipt
+     * check-in (FEATURE_2610_18 D28 · D93 ①). {@code receipt} null = the per-product check-in.
+     */
+    PurchaseRecordResult addPurchase(PurchaseRecordRequest request, PurchaseReceipt receipt);
 
     /** Recent purchases of a product, newest first, {@code limit} rows; {@code sellerId} null = every seller (D7 · D25). */
     List<PurchaseRecordView> recentPurchases(Long productId, Long sellerId, int limit);

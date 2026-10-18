@@ -41,6 +41,13 @@ public interface PurchaseRecordRepository extends JpaRepository<PurchaseRecord, 
                                              Pageable pageable);
 
     /**
+     * Purchase lines of the given receipts in input order, product fetched (FEATURE_2610_18 D94) — the receipt list's
+     * first product · line count · amount sum and the receipt detail's lines.
+     */
+    @Query("select r from PurchaseRecord r join fetch r.product where r.receipt.id in :receiptIds order by r.id")
+    List<PurchaseRecord> findByReceiptIds(@Param("receiptIds") Collection<Long> receiptIds);
+
+    /**
      * 원가 스냅샷용 — 그 (물품 × 판매자) 의 <b>주문일 이전</b> 최근 매입 (FEATURE_2609_28 / PLAN D20).
      *
      * <p>🔴 판매자를 조건에 넣는다. 재고는 공용이 아니고(2609_29 D4) 나간 물건은 그 판매자가 자기 돈으로

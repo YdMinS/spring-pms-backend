@@ -11,6 +11,7 @@ import com.pms.domain.Product;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.PurchaseCheck;
 import com.pms.domain.PurchaseCheckStatus;
+import com.pms.domain.PurchaseReceipt;
 import com.pms.domain.PurchaseRecord;
 import com.pms.domain.Seller;
 import com.pms.config.CoupangProperties;
@@ -873,5 +874,36 @@ class PurchaseListServiceTest {
 
         assertThat(views).extracting(PurchaseRecordView::sellerName)
                 .containsExactly("A상사", "B상사");
+    }
+
+    // --- receipt check-in (FEATURE_2610_18) ---
+
+    /** D93 ①: a receipt line keeps its receipt; the check-in rules stay the same (stock follows the setting). */
+    @Test
+    void testAddPurchaseWithReceiptLinksRecord() {
+        stubAddPurchase();
+        PurchaseReceipt receipt = PurchaseReceipt.builder().id(5L).build();
+
+        PurchaseRecordResult result = service.addPurchase(req(4, "12000", null, null, null), receipt);
+
+        ArgumentCaptor<PurchaseRecord> captor = ArgumentCaptor.forClass(PurchaseRecord.class);
+        verify(purchaseRecordRepository).save(captor.capture());
+        assertThat(captor.getValue().getReceipt()).isSameAs(receipt);
+        assertThat(result.stockRecorded()).isTrue();
+    }
+
+    /** D93 ①: the history row carries the receipt id only when the purchase came with a receipt. */
+    @Test
+    void testRecentPurchasesCarryReceiptId() {
+        Product a = product(PRODUCT_ID, "A");
+        PurchaseRecord withReceipt = record(1L, a, SELLER_A, 3, TODAY).toBuilder()
+                .receipt(PurchaseReceipt.builder().id(5L).build()).build();
+        given(purchaseRecordRepository.findRecentByProduct(eq(PRODUCT_ID), isNull(), any())).willReturn(List.of(
+                withReceipt,
+                record(2L, a, SELLER_A, 5, TODAY)));
+
+        List<PurchaseRecordView> views = service.recentPurchases(PRODUCT_ID, null, 5);
+
+        assertThat(views).extracting(PurchaseRecordView::receiptId).containsExactly(5L, null);
     }
 }

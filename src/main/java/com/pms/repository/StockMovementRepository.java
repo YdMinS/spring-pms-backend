@@ -167,4 +167,10 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE StockMovement s SET s.product = :target WHERE s.product.id = :source")
     int reassignProduct(@Param("target") Product target, @Param("source") Long source);
+
+    /**
+     * Rows tied to the given purchase records (FEATURE_2610_18 D101) — the stock rows of a receipt's lines, moved to
+     * the new payer seller when the receipt header changes its payer.
+     */
+    List<StockMovement> findByPurchaseRecordIdIn(Collection<Long> purchaseRecordIds);
 }

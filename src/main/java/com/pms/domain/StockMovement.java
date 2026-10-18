@@ -21,7 +21,8 @@ import java.time.LocalDate;
  * <p>⚠️ <b>Nothing automatic writes here</b> (2609_28 D18, revised by PLAN 2609_29 D2): no row may be
  * written without a person confirming it. Sync jobs, schedulers and shipment hooks are still
  * forbidden; the [입고] click on the purchase list IS that confirmation, so
- * {@code PurchaseListService -> StockLedgerService} is the one opened path.
+ * {@code PurchaseListService -> StockLedgerService} is the one opened path. A receipt header edit
+ * (FEATURE_2610_18 D101) writes no row — it only moves the rows of its lines to the new payer seller.
  *
  * <p>⚠️ {@code movedOn} (the day a person confirmed the goods moved) and {@code createdAt} (the audit
  * timestamp of the row) are <b>different</b>. Yesterday's delivery can be entered this morning.
