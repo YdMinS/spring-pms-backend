@@ -17,13 +17,15 @@ import java.time.LocalDate;
  * order is cancelled, or settlement breaks.
  *
  * <p>Purchased quantity on the purchase list = SUM(quantity) per (product × seller) (FEATURE_2610_09 D2 · D22).
- * A partial purchase is split into several rows; a wrong entry is corrected with a negative row.
+ * A partial purchase is split into several rows; a wrong quantity or amount is corrected with a negative row. A
+ * receipt header edit rewrites rows: every line of that receipt takes the new seller and purchase day
+ * (FEATURE_2610_18 D100).
  *
  * <p>⚠️ The physical-side ledger is {@link StockMovement} (D1). One [입고] writes both ledgers in one transaction
  * while the stock link setting is on (FEATURE_2610_09 D65) — {@link #stockLinked} records which mode applied.
  *
  * <p>⚠️ ddl-auto=validate (prod) → the @Column definitions below must match the purchase_record DDL
- * (changesets 077 · 109-4).
+ * (changesets 077 · 109-4 · 110-3).
  *
  * @see com.pms.domain.StockMovement physical stock ledger
  */
@@ -86,6 +88,14 @@ public class PurchaseRecord extends BaseEntity {
     @Builder.Default
     @Column(name = "stock_linked", nullable = false)
     private Boolean stockLinked = Boolean.TRUE;
+
+    /**
+     * The receipt this purchase came in with (FEATURE_2610_18 D28 · D93 ①). Null = saved without a receipt photo —
+     * the per-product check-in (D75).
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "receipt_id")
+    private PurchaseReceipt receipt;
 
     /**
      * 이 매입이 {@code Product.price}(기준 원가)를 움직이는가 — <b>이 판정의 유일한 자리</b>

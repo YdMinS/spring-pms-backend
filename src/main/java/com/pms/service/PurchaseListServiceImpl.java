@@ -9,6 +9,7 @@ import com.pms.domain.Product;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.PurchaseCheck;
 import com.pms.domain.PurchaseCheckStatus;
+import com.pms.domain.PurchaseReceipt;
 import com.pms.domain.PurchaseRecord;
 import com.pms.domain.Seller;
 import com.pms.domain.ShoppingListItem;
@@ -322,6 +323,12 @@ public class PurchaseListServiceImpl implements PurchaseListService {
     @Override
     @Transactional
     public PurchaseRecordResult addPurchase(PurchaseRecordRequest request) {
+        return addPurchase(request, null);
+    }
+
+    @Override
+    @Transactional
+    public PurchaseRecordResult addPurchase(PurchaseRecordRequest request, PurchaseReceipt receipt) {
         Product product = productRepository.findById(request.productId())
                 .orElseThrow(() -> new ResourceNotFoundException("Product", request.productId()));
         Seller seller = sellerRepository.findById(request.sellerId())
@@ -330,8 +337,10 @@ public class PurchaseListServiceImpl implements PurchaseListService {
         // 금액 계산 규칙은 엔티티 팩토리 하나에 모여 있다(FEATURE_2609_28 / PLAN D1·D2).
         PurchaseRecord record = PurchaseRecord.of(product, seller, request);
         // D65 · D84: the stock link setting decides whether stock is written, and the record keeps that value.
+        // FEATURE_2610_18 D93 ①: a receipt line keeps its receipt.
         boolean stockLinked = purchaseSettingService.isStockLinked();
-        PurchaseRecord saved = purchaseRecordRepository.save(record.toBuilder().stockLinked(stockLinked).build());
+        PurchaseRecord saved = purchaseRecordRepository.save(
+                record.toBuilder().stockLinked(stockLinked).receipt(receipt).build());
 
         // ① 기준가 갱신(2609_28 D4). reflectToBasePrice·단가·수량 조건은 서비스가 소유한다.
         // ⚠️ 여기서 파급(②=셀 판매가 재계산)은 일어나지 않는다 — 사용자가 preview → apply 로 확정한다.
@@ -366,7 +375,7 @@ public class PurchaseListServiceImpl implements PurchaseListService {
         return purchaseRecordRepository.findRecentByProduct(productId, sellerId, PageRequest.of(0, limit)).stream()
                 .map(r -> new PurchaseRecordView(r.getId(), r.getPurchasedOn(), r.getQuantity(),
                         r.getTotalAmount(), r.getUnitPrice(), Boolean.TRUE.equals(r.getReflectToBasePrice()),
-                        r.getSeller().getSellerName()))
+                        r.getSeller().getSellerName(), r.getReceipt() == null ? null : r.getReceipt().getId()))
                 .toList();
     }
 

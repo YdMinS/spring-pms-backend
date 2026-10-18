@@ -1116,4 +1116,17 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID = '107-elevenst-channel-default'",
                 Integer.class)).isEqualTo(1);
     }
+
+    /** changeset 110 (FEATURE_2610_18 / D28 · D52 · D93): seller_card · purchase_receipt · purchase_record.receipt_id. */
+    @Test
+    void receiptIntakeApplied() {
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM seller_card WHERE hidden_at IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM purchase_receipt WHERE card_id IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM purchase_record WHERE receipt_id IS NOT NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID LIKE '110-%'", Integer.class)).isEqualTo(3);
+    }
 }
