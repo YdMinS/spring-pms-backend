@@ -25,14 +25,14 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * {@link SettlementSyncService} 구현 (FEATURE_2609_30 / PLAN D7·D10·D11).
+ * {@link SettlementSyncService} implementation (FEATURE_2609_30 / PLAN D7 · D10 · D11).
  *
- * <p>⚠️ 클래스 레벨 {@code @Transactional} 을 붙이지 않는다 — 외부 HTTP 루프다. DB 쓰기는
- * {@link SettlementLineUpserter}(페이지당 REQUIRES_NEW)와 {@link SettlementSyncStatusWriter} 에서만
- * 일어난다({@code CoupangInquiryAdapter} 와 같은 자세).
+ * <p>⚠️ No class-level {@code @Transactional} — this is an outbound HTTP loop. DB writes happen only in
+ * {@link SettlementLineUpserter} (REQUIRES_NEW per page), {@link LocalPayoutBuilder} (REQUIRES_NEW, 11st payouts —
+ * FEATURE_2610_20 / D30) and {@link SettlementSyncStatusWriter} (same stance as {@code CoupangInquiryAdapter}).
  *
- * <p>🔴 한 계정의 실패가 나머지를 중단시키지 않는다. 실패한 계정만 {@code failedAccounts} 로 돌려주고
- * 그 계정의 앵커는 <b>건드리지 않는다</b> — 그래야 다음 회차 창이 저절로 넓어진다.
+ * <p>🔴 One account's failure does not stop the rest. Only the failed accounts come back in {@code failedAccounts},
+ * and their anchor is <b>left untouched</b> — that is what widens the next run's window by itself.
  */
 @Slf4j
 @Service
@@ -46,21 +46,28 @@ public class SettlementSyncServiceImpl implements SettlementSyncService {
     private final SettlementSyncStatusWriter settlementSyncStatusWriter;
     private final CoupangProperties coupangProperties;
     private final int manualMinIntervalMinutes;
+    private final int elevenstRevenueDeltaDays;
     private final Map<Platform, SettlementSource> sources = new EnumMap<>(Platform.class);
+    private final Map<Platform, LocalPayoutBuilder> payoutBuilders = new EnumMap<>(Platform.class);
 
     public SettlementSyncServiceImpl(MarketplaceAccountRepository marketplaceAccountRepository,
                                      SettlementLineUpserter settlementLineUpserter,
                                      SettlementSyncStatusWriter settlementSyncStatusWriter,
                                      CoupangProperties coupangProperties,
                                      List<SettlementSource> sources,
+                                     List<LocalPayoutBuilder> payoutBuilders,
                                      @Value("${oclyx.settlement.manual-min-interval-minutes:10}")
-                                     int manualMinIntervalMinutes) {
+                                     int manualMinIntervalMinutes,
+                                     @Value("${oclyx.settlement.elevenst-revenue-delta-days:3}")
+                                     int elevenstRevenueDeltaDays) {
         this.marketplaceAccountRepository = marketplaceAccountRepository;
         this.settlementLineUpserter = settlementLineUpserter;
         this.settlementSyncStatusWriter = settlementSyncStatusWriter;
         this.coupangProperties = coupangProperties;
         this.manualMinIntervalMinutes = manualMinIntervalMinutes;
+        this.elevenstRevenueDeltaDays = elevenstRevenueDeltaDays;
         sources.forEach(source -> this.sources.put(source.platform(), source));
+        payoutBuilders.forEach(builder -> this.payoutBuilders.put(builder.platform(), builder));
     }
 
     @Override
@@ -75,7 +82,6 @@ public class SettlementSyncServiceImpl implements SettlementSyncService {
         LocalDateTime nextAvailableAt = null;
 
         LocalDate to = LocalDate.now(SyncWindow.KST);
-        LocalDate from = to.minusDays(coupangProperties.getRevenueDeltaDays());
 
         for (MarketplaceAccount account : accounts) {
             LocalDateTime available = nextAvailableAt(account);
@@ -88,7 +94,7 @@ public class SettlementSyncServiceImpl implements SettlementSyncService {
                 continue;
             }
             try {
-                total = total.plus(runAccount(account, from, to, true));
+                total = total.plus(runAccount(account, to.minusDays(deltaDays(account)), to, true));
             } catch (CoupangRateLimitedException e) {
                 // 쿨다운은 계정별이다(FEATURE_2609_46 D1) — 한 계정의 429 로 나머지 계정을 중단하지 않는다.
                 // 다만 계정이 전부 쿨다운이면 200 + failedAccounts 에는 재시도 가능 시각 문구가 화면에 뜨지 않으므로
@@ -187,6 +193,12 @@ public class SettlementSyncServiceImpl implements SettlementSyncService {
                     result.lines(), result.matched(), matchRate(result), result.unmatched(),
                     result.duplicates(), account.getId(), from, to);
 
+            // A platform without a payout API rebuilds its payouts from the stored lines (FEATURE_2610_20 / D30).
+            LocalPayoutBuilder payoutBuilder = payoutBuilders.get(account.getPlatform());
+            if (payoutBuilder != null) {
+                payoutBuilder.rebuild(account);
+            }
+
             if (updateAnchor) {
                 settlementSyncStatusWriter.writeRevenueSyncAt(account.getId());
             }
@@ -198,6 +210,13 @@ public class SettlementSyncServiceImpl implements SettlementSyncService {
                 TenantContext.clear();
             }
         }
+    }
+
+    /** Delta window (days) of the scheduled / manual refresh — 11st has its own setting (FEATURE_2610_20 / D11). */
+    private int deltaDays(MarketplaceAccount account) {
+        return account.getPlatform() == Platform.ELEVENST
+                ? elevenstRevenueDeltaDays
+                : coupangProperties.getRevenueDeltaDays();
     }
 
     private static String matchRate(UpsertResult result) {

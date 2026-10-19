@@ -1,6 +1,8 @@
 package com.pms.service.settlement;
 
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.SettlementAdjustment;
+import com.pms.domain.SettlementAdjustmentType;
 import com.pms.domain.SaleType;
 import com.pms.domain.SettlementLine;
 import com.pms.domain.SettlementPayout;
@@ -152,6 +154,50 @@ class SettlementReconciliationServiceImplTest {
         verify(settlementLineRepository, never())
                 .sumSignedSettlementAmount(anyLong(), any(), any(), any());
         verify(settlementPayoutRepository, never()).sumFinalAmountByMonth(anyLong(), any());
+    }
+
+    /** FEATURE_2610_20 / D13 · D29: an 11st payout has no platform total — no month check either. */
+    @Test
+    void elevenstPayoutReportHasNoMonthCheck() {
+        MarketplaceAccount elevenst = MarketplaceAccountFixture.elevenstStubBuilder("KEY")
+                .id(ACCOUNT_ID).accountAlias("11번가").build();
+        SettlementPayout payout = SettlementPayout.builder()
+                .id(PAYOUT_ID)
+                .marketplaceAccount(elevenst)
+                .settlementType(SettlementType.DAILY)
+                .revenueRecognitionMonth(MONTH)
+                .settlementDate(LocalDate.of(2026, 8, 20))
+                .finalAmount(new BigDecimal("9000"))
+                .reconStatus(SettlementReconStatus.NO_TOTAL)
+                .build();
+        given(settlementPayoutRepository.findWithAccountById(PAYOUT_ID)).willReturn(Optional.of(payout));
+        given(settlementAdjustmentRepository.findBySettlementPayout_Id(PAYOUT_ID)).willReturn(List.of());
+        givenLines(line(SaleType.SALE, "9000"));
+        givenEmptyDiffReport();
+
+        ReconReportResponse report = service.report(PAYOUT_ID);
+
+        assertThat(report.monthCheck()).isNull();
+        assertThat(report.blockA().ourTotal()).isNull();
+        verify(settlementLineRepository, never())
+                .sumSignedSettlementAmount(anyLong(), any(), any(), any());
+    }
+
+    /** FEATURE_2610_20 / D14: the deduction guidance names the payout channel's market. */
+    @Test
+    void deductionGuidanceNamesThePayoutMarket() {
+        givenPayout(SettlementType.WEEKLY, "880000", MONTH);
+        givenLines(line(SaleType.SALE, "880000"));
+        given(settlementAdjustmentRepository.findBySettlementPayout_Id(PAYOUT_ID)).willReturn(List.of(
+                SettlementAdjustment.builder()
+                        .adjustmentType(SettlementAdjustmentType.DEDUCTION)
+                        .amount(new BigDecimal("3000"))
+                        .build()));
+
+        SettlementPayoutDetailResponse detail = service.payout(PAYOUT_ID);
+
+        assertThat(detail.adjustments().get(0).guidance())
+                .isEqualTo("쿠팡이 사유를 제공하지 않습니다 — 플랫폼에서 확인이 필요합니다");
     }
 
     // ------------------------------------------------------------- fixtures

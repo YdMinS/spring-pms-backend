@@ -94,6 +94,9 @@ public interface SettlementPayoutRepository extends JpaRepository<SettlementPayo
     /** 그 달 {@code finalAmount} 미수신 건 수 — 합계에서 빠진 건수다(D6). */
     long countByMarketplaceAccount_IdAndRevenueRecognitionMonthAndFinalAmountIsNull(Long accountId, String month);
 
+    /** Every payout of one account — the 11st remittance-date grouping reads them all (FEATURE_2610_20 / D29). */
+    List<SettlementPayout> findByMarketplaceAccount_Id(Long marketplaceAccountId);
+
     /** 계정 단위 존재 확인(적재 로그·테스트용). */
     List<SettlementPayout> findByMarketplaceAccountAndRevenueRecognitionMonth(
             MarketplaceAccount marketplaceAccount, String revenueRecognitionMonth);

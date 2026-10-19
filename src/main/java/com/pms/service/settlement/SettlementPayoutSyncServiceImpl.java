@@ -21,15 +21,18 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * {@link SettlementPayoutSyncService} 구현 (FEATURE_2609_30 / 02 · PLAN D5-3·D5-5·D11).
+ * {@link SettlementPayoutSyncService} implementation (FEATURE_2609_30 / 02 · PLAN D5-3 · D5-5 · D11).
  *
- * <p>⚠️ 클래스 레벨 {@code @Transactional} 을 붙이지 않는다 — 외부 HTTP 루프다. DB 쓰기는
- * {@link SettlementPayoutUpserter}(묶음당 REQUIRES_NEW)와 {@link SettlementSyncStatusWriter} 에서만 일어난다.
+ * <p>⚠️ No class-level {@code @Transactional} — this is an outbound HTTP loop. DB writes happen only in
+ * {@link SettlementPayoutUpserter} (REQUIRES_NEW per payout), {@link LocalPayoutBuilder} (REQUIRES_NEW, 11st payouts
+ * built from stored lines — FEATURE_2610_20 / D30) and {@link SettlementSyncStatusWriter}.
  *
- * <p>🔴 <b>처리 순서를 {@code settlementDate ASC} 로 고정</b>한다(D5-5). 라인 귀속은 "주인 없는 라인을 먼저 온
- * 묶음이 가져간다"는 규칙이라 순서가 결과를 바꾼다 — 같은 입력이면 항상 같은 결과여야 재실행이 안전하다.
+ * <p>🔴 <b>The processing order is fixed to {@code settlementDate ASC}</b> (D5-5). Line attribution is "the payout
+ * that comes first takes the unowned lines", so the order changes the result — the same input must always give the
+ * same result for a re-run to be safe.
  *
- * <p>🔴 한 계정의 실패가 나머지를 중단시키지 않는다. 실패한 계정의 앵커는 갱신하지 않아 다음 회차가 다시 읽는다.
+ * <p>🔴 One account's failure does not stop the rest. A failed account's anchor is not updated, so the next run
+ * reads it again.
  */
 @Slf4j
 @Service
@@ -43,17 +46,20 @@ public class SettlementPayoutSyncServiceImpl implements SettlementPayoutSyncServ
     private final SettlementSyncStatusWriter settlementSyncStatusWriter;
     private final CoupangProperties coupangProperties;
     private final Map<Platform, SettlementSource> sources = new EnumMap<>(Platform.class);
+    private final Map<Platform, LocalPayoutBuilder> payoutBuilders = new EnumMap<>(Platform.class);
 
     public SettlementPayoutSyncServiceImpl(MarketplaceAccountRepository marketplaceAccountRepository,
                                            SettlementPayoutUpserter settlementPayoutUpserter,
                                            SettlementSyncStatusWriter settlementSyncStatusWriter,
                                            CoupangProperties coupangProperties,
-                                           List<SettlementSource> sources) {
+                                           List<SettlementSource> sources,
+                                           List<LocalPayoutBuilder> payoutBuilders) {
         this.marketplaceAccountRepository = marketplaceAccountRepository;
         this.settlementPayoutUpserter = settlementPayoutUpserter;
         this.settlementSyncStatusWriter = settlementSyncStatusWriter;
         this.coupangProperties = coupangProperties;
         sources.forEach(source -> this.sources.put(source.platform(), source));
+        payoutBuilders.forEach(builder -> this.payoutBuilders.put(builder.platform(), builder));
     }
 
     @Override
@@ -111,13 +117,20 @@ public class SettlementPayoutSyncServiceImpl implements SettlementPayoutSyncServ
         PayoutUpsertResult result = PayoutUpsertResult.empty();
         try {
             TenantContext.set(account.getTenantId());
-            for (YearMonth month : months) {
-                List<SettlementPayoutDraft> drafts = new ArrayList<>(source.fetchPayouts(account, month));
-                // 🔴 결정적 처리 순서(D5-5). null 지급일은 뒤로 보낸다.
-                drafts.sort(Comparator.comparing(SettlementPayoutDraft::settlementDate,
-                        Comparator.nullsLast(Comparator.naturalOrder())));
-                for (SettlementPayoutDraft draft : drafts) {
-                    result = result.plus(settlementPayoutUpserter.upsert(account, draft));
+            LocalPayoutBuilder payoutBuilder = payoutBuilders.get(account.getPlatform());
+            if (payoutBuilder != null) {
+                // No payout API for this platform: rebuild from the stored lines instead of calling the market
+                // (FEATURE_2610_20 / D30). The months do not apply — every stored line is regrouped.
+                result = payoutBuilder.rebuild(account);
+            } else {
+                for (YearMonth month : months) {
+                    List<SettlementPayoutDraft> drafts = new ArrayList<>(source.fetchPayouts(account, month));
+                    // 🔴 Deterministic processing order (D5-5). A null payout date goes last.
+                    drafts.sort(Comparator.comparing(SettlementPayoutDraft::settlementDate,
+                            Comparator.nullsLast(Comparator.naturalOrder())));
+                    for (SettlementPayoutDraft draft : drafts) {
+                        result = result.plus(settlementPayoutUpserter.upsert(account, draft));
+                    }
                 }
             }
             if (updateAnchor) {

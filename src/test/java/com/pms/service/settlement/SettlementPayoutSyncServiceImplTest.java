@@ -32,6 +32,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -60,7 +61,7 @@ class SettlementPayoutSyncServiceImplTest {
     void setUp() {
         given(settlementSource.platform()).willReturn(Platform.COUPANG);
         service = new SettlementPayoutSyncServiceImpl(marketplaceAccountRepository, settlementPayoutUpserter,
-                settlementSyncStatusWriter, coupangProperties, List.of(settlementSource));
+                settlementSyncStatusWriter, coupangProperties, List.of(settlementSource), List.of());
         given(marketplaceAccountRepository.findById(7L)).willReturn(Optional.of(account));
         given(settlementPayoutUpserter.upsert(any(), any())).willReturn(new PayoutUpsertResult(1, 3, 1));
     }
@@ -188,6 +189,30 @@ class SettlementPayoutSyncServiceImplTest {
 
         assertThatThrownBy(() -> service.syncPayouts(null, MONTH))
                 .isInstanceOf(CoupangRateLimitedException.class);
+    }
+
+    /** FEATURE_2610_20 / D30: an 11st channel never asks 11st for payouts — its builder regroups the stored lines. */
+    @Test
+    void elevenstAccountRebuildsInsteadOfFetching() {
+        SettlementSource elevenstSource = mock(SettlementSource.class);
+        LocalPayoutBuilder payoutBuilder = mock(LocalPayoutBuilder.class);
+        given(elevenstSource.platform()).willReturn(Platform.ELEVENST);
+        given(payoutBuilder.platform()).willReturn(Platform.ELEVENST);
+        given(payoutBuilder.rebuild(any())).willReturn(new PayoutUpsertResult(2, 5, 0));
+        SettlementPayoutSyncServiceImpl elevenstService = new SettlementPayoutSyncServiceImpl(
+                marketplaceAccountRepository, settlementPayoutUpserter, settlementSyncStatusWriter,
+                coupangProperties, List.of(settlementSource, elevenstSource), List.of(payoutBuilder));
+        MarketplaceAccount elevenst = MarketplaceAccountFixture.elevenstStubBuilder("KEY")
+                .id(9L).accountAlias("11번가").build();
+        given(marketplaceAccountRepository.findById(9L)).willReturn(Optional.of(elevenst));
+
+        SettlementPayoutSyncResponse response = elevenstService.syncPayouts(9L, null);
+
+        verify(elevenstSource, never()).fetchPayouts(any(), any());
+        verify(settlementPayoutUpserter, never()).upsert(any(), any());
+        assertThat(response.payouts()).isEqualTo(2);
+        assertThat(response.attributedLines()).isEqualTo(5);
+        verify(settlementSyncStatusWriter).writePayoutSyncAt(9L);
     }
 
     private static SettlementPayoutDraft draft(SettlementType type, LocalDate settlementDate) {

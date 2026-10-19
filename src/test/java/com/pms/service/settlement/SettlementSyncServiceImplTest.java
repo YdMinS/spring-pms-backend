@@ -7,6 +7,7 @@ import com.pms.dto.response.SettlementSyncResponse;
 import com.pms.exception.CoupangRateLimitedException;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.service.coupang.SyncWindow;
 import com.pms.service.settlement.SettlementLineUpserter.UpsertResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,9 +28,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willAnswer;
 import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
@@ -55,7 +58,7 @@ class SettlementSyncServiceImplTest {
     void setUp() {
         given(settlementSource.platform()).willReturn(Platform.COUPANG);
         service = new SettlementSyncServiceImpl(marketplaceAccountRepository, settlementLineUpserter,
-                settlementSyncStatusWriter, coupangProperties, List.of(settlementSource), 10);
+                settlementSyncStatusWriter, coupangProperties, List.of(settlementSource), List.of(), 10, 3);
         given(settlementLineUpserter.upsertPage(any(), any(), any()))
                 .willReturn(new UpsertResult(1, 1, 0, 0));
     }
@@ -196,6 +199,28 @@ class SettlementSyncServiceImplTest {
         assertThatThrownBy(() -> service.syncPeriod(7L,
                 LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31)))
                 .isInstanceOf(CoupangRateLimitedException.class);
+    }
+
+    /** FEATURE_2610_20 / D11 · D30: an 11st channel reads its own delta window and rebuilds its payouts. */
+    @Test
+    void elevenstAccountUsesItsOwnWindowAndRebuildsPayouts() {
+        SettlementSource elevenstSource = mock(SettlementSource.class);
+        LocalPayoutBuilder payoutBuilder = mock(LocalPayoutBuilder.class);
+        given(elevenstSource.platform()).willReturn(Platform.ELEVENST);
+        given(payoutBuilder.platform()).willReturn(Platform.ELEVENST);
+        SettlementSyncServiceImpl elevenstService = new SettlementSyncServiceImpl(marketplaceAccountRepository,
+                settlementLineUpserter, settlementSyncStatusWriter, coupangProperties,
+                List.of(settlementSource, elevenstSource), List.of(payoutBuilder), 10, 5);
+        MarketplaceAccount elevenst = MarketplaceAccountFixture.elevenstStubBuilder("KEY")
+                .id(9L).accountAlias("11번가").build();
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(elevenst));
+
+        elevenstService.sync(null, null);
+
+        LocalDate today = LocalDate.now(SyncWindow.KST);
+        verify(elevenstSource).fetchRevenue(eq(elevenst), eq(today.minusDays(5)), eq(today), any());
+        verify(payoutBuilder).rebuild(elevenst);
+        verify(settlementSyncStatusWriter).writeRevenueSyncAt(9L);
     }
 
     private void givenOnePage() {

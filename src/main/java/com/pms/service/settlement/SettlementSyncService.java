@@ -16,10 +16,12 @@ import java.util.List;
 public interface SettlementSyncService {
 
     /**
-     * 수동 갱신 — delta 창({@code revenue-delta-days})만 다시 읽는다.
+     * Manual refresh — re-reads only the delta window ({@code oklyx.coupang.revenue-delta-days}; 11st channels
+     * {@code oclyx.settlement.elevenst-revenue-delta-days}, FEATURE_2610_20 / D11).
      *
-     * <p>우선순위: {@code accountId}(단건) &gt; {@code sellerId}(판매자 단위) &gt; 전체.
-     * 🔴 계정별 최소 간격(기본 10분) 안이면 마켓을 호출하지 않고 로컬 상태를 그대로 돌려준다.
+     * <p>Priority: {@code accountId} (one channel) &gt; {@code sellerId} (one seller) &gt; all.
+     * 🔴 Within the per-account minimum interval (default 10 minutes) the market is not called and the local state
+     * is returned as is.
      */
     SettlementSyncResponse sync(Long sellerId, Long accountId);
 
