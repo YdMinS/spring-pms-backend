@@ -123,13 +123,18 @@ public class FixedCostServiceImpl implements FixedCostService {
     }
 
     /**
-     * 멱등 replace — 보낸 목록이 그 채널의 전부다.
+     * Idempotent replace — the list sent is the channel's whole list.
      *
-     * <p>🔴 {@code platform} 검사가 여기 있는 이유: 카탈로그의 축이 플랫폼이라 다른 플랫폼 항목이
-     * 채널에 걸리면 카탈로그 목록(플랫폼별)과 매출 집계(채널별)가 서로 다른 답을 낸다.
+     * <p>🔴 Why the {@code platform} check is here: the catalog's axis is the platform, so an item of another platform
+     * hung on the channel makes the catalog list (per platform) and the sales aggregate (per channel) answer
+     * differently.
      *
-     * <p>⚠️ delete 뒤 {@code flush()} 가 필요하다 — 같은 트랜잭션 안에서 지운 행과 새로 넣는 행이
-     * 유니크 키({@code account, item})가 같으면 flush 순서 때문에 제약 위반이 난다.
+     * <p>🔴 A link to the same catalog item keeps its first-month judgement ({@code firstMonth} ·
+     * {@code firstMonthState} · {@code firstMonthCharged}) across the replace — M0 is written once and an answer never
+     * changes (FEATURE_2610_20 / D45 ④ ⑤). An item left out of the list loses its link and that judgement with it.
+     *
+     * <p>⚠️ {@code flush()} is needed after the delete — when a deleted row and a new row share the unique key
+     * ({@code account, item}) in one transaction, the flush order raises a constraint violation.
      */
     @Override
     @Transactional
@@ -147,6 +152,9 @@ public class FixedCostServiceImpl implements FixedCostService {
         }
         Map<Long, PlatformFixedCost> catalog = new HashMap<>();
         platformFixedCostRepository.findAllById(ids).forEach(item -> catalog.put(item.getId(), item));
+        Map<Long, MarketplaceAccountFixedCost> previous = new HashMap<>();
+        accountFixedCostRepository.findByMarketplaceAccount_Id(accountId)
+                .forEach(link -> previous.put(link.getPlatformFixedCost().getId(), link));
 
         List<MarketplaceAccountFixedCost> toSave = new ArrayList<>(items.size());
         for (AccountFixedCostReplaceRequest.Item item : items) {
@@ -162,6 +170,7 @@ public class FixedCostServiceImpl implements FixedCostService {
             if (appliedFrom != null && appliedTo != null && appliedFrom.compareTo(appliedTo) > 0) {
                 throw new IllegalArgumentException("적용 시작월이 종료월보다 늦습니다");
             }
+            MarketplaceAccountFixedCost kept = previous.get(catalogItem.getId());
             toSave.add(MarketplaceAccountFixedCost.builder()
                     .marketplaceAccount(account)
                     .platformFixedCost(catalogItem)
@@ -169,6 +178,9 @@ public class FixedCostServiceImpl implements FixedCostService {
                     .thresholdOverride(item.thresholdOverride())
                     .appliedFrom(appliedFrom)
                     .appliedTo(appliedTo)
+                    .firstMonth(kept == null ? null : kept.getFirstMonth())
+                    .firstMonthState(kept == null ? null : kept.getFirstMonthState())
+                    .firstMonthCharged(kept == null ? null : kept.getFirstMonthCharged())
                     .build());
         }
 

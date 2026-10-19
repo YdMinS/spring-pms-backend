@@ -38,8 +38,8 @@ public class CoupangSettlementMirrorWriter implements SettlementMirrorWriter {
     }
 
     @Override
-    public void write(SettlementLine line, JsonNode raw) {
-        if (raw == null) {
+    public void write(SettlementLine line, Object rawValue) {
+        if (!(rawValue instanceof JsonNode raw)) {
             return;
         }
         CoupangSettlementLine existing = coupangSettlementLineRepository

@@ -1,7 +1,9 @@
 package com.pms.service.sales;
 
+import com.pms.domain.FirstMonthState;
 import com.pms.domain.FixedCostChargeMode;
 import com.pms.domain.MarketplaceAccountFixedCost;
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformFixedCost;
 import org.springframework.stereotype.Component;
 
@@ -12,43 +14,62 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 채널 고정비 부과 판정·합계 (FEATURE_2609_33 / PLAN 2609_33 D2 · D4 · D4-1 · D5 · D11).
+ * Channel fixed-cost charge judgement and total (FEATURE_2609_33 / PLAN 2609_33 D2 · D4 · D4-1 · D5 · D11).
  *
- * <p>🔴 <b>합계 규칙의 소유자는 이 클래스 하나</b>다. 판정을 호출부에 흩뿌리면 채널 탭과 판매자 탭이
- * 서로 다른 답을 내고, 두 숫자가 어긋나는 순간 화면 전체가 신뢰를 잃는다
- * (2609_30 의 "합계는 Reconciler 만" 과 같은 자세).
+ * <p>🔴 <b>This class is the one owner of the total rule.</b> Scattering the judgement over callers makes the channel
+ * tab and the seller tab give different answers, and the moment two numbers disagree the whole screen loses trust
+ * (same stance as 2609_30's "totals only in the Reconciler").
  *
- * <p><b>판정 규칙</b>(달마다 × 연결마다):
+ * <p><b>Judgement rules</b> (per month × per link):
  * <ol>
- *   <li>대상 달 = 조회 기간이 <b>걸친 달 전부</b>(부분 달 포함, D4)</li>
- *   <li>{@code appliedFrom}~{@code appliedTo} 밖의 달은 제외(둘 다 null 이면 전부, D5)</li>
- *   <li>카탈로그 항목이 비활성이면 0 — 과거 달도 세지 않는다</li>
- *   <li>{@code NEVER} → 0 · {@code ALWAYS} → 매출 무관 부과 · {@code AUTO} → 매출 판정(D2)</li>
- *   <li>AUTO: 🔴 <b>그 달 전체</b> 매출(할인 후) {@code >=} 실효 임계면 부과. "1백만 원 이상"이라
- *       기준 금액과 같으면 부과된다</li>
+ *   <li>Target months = <b>every month the period touches</b> (partial months included, D4)</li>
+ *   <li>Months outside {@code appliedFrom}~{@code appliedTo} are skipped (both null = every month, D5)</li>
+ *   <li>An inactive catalog item is 0 — past months are not counted either</li>
+ *   <li>{@code NEVER} → 0 · {@code ALWAYS} → charged regardless of sales · {@code AUTO} → sales judgement (D2)</li>
+ *   <li>AUTO: 🔴 charged when the <b>whole month's</b> sales (after discounts) {@code >=} the effective threshold.
+ *       The wording is "1,000,000 won or more", so a month exactly at the threshold is charged</li>
+ *   <li>AUTO on an 11st catalog item (FEATURE_2610_20 / D42 · D45 ⑥): charged when the 11st settlement lines of the
+ *       <b>previous</b> month (by purchase-confirmed date) sum, sale amount minus refunds, {@code >=} the threshold.
+ *       Exception: in M0 ({@code firstMonth}) answered by the person, {@code firstMonthCharged} decides</li>
  * </ol>
  *
- * <p>🔴 <b>일할 계산하지 않는다</b>(D4). 실제 부과가 월 1회 정액이라 부분 달도 그 달 판정을 그대로
- * 따른다 — 9/1~9/10 조회에서도 9월 전액이 빠진다. 그 사실을 사용자에게 알리는 것은 화면 몫이다(D4-2).
+ * <p>🔴 <b>No pro-rating</b> (D4). The real charge is a monthly flat amount, so a partial month follows that month's
+ * judgement — a 9/1~9/10 period still takes the whole September amount. Telling the user is the screen's job (D4-2).
  *
- * <p>⚠️ {@code from > to} 는 여기서 검증하지 않는다 — 컨트롤러 상위({@code Period.of})가 이미 400 을 낸다.
+ * <p>⚠️ {@code from > to} is not checked here — the controller side ({@code Period.of}) already answers 400.
  */
 @Component
 public class FixedCostCalculator {
 
     /**
-     * 조회 기간에 이 채널이 부담하는 고정비.
+     * Fixed cost this channel bears in the period, without the 11st material — an AUTO link of an 11st catalog item
+     * counts 0 here (the sales screen calls the overload below with that material).
      *
-     * @param monthlyNetSales key = {@code "YYYY-MM"}, 값 = 🔴 그 달 <b>전체</b>의 할인 후 매출(D11).
-     *                        키가 없는 달은 0(판매가 없었으면 임계 미달)
+     * @param monthlyNetSales key = {@code "YYYY-MM"}, value = 🔴 that <b>whole</b> month's sales after discounts
+     *                        (D11). A month without a key is 0 (no sales → under the threshold)
      */
     public FixedCostResult forChannel(List<MarketplaceAccountFixedCost> links,
                                       LocalDate from, LocalDate to,
                                       Map<String, BigDecimal> monthlyNetSales) {
+        return forChannel(links, from, to, monthlyNetSales, Map.of());
+    }
+
+    /**
+     * Same as {@link #forChannel(List, LocalDate, LocalDate, Map)} with the 11st material (FEATURE_2610_20 / D42).
+     *
+     * @param monthlyConfirmedSales key = {@code "YYYY-MM"} (purchase-confirmed month), value = that month's 11st
+     *                              settlement-line sale amount minus refunds. Read only by AUTO links of an 11st catalog
+     *                              item; a missing month is 0
+     */
+    public FixedCostResult forChannel(List<MarketplaceAccountFixedCost> links,
+                                      LocalDate from, LocalDate to,
+                                      Map<String, BigDecimal> monthlyNetSales,
+                                      Map<String, BigDecimal> monthlyConfirmedSales) {
         if (links == null || links.isEmpty() || from == null || to == null) {
             return FixedCostResult.zero();
         }
         Map<String, BigDecimal> sales = monthlyNetSales == null ? Map.of() : monthlyNetSales;
+        Map<String, BigDecimal> confirmed = monthlyConfirmedSales == null ? Map.of() : monthlyConfirmedSales;
 
         BigDecimal total = BigDecimal.ZERO;
         int chargedMonths = 0;
@@ -58,7 +79,7 @@ public class FixedCostCalculator {
             BigDecimal netSales = sales.getOrDefault(key, BigDecimal.ZERO);
             BigDecimal monthTotal = BigDecimal.ZERO;
             for (MarketplaceAccountFixedCost link : links) {
-                if (charges(link, key, netSales)) {
+                if (charges(link, key, netSales, confirmed)) {
                     monthTotal = monthTotal.add(link.getPlatformFixedCost().getAmount());
                 }
             }
@@ -72,7 +93,8 @@ public class FixedCostCalculator {
     }
 
     /** 연결 1건이 그 달에 부과되는가. */
-    private boolean charges(MarketplaceAccountFixedCost link, String month, BigDecimal netSales) {
+    private boolean charges(MarketplaceAccountFixedCost link, String month, BigDecimal netSales,
+                            Map<String, BigDecimal> confirmed) {
         PlatformFixedCost item = link.getPlatformFixedCost();
         if (item == null || !Boolean.TRUE.equals(item.getActive()) || item.getAmount() == null) {
             return false;
@@ -89,12 +111,32 @@ public class FixedCostCalculator {
         return switch (mode) {
             case NEVER -> false;
             case ALWAYS -> true;
-            // 🔴 ">=" — 공식 문구가 "1백만 원 이상"이다. ">" 로 쓰면 딱 맞는 달이 빠진다.
+            // 🔴 ">=" — the official wording is "1,000,000 won or more" (Coupang) / "5,000,000 won or more" (11st,
+            //    FEATURE_2610_20 / D42). ">" would drop a month exactly at the threshold.
             case AUTO -> {
                 BigDecimal threshold = link.effectiveThreshold();
-                yield threshold != null && netSales.compareTo(threshold) >= 0;
+                if (threshold == null) {
+                    yield false;
+                }
+                yield item.getPlatform() == Platform.ELEVENST
+                        ? elevenstCharges(link, month, threshold, confirmed)
+                        : netSales.compareTo(threshold) >= 0;
             }
         };
+    }
+
+    /**
+     * 11st AUTO (FEATURE_2610_20 / D42 · D45 ⑥): the previous month's 11st purchase-confirmed sales {@code >=}
+     * threshold. In M0 answered by the person ({@link FirstMonthState#ANSWERED}) the answer decides instead; in M0
+     * while still asking there are no lines of the previous month, so the rule gives 0 won by itself.
+     */
+    private static boolean elevenstCharges(MarketplaceAccountFixedCost link, String month, BigDecimal threshold,
+                                           Map<String, BigDecimal> confirmed) {
+        if (month.equals(link.getFirstMonth()) && link.getFirstMonthState() == FirstMonthState.ANSWERED) {
+            return Boolean.TRUE.equals(link.getFirstMonthCharged());
+        }
+        String previous = YearMonth.parse(month).minusMonths(1).toString();
+        return confirmed.getOrDefault(previous, BigDecimal.ZERO).compareTo(threshold) >= 0;
     }
 
     /**

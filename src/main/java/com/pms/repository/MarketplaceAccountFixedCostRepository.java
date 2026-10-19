@@ -1,5 +1,6 @@
 package com.pms.repository;
 
+import com.pms.domain.FirstMonthState;
 import com.pms.domain.MarketplaceAccountFixedCost;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -13,7 +14,10 @@ import java.util.List;
 public interface MarketplaceAccountFixedCostRepository
         extends JpaRepository<MarketplaceAccountFixedCost, Long> {
 
-    /** 채널 1개의 연결 목록(설정 화면). 금액·임계를 읽으므로 카탈로그를 같이 가져온다. */
+    /**
+     * The links of one channel (settings screen · the replace's carried-over first month · the 11st first-month
+     * judgement, FEATURE_2610_20 / D45). The catalog comes along because the amount and threshold are read.
+     */
     @EntityGraph(attributePaths = {"platformFixedCost"})
     List<MarketplaceAccountFixedCost> findByMarketplaceAccount_Id(Long accountId);
 
@@ -28,6 +32,10 @@ public interface MarketplaceAccountFixedCostRepository
      */
     @EntityGraph(attributePaths = {"platformFixedCost"})
     List<MarketplaceAccountFixedCost> findByMarketplaceAccount_IdIn(Collection<Long> accountIds);
+
+    /** Links in one first-month state with channel and seller — the 「정산 내역」 question bar (FEATURE_2610_20 / D45 ⑦). */
+    @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller"})
+    List<MarketplaceAccountFixedCost> findByFirstMonthStateOrderByIdAsc(FirstMonthState firstMonthState);
 
     /** 멱등 replace(PUT) 의 전반부 — 지운 뒤 다시 넣는다. */
     void deleteByMarketplaceAccount_Id(Long accountId);

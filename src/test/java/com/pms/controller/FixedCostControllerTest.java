@@ -1,6 +1,7 @@
 package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
+import com.pms.domain.FirstMonthState;
 import com.pms.domain.FixedCostChargeMode;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MarketplaceAccountFixedCost;
@@ -21,6 +22,7 @@ import org.springframework.http.MediaType;
 
 import java.math.BigDecimal;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -29,10 +31,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * 고정비 카탈로그 · 채널 연결 API (FEATURE_2609_33 / PLAN 2609_33 D10).
+ * Fixed-cost catalog · channel link API (FEATURE_2609_33 / PLAN 2609_33 D10).
  *
- * <p>비용 마스터는 다른 비용 화면과 같은 등급이라 전부 ADMIN 이다. 권한·중복·사용중 삭제·플랫폼 교차만
- * 검증한다 — 필드 검증은 프레임워크 몫이라 1건만 둔다.
+ * <p>The cost master is the same grade as the other cost screens, so everything is ADMIN. Verified: authority,
+ * duplicates, delete-in-use, the cross-platform check, the replace with its effective threshold, and the replace keeping
+ * the 11st first-month judgement (FEATURE_2610_20 / D45 ④ ⑤) — field validation is the framework's job, so there is
+ * just one case of it.
  */
 class FixedCostControllerTest extends BaseIntegrationTest {
 
@@ -145,6 +149,31 @@ class FixedCostControllerTest extends BaseIntegrationTest {
         mockMvc.perform(get(accountPath()).header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(1));
+    }
+
+    /** FEATURE_2610_20 / D45 ④ ⑤: replacing the links keeps the first-month judgement of the same catalog item. */
+    @Test
+    void testPutKeepsFirstMonthJudgement() throws Exception {
+        accountFixedCostRepository.save(MarketplaceAccountFixedCost.builder()
+                .marketplaceAccount(coupangAccount).platformFixedCost(coupangItem)
+                .chargeMode(FixedCostChargeMode.AUTO)
+                .firstMonth("2026-10").firstMonthState(FirstMonthState.ANSWERED).firstMonthCharged(true)
+                .build());
+
+        mockMvc.perform(put(accountPath())
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"items":[{"fixedCostId":%d,"chargeMode":"ALWAYS"}]}
+                                """.formatted(coupangItem.getId())))
+                .andExpect(status().isOk());
+
+        MarketplaceAccountFixedCost link = accountFixedCostRepository
+                .findByMarketplaceAccount_Id(coupangAccount.getId()).get(0);
+        assertThat(link.getChargeMode()).isEqualTo(FixedCostChargeMode.ALWAYS);
+        assertThat(link.getFirstMonth()).isEqualTo("2026-10");
+        assertThat(link.getFirstMonthState()).isEqualTo(FirstMonthState.ANSWERED);
+        assertThat(link.getFirstMonthCharged()).isTrue();
     }
 
     /** 적용 구간은 달 단위다 — 형식이 어긋나면 400(필드 검증은 이 1건으로 충분하다). */

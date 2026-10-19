@@ -7,6 +7,8 @@ import com.pms.dto.response.SettlementSyncResponse;
 import com.pms.exception.CoupangRateLimitedException;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.service.coupang.SyncWindow;
+import com.pms.service.sales.ElevenstFirstMonthService;
 import com.pms.service.settlement.SettlementLineUpserter.UpsertResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,6 +21,7 @@ import org.mockito.quality.Strictness;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -27,9 +30,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willAnswer;
 import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
@@ -44,6 +49,7 @@ class SettlementSyncServiceImplTest {
     @Mock private SettlementLineUpserter settlementLineUpserter;
     @Mock private SettlementSyncStatusWriter settlementSyncStatusWriter;
     @Mock private SettlementSource settlementSource;
+    @Mock private ElevenstFirstMonthService elevenstFirstMonthService;
 
     private final CoupangProperties coupangProperties = new CoupangProperties();
     private SettlementSyncServiceImpl service;
@@ -55,7 +61,8 @@ class SettlementSyncServiceImplTest {
     void setUp() {
         given(settlementSource.platform()).willReturn(Platform.COUPANG);
         service = new SettlementSyncServiceImpl(marketplaceAccountRepository, settlementLineUpserter,
-                settlementSyncStatusWriter, coupangProperties, List.of(settlementSource), 10);
+                settlementSyncStatusWriter, coupangProperties, List.of(settlementSource), List.of(),
+                elevenstFirstMonthService, 10, 3);
         given(settlementLineUpserter.upsertPage(any(), any(), any()))
                 .willReturn(new UpsertResult(1, 1, 0, 0));
     }
@@ -196,6 +203,84 @@ class SettlementSyncServiceImplTest {
         assertThatThrownBy(() -> service.syncPeriod(7L,
                 LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31)))
                 .isInstanceOf(CoupangRateLimitedException.class);
+    }
+
+    /** FEATURE_2610_20 / D11 · D30: an 11st channel reads its own delta window and rebuilds its payouts. */
+    @Test
+    void elevenstAccountUsesItsOwnWindowAndRebuildsPayouts() {
+        SettlementSource elevenstSource = mock(SettlementSource.class);
+        LocalPayoutBuilder payoutBuilder = mock(LocalPayoutBuilder.class);
+        given(elevenstSource.platform()).willReturn(Platform.ELEVENST);
+        given(payoutBuilder.platform()).willReturn(Platform.ELEVENST);
+        SettlementSyncServiceImpl elevenstService = new SettlementSyncServiceImpl(marketplaceAccountRepository,
+                settlementLineUpserter, settlementSyncStatusWriter, coupangProperties,
+                List.of(settlementSource, elevenstSource), List.of(payoutBuilder), elevenstFirstMonthService, 10, 5);
+        MarketplaceAccount elevenst = MarketplaceAccountFixture.elevenstStubBuilder("KEY")
+                .id(9L).accountAlias("11번가").build();
+        given(marketplaceAccountRepository.findByIsActiveTrue()).willReturn(List.of(elevenst));
+
+        elevenstService.sync(null, null);
+
+        LocalDate today = LocalDate.now(SyncWindow.KST);
+        verify(elevenstSource).fetchRevenue(eq(elevenst), eq(today.minusDays(5)), eq(today), any());
+        verify(payoutBuilder).rebuild(elevenst);
+        verify(settlementSyncStatusWriter).writeRevenueSyncAt(9L);
+    }
+
+    /**
+     * FEATURE_2610_20 / D45 ②: after an 11st load, a link waiting for its first month makes the service load M0's
+     * previous month once — loaded with lines → finished as loaded.
+     */
+    @Test
+    void elevenstLoadJudgesTheFirstMonth() {
+        SettlementSource elevenstSource = mock(SettlementSource.class);
+        given(elevenstSource.platform()).willReturn(Platform.ELEVENST);
+        SettlementSyncServiceImpl elevenstService = new SettlementSyncServiceImpl(marketplaceAccountRepository,
+                settlementLineUpserter, settlementSyncStatusWriter, coupangProperties,
+                List.of(settlementSource, elevenstSource), List.of(), elevenstFirstMonthService, 10, 3);
+        MarketplaceAccount elevenst = MarketplaceAccountFixture.elevenstStubBuilder("KEY")
+                .id(9L).accountAlias("11번가").build();
+        given(marketplaceAccountRepository.findById(9L)).willReturn(Optional.of(elevenst));
+        willAnswer(invocation -> {
+            consumer(invocation.getArgument(3)).accept(List.of(draft()));
+            return null;
+        }).given(elevenstSource).fetchRevenue(any(), any(), any(), any());
+        given(elevenstFirstMonthService.startJudging(elevenst)).willReturn(List.of(YearMonth.of(2026, 10)));
+
+        elevenstService.syncPeriod(9L, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31));
+
+        verify(elevenstFirstMonthService).resolveAsking(elevenst);
+        verify(elevenstSource).fetchRevenue(eq(elevenst), eq(LocalDate.of(2026, 9, 1)),
+                eq(LocalDate.of(2026, 9, 30)), any());
+        verify(elevenstFirstMonthService).finishJudging(elevenst, YearMonth.of(2026, 10), true);
+    }
+
+    /** FEATURE_2610_20 / D45 ②: M0's previous month fails to load → finished as not loaded (asking). */
+    @Test
+    void elevenstFirstMonthLoadFailureMeansAsking() {
+        SettlementSource elevenstSource = mock(SettlementSource.class);
+        given(elevenstSource.platform()).willReturn(Platform.ELEVENST);
+        SettlementSyncServiceImpl elevenstService = new SettlementSyncServiceImpl(marketplaceAccountRepository,
+                settlementLineUpserter, settlementSyncStatusWriter, coupangProperties,
+                List.of(settlementSource, elevenstSource), List.of(), elevenstFirstMonthService, 10, 3);
+        MarketplaceAccount elevenst = MarketplaceAccountFixture.elevenstStubBuilder("KEY")
+                .id(9L).accountAlias("11번가").build();
+        given(marketplaceAccountRepository.findById(9L)).willReturn(Optional.of(elevenst));
+        willAnswer(invocation -> {
+            LocalDate from = invocation.getArgument(1);
+            if (from.getMonthValue() == 9) {
+                throw new IllegalStateException("11번가 정산 조회 실패: 서버 점검중 (1000)");
+            }
+            consumer(invocation.getArgument(3)).accept(List.of(draft()));
+            return null;
+        }).given(elevenstSource).fetchRevenue(any(), any(), any(), any());
+        given(elevenstFirstMonthService.startJudging(elevenst)).willReturn(List.of(YearMonth.of(2026, 10)));
+
+        SettlementSyncResponse response =
+                elevenstService.syncPeriod(9L, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31));
+
+        verify(elevenstFirstMonthService).finishJudging(elevenst, YearMonth.of(2026, 10), false);
+        assertThat(response.failedAccounts()).isEmpty();
     }
 
     private void givenOnePage() {

@@ -1,0 +1,125 @@
+# 11st settlement (FEATURE_2610_20 / D3 · D16 · D46).
+#   111-1 elevenst_settlement_line = the 11st mirror of one settlement_line (1:1, UNIQUE settlement_line_id).
+#         One column per kept field of the 11st settlement list row (the 46 fields of D16 — no member id / name),
+#         amounts DECIMAL(15,2) · dates DATE · the rest VARCHAR, plus raw = the same kept fields as XML.
+#         stl_pln_dy (11st remittance date) is the key ElevenstPayoutBuilder groups payouts by (D29).
+#   111-2 marketplace_account_fixed_cost.first_month · first_month_state · first_month_charged = the first-month (M0)
+#         judgement of an 11st server-fee link (D45 · D46). All nullable, no backfill; always NULL on other links.
+#   111-3 MySQL only: first_month_charged BOOLEAN -> BIT(1) (006 / 037 pattern — Hibernate validate expects BIT).
+# ⚠️ H2 constraint names are schema-global unique -> table-prefixed names.
+databaseChangeLog:
+
+  - changeSet:
+      id: 111-1-elevenst-settlement-line
+      author: oclyx
+      comment: "FEATURE_2610_20 D3 · D16: elevenst_settlement_line (11st mirror of settlement_line, 46 kept fields + raw)."
+      changes:
+        - createTable:
+            tableName: elevenst_settlement_line
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: settlement_line_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: marketplace_account_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: ord_no, type: VARCHAR(100) }
+              - column: { name: ord_prd_seq, type: VARCHAR(50) }
+              - column: { name: dlv_no, type: VARCHAR(100) }
+              - column: { name: clm_req_seq, type: VARCHAR(100) }
+              - column: { name: prd_no, type: VARCHAR(100) }
+              - column: { name: seller_prd_no, type: VARCHAR(100) }
+              - column: { name: prd_nm, type: VARCHAR(500) }
+              - column: { name: slct_prd_opt_nm, type: VARCHAR(500) }
+              - column: { name: ord_qty, type: VARCHAR(20) }
+              - column: { name: fee_type_nm, type: VARCHAR(100) }
+              - column: { name: ord_stl_end_dt, type: DATE }
+              - column: { name: pocnfrm_dt, type: DATE }
+              - column: { name: snd_end_dt, type: DATE }
+              - column: { name: trt_end_dt, type: DATE }
+              - column: { name: stl_dy, type: DATE }
+              - column: { name: stl_pln_dy, type: DATE }
+              - column: { name: sel_prc, type: "DECIMAL(15,2)" }
+              - column: { name: opt_amt, type: "DECIMAL(15,2)" }
+              - column: { name: sel_prc_amt, type: "DECIMAL(15,2)" }
+              - column: { name: sel_fee, type: "DECIMAL(15,2)" }
+              - column: { name: sel_fixed_fee, type: VARCHAR(20) }
+              - column: { name: deduct_amt, type: "DECIMAL(15,2)" }
+              - column: { name: stl_amt, type: "DECIMAL(15,2)" }
+              - column: { name: cupn_amt, type: "DECIMAL(15,2)" }
+              - column: { name: seller_cupn_amt, type: "DECIMAL(15,2)" }
+              - column: { name: tmall_apply_dsc_amt, type: "DECIMAL(15,2)" }
+              - column: { name: card_dsc_seller_dfrm_amt, type: "DECIMAL(15,2)" }
+              - column: { name: seller_dfrm_multi_dsc_cst, type: "DECIMAL(15,2)" }
+              - column: { name: sbdsc_seller_dfrm_amt_sum, type: "DECIMAL(15,2)" }
+              - column: { name: sbdsc_flctn_stl_amt, type: "DECIMAL(15,2)" }
+              - column: { name: tmall_over_dsc_amt, type: "DECIMAL(15,2)" }
+              - column: { name: dlv_amt, type: "DECIMAL(15,2)" }
+              - column: { name: bm_stl_dlv_cst, type: "DECIMAL(15,2)" }
+              - column: { name: clm_dlv_cst, type: "DECIMAL(15,2)" }
+              - column: { name: add_clm_dlv_cst, type: "DECIMAL(15,2)" }
+              - column: { name: clm_fst_dlv_cst, type: "DECIMAL(15,2)" }
+              - column: { name: bm_clm_fst_dlv_cst, type: "DECIMAL(15,2)" }
+              - column: { name: abrd_cn_dlv_cst, type: "DECIMAL(15,2)" }
+              - column: { name: seller_dfrm_app_dlv_amt, type: "DECIMAL(15,2)" }
+              - column: { name: seller_dfrm_deferred_ad_fee, type: "DECIMAL(15,2)" }
+              - column: { name: seller_dfrm_intfree_fee, type: "DECIMAL(15,2)" }
+              - column: { name: seller_dfrm_ocb_amt, type: "DECIMAL(15,2)" }
+              - column: { name: seller_dfrm_pnt_prd, type: "DECIMAL(15,2)" }
+              - column: { name: seller_dfrm_gbl_dlv_fee, type: "DECIMAL(15,2)" }
+              - column: { name: seller_dfrm_gbl_cn_dlv_cst, type: "DECIMAL(15,2)" }
+              - column: { name: deba_gtn_stl_amt, type: "DECIMAL(15,2)" }
+              - column: { name: raw, type: CLOB }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_elevenst_stlline_tenant
+            baseTableName: elevenst_settlement_line
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_elevenst_stlline_line
+            baseTableName: elevenst_settlement_line
+            baseColumnNames: settlement_line_id
+            referencedTableName: settlement_line
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_elevenst_stlline_account
+            baseTableName: elevenst_settlement_line
+            baseColumnNames: marketplace_account_id
+            referencedTableName: marketplace_account
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            constraintName: uq_elevenst_settlement_line
+            tableName: elevenst_settlement_line
+            columnNames: settlement_line_id
+      rollback:
+        - dropTable: { tableName: elevenst_settlement_line }
+
+  - changeSet:
+      id: 111-2-fixed-cost-first-month
+      author: oclyx
+      comment: "FEATURE_2610_20 D45 · D46: first-month judgement columns on marketplace_account_fixed_cost (nullable)."
+      changes:
+        - addColumn:
+            tableName: marketplace_account_fixed_cost
+            columns:
+              - column: { name: first_month, type: VARCHAR(7) }
+              - column: { name: first_month_state, type: VARCHAR(10) }
+              - column: { name: first_month_charged, type: BOOLEAN }
+      rollback:
+        - dropColumn: { tableName: marketplace_account_fixed_cost, columnName: first_month_charged }
+        - dropColumn: { tableName: marketplace_account_fixed_cost, columnName: first_month_state }
+        - dropColumn: { tableName: marketplace_account_fixed_cost, columnName: first_month }
+
+  # MySQL only: abstract BOOLEAN -> TINYINT, but Hibernate expects BIT(1). Re-type only (nullable -> no NOT NULL /
+  # default to re-declare). Mirrors 037. H2 untouched.
+  - changeSet:
+      id: 111-3-fixed-cost-first-month-mysql-bit
+      author: oclyx
+      dbms: mysql
+      comment: "FEATURE_2610_20 D46: first_month_charged TINYINT -> BIT(1) to satisfy Hibernate schema validation (nullable)."
+      changes:
+        - modifyDataType:
+            tableName: marketplace_account_fixed_cost
+            columnName: first_month_charged
+            newDataType: BIT(1)

@@ -9,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -69,6 +70,29 @@ public interface SettlementLineRepository extends JpaRepository<SettlementLine, 
                                          @Param("to") LocalDate to,
                                          @Param("refund") SaleType refund);
 
+    /**
+     * Sale amount minus refunds per account × recognition month (FEATURE_2610_20 / D42) — the 11st server-fee
+     * judgement material ("previous month's purchase-confirmed sales"). Rows = {accountId, year, month, amount}; the
+     * month string is built by the caller (same H2 / MySQL reason as {@link #aggregateBySaleMonth}).
+     */
+    @Query("""
+            select l.marketplaceAccount.id, year(l.recognitionDate), month(l.recognitionDate),
+                   coalesce(sum(case when l.saleType = :refund then -coalesce(l.saleAmount, 0)
+                                     else coalesce(l.saleAmount, 0) end), 0)
+            from SettlementLine l
+            where l.marketplaceAccount.id in :accountIds
+              and l.recognitionDate >= :from and l.recognitionDate <= :to
+            group by l.marketplaceAccount.id, year(l.recognitionDate), month(l.recognitionDate)
+            """)
+    List<Object[]> sumSaleAmountByMonth(@Param("accountIds") Collection<Long> accountIds,
+                                        @Param("from") LocalDate from,
+                                        @Param("to") LocalDate to,
+                                        @Param("refund") SaleType refund);
+
+    /** Earliest recognition date of the account's lines, or null when it has none (FEATURE_2610_20 / D45 ②). */
+    @Query("SELECT MIN(l.recognitionDate) FROM SettlementLine l WHERE l.marketplaceAccount.id = :accountId")
+    LocalDate findEarliestRecognitionDate(@Param("accountId") Long accountId);
+
     /** 그 계정·그 인식일 구간의 라인 건수. 🔴 0 = 매출내역 미적재 (PLAN 2609_32 D4-1). */
     long countByMarketplaceAccount_IdAndRecognitionDateBetween(Long accountId, LocalDate from, LocalDate to);
 
@@ -99,19 +123,22 @@ public interface SettlementLineRepository extends JpaRepository<SettlementLine, 
                                                           @Param("to") LocalDate to);
 
     /**
-     * 판매월 × 지급일 집계 — "그 달 판매가 언제 얼마로 정산됐나" (FEATURE_2609_34).
+     * Sale month × payout date — "when and for how much was that month's sale settled" (FEATURE_2609_34).
      *
-     * <p>🔴 <b>지급 묶음에 귀속된 판매만</b> 센다. 아직 어느 지급에도 붙지 않은 판매는 정산 시점이 없어
-     * 이 집계에 넣을 자리가 없다 — 화면이 "미정산"으로 따로 말한다.
+     * <p>🔴 Only sales <b>attributed to a payout</b> are counted. A sale on no payout yet has no settlement time and no
+     * place in this aggregate — the screen says "not settled" separately.
      *
-     * <p>🔴 환불은 음수로 반영한다({@code saleType = REFUND}) — 그렇지 않으면 환불이 매출을 부풀린다.
+     * <p>🔴 Refunds count negative ({@code saleType = REFUND}) — otherwise refunds inflate the sales.
      *
-     * <p>⚠️ 월 문자열 조립은 서비스가 한다({@code year()}/{@code month()} 정수로 그룹핑) — {@code date_format}
-     * 같은 네이티브 함수는 H2(테스트)와 MySQL(운영)에서 다르게 동작한다.
+     * <p>⚠️ The month string is built by the service (grouping by {@code year()} / {@code month()} integers) — a native
+     * function like {@code date_format} behaves differently on H2 (tests) and MySQL (prod).
+     *
+     * <p>The payout date = the confirmed payout date when present, else {@code settlementDate} (FEATURE_2610_20 / D38:
+     * an 11st payout marked paid is shown on the day the money actually arrived).
      */
     @Query("""
             select year(l.recognitionDate), month(l.recognitionDate),
-                   p.settlementDate, p.status,
+                   coalesce(p.finalSettlementDate, p.settlementDate), p.status,
                    count(l),
                    coalesce(sum(l.saleAmount), 0),
                    coalesce(sum(case when l.saleType = com.pms.domain.SaleType.REFUND
@@ -120,8 +147,10 @@ public interface SettlementLineRepository extends JpaRepository<SettlementLine, 
               join l.settlementPayout p
             where l.marketplaceAccount.id = :accountId
               and l.recognitionDate >= :from and l.recognitionDate <= :to
-            group by year(l.recognitionDate), month(l.recognitionDate), p.settlementDate, p.status
-            order by year(l.recognitionDate) desc, month(l.recognitionDate) desc, p.settlementDate asc
+            group by year(l.recognitionDate), month(l.recognitionDate),
+                     coalesce(p.finalSettlementDate, p.settlementDate), p.status
+            order by year(l.recognitionDate) desc, month(l.recognitionDate) desc,
+                     coalesce(p.finalSettlementDate, p.settlementDate) asc
             """)
     List<Object[]> aggregateBySaleMonth(@Param("accountId") Long accountId,
                                         @Param("from") LocalDate from,

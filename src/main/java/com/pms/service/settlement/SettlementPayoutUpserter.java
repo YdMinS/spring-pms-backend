@@ -165,7 +165,7 @@ public class SettlementPayoutUpserter {
         return attached.size();
     }
 
-    /** 묶음 1건 적재의 집계. */
+    /** Load counts — of one payout upsert, or summed over a run (also the 11st payout rebuild, FEATURE_2610_20). */
     public record PayoutUpsertResult(int payouts, int attributedLines, int adjustments) {
 
         public static PayoutUpsertResult empty() {

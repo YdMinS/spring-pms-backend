@@ -4,12 +4,18 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 
 /**
- * 지급 묶음 1건의 요약 (FEATURE_2609_30 / 02 · PLAN D3 · D5-3).
+ * Summary of one payout (FEATURE_2609_30 / 02 · PLAN D3 · D5-3).
  *
- * <p>목록·상세·리포트가 같은 요약을 쓴다 — 화면마다 다른 필드를 내려주면 "왜 목록과 상세 금액이 다르지"가 난다.
+ * <p>The list, the detail and the report share this summary — sending different fields per screen produces "why do
+ * the list and the detail show different amounts".
  *
- * <p>⚠️ 소유 축은 <b>채널(marketplaceAccount)</b> 이다. 판매자는 표기용이며 정산은 vendorId 단위로 온다(D3).
- * ⚠️ {@code lineCount == 0} 은 정상이다(D5-4) — 유보금 해제·채무 상환·광고비 정산은 판매 라인이 없다.
+ * <p>⚠️ The owning axis is the <b>channel (marketplaceAccount)</b>. The seller is for display; settlement arrives per
+ * vendorId (D3).
+ * ⚠️ {@code lineCount == 0} is normal (D5-4) — reserve releases, debt repayments and ad settlements carry no lines.
+ *
+ * @param paymentCheckNeeded FEATURE_2610_20 / D40: an 11st payout still {@code SCHEDULED} after its remittance date
+ *                           (before today, KST) — the screens show 「입금 확인 필요」 instead of 「예정」. Always false
+ *                           for other platforms. Display only: the stored status stays {@code SCHEDULED}.
  */
 public record PayoutSummary(
         Long payoutId,
@@ -29,5 +35,6 @@ public record PayoutSummary(
         BigDecimal finalAmount,
         String status,
         String reconStatus,
-        long lineCount) {
+        long lineCount,
+        boolean paymentCheckNeeded) {
 }

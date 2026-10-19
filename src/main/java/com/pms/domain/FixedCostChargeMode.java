@@ -1,17 +1,19 @@
 package com.pms.domain;
 
 /**
- * 채널이 고정비 항목을 부담하는 방식 (FEATURE_2609_33 / PLAN 2609_33 D2).
+ * How a channel bears a fixed-cost item (FEATURE_2609_33 / PLAN 2609_33 D2).
  *
- * <p>기본은 {@link #AUTO} 다 — 그 달 채널 매출이 임계 이상이면 부과한다. 그런데 우리 매출 축이
- * 플랫폼의 인식 기준과 <b>완전히 같다는 보장이 없어</b>(D11 · D11-1) 경계 금액에서 갈릴 수 있다.
- * 실제 청구서가 우리 판정과 다르면 사람이 이긴다 → {@link #ALWAYS} · {@link #NEVER}.
+ * <p>The default is {@link #AUTO} — charged when the month's channel sales reach the threshold (an 11st item: the
+ * previous month's 11st purchase-confirmed sales, FEATURE_2610_20 / D42). Our sales axis is <b>not guaranteed to match
+ * the platform's recognition basis</b> (D11 · D11-1), so a month near the threshold can go either way. When the real
+ * bill disagrees with our judgement the person wins → {@link #ALWAYS} · {@link #NEVER}.
  *
- * <p>⚠️ 달별 부과 예외 테이블은 만들지 않는다(D2) — 3값으로 부족하다고 <b>판명된 뒤</b>에 다룬다.
+ * <p>⚠️ No per-month exception table (D2) — handled only <b>once 3 values prove not enough</b>. The one exception is
+ * the 11st first month (M0), kept as three columns on the link, not a table (FEATURE_2610_20 / D41 · D46).
  */
 public enum FixedCostChargeMode {
 
-    /** 그 달 매출 >= 임계 면 부과 (기본). */
+    /** Charged when the month's sales >= threshold (default; 11st item: the previous month's, D42). */
     AUTO,
 
     /** 매출과 무관하게 매달 부과 — 실제 청구가 계속 되는 것이 확인된 채널. */

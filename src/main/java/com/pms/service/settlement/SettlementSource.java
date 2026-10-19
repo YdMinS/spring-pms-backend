@@ -10,14 +10,16 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * 플랫폼별 정산 매출내역 조회 seam (FEATURE_2609_30 / PLAN D5).
+ * Per-platform settlement revenue lookup seam (FEATURE_2609_30 / PLAN D5).
  *
- * <p><b>필수 규칙</b>: 중립 적재 서비스({@link SettlementSyncService})는 이 인터페이스에만 의존한다 —
- * 쿠팡 경로·필드명·페이징 규칙을 중립 쪽으로 새어 나가게 하지 말 것(2609_26 원칙). 구현은 지금
- * {@code service/settlement/coupang/CoupangSettlementSource} 하나이며 주입은 {@code Map<Platform, ...>} 이다.
+ * <p><b>Rule</b>: the neutral load service ({@link SettlementSyncService}) depends on this interface only — do not let
+ * a platform's paths, field names or paging rules leak into the neutral side (2609_26 principle). Implementations
+ * are {@code service/settlement/coupang/CoupangSettlementSource} and
+ * {@code service/settlement/elevenst/ElevenstSettlementSource} (FEATURE_2610_20), injected as
+ * {@code Map<Platform, ...>}.
  *
- * <p>⚠️ 페이징·조회 창 분할(쿠팡 31일 상한)은 <b>구현 안에서</b> 처리한다. 호출자는 원하는 기간을 그냥
- * 넘기고, 400 을 사용자에게 그대로 보여주지 않는다.
+ * <p>⚠️ Paging and window splitting (Coupang · 11st 31-day cap) are handled <b>inside the implementation</b>. Callers
+ * pass the range they want and never show a 400 to the user as is.
  */
 public interface SettlementSource {
 
@@ -47,12 +49,16 @@ public interface SettlementSource {
                       Consumer<List<SettlementLineDraft>> pageConsumer);
 
     /**
-     * 이 계정의 {@code month}(매출인식월) 지급 묶음 전부 (FEATURE_2609_30 / 02 · PLAN D5-2).
+     * Every payout of this account for {@code month} (revenue-recognition month) (FEATURE_2609_30 / 02 · PLAN D5-2).
      *
-     * <p>🔴 매출내역과 <b>다른 피드</b>다: 축이 인식월 하나이고 페이징이 없으며, 한 원소가 지급 묶음 1건이다.
-     * 같은 달에 여러 건이 오므로 구현은 원소를 <b>합치지 않는다</b>(D5-3).
+     * <p>🔴 A <b>different feed</b> from the revenue history: one axis (the recognition month), no paging, and one
+     * element = one payout. Several arrive in the same month, so an implementation <b>never merges</b> elements
+     * (D5-3).
      *
-     * <p>⚠️ 당월을 넘는 월은 플랫폼이 400 을 준다 — 호출자가 미래 월을 넘기지 않는다.
+     * <p>⚠️ A month after the current one gets a 400 from the platform — callers never pass a future month.
+     *
+     * <p>A platform with no payout API returns nothing here and registers a {@link LocalPayoutBuilder} instead —
+     * 11st (FEATURE_2610_20 / D30); the payout load then never calls this method for that platform.
      */
     List<SettlementPayoutDraft> fetchPayouts(MarketplaceAccount account, YearMonth month);
 }

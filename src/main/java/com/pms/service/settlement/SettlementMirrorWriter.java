@@ -1,6 +1,5 @@
 package com.pms.service.settlement;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.pms.domain.Platform;
 import com.pms.domain.SettlementLine;
 
@@ -17,10 +16,11 @@ public interface SettlementMirrorWriter {
     Platform platform();
 
     /**
-     * 저장된 중립 라인에 대응하는 미러 행을 멱등하게 남긴다(있으면 갱신).
+     * Writes the mirror row of a stored neutral line, idempotently (updates it when it exists).
      *
-     * @param line 이미 저장된 중립 라인 (id 확정)
-     * @param raw  응답 원문 라인 1개
+     * @param line the neutral line, already stored (id assigned)
+     * @param raw  one raw response line — the shape the platform's source put on the draft (Coupang = JsonNode ·
+     *             11st = kept-field map, FEATURE_2610_20 / D16); a writer ignores any other shape
      */
-    void write(SettlementLine line, JsonNode raw);
+    void write(SettlementLine line, Object raw);
 }

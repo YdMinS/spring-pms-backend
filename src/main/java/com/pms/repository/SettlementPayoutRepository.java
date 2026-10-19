@@ -28,7 +28,10 @@ public interface SettlementPayoutRepository extends JpaRepository<SettlementPayo
             Long marketplaceAccountId, String revenueRecognitionMonth, SettlementType settlementType,
             LocalDate settlementDate);
 
-    /** 상세·리포트용 단건 — 채널/판매자 표기를 위해 계정·판매자를 함께 로딩한다(open-in-view=false). */
+    /**
+     * Single payout with its account and seller loaded (open-in-view=false) — for the detail · report channel and
+     * seller display, and for the platform check of the 11st 「지급 완료」 mark (FEATURE_2610_20 / D34).
+     */
     @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller"})
     Optional<SettlementPayout> findWithAccountById(Long id);
 
@@ -50,17 +53,21 @@ public interface SettlementPayoutRepository extends JpaRepository<SettlementPayo
                                   @Param("to") LocalDate to);
 
     /**
-     * <b>매출인식월</b> 구간 조회 — 매출 화면이 "이 기간 매출에 대한 정산"을 나열하는 유일한 경로
-     * (FEATURE_2609_34).
+     * <b>Revenue-recognition month</b> range lookup — the only path the sales screen uses to list "the settlements
+     * for this period's sales" (FEATURE_2609_34).
      *
-     * <p>🔴 {@link #search} 와 축이 다르다. 저쪽은 <b>지급일</b>(돈이 언제 들어왔나), 이쪽은
-     * <b>매출인식월</b>(어느 달 매출에 대한 정산인가)이다. 매출 화면의 기간은 판매일 축이라 지급일로 자르면
-     * 8월에 판 것을 9월에 받는 건이 통째로 빠진다 — 두 메서드를 합치지 말 것.
+     * <p>🔴 A different axis from {@link #search}: that one is the <b>payout date</b> ({@code settlementDate} — the
+     * scheduled date; for 11st the remittance date, and FEATURE_2610_20 / D38 keeps the list filter on it), this one
+     * is the <b>revenue-recognition month</b> (which month's sales the settlement is for). The sales screen's period
+     * is on the sale-date axis, so cutting by the payout date drops whole cases sold in August and paid in September
+     * — do not merge the two methods.
      *
-     * <p>⚠️ {@code revenue_recognition_month} 는 {@code 'YYYY-MM'} 고정폭 문자열이라 사전식 비교가
-     * 연월 비교와 같다. {@code >=}/{@code <=} 를 그대로 쓰는 이유이고, 인덱스도 그대로 탄다.
+     * <p>⚠️ {@code revenue_recognition_month} is a fixed-width {@code 'YYYY-MM'} string, so lexicographic comparison
+     * equals year-month comparison. That is why {@code >=}/{@code <=} are used as they are, and the index still
+     * applies.
      *
-     * <p>정렬 = 인식월 내림차순(최근 달이 위) → 같은 달 안에서는 지급일 오름차순(주정산 1차·2차·3차 순).
+     * <p>Order = recognition month descending (latest month on top) → within a month, payout date ascending (main
+     * settlement 1st · 2nd · 3rd).
      */
     @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller"})
     @Query("SELECT p FROM SettlementPayout p WHERE "
@@ -94,40 +101,47 @@ public interface SettlementPayoutRepository extends JpaRepository<SettlementPayo
     /** 그 달 {@code finalAmount} 미수신 건 수 — 합계에서 빠진 건수다(D6). */
     long countByMarketplaceAccount_IdAndRevenueRecognitionMonthAndFinalAmountIsNull(Long accountId, String month);
 
+    /** Every payout of one account — the 11st remittance-date grouping reads them all (FEATURE_2610_20 / D29). */
+    List<SettlementPayout> findByMarketplaceAccount_Id(Long marketplaceAccountId);
+
     /** 계정 단위 존재 확인(적재 로그·테스트용). */
     List<SettlementPayout> findByMarketplaceAccountAndRevenueRecognitionMonth(
             MarketplaceAccount marketplaceAccount, String revenueRecognitionMonth);
 
     /**
-     * 채널(계정)별 지급 묶음 집계 — 매출 화면의 "받을 돈" · 입금 확정 (FEATURE_2609_30 / 03 ①②).
+     * Payouts summed per channel (account) — the sales screen's "money to receive" · paid in the period
+     * (FEATURE_2609_30 / 03 ①②).
      *
-     * <p>🔴 {@code pendingPayout} 에 <b>기간 조건이 없다</b>(D4). 지급 묶음의 축은 매출인식일이라 판매일
-     * 기간과 겹치지 않는다 — 판매일 기간으로 자르면 "받을 돈"이 실제 받을 금액보다 작게 나온다.
-     * 기간을 타는 것은 {@code paidAmount}(현금주의) 하나뿐이고, 기준일은 {@code settlementDate} 다.
+     * <p>🔴 {@code pendingPayout} has <b>no period condition</b> (D4). The payout axis is the revenue-recognition date,
+     * which does not line up with the sale-date period — cutting by the sale period makes "money to receive" smaller
+     * than what will actually be received. Only {@code paidAmount} (cash basis) takes the period.
      *
-     * <p>🔴 <b>{@code finalSettlementDate} 를 기준일로 쓰지 말 것</b>(FEATURE_2609_34, 2026-09-11 문서 확인).
-     * 지급내역 API(`settlement-histories`) 응답에는 그 필드가 <b>아예 없다</b> — {@code finalSettlementDate}
-     * 는 매출내역 API(`revenue-history`)에만 있다. 그래서 이 컬럼은 prod 전 건 NULL 이고, 그것을 기준으로
-     * 자르면 "기간 내 입금"이 <b>영원히 0원</b>이 된다(실측). 지급 시점은 {@code settlementDate} + 
-     * {@code status = DONE(PAID)} 조합으로 판정한다.
+     * <p>🔴 The date {@code paidAmount} is cut by = the confirmed payout date when present, else {@code settlementDate}
+     * (FEATURE_2610_20 / D38: an 11st payout marked paid carries the real arrival date there). <b>Never cut by
+     * {@code finalSettlementDate} alone</b> (FEATURE_2609_34, checked against the docs 2026-09-11): the Coupang
+     * payment-history API ({@code settlement-histories}) does <b>not send that field at all</b> — only the
+     * revenue-history API ({@code revenue-history}) has it — so the column is NULL on every Coupang row in prod, and
+     * cutting by it alone makes "paid in the period" <b>0 won forever</b> (measured). With the fallback, Coupang rows
+     * are still cut by {@code settlementDate} + {@code status = DONE (PAID)}.
      *
-     * <p>⚠️ {@code recon_status = AMOUNT_ONLY}(추가정산·유보금)를 제외하지 않는다 — 라인이 없을 뿐
-     * 실제로 받을 돈이다(D5-4·D5-5).
+     * <p>⚠️ {@code recon_status = AMOUNT_ONLY} (additional · reserve payouts) is not excluded — they carry no lines but
+     * are money actually received (D5-4 · D5-5).
      *
-     * <p>⚠️ {@code case ... then p.finalAmount end}(else 없음)로 두는 이유: {@code else 0} 을 쓰면
-     * 정수 리터럴과 DECIMAL 이 한 CASE 에 섞인다. 합계가 없으면 {@code coalesce} 가 0 으로 받는다.
+     * <p>⚠️ Why {@code case ... then p.finalAmount end} (no else): {@code else 0} mixes an integer literal and DECIMAL
+     * in one CASE. With no rows, {@code coalesce} turns it into 0.
      *
-     * <p>🔴 <b>대사 상태별 건수를 여기서 세지 말 것</b>(FEATURE_2609_34). 이 집계에는 기간이 걸리지 않으므로
-     * 그 건수를 기간 필터가 달린 화면 행에 걸면 "이 기간에 N건이 어긋났다"로 읽힌다. 대사 상태는 인식월로
-     * 좁힌 {@link #searchByRecognitionMonth} 목록이 건별로 보여준다.
+     * <p>🔴 <b>Do not count reconciliation statuses here</b> (FEATURE_2609_34). This aggregate has no period, so a count
+     * from it on a row with a period filter reads as "N payouts mismatched in this period". Reconciliation status is
+     * shown per payout by the recognition-month list {@link #searchByRecognitionMonth}.
      */
     @Query("""
             select new com.pms.dto.response.PayoutAggregate(
                 a.id,
                 coalesce(sum(case when p.status = :scheduled then p.finalAmount end), 0),
                 coalesce(sum(case when p.status = :paid
-                                   and p.settlementDate >= :from
-                                   and p.settlementDate <= :to then p.finalAmount end), 0))
+                                   and coalesce(p.finalSettlementDate, p.settlementDate) >= :from
+                                   and coalesce(p.finalSettlementDate, p.settlementDate) <= :to
+                              then p.finalAmount end), 0))
             from SettlementPayout p join p.marketplaceAccount a
             where (:sellerId is null or a.seller.id = :sellerId)
             group by a.id

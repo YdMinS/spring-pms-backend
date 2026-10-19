@@ -3,8 +3,10 @@ package com.pms.service.sales;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MarketplaceAccountFixedCost;
 import com.pms.domain.MasterProductOption;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.domain.SaleType;
 import com.pms.domain.SettlementPayoutStatus;
 import com.pms.dto.response.ChannelSalesResponse;
 import com.pms.dto.response.MonthlyChannelSales;
@@ -17,6 +19,7 @@ import com.pms.repository.MarketplaceAccountFixedCostRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
+import com.pms.repository.SettlementLineRepository;
 import com.pms.repository.SettlementPayoutRepository;
 import com.pms.service.MasterChannelConfigService;
 import com.pms.service.sales.FixedCostCalculator.FixedCostResult;
@@ -73,6 +76,7 @@ public class SalesStatsServiceImpl implements SalesStatsService {
     private final OrderLineRepository orderLineRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
     private final SettlementPayoutRepository settlementPayoutRepository;
+    private final SettlementLineRepository settlementLineRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final MarketplaceAccountFixedCostRepository fixedCostRepository;
     private final MasterChannelConfigService masterChannelConfigService;
@@ -82,6 +86,7 @@ public class SalesStatsServiceImpl implements SalesStatsService {
     public SalesStatsServiceImpl(OrderLineRepository orderLineRepository,
                                  ProductListingOptionRepository productListingOptionRepository,
                                  SettlementPayoutRepository settlementPayoutRepository,
+                                 SettlementLineRepository settlementLineRepository,
                                  MarketplaceAccountRepository marketplaceAccountRepository,
                                  MarketplaceAccountFixedCostRepository fixedCostRepository,
                                  MasterChannelConfigService masterChannelConfigService,
@@ -90,6 +95,7 @@ public class SalesStatsServiceImpl implements SalesStatsService {
         this.orderLineRepository = orderLineRepository;
         this.productListingOptionRepository = productListingOptionRepository;
         this.settlementPayoutRepository = settlementPayoutRepository;
+        this.settlementLineRepository = settlementLineRepository;
         this.marketplaceAccountRepository = marketplaceAccountRepository;
         this.fixedCostRepository = fixedCostRepository;
         this.masterChannelConfigService = masterChannelConfigService;
@@ -346,17 +352,19 @@ public class SalesStatsServiceImpl implements SalesStatsService {
     // ── 고정비 (FEATURE_2609_33 / PLAN 2609_33 D4 · D4-1 · D6 · D12) ──────────────────────
 
     /**
-     * 계정별 기간 고정비.
+     * Fixed cost per account for the period.
      *
-     * <p>🔴 <b>{@code byChannel} 과 {@code summary} 가 이 메서드 하나만 쓴다.</b> 두 탭이 각자 계산하면
-     * (a) 계정마다 쿼리가 나가고 (b) 두 탭 합계가 서로 어긋난다 — 어긋나는 순간 화면이 신뢰를 잃는다.
+     * <p>🔴 <b>{@code byChannel} and {@code summary} both use this one method.</b> If the two tabs computed it each,
+     * (a) a query would go out per account and (b) the two tabs' totals would disagree — and the screen loses trust
+     * the moment they do.
      *
-     * <p>🔴 판정 매출은 <b>걸친 달 전체</b>다(D4-1): 조회 기간이 아니라 첫 달 1일 00:00 ~ 마지막 달
-     * 다음 달 1일 00:00 으로 넓혀 집계한다. 9/1~9/10 조회에서 10일치로 판정하면 임계 미달로 보여
-     * "9월엔 고정비가 없다" 가 된다.
+     * <p>🔴 The judgement sales are the <b>whole months touched</b> (D4-1): the aggregate is widened from the period to
+     * the first month's 1st 00:00 ~ the 1st 00:00 of the month after the last. Judging 9/1~9/10 on ten days of sales
+     * would fall under the threshold and say "no fixed cost in September". 11st links are judged on the previous
+     * month's purchase-confirmed settlement lines instead (FEATURE_2610_20 / D42 — {@link #elevenstConfirmedSales}).
      *
-     * <p>⚠️ 연결이 <b>0건이면 월별 집계 쿼리를 아예 부르지 않는다</b> — 고정비를 쓰지 않는 테넌트가
-     * 매출 화면을 열 때마다 집계를 한 번 더 돌 이유가 없다.
+     * <p>⚠️ With <b>0 links the monthly aggregate is never queried</b> — a tenant without fixed costs has no reason to
+     * run one more aggregate every time it opens the sales screen.
      */
     private Map<Long, FixedCostResult> fixedCostByAccount(Period period, Long sellerId,
                                                           Collection<Long> accountIds) {
@@ -372,14 +380,45 @@ public class SalesStatsServiceImpl implements SalesStatsService {
                 .collect(Collectors.groupingBy(link -> link.getMarketplaceAccount().getId()));
 
         Map<Long, Map<String, BigDecimal>> monthlySales = monthlyNetSales(period, sellerId);
+        Map<Long, Map<String, BigDecimal>> confirmedSales = elevenstConfirmedSales(period, links);
         Map<Long, FixedCostResult> result = new HashMap<>();
         linksByAccount.forEach((accountId, accountLinks) -> result.put(accountId,
                 fixedCostCalculator.forChannel(accountLinks, period.from(), period.to(),
-                        monthlySales.getOrDefault(accountId, Map.of()))));
+                        monthlySales.getOrDefault(accountId, Map.of()),
+                        confirmedSales.getOrDefault(accountId, Map.of()))));
         return result;
     }
 
-    /** 계정 × {@code "YYYY-MM"} 할인 후 매출. 🔴 문자열 키 조립은 여기서만 한다(쿼리는 year/month 정수). */
+    /**
+     * Account × {@code "YYYY-MM"} 11st purchase-confirmed sales (sale amount minus refunds of the settlement lines),
+     * from the month before the period's first month — the 11st server fee is judged on the previous month
+     * (FEATURE_2610_20 / D42). No 11st link → no query.
+     */
+    private Map<Long, Map<String, BigDecimal>> elevenstConfirmedSales(Period period,
+                                                                      List<MarketplaceAccountFixedCost> links) {
+        Set<Long> accountIds = links.stream()
+                .filter(link -> link.getPlatformFixedCost() != null
+                        && link.getPlatformFixedCost().getPlatform() == Platform.ELEVENST)
+                .map(link -> link.getMarketplaceAccount().getId())
+                .collect(Collectors.toSet());
+        if (accountIds.isEmpty()) {
+            return Map.of();
+        }
+        LocalDate from = YearMonth.from(period.from()).minusMonths(1).atDay(1);
+        LocalDate to = YearMonth.from(period.to()).atEndOfMonth();
+        Map<Long, Map<String, BigDecimal>> byAccount = new HashMap<>();
+        for (Object[] row : settlementLineRepository.sumSaleAmountByMonth(accountIds, from, to, SaleType.REFUND)) {
+            byAccount.computeIfAbsent((Long) row[0], key -> new HashMap<>())
+                    .put(YearMonth.of(((Number) row[1]).intValue(), ((Number) row[2]).intValue()).toString(),
+                            (BigDecimal) row[3]);
+        }
+        return byAccount;
+    }
+
+    /**
+     * Account × {@code "YYYY-MM"} sales after discounts. 🔴 The month string keys are built in this class only — here
+     * and in {@link #elevenstConfirmedSales} (the queries give year / month integers).
+     */
     private Map<Long, Map<String, BigDecimal>> monthlyNetSales(Period period, Long sellerId) {
         LocalDateTime from = YearMonth.from(period.from()).atDay(1).atStartOfDay();
         LocalDateTime toExclusive = YearMonth.from(period.to()).plusMonths(1).atDay(1).atStartOfDay();

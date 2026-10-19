@@ -220,3 +220,5 @@ databaseChangeLog:
       file: db/changelog/changes/109-purchase-seller-filter.yaml
   - include:
       file: db/changelog/changes/110-receipt-intake.yaml
+  - include:
+      file: db/changelog/changes/111-elevenst-settlement.yaml

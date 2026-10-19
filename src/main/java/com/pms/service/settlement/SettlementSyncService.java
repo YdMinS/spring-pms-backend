@@ -16,21 +16,29 @@ import java.util.List;
 public interface SettlementSyncService {
 
     /**
-     * 수동 갱신 — delta 창({@code revenue-delta-days})만 다시 읽는다.
+     * Manual refresh — re-reads only the delta window ({@code oklyx.coupang.revenue-delta-days}; 11st channels
+     * {@code oclyx.settlement.elevenst-revenue-delta-days}, FEATURE_2610_20 / D11).
      *
-     * <p>우선순위: {@code accountId}(단건) &gt; {@code sellerId}(판매자 단위) &gt; 전체.
-     * 🔴 계정별 최소 간격(기본 10분) 안이면 마켓을 호출하지 않고 로컬 상태를 그대로 돌려준다.
+     * <p>Priority: {@code accountId} (one channel) &gt; {@code sellerId} (one seller) &gt; all.
+     * 🔴 Within the per-account minimum interval (default 10 minutes) the market is not called and the local state
+     * is returned as is.
+     *
+     * <p>After an 11st account loads, its server-fee first month may load M0's previous month once more
+     * (FEATURE_2610_20 / D45).
      */
     SettlementSyncResponse sync(Long sellerId, Long accountId);
 
     /**
-     * 기간 지정 백필. 31일을 넘는 구간은 어댑터가 잘라 여러 번 호출한다.
+     * Period backfill. A range over 31 days is split by the adapter into several calls.
      *
-     * <p>⚠️ 최소 간격 가드를 적용하지 않고, {@code lastSettlementSyncAt} 도 <b>갱신하지 않는다</b> —
-     * 과거 구간 백필이 "최신까지 읽었다"는 뜻이 되면 delta 창이 그 구간을 건너뛰고, 수동 갱신까지 10분
-     * 막힌다.
+     * <p>⚠️ The minimum-interval guard is not applied, and {@code lastSettlementSyncAt} is <b>not updated</b> — if a
+     * past-range backfill meant "read up to now", the delta window would skip that range and the manual refresh would
+     * be blocked for 10 minutes.
      *
-     * @throws IllegalArgumentException {@code from > to} 이거나 계정이 없을 때 (→ 400)
+     * <p>After an 11st account loads, its server-fee first month may load M0's previous month once more
+     * (FEATURE_2610_20 / D45).
+     *
+     * @throws IllegalArgumentException {@code from > to} or the account does not exist (→ 400)
      */
     SettlementSyncResponse syncPeriod(Long accountId, LocalDate from, LocalDate to);
 

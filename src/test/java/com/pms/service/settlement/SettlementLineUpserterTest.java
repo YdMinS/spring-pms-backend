@@ -2,6 +2,7 @@ package com.pms.service.settlement;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.ElevenstOrderLine;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Order;
 import com.pms.domain.OrderLine;
@@ -11,6 +12,7 @@ import com.pms.domain.SaleType;
 import com.pms.domain.SettlementLine;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CoupangOrderLineRepository;
+import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.SettlementLineRepository;
@@ -25,6 +27,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -50,6 +53,7 @@ class SettlementLineUpserterTest {
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private OrderLineRepository orderLineRepository;
     @Mock private CoupangOrderLineRepository coupangOrderLineRepository;
+    @Mock private ElevenstOrderLineRepository elevenstOrderLineRepository;
 
     private SettlementLineUpserter upserter;
 
@@ -60,7 +64,7 @@ class SettlementLineUpserterTest {
     void setUp() {
         // 미러 기록기는 비워 둔다 — 이 테스트의 관심사는 중립 라인이다(미러 없음도 정상 동작).
         upserter = new SettlementLineUpserter(settlementLineRepository, productListingOptionRepository,
-                orderLineRepository, coupangOrderLineRepository, List.of());
+                orderLineRepository, coupangOrderLineRepository, elevenstOrderLineRepository, List.of());
         given(settlementLineRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
     }
 
@@ -238,6 +242,36 @@ class SettlementLineUpserterTest {
         // 같은 실행에서 같은 유일키가 두 번 = upsert 가 금액을 덮어써 조용히 잃는 상황이다.
         assertThat(result.duplicates()).isEqualTo(1);
         assertThat(result.lines()).isEqualTo(2);
+    }
+
+    /**
+     * FEATURE_2610_20 / D5 · D6: an 11st line joins the 11st order mirror by (ordNo, ordPrdSeq) — a refund key
+     * {@code ordPrdSeq-clmReqSeq} uses the part before the dash — and takes only that order line's option.
+     */
+    @Test
+    void elevenstLineMatchesItsOrderLineAndOption() {
+        MarketplaceAccount elevenst = MarketplaceAccountFixture.elevenstStubBuilder("KEY").id(9L).build();
+        ProductListingOption option = ProductListingOption.builder().id(31L).build();
+        OrderLine orderLine = OrderLine.builder().id(21L).productListingOption(option).build();
+        given(settlementLineRepository
+                .findByMarketplaceAccount_IdAndExternalOrderIdAndPlatformOptionIdAndSaleTypeAndRecognitionDate(
+                        anyLong(), anyString(), anyString(), any(), any()))
+                .willReturn(Optional.empty());
+        given(elevenstOrderLineRepository.findByMarketplaceAccount_IdAndOrdNoAndOrdPrdSeq(9L, "E1", "2"))
+                .willReturn(Optional.of(ElevenstOrderLine.builder().orderLine(orderLine).build()));
+        SettlementLineDraft refund = new SettlementLineDraft("E1", "2-77", SaleType.REFUND, RECOGNITION,
+                null, null, null, 1, new BigDecimal("10000"), null, null, null, null, null,
+                new BigDecimal("9000"), Map.of());
+
+        upserter.upsertPage(elevenst, List.of(refund), new HashSet<>());
+
+        ArgumentCaptor<SettlementLine> saved = ArgumentCaptor.forClass(SettlementLine.class);
+        verify(settlementLineRepository).save(saved.capture());
+        assertThat(saved.getValue().getOrderLine()).isSameAs(orderLine);
+        assertThat(saved.getValue().getProductListingOption()).isSameAs(option);
+        verify(productListingOptionRepository, never()).findByPlatformOptionId(anyString());
+        verify(coupangOrderLineRepository, never())
+                .findByMarketplaceAccount_IdAndOrderIdRawAndVendorItemId(anyLong(), anyString(), anyString());
     }
 
     private SettlementLineDraft draft(String saleAmount) {

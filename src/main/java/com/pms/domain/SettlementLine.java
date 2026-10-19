@@ -12,7 +12,8 @@ import java.time.LocalDate;
  *
  * <p>This is the only measured material we have for reconciliation and profit: it carries the fee the
  * platform actually charged, per order line. Platform-specific fee columns and the raw response live
- * in {@link CoupangSettlementLine} (1:1), same split as {@code order_line}/{@code coupang_order_line}.</p>
+ * in {@link CoupangSettlementLine} / {@link ElevenstSettlementLine} (1:1, FEATURE_2610_20), same split as
+ * {@code order_line}/{@code coupang_order_line}.</p>
  *
  * <p>🔴 <b>{@link #orderLine} may be null and that is a NORMAL state</b> (D7), not a defect: ad-cost
  * offsets and orders outside our loaded window can never match. Dropping unmatched lines would make
@@ -21,7 +22,8 @@ import java.time.LocalDate;
  *
  * <p>🔴 <b>{@link #settlementPayout} is null after prompt 01</b> (D5-2) — the revenue-history feed has
  * no settlementType, so guessing the payout grouping here would not line up with the bank transfer.
- * Prompt 02 attributes lines to payouts; the upsert must never clear that attribution.</p>
+ * Prompt 02 attributes lines to payouts; the upsert must never clear that attribution. 11st lines are attributed
+ * in the same run by {@code ElevenstPayoutBuilder}, by their remittance date (FEATURE_2610_20 / D29).</p>
  *
  * <p>🔴 Unique key = (account, externalOrderId, platformOptionId, saleType, recognitionDate) — it
  * deliberately excludes {@code settlement_payout_id}, which is null at load time. Corrections are
@@ -52,7 +54,7 @@ public class SettlementLine extends BaseEntity {
     @Column(name = "tenant_id", nullable = false)
     private Long tenantId;
 
-    /** Nullable until prompt 02 attributes the line to a payout unit (D5-2). */
+    /** Nullable until prompt 02 (11st: {@code ElevenstPayoutBuilder}) attributes the line to a payout unit (D5-2). */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "settlement_payout_id")
     private SettlementPayout settlementPayout;
@@ -74,7 +76,10 @@ public class SettlementLine extends BaseEntity {
     @Column(name = "external_order_id", nullable = false, length = 100)
     private String externalOrderId;
 
-    /** Coupang vendorItemId. Called by its neutral name here (2609_26 naming rule). */
+    /**
+     * Coupang vendorItemId; 11st {@code ordPrdSeq}, or {@code ordPrdSeq-clmReqSeq} for a refund row
+     * (FEATURE_2610_20 / D5). Called by its neutral name here (2609_26 naming rule).
+     */
     @Column(name = "platform_option_id", nullable = false, length = 100)
     private String platformOptionId;
 
@@ -113,7 +118,10 @@ public class SettlementLine extends BaseEntity {
     @Column(name = "settlement_amount", precision = 15, scale = 2)
     private BigDecimal settlementAmount;
 
-    /** Revenue-recognition date = the axis both settlement APIs are keyed on. Part of the unique key. */
+    /**
+     * Revenue-recognition date = the axis both Coupang settlement APIs are keyed on; 11st = the purchase-confirmed
+     * date {@code pocnfrmDt} (FEATURE_2610_20 / D27). Part of the unique key.
+     */
     @Column(name = "recognition_date", nullable = false)
     private LocalDate recognitionDate;
 
