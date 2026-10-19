@@ -652,14 +652,23 @@ public class CoupangListingAdapter implements ListingChannel {
             // and the option gate only looked at attributes. Coupang answered with an opaque
             // "'1 번 옵션 의 고시정보' 다시 확인해 주세요". Checked for SINGLE and AB alike.
             if (!requiredNotices.isEmpty()) {
-                Map<String, String> notices = mergedNotices(masterNotices, mo, option);
-                for (CategoryNotice notice : requiredNotices) {
-                    String value = notices.get(notice.key());
-                    if (value == null || value.isBlank()) {
-                        throw new IllegalArgumentException(
-                                "필수 고시 누락: " + option.getOptionName() + " / " + notice.key());
-                    }
-                }
+                requireNotices(requiredNotices, mergedNotices(masterNotices, mo, option), option.getOptionName());
+            }
+        }
+    }
+
+    /**
+     * 96 ⑨: every required 고시 of the picked 품목군 must carry a value. Shared by validateRegistrable (register)
+     * and buildPayload — the latter is the only gate on the [수정 요청] path (108/D4 skips validateRegistrable),
+     * where a stale-key notice used to be dropped by toNotices and reach Coupang as an opaque
+     * "'1 번 옵션 의 고시정보' 다시 확인해 주세요" (2026-10-19, master 1705).
+     */
+    private static void requireNotices(List<CategoryNotice> requiredNotices, Map<String, String> notices,
+                                       String optionName) {
+        for (CategoryNotice notice : requiredNotices) {
+            String value = notices.get(notice.key());
+            if (value == null || value.isBlank()) {
+                throw new IllegalArgumentException("필수 고시 누락: " + optionName + " / " + notice.key());
             }
         }
     }
@@ -776,9 +785,15 @@ public class CoupangListingAdapter implements ListingChannel {
         // Notice detail(noticeCategoryDetailName) → group(noticeCategoryName) for this category (61), narrowed
         // to the group the user actually picked (96 ⑩ — 품목군 share notice keys, so a first-wins map tagged the
         // shared ones with whichever group happened to come first).
-        Map<String, String> groupByDetail = noticesOfSelectedGroup(schema, selectedNoticeGroup(cell, master)).stream()
+        String selectedNoticeGroup = selectedNoticeGroup(cell, master);
+        List<CategoryNotice> selectedGroupNotices = noticesOfSelectedGroup(schema, selectedNoticeGroup);
+        Map<String, String> groupByDetail = selectedGroupNotices.stream()
                 .filter(n -> n.groupName() != null)
                 .collect(Collectors.toMap(CategoryNotice::key, CategoryNotice::groupName, (a, b) -> a));
+        // Same rule as validateRegistrable (96 ⑨): legacy cells with no stored group are not checked.
+        List<CategoryNotice> requiredNotices = selectedNoticeGroup != null
+                ? selectedGroupNotices.stream().filter(CategoryNotice::required).toList()
+                : List.of();
         // 96 ④: attribute name → 기본 단위. Coupang has no unit field — the value itself must carry it
         // ("200ml"). Built once, outside the items loop.
         // 2026-10-07: the unit actually accepted (sendUnit) — basicUnit unless the category does not list it.
@@ -865,6 +880,9 @@ public class CoupangListingAdapter implements ListingChannel {
                 }
             }
             Map<String, String> notices = mergedNotices(masterNotices, mo, option);
+            if (!requiredNotices.isEmpty()) {
+                requireNotices(requiredNotices, notices, option.getOptionName());
+            }
             if (!notices.isEmpty()) {
                 List<Map<String, Object>> noticeItems = toNotices(notices, groupByDetail);
                 if (!noticeItems.isEmpty()) {
