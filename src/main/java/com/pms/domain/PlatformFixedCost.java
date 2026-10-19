@@ -54,7 +54,10 @@ public class PlatformFixedCost extends BaseEntity {
     @Column(name = "amount", nullable = false, precision = 15, scale = 2)
     private BigDecimal amount;
 
-    /** 부과 임계. 그 달 채널 매출(할인 후)이 이 값 <b>이상</b>이면 부과된다. */
+    /**
+     * Charge threshold. Charged when the month's channel sales (after discounts) are <b>at least</b> this value — for
+     * an 11st item, the previous month's 11st purchase-confirmed sales (FEATURE_2610_20 / D42).
+     */
     @Column(name = "threshold_amount", nullable = false, precision = 15, scale = 2)
     private BigDecimal thresholdAmount;
 

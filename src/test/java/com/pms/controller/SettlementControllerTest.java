@@ -2,11 +2,15 @@ package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.Category;
+import com.pms.domain.FirstMonthState;
+import com.pms.domain.FixedCostChargeMode;
 import com.pms.domain.CategoryMapping;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.MarketplaceAccountFixedCost;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
+import com.pms.domain.PlatformFixedCost;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.SaleType;
@@ -22,9 +26,11 @@ import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CategoryMappingRepository;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.CoupangAccountCredentialRepository;
+import com.pms.repository.MarketplaceAccountFixedCostRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.PlatformCategoryRepository;
+import com.pms.repository.PlatformFixedCostRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.SellerRepository;
@@ -69,6 +75,7 @@ class SettlementControllerTest extends BaseIntegrationTest {
     private static final String BY_SALE_MONTH = "/api/admin/settlement/by-sale-month";
     private static final String SUGGESTIONS = "/api/admin/settlement/commission-suggestions";
     private static final String SUGGESTIONS_APPLY = SUGGESTIONS + "/apply";
+    private static final String FIRST_MONTH_QUESTIONS = "/api/admin/settlement/first-month-questions";
     private static final String XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
     @Autowired private SellerRepository sellerRepository;
@@ -83,6 +90,8 @@ class SettlementControllerTest extends BaseIntegrationTest {
     @Autowired private MasterProductRepository masterProductRepository;
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
+    @Autowired private PlatformFixedCostRepository platformFixedCostRepository;
+    @Autowired private MarketplaceAccountFixedCostRepository accountFixedCostRepository;
 
     @MockBean private CoupangApiClient coupangApiClient;
 
@@ -172,6 +181,8 @@ class SettlementControllerTest extends BaseIntegrationTest {
 
     @AfterEach
     void cleanup() {
+        accountFixedCostRepository.deleteAll();       // FEATURE_2610_20 seed — refers to the account and the item
+        platformFixedCostRepository.deleteAll();
         settlementAdjustmentRepository.deleteAll();   // FK child first
         settlementLineRepository.deleteAll();
         settlementPayoutRepository.deleteAll();
@@ -540,6 +551,45 @@ class SettlementControllerTest extends BaseIntegrationTest {
         SettlementPayout undone = settlementPayoutRepository.findById(elevenstPayoutId).orElseThrow();
         assertThat(undone.getStatus()).isEqualTo(SettlementPayoutStatus.SCHEDULED);
         assertThat(undone.getFinalSettlementDate()).isNull();
+    }
+
+    // ---- 11st server-fee first month (FEATURE_2610_20 / D45 ⑦) ----
+
+    @Test
+    void firstMonthQuestions_userToken_returns403() throws Exception {
+        mockMvc.perform(get(FIRST_MONTH_QUESTIONS).header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void firstMonthQuestions_adminToken_listsAndAnswers() throws Exception {
+        Seller seller = sellerRepository.findAll().get(0);
+        MarketplaceAccount elevenst = marketplaceAccountRepository.save(MarketplaceAccount.builder()
+                .seller(seller).platform(Platform.ELEVENST).accountAlias("11번가").isActive(true).build());
+        PlatformFixedCost item = platformFixedCostRepository.save(PlatformFixedCost.builder()
+                .platform(Platform.ELEVENST).name("11번가 서버이용료")
+                .amount(new BigDecimal("77000")).thresholdAmount(new BigDecimal("5000000")).active(true).build());
+        MarketplaceAccountFixedCost link = accountFixedCostRepository.save(MarketplaceAccountFixedCost.builder()
+                .marketplaceAccount(elevenst).platformFixedCost(item).chargeMode(FixedCostChargeMode.AUTO)
+                .firstMonth("2026-10").firstMonthState(FirstMonthState.ASKING).build());
+
+        mockMvc.perform(get(FIRST_MONTH_QUESTIONS).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].linkId").value(link.getId()))
+                .andExpect(jsonPath("$.data[0].accountAlias").value("11번가"))
+                .andExpect(jsonPath("$.data[0].askMonth").value("2026-09"));
+
+        mockMvc.perform(post(FIRST_MONTH_QUESTIONS + "/" + link.getId())
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"charged\":true}"))
+                .andExpect(status().isOk());
+
+        MarketplaceAccountFixedCost answered = accountFixedCostRepository.findById(link.getId()).orElseThrow();
+        assertThat(answered.getFirstMonthState()).isEqualTo(FirstMonthState.ANSWERED);
+        assertThat(answered.getFirstMonthCharged()).isTrue();
+        mockMvc.perform(get(FIRST_MONTH_QUESTIONS).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isEmpty());
     }
 
     /** One 11st channel of the seeded seller with one scheduled DAILY payout (remittance 2026-08-20) and its line. */

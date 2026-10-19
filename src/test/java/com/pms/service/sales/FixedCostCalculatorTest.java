@@ -1,5 +1,6 @@
 package com.pms.service.sales;
 
+import com.pms.domain.FirstMonthState;
 import com.pms.domain.FixedCostChargeMode;
 import com.pms.domain.MarketplaceAccountFixedCost;
 import com.pms.domain.PlatformFixedCost;
@@ -15,13 +16,15 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 고정비 부과 판정 (FEATURE_2609_33 / PLAN 2609_33 D2 · D4 · D4-1 · D5 · D11).
+ * Fixed-cost charge judgement (FEATURE_2609_33 / PLAN 2609_33 D2 · D4 · D4-1 · D5 · D11 · FEATURE_2610_20 / D42).
  *
- * <p>🔴 <b>판정이 이 기능의 전부</b>다 — 달마다 다시 따지고(D2), 부분 달도 그 달 전체 매출로 보고(D4-1),
- * 판정 금액은 <b>할인 후</b>다(D11). 셋 중 하나가 조용히 틀리면 순이익이 채널당 매달 55,000 씩 어긋난다.
+ * <p>🔴 <b>The judgement is the whole of this feature</b> — re-judged every month (D2), a partial month judged on that
+ * whole month's sales (D4-1), and the judged amount is <b>after discounts</b> (D11). If one of the three goes silently
+ * wrong, net profit drifts by 55,000 per channel per month. An 11st catalog item is judged on the previous month's
+ * 11st purchase-confirmed sales instead (D42 — the last two tests).
  *
- * <p>⚠️ 여기 매출은 이미 "그 달 전체의 할인 후 금액"이다 — 그 값을 만드는 SQL 은 목으로 검증되지 않아
- * {@code OrderLineFixedCostMonthlyAggregationTest}(@DataJpaTest) 가 따로 맡는다.
+ * <p>⚠️ The sales here are already "the whole month after discounts" — the SQL building them is not checked through
+ * mocks, so {@code OrderLineFixedCostMonthlyAggregationTest} (@DataJpaTest) covers it separately.
  */
 class FixedCostCalculatorTest {
 
@@ -179,7 +182,53 @@ class FixedCostCalculatorTest {
         assertThat(result.chargedMonths()).isZero();
     }
 
+    /** FEATURE_2610_20 / D42: an 11st link is judged on the previous month's purchase-confirmed sales. */
+    @Test
+    void elevenstAutoUsesPreviousMonthConfirmedSales() {
+        MarketplaceAccountFixedCost elevenst = elevenst(null, null, null);
+
+        FixedCostResult result = calculator.forChannel(List.of(elevenst), SEP_1, SEP_30,
+                Map.of("2026-09", new BigDecimal("9000000")),
+                Map.of("2026-08", new BigDecimal("5000000"), "2026-09", new BigDecimal("100")));
+
+        assertThat(result.amount()).isEqualByComparingTo("77000");
+        assertThat(calculator.forChannel(List.of(elevenst), SEP_1, SEP_30,
+                Map.of("2026-09", new BigDecimal("9000000")),
+                Map.of("2026-08", new BigDecimal("4999999"))).amount()).isEqualByComparingTo("0");
+    }
+
+    /** FEATURE_2610_20 / D45 ⑥: in M0 the person's answer wins over the previous month's lines. */
+    @Test
+    void elevenstAnsweredFirstMonthFollowsTheAnswer() {
+        FixedCostResult charged = calculator.forChannel(
+                List.of(elevenst("2026-09", FirstMonthState.ANSWERED, true)), SEP_1, SEP_30,
+                Map.of(), Map.of());
+        FixedCostResult notCharged = calculator.forChannel(
+                List.of(elevenst("2026-09", FirstMonthState.ANSWERED, false)), SEP_1, SEP_30,
+                Map.of(), Map.of("2026-08", new BigDecimal("9000000")));
+        FixedCostResult asking = calculator.forChannel(
+                List.of(elevenst("2026-09", FirstMonthState.ASKING, null)), SEP_1, SEP_30,
+                Map.of(), Map.of());
+
+        assertThat(charged.amount()).isEqualByComparingTo("77000");
+        assertThat(notCharged.amount()).isEqualByComparingTo("0");
+        assertThat(asking.amount()).isEqualByComparingTo("0");
+    }
+
     // ------------------------------------------------------------- fixtures
+
+    private MarketplaceAccountFixedCost elevenst(String firstMonth, FirstMonthState state, Boolean charged) {
+        return MarketplaceAccountFixedCost.builder()
+                .platformFixedCost(PlatformFixedCost.builder()
+                        .platform(Platform.ELEVENST).name("11번가 서버이용료")
+                        .amount(new BigDecimal("77000")).thresholdAmount(new BigDecimal("5000000"))
+                        .active(true).build())
+                .chargeMode(FixedCostChargeMode.AUTO)
+                .firstMonth(firstMonth)
+                .firstMonthState(state)
+                .firstMonthCharged(charged)
+                .build();
+    }
 
     private MarketplaceAccountFixedCost auto() {
         return link(FixedCostChargeMode.AUTO, null, null, null, true);

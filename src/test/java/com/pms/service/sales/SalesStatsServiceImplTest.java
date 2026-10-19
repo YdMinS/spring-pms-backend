@@ -12,6 +12,7 @@ import com.pms.domain.PlatformCategory;
 import com.pms.domain.PlatformFixedCost;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.domain.SaleType;
 import com.pms.domain.Seller;
 import com.pms.dto.response.MonthlyChannelSales;
 import com.pms.dto.response.PayoutAggregate;
@@ -23,6 +24,7 @@ import com.pms.repository.MarketplaceAccountFixedCostRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
+import com.pms.repository.SettlementLineRepository;
 import com.pms.repository.SettlementPayoutRepository;
 import com.pms.service.MasterChannelConfigService;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,19 +40,20 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 /**
- * 매출 집계 서비스 — 세율·순이익·축 변환 (FEATURE_2609_30 / PLAN D4 · D14 · D19 · 03).
+ * Sales aggregate service — rates · net profit · axis changes (FEATURE_2609_30 / PLAN D4 · D14 · D19 · 03).
  *
- * <p>🔴 이 클래스에 {@code ProductRepository} 목이 <b>없다</b>. 원가는 {@code order_line} 스냅샷뿐이고
- * 현재가로 메우면 원가를 고칠 때마다 과거 순이익이 소급 변동한다 — 의존 자체를 두지 않는 것이
- * {@code verify(productRepository, never())} 보다 강한 보증이다.
+ * <p>🔴 This class has <b>no</b> {@code ProductRepository} mock. The cost is the {@code order_line} snapshot only, and
+ * filling it with the current price would move past net profit every time a cost is edited — not having the
+ * dependency at all is a stronger guarantee than {@code verify(productRepository, never())}.
  *
- * <p>수량·할인 안분처럼 <b>SQL 안에 있는</b> 규칙은 목으로 검증되지 않는다 →
- * {@code OrderLineSalesAggregationTest}(@DataJpaTest) 가 그쪽을 맡는다.
+ * <p>Rules <b>inside the order_line SQL</b>, such as quantity and discount splitting, are not checked through mocks →
+ * {@code OrderLineSalesAggregationTest} (@DataJpaTest) covers them.
  */
 @ExtendWith(MockitoExtension.class)
 class SalesStatsServiceImplTest {
@@ -62,6 +65,7 @@ class SalesStatsServiceImplTest {
     @Mock private OrderLineRepository orderLineRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private SettlementPayoutRepository settlementPayoutRepository;
+    @Mock private SettlementLineRepository settlementLineRepository;
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock private MarketplaceAccountFixedCostRepository fixedCostRepository;
     @Mock private MasterChannelConfigService masterChannelConfigService;
@@ -76,8 +80,8 @@ class SalesStatsServiceImplTest {
     void setUp() {
         // 🔴 계산기는 목이 아니라 실제 구현이다 — 판정 규칙이 갈리면 두 탭 합계가 어긋난다.
         service = new SalesStatsServiceImpl(orderLineRepository, productListingOptionRepository,
-                settlementPayoutRepository, marketplaceAccountRepository, fixedCostRepository,
-                masterChannelConfigService, new FixedCostCalculator(), VAT);
+                settlementPayoutRepository, settlementLineRepository, marketplaceAccountRepository,
+                fixedCostRepository, masterChannelConfigService, new FixedCostCalculator(), VAT);
     }
 
     /** 🔴 D19: 쿠팡은 수수료 + 그 수수료의 부가세를 뗀다. 10.6% × 1.1 = 11.66% 가 추정 수수료다. */
@@ -319,6 +323,34 @@ class SalesStatsServiceImplTest {
                     assertThat(row.estNetProfit()).isEqualByComparingTo("18340");
                 });
         verify(orderLineRepository, never()).aggregateMonthlySales(any(), any(), any());
+    }
+
+    /** FEATURE_2610_20 / D42: an 11st link reads the previous month's 11st settlement lines, not this month's orders. */
+    @Test
+    void testByChannelJudgesElevenstOnPreviousMonthSettlementLines() {
+        MarketplaceAccount elevenst = MarketplaceAccountFixture.elevenstStubBuilder("KEY")
+                .id(30L).seller(seller).accountAlias("11번가-메인").build();
+        givenAccounts(elevenst);
+        givenNoPayouts();
+        givenSales(group(elevenst, 100L, 100L, "100000", "0", "40000", 0, 10L));
+        givenOption(100L, 500L, "0.106", "2500", "500");
+        givenFixedCostLinks(MarketplaceAccountFixedCost.builder()
+                .marketplaceAccount(elevenst)
+                .platformFixedCost(PlatformFixedCost.builder()
+                        .platform(Platform.ELEVENST)
+                        .name("11번가 서버이용료")
+                        .amount(new BigDecimal("77000"))
+                        .thresholdAmount(new BigDecimal("5000000"))
+                        .active(true)
+                        .build())
+                .chargeMode(FixedCostChargeMode.AUTO)
+                .build());
+        given(settlementLineRepository.sumSaleAmountByMonth(any(), eq(LocalDate.of(2026, 8, 1)), eq(TO),
+                eq(SaleType.REFUND)))
+                .willReturn(List.<Object[]>of(new Object[]{30L, 2026, 8, new BigDecimal("5000000")}));
+
+        assertThat(service.byChannel(FROM, TO, null)).singleElement()
+                .satisfies(row -> assertThat(row.fixedCost()).isEqualByComparingTo("77000"));
     }
 
     /** 🔴 D12: 판매자 행은 채널 결과의 <b>합</b>이다 — 판매자 단위로 임계를 다시 판정하지 않는다. */

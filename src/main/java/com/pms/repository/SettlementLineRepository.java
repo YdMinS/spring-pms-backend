@@ -9,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -68,6 +69,29 @@ public interface SettlementLineRepository extends JpaRepository<SettlementLine, 
                                          @Param("from") LocalDate from,
                                          @Param("to") LocalDate to,
                                          @Param("refund") SaleType refund);
+
+    /**
+     * Sale amount minus refunds per account × recognition month (FEATURE_2610_20 / D42) — the 11st server-fee
+     * judgement material ("previous month's purchase-confirmed sales"). Rows = {accountId, year, month, amount}; the
+     * month string is built by the caller (same H2 / MySQL reason as {@link #aggregateBySaleMonth}).
+     */
+    @Query("""
+            select l.marketplaceAccount.id, year(l.recognitionDate), month(l.recognitionDate),
+                   coalesce(sum(case when l.saleType = :refund then -coalesce(l.saleAmount, 0)
+                                     else coalesce(l.saleAmount, 0) end), 0)
+            from SettlementLine l
+            where l.marketplaceAccount.id in :accountIds
+              and l.recognitionDate >= :from and l.recognitionDate <= :to
+            group by l.marketplaceAccount.id, year(l.recognitionDate), month(l.recognitionDate)
+            """)
+    List<Object[]> sumSaleAmountByMonth(@Param("accountIds") Collection<Long> accountIds,
+                                        @Param("from") LocalDate from,
+                                        @Param("to") LocalDate to,
+                                        @Param("refund") SaleType refund);
+
+    /** Earliest recognition date of the account's lines, or null when it has none (FEATURE_2610_20 / D45 ②). */
+    @Query("SELECT MIN(l.recognitionDate) FROM SettlementLine l WHERE l.marketplaceAccount.id = :accountId")
+    LocalDate findEarliestRecognitionDate(@Param("accountId") Long accountId);
 
     /** 그 계정·그 인식일 구간의 라인 건수. 🔴 0 = 매출내역 미적재 (PLAN 2609_32 D4-1). */
     long countByMarketplaceAccount_IdAndRecognitionDateBetween(Long accountId, LocalDate from, LocalDate to);
