@@ -7,15 +7,18 @@ import org.hibernate.annotations.TenantId;
 import java.math.BigDecimal;
 
 /**
- * "이 채널이 저 고정비 항목을 부담한다" 는 연결 (FEATURE_2609_33 / PLAN 2609_33 D1 · D2 · D2-1 · D5).
+ * The link "this channel bears that fixed-cost item" (FEATURE_2609_33 / PLAN 2609_33 D1 · D2 · D2-1 · D5).
  *
- * <p>🔴 <b>금액이 여기 없다</b>(D1). 금액과 기본 임계는 {@link PlatformFixedCost} 에만 있고 여기에는
- * "덮어쓸 것"(모드·임계·적용 구간)만 있다.
+ * <p>🔴 <b>No amount here</b> (D1). The amount and the default threshold live only in {@link PlatformFixedCost}; this
+ * row holds only "what to override" (mode · threshold · applied months) — plus, for an 11st server-fee link, the
+ * first-month (M0) judgement ({@code firstMonth} · {@code firstMonthState} · {@code firstMonthCharged},
+ * FEATURE_2610_20 / D45 · D46).
  *
- * <p>적용 구간({@code appliedFrom} ~ {@code appliedTo}, 둘 다 {@code YYYY-MM})은 계약 전/후 달을 빼기
- * 위한 것이다(D5) — 없으면 계약 전 과거 달 순이익이 실제보다 낮게 나온다. 둘 다 null = 전 기간.
+ * <p>The applied months ({@code appliedFrom} ~ {@code appliedTo}, both {@code YYYY-MM}) cut off months before / after
+ * the contract (D5) — without them, past months before the contract show a lower profit than they had. Both null =
+ * every month.
  *
- * <p>⚠️ ddl-auto=validate (dev/prod) → 아래 @Column 정의는 changeset 086 과 일치해야 한다.
+ * <p>⚠️ ddl-auto=validate (dev/prod) → the @Column definitions below must match changesets 086 and 111-2.
  */
 @Entity
 @Table(name = "marketplace_account_fixed_cost")
@@ -56,6 +59,22 @@ public class MarketplaceAccountFixedCost extends BaseEntity {
     /** {@code YYYY-MM}. null = 진행 중(종료월 없음). */
     @Column(name = "applied_to", length = 7)
     private String appliedTo;
+
+    /**
+     * 11st server fee only (FEATURE_2610_20 / D45 · D46): M0 = the month of the earliest purchase-confirmed date stored
+     * when the judgement started, {@code YYYY-MM}. Written once, never changed. null = not judged yet / not 11st.
+     */
+    @Column(name = "first_month", length = 7)
+    private String firstMonth;
+
+    /** 11st server fee only: where the M0 judgement stands (D45). null = not judged yet / not 11st. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "first_month_state", length = 10)
+    private FirstMonthState firstMonthState;
+
+    /** 11st server fee only: the person's answer (charged in M0 or not). Set only with {@link FirstMonthState#ANSWERED}. */
+    @Column(name = "first_month_charged")
+    private Boolean firstMonthCharged;
 
     /** 실효 임계 — 채널 override 가 있으면 그것, 없으면 카탈로그 기본값(D2-1). */
     public BigDecimal effectiveThreshold() {

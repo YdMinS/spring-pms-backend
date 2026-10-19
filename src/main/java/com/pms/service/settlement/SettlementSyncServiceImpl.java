@@ -9,6 +9,7 @@ import com.pms.exception.CoupangRateLimitedException;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.security.TenantContext;
 import com.pms.service.coupang.SyncWindow;
+import com.pms.service.sales.ElevenstFirstMonthService;
 import com.pms.service.settlement.SettlementLineUpserter.UpsertResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashSet;
@@ -29,7 +31,8 @@ import java.util.Set;
  *
  * <p>⚠️ No class-level {@code @Transactional} — this is an outbound HTTP loop. DB writes happen only in
  * {@link SettlementLineUpserter} (REQUIRES_NEW per page), {@link LocalPayoutBuilder} (REQUIRES_NEW, 11st payouts —
- * FEATURE_2610_20 / D30) and {@link SettlementSyncStatusWriter} (same stance as {@code CoupangInquiryAdapter}).
+ * FEATURE_2610_20 / D30), {@link ElevenstFirstMonthService} (REQUIRES_NEW per step, the 11st server-fee first month —
+ * D45) and {@link SettlementSyncStatusWriter} (same stance as {@code CoupangInquiryAdapter}).
  *
  * <p>🔴 One account's failure does not stop the rest. Only the failed accounts come back in {@code failedAccounts},
  * and their anchor is <b>left untouched</b> — that is what widens the next run's window by itself.
@@ -45,6 +48,7 @@ public class SettlementSyncServiceImpl implements SettlementSyncService {
     private final SettlementLineUpserter settlementLineUpserter;
     private final SettlementSyncStatusWriter settlementSyncStatusWriter;
     private final CoupangProperties coupangProperties;
+    private final ElevenstFirstMonthService elevenstFirstMonthService;
     private final int manualMinIntervalMinutes;
     private final int elevenstRevenueDeltaDays;
     private final Map<Platform, SettlementSource> sources = new EnumMap<>(Platform.class);
@@ -56,6 +60,7 @@ public class SettlementSyncServiceImpl implements SettlementSyncService {
                                      CoupangProperties coupangProperties,
                                      List<SettlementSource> sources,
                                      List<LocalPayoutBuilder> payoutBuilders,
+                                     ElevenstFirstMonthService elevenstFirstMonthService,
                                      @Value("${oclyx.settlement.manual-min-interval-minutes:10}")
                                      int manualMinIntervalMinutes,
                                      @Value("${oclyx.settlement.elevenst-revenue-delta-days:3}")
@@ -64,6 +69,7 @@ public class SettlementSyncServiceImpl implements SettlementSyncService {
         this.settlementLineUpserter = settlementLineUpserter;
         this.settlementSyncStatusWriter = settlementSyncStatusWriter;
         this.coupangProperties = coupangProperties;
+        this.elevenstFirstMonthService = elevenstFirstMonthService;
         this.manualMinIntervalMinutes = manualMinIntervalMinutes;
         this.elevenstRevenueDeltaDays = elevenstRevenueDeltaDays;
         sources.forEach(source -> this.sources.put(source.platform(), source));
@@ -95,6 +101,7 @@ public class SettlementSyncServiceImpl implements SettlementSyncService {
             }
             try {
                 total = total.plus(runAccount(account, to.minusDays(deltaDays(account)), to, true));
+                afterRevenueSync(account);
             } catch (CoupangRateLimitedException e) {
                 // 쿨다운은 계정별이다(FEATURE_2609_46 D1) — 한 계정의 429 로 나머지 계정을 중단하지 않는다.
                 // 다만 계정이 전부 쿨다운이면 200 + failedAccounts 에는 재시도 가능 시각 문구가 화면에 뜨지 않으므로
@@ -134,6 +141,7 @@ public class SettlementSyncServiceImpl implements SettlementSyncService {
         try {
             // 창 분할(31일 상한)은 어댑터가 한다 — 여기서 400 을 사용자에게 그대로 보여주지 않는다.
             total = runAccount(account, from, to, false);
+            afterRevenueSync(account);
         } catch (CoupangRateLimitedException e) {
             // 기간 백필은 계정 1건 경로다(루프가 아니다) — 그 하나가 쿨다운이면 성공한 계정이 없으므로,
             //    200 + failedAccounts 로 내려가면 프론트의 월 루프가 남은 달을 계속 던져 왕복만 늘고,
@@ -203,6 +211,42 @@ public class SettlementSyncServiceImpl implements SettlementSyncService {
                 settlementSyncStatusWriter.writeRevenueSyncAt(account.getId());
             }
             return result;
+        } finally {
+            if (previousTenant != null) {
+                TenantContext.set(previousTenant);
+            } else {
+                TenantContext.clear();
+            }
+        }
+    }
+
+    /**
+     * After a successful revenue load of an account: the 11st server-fee first-month judgement (FEATURE_2610_20 /
+     * D45 ① ~ ③ — {@link ElevenstFirstMonthService}). M0's previous month is loaded once per M0 without touching the
+     * anchor; a failed load only means ASKING. Any error here is logged and never fails the sync — the lines are
+     * already stored.
+     */
+    private void afterRevenueSync(MarketplaceAccount account) {
+        if (account.getPlatform() != Platform.ELEVENST) {
+            return;
+        }
+        Long previousTenant = TenantContext.get();
+        try {
+            TenantContext.set(account.getTenantId());
+            elevenstFirstMonthService.resolveAsking(account);
+            for (YearMonth firstMonth : elevenstFirstMonthService.startJudging(account)) {
+                YearMonth previous = firstMonth.minusMonths(1);
+                boolean loaded;
+                try {
+                    loaded = runAccount(account, previous.atDay(1), previous.atEndOfMonth(), false).lines() > 0;
+                } catch (RuntimeException e) {
+                    log.warn("11st first-month load failed: account={} month={}", account.getId(), previous, e);
+                    loaded = false;
+                }
+                elevenstFirstMonthService.finishJudging(account, firstMonth, loaded);
+            }
+        } catch (RuntimeException e) {
+            log.warn("11st first-month judgement failed: account={}", account.getId(), e);
         } finally {
             if (previousTenant != null) {
                 TenantContext.set(previousTenant);

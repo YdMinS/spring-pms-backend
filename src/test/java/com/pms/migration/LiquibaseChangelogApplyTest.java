@@ -1130,12 +1130,19 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID LIKE '110-%'", Integer.class)).isEqualTo(3);
     }
 
-    /** changeset 111 (FEATURE_2610_20 / D3 · D16): elevenst_settlement_line, created empty. */
+    /**
+     * changeset 111 (FEATURE_2610_20 / D3 · D16 · D46): elevenst_settlement_line, created empty, + the three first-month
+     * columns on marketplace_account_fixed_cost. 111-3 is MySQL only, so H2 records 111-1 and 111-2.
+     */
     @Test
     void elevenstSettlementApplied() {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM elevenst_settlement_line WHERE stl_pln_dy IS NULL", Integer.class)).isZero();
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID LIKE '111-%'", Integer.class)).isEqualTo(1);
+                "SELECT COUNT(*) FROM marketplace_account_fixed_cost WHERE first_month IS NOT NULL "
+                        + "OR first_month_state IS NOT NULL OR first_month_charged IS NOT NULL",
+                Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID LIKE '111-%'", Integer.class)).isEqualTo(2);
     }
 }

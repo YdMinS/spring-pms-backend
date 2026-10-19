@@ -2,9 +2,11 @@ package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.CommissionApplyRequest;
+import com.pms.dto.request.FirstMonthAnswerRequest;
 import com.pms.dto.request.PayoutMarkPaidRequest;
 import com.pms.dto.response.CommissionApplyResponse;
 import com.pms.dto.response.CommissionSuggestionResponse;
+import com.pms.dto.response.FirstMonthQuestionResponse;
 import com.pms.dto.response.PayoutSummary;
 import com.pms.dto.response.SaleMonthSettlement;
 import com.pms.dto.response.ReconLineView;
@@ -13,6 +15,7 @@ import com.pms.dto.response.SettlementPayoutDetailResponse;
 import com.pms.dto.response.SettlementPayoutSyncResponse;
 import com.pms.dto.response.SettlementSyncResponse;
 import com.pms.dto.response.SettlementSyncTargetResponse;
+import com.pms.service.sales.ElevenstFirstMonthService;
 import com.pms.service.settlement.CommissionFeedbackService;
 import com.pms.service.settlement.SettlementPaymentService;
 import com.pms.service.settlement.SettlementPayoutSyncService;
@@ -45,7 +48,8 @@ import java.util.List;
  *
  * <p>Payout lookup · difference report · Excel were added by FEATURE_2609_30 / 02. Every lookup reads the local DB and
  * never calls the market — <b>no automatic refresh</b> is attached, so opening a screen never becomes an API call
- * (PLAN D11). The 11st 「지급 완료」 mark and its undo (FEATURE_2610_20 / D34 · D39) only write the local payout.
+ * (PLAN D11). The 11st 「지급 완료」 mark and its undo (FEATURE_2610_20 / D34 · D39) and the 11st first-month answer
+ * (D45 ⑦) only write local rows.
  *
  * <p>⚠️ {@code IllegalArgumentException} is mapped to 400 by {@code GlobalExceptionHandler} — do not catch it here.
  */
@@ -64,6 +68,7 @@ public class SettlementController {
     private final SettlementReconciliationService settlementReconciliationService;
     private final CommissionFeedbackService commissionFeedbackService;
     private final SettlementPaymentService settlementPaymentService;
+    private final ElevenstFirstMonthService elevenstFirstMonthService;
 
     /**
      * 수동 갱신 — delta 창만 다시 읽는다. 우선순위: accountId &gt; sellerId &gt; 전체.
@@ -182,6 +187,20 @@ public class SettlementController {
     @PostMapping("/payouts/{id}/unmark-paid")
     public ResponseEntity<ResponseDTO<Void>> unmarkPaid(@PathVariable Long id) {
         settlementPaymentService.unmarkPaid(id);
+        return ResponseEntity.ok(ResponseDTO.success(null));
+    }
+
+    /** 11st server-fee links waiting for the first-month answer — the 「정산 내역」 question bar (FEATURE_2610_20 / D45 ⑦). */
+    @GetMapping("/first-month-questions")
+    public ResponseEntity<ResponseDTO<List<FirstMonthQuestionResponse>>> firstMonthQuestions() {
+        return ResponseEntity.ok(ResponseDTO.success(elevenstFirstMonthService.questions()));
+    }
+
+    /** [예] / [아니오] on one question (D45 ⑦). A link not asking, an unknown id or a missing answer is 400. */
+    @PostMapping("/first-month-questions/{linkId}")
+    public ResponseEntity<ResponseDTO<Void>> answerFirstMonth(@PathVariable Long linkId,
+                                                              @RequestBody FirstMonthAnswerRequest request) {
+        elevenstFirstMonthService.answer(linkId, request.charged());
         return ResponseEntity.ok(ResponseDTO.success(null));
     }
 
