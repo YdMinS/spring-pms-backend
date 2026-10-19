@@ -5,26 +5,31 @@ import com.pms.dto.response.SettlementPayoutSyncResponse;
 import java.time.YearMonth;
 
 /**
- * 지급내역(지급 묶음) 적재의 <b>단일 진입점</b> (FEATURE_2609_30 / 02 · PLAN D5-2 · D11).
+ * The <b>single entry point</b> of the payment-history (payout) load (FEATURE_2609_30 / 02 · PLAN D5-2 · D11).
  *
- * <p><b>필수 규칙</b>: 컨트롤러·스케줄러는 여기만 호출한다. 어댑터({@link SettlementSource})나
- * {@link SettlementPayoutUpserter} 를 직접 부르면 처리 순서 고정(settlementDate ASC)·계정 격리·앵커 갱신이
- * 호출처마다 두 벌이 된다.
+ * <p><b>Rule</b>: controllers and schedulers call only this. Calling an adapter ({@link SettlementSource}) or
+ * {@link SettlementPayoutUpserter} directly gives every caller its own copy of the fixed processing order
+ * (settlementDate ASC) · per-account isolation · anchor update.
  *
- * <p>⚠️ 매출내역 적재({@link SettlementSyncService})와 분리한 이유 = 피드가 다르다. 주기(일 1회 vs 주 1회),
- * 축(인식일 구간 vs 인식월), 응답 모양이 전부 다르며, 이쪽만이 지급 묶음을 만든다.
+ * <p>⚠️ Why it is apart from the revenue load ({@link SettlementSyncService}): the feeds differ — cycle (daily vs
+ * weekly), axis (recognition-date range vs recognition month) and response shape all differ. Payouts of a platform
+ * with a payout API are made only here; 11st payouts are rebuilt from the stored lines by its
+ * {@link LocalPayoutBuilder}, from here and from the revenue load alike (FEATURE_2610_20 / D29 · D30).
  */
 public interface SettlementPayoutSyncService {
 
     /**
-     * 지급내역 적재 + 라인 귀속 + 대사.
+     * Payout load + line attribution + reconciliation. A platform with a {@link LocalPayoutBuilder} (11st) is not
+     * called at all: its payouts are rebuilt from the stored lines, and {@code month} does not apply
+     * (FEATURE_2610_20 / D30).
      *
-     * @param accountId null 이면 지원 플랫폼의 활성 계정 전부
-     * @param month     null 이면 계정별로 자동 결정한다 — 최초 실행이면
-     *                  {@code payoutBackfillMonths} 개월치, 아니면 당월 + 직전월(정정 흡수).
-     *                  🔴 지정하면 그 달만 읽고 {@code lastPayoutSyncAt}(앵커) 을 <b>갱신하지 않는다</b>
-     *                  (PLAN 2609_31 D3 — 과거 달 백필이 "최초 실행"을 소진하면 초기 백필이 영영 안 돈다)
-     * @throws IllegalArgumentException 계정이 없거나 미래 월을 요청했을 때 (→ 400)
+     * @param accountId null = every active account of a supported platform
+     * @param month     null = decided per account — the first run reads {@code payoutBackfillMonths} months,
+     *                  later runs the current + previous month (absorbs corrections).
+     *                  🔴 When given, only that month is read and {@code lastPayoutSyncAt} (the anchor) is
+     *                  <b>not updated</b> (PLAN 2609_31 D3 — a past-month backfill that used up the "first run" would
+     *                  keep the initial backfill from ever running)
+     * @throws IllegalArgumentException the account does not exist or a future month was requested (→ 400)
      */
     SettlementPayoutSyncResponse syncPayouts(Long accountId, YearMonth month);
 }

@@ -3,10 +3,12 @@ package com.pms.service.settlement;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderLine;
 import com.pms.domain.CoupangOrderLine;
+import com.pms.domain.ElevenstOrderLine;
 import com.pms.domain.Platform;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.SettlementLine;
 import com.pms.repository.CoupangOrderLineRepository;
+import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.SettlementLineRepository;
@@ -24,16 +26,17 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * {@link SettlementLineDraft} → {@code settlement_line} 멱등 upsert + 주문 라인 매핑
- * (FEATURE_2609_30 / PLAN D7·D10).
+ * {@link SettlementLineDraft} → idempotent {@code settlement_line} upsert + order-line matching
+ * (FEATURE_2609_30 / PLAN D7 · D10).
  *
- * <p>⚠️ {@code REQUIRES_NEW} — 호출자({@code SettlementSyncServiceImpl})는 외부 HTTP 루프라 트랜잭션이
- * 없다. 페이지 1개 = 트랜잭션 1개여서 3페이지에서 실패해도 1~2페이지는 남는다
- * ({@code InquiryUpserter}·{@code ClaimUpserter} 와 같은 자세).
+ * <p>⚠️ {@code REQUIRES_NEW} — the caller ({@code SettlementSyncServiceImpl}) is an outbound HTTP loop with no
+ * transaction. One page = one transaction, so a failure on page 3 keeps pages 1~2
+ * (same stance as {@code InquiryUpserter} · {@code ClaimUpserter}).
  *
- * <p>🔴 <b>delete-insert 금지</b>(D10). 정산은 확정 후 정정되므로 재조회가 잦은데, 지우고 다시 넣으면
- * {@code order_line} 매핑과 02 가 채운 지급 묶음 귀속이 함께 날아간다. 정정은 금액 필드 UPDATE 로만
- * 반영한다.
+ * <p>🔴 <b>No delete-insert</b> (D10). Settlements are corrected after confirmation, so re-reads are frequent;
+ * deleting and inserting again would wipe the {@code order_line} mapping and the payout attribution (filled by the
+ * payout load — for 11st by {@code ElevenstPayoutBuilder}, FEATURE_2610_20 / D29). Corrections are applied only by
+ * UPDATE of the amount fields.
  */
 @Slf4j
 @Service
@@ -43,27 +46,30 @@ public class SettlementLineUpserter {
     private final ProductListingOptionRepository productListingOptionRepository;
     private final OrderLineRepository orderLineRepository;
     private final CoupangOrderLineRepository coupangOrderLineRepository;
+    private final ElevenstOrderLineRepository elevenstOrderLineRepository;
     private final Map<Platform, SettlementMirrorWriter> mirrorWriters = new EnumMap<>(Platform.class);
 
     public SettlementLineUpserter(SettlementLineRepository settlementLineRepository,
                                   ProductListingOptionRepository productListingOptionRepository,
                                   OrderLineRepository orderLineRepository,
                                   CoupangOrderLineRepository coupangOrderLineRepository,
+                                  ElevenstOrderLineRepository elevenstOrderLineRepository,
                                   List<SettlementMirrorWriter> mirrorWriters) {
         this.settlementLineRepository = settlementLineRepository;
         this.productListingOptionRepository = productListingOptionRepository;
         this.orderLineRepository = orderLineRepository;
         this.coupangOrderLineRepository = coupangOrderLineRepository;
+        this.elevenstOrderLineRepository = elevenstOrderLineRepository;
         mirrorWriters.forEach(writer -> this.mirrorWriters.put(writer.platform(), writer));
     }
 
     /**
-     * 페이지 1개를 적재한다.
+     * Loads one page.
      *
-     * @param seenKeysThisRun 같은 실행에서 이미 본 유일키. 🔴 호출자가 <b>실행 단위</b>로 만들어 넘긴다 —
-     *                        정정 재조회는 실행이 달라 여기 걸리지 않으므로, 여기 걸리는 것은 쿠팡이 한
-     *                        라인을 쪼개 보냈다는 뜻(= upsert 가 금액을 덮어써 조용히 잃는 상황)뿐이다
-     * @return 이 페이지의 집계 (라인·매칭·미매칭·중복)
+     * @param seenKeysThisRun unique keys already seen in this run. 🔴 The caller makes it <b>per run</b> — a
+     *                        correction re-read is another run and never hits it, so a hit only means the market
+     *                        split one line in two (= the upsert overwrites the amount and silently loses one)
+     * @return the page's counts (lines · matched · unmatched · duplicates)
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public UpsertResult upsertPage(MarketplaceAccount account, List<SettlementLineDraft> page,
@@ -76,8 +82,8 @@ public class SettlementLineUpserter {
         for (SettlementLineDraft draft : page) {
             String key = draft.uniqueKey(account.getId());
             if (!seenKeysThisRun.add(key)) {
-                // 같은 동기화 실행에서 같은 키가 재등장 = 쿠팡이 한 라인을 쪼개 보냈다는 뜻이다.
-                // 정정 재조회는 실행이 달라 여기 걸리지 않는다 — 진짜 중복만 잡힌다.
+                // The same key twice in one sync run = the market split one line in two.
+                // A correction re-read is another run and never lands here — only real duplicates do.
                 duplicates++;
                 log.warn("정산 라인 유일키 중복 — 덮어쓰기 발생: {}", key);
             }
@@ -106,7 +112,7 @@ public class SettlementLineUpserter {
 
         if (found.isEmpty()) {
             OrderLine orderLine = matchOrderLine(account, draft);
-            ProductListingOption option = matchOption(draft.platformOptionId(), orderLine);
+            ProductListingOption option = matchOption(account, draft.platformOptionId(), orderLine);
             return settlementLineRepository.save(SettlementLine.builder()
                     .marketplaceAccount(account)
                     .productListingOption(option)
@@ -124,20 +130,20 @@ public class SettlementLineUpserter {
                     .settlementAmount(draft.settlementAmount())
                     .recognitionDate(draft.recognitionDate())
                     .saleDate(draft.saleDate())
-                    .build());                       // settlementPayout = null (D5-2) — 02 가 채운다
+                    .build());                       // settlementPayout = null (D5-2) — the payout load fills it
         }
 
-        // 정정 반영: 금액·수량·날짜만 갱신한다.
-        // 🔴 settlementPayout 은 손대지 않는다(02 가 채운 귀속을 지우면 대사가 무너진다).
-        // ⚠️ orderLine/option 은 "비어 있을 때만" 채운다 — 이미 붙은 매핑을 재조회가 밀어내면
-        //    WING 수동 수정으로 깨진 매칭이 멀쩡한 값을 덮는다([[project_wing_edit_desync]]).
+        // Correction: only amounts · quantity · dates are updated.
+        // 🔴 settlementPayout is left alone (wiping the attribution the payout load filled breaks reconciliation).
+        // ⚠️ orderLine / option are filled "only when empty" — if a re-read pushed out a mapping already attached,
+        //    a match broken by a manual WING edit would overwrite a good value ([[project_wing_edit_desync]]).
         SettlementLine existing = found.get();
         OrderLine orderLine = existing.getOrderLine() != null
                 ? existing.getOrderLine()
                 : matchOrderLine(account, draft);
         ProductListingOption option = existing.getProductListingOption() != null
                 ? existing.getProductListingOption()
-                : matchOption(draft.platformOptionId(), orderLine);
+                : matchOption(account, draft.platformOptionId(), orderLine);
 
         return settlementLineRepository.save(existing.toBuilder()
                 .productListingOption(option)
@@ -155,14 +161,22 @@ public class SettlementLineUpserter {
     }
 
     /**
-     * 채널 옵션 매칭 (D7): {@code platformOptionId}(= 쿠팡 vendorItemId) →
-     * {@link ProductListingOption#getPlatformOptionId()}. 2609_22·2609_23 이 쓰는 경로 그대로다 —
-     * 새 조회 방식을 만들지 말 것.
+     * Channel option match (D7): {@code platformOptionId} (= Coupang vendorItemId) →
+     * {@link ProductListingOption#getPlatformOptionId()}. The same path 2609_22 · 2609_23 use — do not add another
+     * lookup.
      *
-     * <p>못 찾으면 <b>붙은 주문에 달린 옵션</b>으로 대신한다 — 주문이 이미 그 옵션을 알고 있으면
-     * 등록 목록을 다시 뒤질 이유가 없다.
+     * <p>When nothing matches, the option of the <b>attached order line</b> is used — the order already knows its
+     * option, so there is no reason to search the listings again.
+     *
+     * <p>11st (FEATURE_2610_20 / D6): only the option of the attached 11st order line. The global
+     * {@code findByPlatformOptionId} lookup is never used for an 11st line — 11st listings leave that column empty,
+     * so a match there could only be a Coupang option.
      */
-    private ProductListingOption matchOption(String platformOptionId, OrderLine orderLine) {
+    private ProductListingOption matchOption(MarketplaceAccount account, String platformOptionId,
+                                             OrderLine orderLine) {
+        if (account.getPlatform() == Platform.ELEVENST) {
+            return orderLine == null ? null : orderLine.getProductListingOption();
+        }
         ProductListingOption option =
                 productListingOptionRepository.findByPlatformOptionId(platformOptionId).orElse(null);
         if (option != null) {
@@ -176,6 +190,9 @@ public class SettlementLineUpserter {
      * 못 쓰게 되므로 여기서는 조용히 null 을 돌려주고, 호출자가 매칭률을 한 줄로 남긴다.
      */
     private OrderLine matchOrderLine(MarketplaceAccount account, SettlementLineDraft draft) {
+        if (account.getPlatform() == Platform.ELEVENST) {
+            return matchElevenstOrderLine(account, draft);
+        }
         // 🔴 <b>주문번호 + 마켓 옵션번호로 바로 붙인다</b>(FEATURE_2609_34). 예전에는 등록된 채널 옵션을
         //    거쳐야만 붙어서, 아직 등록하지 않은 상품의 판매는 전부 미분류로 남았다 — prod 실측으로
         //    1,096건 중 31건(2.8%)만 붙었고, 이 경로로는 672건(61.3%)이 붙는다. 등록 여부와 무관한
@@ -197,6 +214,21 @@ public class SettlementLineUpserter {
         List<OrderLine> candidates = orderLineRepository
                 .findByExternalOrderIdAndListingOptionId(draft.externalOrderId(), option.getId());
         return candidates.size() == 1 ? candidates.get(0) : null;
+    }
+
+    /**
+     * 11st order line by (account, {@code ordNo}, {@code ordPrdSeq}) — the 11st order mirror's unique key
+     * (FEATURE_2610_20 / D5). A refund row's option key is {@code ordPrdSeq-clmReqSeq}; the part before the first
+     * {@code -} is the order line sequence.
+     */
+    private OrderLine matchElevenstOrderLine(MarketplaceAccount account, SettlementLineDraft draft) {
+        String optionKey = draft.platformOptionId();
+        int dash = optionKey.indexOf('-');
+        String ordPrdSeq = dash < 0 ? optionKey : optionKey.substring(0, dash);
+        return elevenstOrderLineRepository
+                .findByMarketplaceAccount_IdAndOrdNoAndOrdPrdSeq(account.getId(), draft.externalOrderId(), ordPrdSeq)
+                .map(ElevenstOrderLine::getOrderLine)
+                .orElse(null);
     }
 
     /**

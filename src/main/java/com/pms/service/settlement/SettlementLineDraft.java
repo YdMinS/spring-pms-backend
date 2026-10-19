@@ -1,27 +1,28 @@
 package com.pms.service.settlement;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.pms.domain.SaleType;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
 /**
- * 플랫폼 어댑터 → 중립 적재 사이의 전달 객체 (FEATURE_2609_30 / PLAN D5·D6).
+ * Transfer object between a platform adapter and the neutral load (FEATURE_2609_30 / PLAN D5 · D6).
  *
- * <p>플랫폼 필드명은 여기서 끝난다 — 저장은 {@link SettlementLineUpserter} 가 중립 컬럼으로만 한다.
- * {@code raw} 만 플랫폼 미러({@code coupang_settlement_line})로 흘러간다.
+ * <p>Platform field names end here — {@link SettlementLineUpserter} stores neutral columns only. Only {@code raw}
+ * flows on to the platform mirror ({@code coupang_settlement_line} · {@code elevenst_settlement_line},
+ * FEATURE_2610_20).
  *
- * <p>🔴 필수 4개({@code externalOrderId}·{@code platformOptionId}·{@code saleType}·
- * {@code recognitionDate})가 비면 <b>라인을 버리지 않고 예외를 던진다</b>. 이 넷이 라인의 유일키라
- * 하나라도 없으면 멱등 upsert 자체가 성립하지 않는다 — 조용히 버리면 재조회 때마다 중복이 쌓이거나
- * 금액이 사라진다.
+ * <p>🔴 When one of the four required values ({@code externalOrderId} · {@code platformOptionId} · {@code saleType} ·
+ * {@code recognitionDate}) is missing, the line is <b>not dropped — an exception is thrown</b>. The four are the
+ * line's unique key; without one of them an idempotent upsert is impossible, and dropping it silently either piles
+ * up duplicates on every re-read or loses the amount.
  *
- * @param saleAmount         판매금액 (환불도 <b>양수</b>다. 방향은 {@code saleType} 이 정한다)
- * @param serviceFeeRatio    실측 수수료율(VAT 제외) — 06 이 읽는다
- * @param couponAmount       셀러 부담 쿠폰 합 (플랫폼 부담 쿠폰은 제외)
- * @param deliveryFeeAmount  배송비 분담 (원거리 배송비 포함)
- * @param raw                응답 원문 라인 1개 — 미러 저장용(필수)
+ * @param saleAmount         sale amount (a refund is <b>positive</b> too — {@code saleType} sets the direction)
+ * @param serviceFeeRatio    measured commission rate (VAT excluded) — read by 06
+ * @param couponAmount       sum of seller-funded coupons (platform-funded coupons excluded)
+ * @param deliveryFeeAmount  delivery-fee share (remote-area surcharge included)
+ * @param raw                one raw response line for the platform mirror (required) — Coupang = {@code JsonNode},
+ *                           11st = the kept-field {@code Map<String, String>} (FEATURE_2610_20 / D16)
  */
 public record SettlementLineDraft(
         String externalOrderId,
@@ -39,7 +40,7 @@ public record SettlementLineDraft(
         BigDecimal couponAmount,
         BigDecimal deliveryFeeAmount,
         BigDecimal settlementAmount,
-        JsonNode raw) {
+        Object raw) {
 
     public SettlementLineDraft {
         require(externalOrderId != null && !externalOrderId.isBlank(), "주문번호");

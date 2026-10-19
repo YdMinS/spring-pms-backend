@@ -1,6 +1,7 @@
 package com.pms.service.settlement;
 
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.Platform;
 import com.pms.domain.Seller;
 import com.pms.domain.SettlementAdjustment;
 import com.pms.domain.SettlementAdjustmentType;
@@ -8,6 +9,7 @@ import com.pms.domain.SettlementLine;
 import com.pms.domain.SaleType;
 import com.pms.domain.SettlementPayout;
 import com.pms.domain.SettlementPayoutStatus;
+import com.pms.domain.SettlementReconStatus;
 import com.pms.dto.response.AdjustmentView;
 import com.pms.dto.response.MonthCheck;
 import com.pms.dto.response.PayoutSummary;
@@ -28,18 +30,21 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.format.DateTimeParseException;
 import java.util.List;
+import java.util.Map;
 
 /**
- * {@link SettlementReconciliationService} 구현 (FEATURE_2609_30 / 02).
+ * {@link SettlementReconciliationService} implementation (FEATURE_2609_30 / 02).
  *
- * <p>⚠️ 클래스 레벨 {@code @Transactional(readOnly = true)} — LAZY 연관(계정·셀·카테고리)을 타므로
- * 트랜잭션 밖에서 부르면 open-in-view=false 환경에서 LazyInitializationException 이 난다.
+ * <p>⚠️ Class-level {@code @Transactional(readOnly = true)} — it walks LAZY associations (account · cell · category),
+ * so a call outside a transaction throws LazyInitializationException with open-in-view=false.
  *
- * <p>🔴 <b>대조하지 않은 값은 내려보내지 않는다</b> (FEATURE_2609_32 / PLAN 2609_32 D1·D2). 라인을 일부러
- * 귀속시키지 않는 유형({@code SettlementReconciler#isReconcilable} == false — 추가정산·유보금)은
- * {@code ourTotal}·{@code diff}·{@code tolerance} 를 {@code null} 로 둔다. 계산하면 0원을 "우리 집계"로
- * 내려보내 100% "차액 −전액"이 되고, 그 경고는 정보량이 0인 채로 진짜 차액을 묻어버린다.
- * 대신 참고 지표로 인식월 한 줄({@link MonthCheck})을 리포트에 싣는다(D4).
+ * <p>🔴 <b>Values we did not compare are not sent</b> (FEATURE_2609_32 / PLAN 2609_32 D1 · D2). Types whose lines are
+ * deliberately not attributed ({@code SettlementReconciler#isReconcilable} == false — additional payouts · reserve)
+ * get {@code ourTotal} · {@code diff} · {@code tolerance} = {@code null}. Computing them would send 0 won as "our
+ * total", a 100% "diff −full amount", and that zero-information warning buries the real differences.
+ * Instead the report carries one recognition-month reference row ({@link MonthCheck}) (D4) — except for 11st payouts
+ * ({@code NO_TOTAL}), whose totals are our own sums, so there is no platform total to compare with
+ * (FEATURE_2610_20 / D13).
  */
 @Service
 @Slf4j
@@ -48,11 +53,18 @@ import java.util.List;
 public class SettlementReconciliationServiceImpl implements SettlementReconciliationService {
 
     /**
-     * 🔴 쿠팡은 차감 사유를 주지 않는다. 우리가 모르는 것을 아는 척하지 않고, 사용자가 어디에 물어야 하는지를
-     * 알려준다(D13). 이 문구는 <b>서버가 소유</b>한다 — 프론트가 지어내지 않게 하려면 응답에 있어야 한다.
+     * 🔴 The marketplace gives no reason for a deduction. We do not pretend to know it — we tell the user where to
+     * ask (D13). The text is <b>owned by the server</b>: the screen must not invent it, so it has to be in the
+     * response. The subject is the payout channel's market name (FEATURE_2610_20 / D14); an unknown platform reads
+     * 「마켓이」.
      */
-    static final String DEDUCTION_GUIDANCE =
-            "쿠팡이 사유를 제공하지 않습니다 — 플랫폼에서 확인이 필요합니다";
+    static final String DEDUCTION_GUIDANCE = "%s 사유를 제공하지 않습니다 — 플랫폼에서 확인이 필요합니다";
+
+    /** Market name + subject particle for {@link #DEDUCTION_GUIDANCE} (FEATURE_2610_20 / D14). */
+    private static final Map<Platform, String> MARKET_SUBJECTS = Map.of(
+            Platform.COUPANG, "쿠팡이",
+            Platform.NAVER, "네이버가",
+            Platform.ELEVENST, "11번가가");
 
     private final SettlementPayoutRepository settlementPayoutRepository;
     private final SettlementAdjustmentRepository settlementAdjustmentRepository;
@@ -123,7 +135,7 @@ public class SettlementReconciliationServiceImpl implements SettlementReconcilia
         BigDecimal adjustmentTotal = settlementReconciler.adjustmentTotal(adjustments);
         return new SettlementPayoutDetailResponse(
                 summary(payout, lines.size()),
-                adjustments.stream().map(SettlementReconciliationServiceImpl::view).toList(),
+                adjustments.stream().map(adjustment -> view(adjustment, payout)).toList(),
                 lineTotal,
                 adjustmentTotal,
                 reconcilable ? lineTotal.add(adjustmentTotal) : null,
@@ -152,7 +164,7 @@ public class SettlementReconciliationServiceImpl implements SettlementReconcilia
         BigDecimal adjustmentTotal = settlementReconciler.adjustmentTotal(adjustments);
         ReconReportResponse.BlockA blockA = new ReconReportResponse.BlockA(
                 lineTotal,
-                adjustments.stream().map(SettlementReconciliationServiceImpl::view).toList(),
+                adjustments.stream().map(adjustment -> view(adjustment, payout)).toList(),
                 adjustmentTotal,
                 reconcilable ? lineTotal.add(adjustmentTotal) : null,
                 payout.getFinalAmount(),
@@ -164,7 +176,8 @@ public class SettlementReconciliationServiceImpl implements SettlementReconcilia
         SettlementDiffAnalyzer.DiffReport diff = settlementDiffAnalyzer.analyze(payout, lines);
         return new ReconReportResponse(summary(payout, lines.size()), blockA,
                 new ReconReportResponse.BlockB(diff.expected(), diff.actual(), diff.totalDiff(), diff.labels()),
-                reconcilable ? null : monthCheck(payout));
+                reconcilable || payout.getReconStatus() == SettlementReconStatus.NO_TOTAL
+                        ? null : monthCheck(payout));
     }
 
     /**
@@ -231,9 +244,12 @@ public class SettlementReconciliationServiceImpl implements SettlementReconcilia
         return lines.stream().filter(line -> line.getOrderLine() == null).count();
     }
 
-    private static AdjustmentView view(SettlementAdjustment adjustment) {
+    private static AdjustmentView view(SettlementAdjustment adjustment, SettlementPayout payout) {
+        MarketplaceAccount account = payout.getMarketplaceAccount();
+        String subject = account == null || account.getPlatform() == null
+                ? null : MARKET_SUBJECTS.get(account.getPlatform());
         String guidance = adjustment.getAdjustmentType() == SettlementAdjustmentType.DEDUCTION
-                ? DEDUCTION_GUIDANCE : null;
+                ? String.format(DEDUCTION_GUIDANCE, subject == null ? "마켓이" : subject) : null;
         return new AdjustmentView(adjustment.getAdjustmentType().name(), adjustment.getAmount(),
                 adjustment.getNote(), guidance);
     }

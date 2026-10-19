@@ -1129,4 +1129,13 @@ class LiquibaseChangelogApplyTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID LIKE '110-%'", Integer.class)).isEqualTo(3);
     }
+
+    /** changeset 111 (FEATURE_2610_20 / D3 · D16): elevenst_settlement_line, created empty. */
+    @Test
+    void elevenstSettlementApplied() {
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM elevenst_settlement_line WHERE stl_pln_dy IS NULL", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID LIKE '111-%'", Integer.class)).isEqualTo(1);
+    }
 }

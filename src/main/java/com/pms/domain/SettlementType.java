@@ -11,6 +11,9 @@ package com.pms.domain;
  *
  * <p>{@link #RESERVE} = "payment of the final amount" (paying out the remaining balance), not a
  * release of withheld reserve.
+ *
+ * <p>11st assigns no cycle: its payouts are built here, one per remittance date, and carry {@link #DAILY}
+ * (FEATURE_2610_20 / D29).
  */
 public enum SettlementType {
 
