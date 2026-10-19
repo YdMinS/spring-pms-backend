@@ -1,5 +1,6 @@
 package com.pms.service.settlement;
 
+import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -90,17 +91,21 @@ public class CommissionFeedbackServiceImpl implements CommissionFeedbackService 
     private final MasterChannelConfigService masterChannelConfigService;
     private final PriceHistoryRecorder priceHistoryRecorder;
     private final BigDecimal feeVatRate;
+    private final boolean elevenstFeedbackEnabled;
 
     public CommissionFeedbackServiceImpl(SettlementLineRepository settlementLineRepository,
                                          PlatformCategoryRepository platformCategoryRepository,
                                          MasterChannelConfigService masterChannelConfigService,
                                          PriceHistoryRecorder priceHistoryRecorder,
-                                         @Value("${oclyx.pricing.fee-vat-rate:0.1}") BigDecimal feeVatRate) {
+                                         @Value("${oclyx.pricing.fee-vat-rate:0.1}") BigDecimal feeVatRate,
+                                         @Value("${oclyx.settlement.elevenst-commission-feedback-enabled:false}")
+                                         boolean elevenstFeedbackEnabled) {
         this.settlementLineRepository = settlementLineRepository;
         this.platformCategoryRepository = platformCategoryRepository;
         this.masterChannelConfigService = masterChannelConfigService;
         this.priceHistoryRecorder = priceHistoryRecorder;
         this.feeVatRate = feeVatRate == null ? BigDecimal.ZERO : feeVatRate;
+        this.elevenstFeedbackEnabled = elevenstFeedbackEnabled;
     }
 
     // ── 제안 목록 ────────────────────────────────────────────────────────
@@ -210,11 +215,15 @@ public class CommissionFeedbackServiceImpl implements CommissionFeedbackService 
     // ── 집계 ────────────────────────────────────────────────────────────
 
     /**
-     * 카테고리 단위 가중 집계. 🔴 {@code REFUND} 는 제외한다 — 환불 라인의 수수료는 환급이라 비율의 의미가
-     * 반대이고, 섞으면 실측이 실제보다 낮게 나온다.
+     * Weighted aggregate per category. 🔴 {@code REFUND} is excluded — a refund line's fee is a give-back, so its ratio
+     * means the opposite, and mixing it in makes the measured rate lower than it is.
      *
-     * <p>⚠️ 카테고리 매핑이 없는 셀은 조용히 빠진다(예외 아님). 시드 공백 하나 때문에 목록 전체가 500 이
-     * 되면 안 된다 — 매핑이 없으면 애초에 제안할 기준표 행이 없다.
+     * <p>🔴 11st lines are excluded while {@code oclyx.settlement.elevenst-commission-feedback-enabled} is false (the
+     * default) — until the first live check shows whether the 2% price-comparison and 3.3% shipping fees are mixed
+     * into {@code selFee} (FEATURE_2610_20 / D8 · D31 ②).
+     *
+     * <p>⚠️ A cell without a category mapping drops out silently (no exception). One seed gap must not turn the whole
+     * list into a 500 — without a mapping there is no table row to propose for anyway.
      */
     private Map<Long, Stat> aggregate(Long sellerId, Window window) {
         List<SettlementLine> lines = settlementLineRepository
@@ -224,6 +233,10 @@ public class CommissionFeedbackServiceImpl implements CommissionFeedbackService 
 
         for (SettlementLine line : lines) {
             if (line.getSaleType() == SaleType.REFUND) {
+                continue;
+            }
+            if (!elevenstFeedbackEnabled && line.getMarketplaceAccount() != null
+                    && line.getMarketplaceAccount().getPlatform() == Platform.ELEVENST) {
                 continue;
             }
             ProductListingOption option = line.getProductListingOption();
@@ -317,7 +330,7 @@ public class CommissionFeedbackServiceImpl implements CommissionFeedbackService 
 
         private void add(SettlementLine line, Long listingId) {
             saleAmount = saleAmount.add(nz(line.getSaleAmount()));
-            // 실측은 "쿠팡이 실제로 뗀 것" — 수수료와 그 부가세를 함께 본다.
+            // Measured = what the market actually took — the fee and its VAT together.
             fee = fee.add(nz(line.getServiceFee())).add(nz(line.getServiceFeeVat()));
             samples++;
             listings.add(listingId);

@@ -2,6 +2,7 @@ package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.CommissionApplyRequest;
+import com.pms.dto.request.PayoutMarkPaidRequest;
 import com.pms.dto.response.CommissionApplyResponse;
 import com.pms.dto.response.CommissionSuggestionResponse;
 import com.pms.dto.response.PayoutSummary;
@@ -13,6 +14,7 @@ import com.pms.dto.response.SettlementPayoutSyncResponse;
 import com.pms.dto.response.SettlementSyncResponse;
 import com.pms.dto.response.SettlementSyncTargetResponse;
 import com.pms.service.settlement.CommissionFeedbackService;
+import com.pms.service.settlement.SettlementPaymentService;
 import com.pms.service.settlement.SettlementPayoutSyncService;
 import com.pms.service.settlement.SettlementReconciliationService;
 import com.pms.service.settlement.SettlementSyncService;
@@ -36,15 +38,16 @@ import java.time.YearMonth;
 import java.util.List;
 
 /**
- * 정산 원장 동기화 트리거 API — <b>ADMIN 전용</b> (FEATURE_2609_30 / PLAN D11 · D17).
+ * Settlement ledger sync trigger API — <b>ADMIN only</b> (FEATURE_2609_30 / PLAN D11 · D17).
  *
- * <p>정산·손익은 경영 데이터라 구매목록·재고와 같은 등급이다({@code PurchaseListController} 미러).
+ * <p>Settlement and profit are management data, the same grade as the purchase list and stock (mirrors
+ * {@code PurchaseListController}).
  *
- * <p>지급 묶음 조회·차이 리포트·엑셀은 FEATURE_2609_30 / 02 가 더한 것이다. 조회는 전부 로컬 DB 라
- * 마켓을 부르지 않는다 — 화면 진입이 API 호출이 되지 않게 <b>자동 갱신을 걸지 않는다</b>(PLAN D11).
+ * <p>Payout lookup · difference report · Excel were added by FEATURE_2609_30 / 02. Every lookup reads the local DB and
+ * never calls the market — <b>no automatic refresh</b> is attached, so opening a screen never becomes an API call
+ * (PLAN D11). The 11st 「지급 완료」 mark and its undo (FEATURE_2610_20 / D34 · D39) only write the local payout.
  *
- * <p>⚠️ {@code IllegalArgumentException} 은 {@code GlobalExceptionHandler} 가 400 으로 매핑한다 —
- * 여기서 다시 잡지 말 것.
+ * <p>⚠️ {@code IllegalArgumentException} is mapped to 400 by {@code GlobalExceptionHandler} — do not catch it here.
  */
 @RestController
 @RequestMapping("/api/admin/settlement")
@@ -60,6 +63,7 @@ public class SettlementController {
     private final SettlementPayoutSyncService settlementPayoutSyncService;
     private final SettlementReconciliationService settlementReconciliationService;
     private final CommissionFeedbackService commissionFeedbackService;
+    private final SettlementPaymentService settlementPaymentService;
 
     /**
      * 수동 갱신 — delta 창만 다시 읽는다. 우선순위: accountId &gt; sellerId &gt; 전체.
@@ -161,6 +165,24 @@ public class SettlementController {
     @GetMapping("/payouts/{id}")
     public ResponseEntity<ResponseDTO<SettlementPayoutDetailResponse>> payout(@PathVariable Long id) {
         return ResponseEntity.ok(ResponseDTO.success(settlementReconciliationService.payout(id)));
+    }
+
+    /**
+     * 11st 「지급 완료」 (FEATURE_2610_20 / D34 · D38): status PAID + the date the money actually arrived. A Coupang
+     * payout, an unknown id or a missing {@code paidOn} is 400.
+     */
+    @PostMapping("/payouts/{id}/mark-paid")
+    public ResponseEntity<ResponseDTO<Void>> markPaid(@PathVariable Long id,
+                                                      @RequestBody PayoutMarkPaidRequest request) {
+        settlementPaymentService.markPaid(id, request.paidOn());
+        return ResponseEntity.ok(ResponseDTO.success(null));
+    }
+
+    /** 11st 「지급 완료 취소」 (FEATURE_2610_20 / D39): back to SCHEDULED, the arrival date cleared. */
+    @PostMapping("/payouts/{id}/unmark-paid")
+    public ResponseEntity<ResponseDTO<Void>> unmarkPaid(@PathVariable Long id) {
+        settlementPaymentService.unmarkPaid(id);
+        return ResponseEntity.ok(ResponseDTO.success(null));
     }
 
     /** 묶음의 라인 목록 — 원인 라벨 필터 · 미분류만 보기. */

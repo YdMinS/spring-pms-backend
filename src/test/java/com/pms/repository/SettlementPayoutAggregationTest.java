@@ -82,6 +82,19 @@ class SettlementPayoutAggregationTest {
     }
 
     /**
+     * FEATURE_2610_20 / D38: an 11st payout marked paid counts on the day the money actually arrived
+     * ({@code finalSettlementDate}), not on its remittance date.
+     */
+    @Test
+    void paidAmountUsesTheConfirmedDateWhenPresent() {
+        paidOn(LocalDate.of(2026, 9, 30), LocalDate.of(2026, 10, 2), "70000");   // arrived after the period
+        paidOn(LocalDate.of(2026, 8, 31), LocalDate.of(2026, 9, 2), "40000");    // arrived inside the period
+        em.flush();
+
+        assertThat(aggregate().paidAmount()).isEqualByComparingTo("40000");
+    }
+
+    /**
      * 🔴 묶음이 없는 계정은 {@code group by} 라 <b>행 자체가 나오지 않는다</b>.
      *
      * <p>그래서 서비스가 {@code PayoutAggregate.empty} 로 메운다 — 그 0 이 없으면 정산 이력이 없는 채널의
@@ -100,9 +113,24 @@ class SettlementPayoutAggregationTest {
         return rows.get(0);
     }
 
+    /** A paid DAILY payout with its actual arrival date filled (the 11st 「지급 완료」 mark). */
+    private void paidOn(LocalDate settlementDate, LocalDate arrivedOn, String finalAmount) {
+        em.persist(SettlementPayout.builder()
+                .marketplaceAccount(account)
+                .settlementType(SettlementType.DAILY)
+                .revenueRecognitionMonth(settlementDate.toString().substring(0, 7))
+                .settlementDate(settlementDate)
+                .finalSettlementDate(arrivedOn)
+                .finalAmount(new BigDecimal(finalAmount))
+                .status(SettlementPayoutStatus.PAID)
+                .reconStatus(SettlementReconStatus.NO_TOTAL)
+                .build());
+    }
+
     /**
-     * 🔴 {@code finalSettlementDate} 를 채우지 않는다 — 지급내역 API 가 주지 않는 필드라 실제로도 항상
-     * NULL 이다. 테스트가 그걸 채우면 "기준일을 되돌려도 통과하는" 가짜 그물이 된다.
+     * 🔴 Does not fill {@code finalSettlementDate} — the Coupang payment-history API never sends that field, so a
+     * Coupang payout keeps it NULL (only an 11st payout marked 「지급 완료」 has it — {@link #paidOn}). Filling it here
+     * would make a net that still passes when the date basis is reverted.
      */
     private void payout(LocalDate settlementDate, SettlementPayoutStatus status,
                         SettlementReconStatus recon, String finalAmount) {

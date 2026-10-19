@@ -6,8 +6,10 @@ import com.pms.domain.SettlementAdjustmentType;
 import com.pms.domain.SaleType;
 import com.pms.domain.SettlementLine;
 import com.pms.domain.SettlementPayout;
+import com.pms.domain.SettlementPayoutStatus;
 import com.pms.domain.SettlementReconStatus;
 import com.pms.domain.SettlementType;
+import com.pms.dto.response.PayoutSummary;
 import com.pms.dto.response.ReconReportResponse;
 import com.pms.dto.response.SettlementPayoutDetailResponse;
 import com.pms.fixture.MarketplaceAccountFixture;
@@ -198,6 +200,24 @@ class SettlementReconciliationServiceImplTest {
 
         assertThat(detail.adjustments().get(0).guidance())
                 .isEqualTo("쿠팡이 사유를 제공하지 않습니다 — 플랫폼에서 확인이 필요합니다");
+    }
+
+    /** FEATURE_2610_20 / D40: a scheduled 11st payout past its remittance date needs a payment check. */
+    @Test
+    void elevenstScheduledPayoutPastItsDateNeedsPaymentCheck() {
+        MarketplaceAccount elevenst = MarketplaceAccountFixture.elevenstStubBuilder("KEY")
+                .id(ACCOUNT_ID).accountAlias("11번가").build();
+        SettlementPayout overdue = SettlementPayout.builder()
+                .id(PAYOUT_ID).marketplaceAccount(elevenst).settlementType(SettlementType.DAILY)
+                .settlementDate(LocalDate.of(2026, 8, 20)).status(SettlementPayoutStatus.SCHEDULED)
+                .reconStatus(SettlementReconStatus.NO_TOTAL).build();
+        SettlementPayout paid = overdue.toBuilder().id(PAYOUT_ID + 1).status(SettlementPayoutStatus.PAID).build();
+        given(settlementPayoutRepository.search(null, null, null, null)).willReturn(List.of(overdue, paid));
+
+        List<PayoutSummary> rows = service.payouts(null, null, null, null);
+
+        assertThat(rows.get(0).paymentCheckNeeded()).isTrue();
+        assertThat(rows.get(1).paymentCheckNeeded()).isFalse();
     }
 
     // ------------------------------------------------------------- fixtures
