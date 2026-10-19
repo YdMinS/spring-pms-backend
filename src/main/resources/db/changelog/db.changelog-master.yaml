@@ -222,3 +222,5 @@ databaseChangeLog:
       file: db/changelog/changes/110-receipt-intake.yaml
   - include:
       file: db/changelog/changes/111-elevenst-settlement.yaml
+  - include:
+      file: db/changelog/changes/112-thumbnail-collage.yaml

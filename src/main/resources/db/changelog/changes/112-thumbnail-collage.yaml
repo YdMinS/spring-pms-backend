@@ -1,0 +1,83 @@
+# Thumbnail collage stages (FEATURE_2610_21 / D9 · D38 · D42 · D47).
+#   112-1 thumbnail_collage = one row per stage of a master: MASTER (seller_id, product_listing_id NULL) ·
+#         SELLER:{sellerId} (seller_id set) · LISTING:{listingId} (product_listing_id set). scope_key carries the
+#         uniqueness — a unique key over the nullable columns would not stop duplicates in MySQL. layout = JSON TEXT
+#         (D47), NULL when the stage is switched off (enabled = false, D42). Deleting the master, seller or listing
+#         deletes its rows (ON DELETE CASCADE).
+#   112-2 MySQL only: enabled BOOLEAN -> BIT(1) (006 / 109-5 pattern — Hibernate validate expects BIT).
+# ⚠️ H2 constraint names are schema-global unique -> table-prefixed names.
+databaseChangeLog:
+
+  - changeSet:
+      id: 112-1-thumbnail-collage
+      author: oclyx
+      comment: "FEATURE_2610_21 D38: thumbnail_collage (collage per master / seller / listing stage)."
+      changes:
+        - createTable:
+            tableName: thumbnail_collage
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: master_product_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: seller_id, type: BIGINT }
+              - column: { name: product_listing_id, type: BIGINT }
+              - column: { name: scope_key, type: VARCHAR(40), constraints: { nullable: false } }
+              - column: { name: enabled, type: BOOLEAN, constraints: { nullable: false } }
+              - column: { name: layout, type: TEXT }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_thumbnailcollage_tenant
+            baseTableName: thumbnail_collage
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_thumbnailcollage_master
+            baseTableName: thumbnail_collage
+            baseColumnNames: master_product_id
+            referencedTableName: master_product
+            referencedColumnNames: id
+            onDelete: CASCADE
+        - addForeignKeyConstraint:
+            constraintName: fk_thumbnailcollage_seller
+            baseTableName: thumbnail_collage
+            baseColumnNames: seller_id
+            referencedTableName: seller
+            referencedColumnNames: id
+            onDelete: CASCADE
+        - addForeignKeyConstraint:
+            constraintName: fk_thumbnailcollage_listing
+            baseTableName: thumbnail_collage
+            baseColumnNames: product_listing_id
+            referencedTableName: product_listing
+            referencedColumnNames: id
+            onDelete: CASCADE
+        - addUniqueConstraint:
+            constraintName: uq_thumbnail_collage_scope
+            tableName: thumbnail_collage
+            columnNames: master_product_id, scope_key
+      rollback:
+        - dropTable: { tableName: thumbnail_collage }
+
+  # MySQL only: abstract BOOLEAN -> TINYINT, but Hibernate expects BIT(1). Re-type + re-declare NOT NULL
+  # (MySQL MODIFY drops it). Mirrors 109-5. H2 untouched.
+  - changeSet:
+      id: 112-2-thumbnail-collage-mysql-bit
+      author: oclyx
+      dbms: mysql
+      comment: "thumbnail_collage.enabled TINYINT -> BIT(1) to satisfy Hibernate schema validation."
+      changes:
+        - modifyDataType:
+            tableName: thumbnail_collage
+            columnName: enabled
+            newDataType: BIT(1)
+        - addNotNullConstraint:
+            tableName: thumbnail_collage
+            columnName: enabled
+            columnDataType: BIT(1)
+      rollback:
+        - modifyDataType:
+            tableName: thumbnail_collage
+            columnName: enabled
+            newDataType: BOOLEAN

@@ -11,7 +11,8 @@ import java.net.URL;
 
 /**
  * Loads the raw bytes of a product's source image — the base the thumbnail renderer composites
- * ({@code bind:productImage}). The meaning of {@code product.imageUrl} differs by environment
+ * ({@code bind:productImage}), or one cell photo of a thumbnail collage ({@code CollageThumbnailRenderer},
+ * FEATURE_2610_21). The meaning of {@code product.imageUrl} differs by environment
  * (see {@link ImageStorageService}), so this branches on it:
  *
  * <ul>
