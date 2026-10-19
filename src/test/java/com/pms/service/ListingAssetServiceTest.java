@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.CollageLayout;
 import com.pms.domain.DetailBlock;
 import com.pms.domain.DetailTemplate;
 import com.pms.domain.GeneratedContentSource;
@@ -21,6 +22,9 @@ import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
+import com.pms.service.collage.CollageLayouts;
+import com.pms.service.collage.CollageThumbnailRenderer;
+import com.pms.service.collage.ThumbnailCollageResolver;
 import com.pms.service.listing.CellBomResolver;
 import com.pms.repository.ProductListingRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -52,7 +56,8 @@ import static org.mockito.Mockito.verify;
 /**
  * {@code regenerateAssets} seam (FEATURE_2608_06 / 3b-2): base photo = master override (preferred) else
  * first BOM product; text bindings prefer master fieldValues; renderer + uploadBytes called once; option
- * sellingPrice written; GeneratedProductData upserted (new / in-place); detail stub non-blank.
+ * sellingPrice written; GeneratedProductData upserted (new / in-place); detail stub non-blank. A collage resolved
+ * for the cell replaces the base photo (FEATURE_2610_21).
  */
 @ExtendWith(MockitoExtension.class)
 class ListingAssetServiceTest {
@@ -76,6 +81,9 @@ class ListingAssetServiceTest {
     @Mock private PriceCalculator priceCalculator;
     @Mock private DetailContentGenerator detailContentGenerator;
     @Mock private com.pms.service.listing.ListingChannelResolver listingChannelResolver;
+    // FEATURE_2610_21: default mock → Optional.empty() = no collage, the single-photo path below.
+    @Mock private ThumbnailCollageResolver thumbnailCollageResolver;
+    @Mock private CollageThumbnailRenderer collageThumbnailRenderer;
     // 2609_28/D23: the recorder is wired for real (below) so the skip rules run end-to-end from the seam.
     @Mock private com.pms.repository.PriceChangeLogRepository priceChangeLogRepository;
     @InjectMocks private ListingAssetServiceImpl service;
@@ -856,5 +864,48 @@ class ListingAssetServiceTest {
         GeneratedProductData last = dataCaptor.getAllValues().get(1);
         assertThat(last.getSource()).isEqualTo(GeneratedContentSource.AUTO);
         assertThat(last.getDetailHtml()).isEqualTo("<p>운동화</p>");   // generator output, not the edit
+    }
+
+    /**
+     * FEATURE_2610_21 D8 · D37: a collage resolved for the cell replaces the single photo — the collage renderer
+     * draws the thumbnail with the cell's template and text bindings, and neither the master cover photo nor the
+     * BOM photo is loaded.
+     */
+    @Test
+    void regenerateAssets_collageResolved_rendersCollageInsteadOfPhoto() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터")
+                .sourceImageUrl("https://cdn/override.jpg").build();
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀")
+                .masterProduct(master).build();
+        Product second = Product.builder().id(10L).productName("양말").imageUrl("products/s.jpg").build();
+        List<Product> products = List.of(product(), second);
+        CollageLayout layout = CollageLayouts.initial(List.of(9L, 10L));
+
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+        given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.of(
+                List.of(new CellBomResolver.Line(1L, product(), 1))));
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID)).willReturn(Optional.empty());
+        given(thumbnailCollageResolver.resolve(cell))
+                .willReturn(Optional.of(new ThumbnailCollageResolver.ResolvedCollage(layout, products)));
+        given(channelTemplateResolver.resolveThumbnail(any())).willReturn(template());
+        given(collageThumbnailRenderer.render(any(), any(), eq(layout), eq(products))).willReturn(new byte[]{5});
+        given(imageStorageService.uploadBytes(any(), anyString(), anyString(), anyString()))
+                .willReturn("thumbnails/collage.jpg");
+        given(priceCalculator.calculatePrices(any(), any(), any()))
+                .willReturn(new PriceCalculator.PriceResult(new BigDecimal("10670"), new BigDecimal("13340")));
+        given(detailContentGenerator.generate(any())).willReturn("<p>운동화</p>");
+        given(generatedProductDataRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+
+        GeneratedProductData data = service.regenerateAssets(cell);
+
+        verify(productImageLoader, never()).loadUrl(any());
+        verify(productImageLoader, never()).load(any());
+        verify(thumbnailRenderer, never()).render(any(), any(), any());
+        ArgumentCaptor<ThumbnailTemplate> templateCaptor = ArgumentCaptor.forClass(ThumbnailTemplate.class);
+        verify(collageThumbnailRenderer).render(templateCaptor.capture(), any(), eq(layout), eq(products));
+        assertThat(templateCaptor.getValue().getId()).isEqualTo(3L);
+        verify(imageStorageService).uploadBytes(eq(new byte[]{5}), anyString(), anyString(), eq("image/jpeg"));
+        assertThat(data.getThumbnailUrl()).isEqualTo("thumbnails/collage.jpg");
+        assertThat(data.getTemplateId()).isEqualTo(3L);
     }
 }

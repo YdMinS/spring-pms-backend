@@ -24,8 +24,10 @@ import java.util.List;
  * other tenant) or a preset without operations → warn log + empty list (the photo is rendered
  * unprocessed). Same rule as the detail generator's preset lookup.</p>
  *
- * <p>Callers: {@code ListingAssetServiceImpl.regenerateAssets} (generation) and
- * {@code ThumbnailTemplateServiceImpl.preview} (editor preview).
+ * <p>Callers: {@code ListingAssetServiceImpl.regenerateAssets} (generation),
+ * {@code ThumbnailTemplateServiceImpl.preview} (editor preview) and
+ * {@code collage.CollageThumbnailRenderer.render} (collage generation and preview, FEATURE_2610_21 — the finished
+ * collage is the product photo).
  * Usage: {@code List<ImageOp> ops = thumbnailPresetResolver.productImageOps(template);
  * byte[] photo = ops.isEmpty() ? base : imageProcessor.process(imageDecodeSupport.flattenOnWhite(base), ops);}</p>
  *

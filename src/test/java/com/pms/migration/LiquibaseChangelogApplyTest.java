@@ -1145,4 +1145,14 @@ class LiquibaseChangelogApplyTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID LIKE '111-%'", Integer.class)).isEqualTo(2);
     }
+
+    /** changeset 112 (FEATURE_2610_21 / D38): thumbnail_collage, created empty. 112-2 is MySQL only. */
+    @Test
+    void thumbnailCollageApplied() {
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM thumbnail_collage WHERE scope_key IS NULL OR layout IS NOT NULL",
+                Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID LIKE '112-%'", Integer.class)).isEqualTo(1);
+    }
 }
