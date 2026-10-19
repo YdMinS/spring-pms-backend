@@ -1181,7 +1181,13 @@ class CoupangListingAdapterTest {
 
     @Test
     void register_sharedNoticeKey_usesSelectedGroupNotTheFirstOne() throws Exception {
-        ProductListing cell = cellWithNoticeGroup("가공식품");   // NOT the first group in the schema
+        // NOT the first group in the schema. Both 가공식품 required notices are filled (the payload builder now
+        // enforces them, same as validateRegistrable).
+        MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨")
+                .categoryNotices(Map.of("소비기한", "2026-12-31", "포장단위별 용량", "320g"))
+                .categoryNoticeGroup("가공식품").build();
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
+                .platformProductId("123456789").masterProduct(master).build();
         given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
                 ProductListingOption.builder().id(1L).optionName("A")
                         .sellingPrice(new BigDecimal("6000")).active(true).build()));
@@ -1195,10 +1201,9 @@ class CoupangListingAdapterTest {
 
         adapter.register(cell, gen, acct());
 
-        JsonNode notice = objectMapper.readTree(payload.getValue())
-                .path("items").get(0).path("notices").get(0);
-        assertThat(notice.path("noticeCategoryDetailName").asText()).isEqualTo("소비기한");
-        assertThat(notice.path("noticeCategoryName").asText()).isEqualTo("가공식품");
+        JsonNode notices = objectMapper.readTree(payload.getValue()).path("items").get(0).path("notices");
+        assertThat(notices).hasSize(2);
+        notices.forEach(n -> assertThat(n.path("noticeCategoryName").asText()).isEqualTo("가공식품"));
     }
 
     @Test
@@ -1323,6 +1328,33 @@ class CoupangListingAdapterTest {
         assertThatThrownBy(() -> adapter.validateRegistrable(cell, null, acct()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("필수 고시 누락");
+    }
+
+    // 2026-10-19 (master 1705): [수정 요청] skips validateRegistrable (108/D4), and a notice stored under a key
+    // the picked 품목군 does not have was silently dropped by toNotices → Coupang rejected with
+    // "'1 번 옵션 의 고시정보' 다시 확인해 주세요". The payload builder now stops it before the PUT.
+    @Test
+    void update_requiredNoticeOnlyUnderStaleKey_throwsBeforePut() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨")
+                .categoryAttributes(Map.of("원산지", "국내산"))
+                .categoryNotices(Map.of(
+                        "소비기한", "2026-12-31",
+                        "포장단위별 내용물의 용량(중량),수량,크기", "320g 1개"))   // not a 가공식품 key
+                .categoryNoticeGroup("가공식품").build();
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
+                .platformProductId("123456789").masterProduct(master).build();
+        given(masterProductService.isBundle(1L)).willReturn(false);
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(sharedNoticeKeySchema());
+        givenOneActiveOption();
+        GeneratedProductData gen = GeneratedProductData.builder()
+                .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+
+        assertThatThrownBy(() -> adapter.update(cell, gen, acct()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("필수 고시 누락")
+                .hasMessageContaining("포장단위별 용량");
+        verify(client, never()).put(anyString(), anyString(), any());
     }
 
     // ---- 108: displayProductName + requested=true (register) / update identifiers (PUT) ----
