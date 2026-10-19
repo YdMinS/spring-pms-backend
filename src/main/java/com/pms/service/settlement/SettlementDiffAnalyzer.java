@@ -264,7 +264,8 @@ public class SettlementDiffAnalyzer {
                 line.getPlatformOptionId(),
                 productName(line),
                 line.getRecognitionDate(),
-                payout.getSettlementDate(),
+                // FEATURE_2610_20 / D38: the confirmed payout date when present (an 11st payout marked paid).
+                payout.getFinalSettlementDate() != null ? payout.getFinalSettlementDate() : payout.getSettlementDate(),
                 payout.getSettlementType() == null ? null : payout.getSettlementType().name(),
                 line.getSaleAmount(),
                 line.getServiceFee(),

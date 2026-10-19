@@ -466,6 +466,105 @@ class SettlementControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isConflict());
     }
 
+    // ---- 11st 「지급 완료」 (FEATURE_2610_20 / D34 · D36 · D38 · D39) ----
+
+    @Test
+    void markPaid_userToken_returns403() throws Exception {
+        mockMvc.perform(post(PAYOUTS + "/" + payoutId + "/mark-paid")
+                        .header("Authorization", "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"paidOn\":\"2026-09-07\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void markPaid_coupangPayout_returns400() throws Exception {
+        mockMvc.perform(post(PAYOUTS + "/" + payoutId + "/mark-paid")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"paidOn\":\"2026-09-07\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void markPaid_missingDate_returns400() throws Exception {
+        Long elevenstPayoutId = seedElevenstPayout();
+
+        mockMvc.perform(post(PAYOUTS + "/" + elevenstPayoutId + "/mark-paid")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    /** D38 round 10: an arrival date after today (KST) is refused and the payout stays scheduled. */
+    @Test
+    void markPaid_futureDate_returns400() throws Exception {
+        Long elevenstPayoutId = seedElevenstPayout();
+
+        mockMvc.perform(post(PAYOUTS + "/" + elevenstPayoutId + "/mark-paid")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"paidOn\":\"2999-01-01\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("실제 입금일은 오늘 이후로 정할 수 없습니다."));
+
+        SettlementPayout untouched = settlementPayoutRepository.findById(elevenstPayoutId).orElseThrow();
+        assertThat(untouched.getStatus()).isEqualTo(SettlementPayoutStatus.SCHEDULED);
+        assertThat(untouched.getFinalSettlementDate()).isNull();
+    }
+
+    @Test
+    void markPaid_elevenstPayout_recordsArrivalDateAndUnmarkClearsIt() throws Exception {
+        Long elevenstPayoutId = seedElevenstPayout();
+        Long elevenstAccountId = settlementPayoutRepository.findWithAccountById(elevenstPayoutId).orElseThrow()
+                .getMarketplaceAccount().getId();
+
+        mockMvc.perform(post(PAYOUTS + "/" + elevenstPayoutId + "/mark-paid")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"paidOn\":\"2026-09-07\"}"))
+                .andExpect(status().isOk());
+
+        SettlementPayout paid = settlementPayoutRepository.findById(elevenstPayoutId).orElseThrow();
+        assertThat(paid.getStatus()).isEqualTo(SettlementPayoutStatus.PAID);
+        assertThat(paid.getFinalSettlementDate()).isEqualTo(LocalDate.of(2026, 9, 7));
+        // D38: the sale-month view shows the day the money actually arrived.
+        mockMvc.perform(get(BY_SALE_MONTH)
+                        .param("accountId", String.valueOf(elevenstAccountId))
+                        .param("from", "2026-08-01").param("to", "2026-08-31")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].settlementDate").value("2026-09-07"))
+                .andExpect(jsonPath("$.data[0].paid").value(true));
+
+        mockMvc.perform(post(PAYOUTS + "/" + elevenstPayoutId + "/unmark-paid")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        SettlementPayout undone = settlementPayoutRepository.findById(elevenstPayoutId).orElseThrow();
+        assertThat(undone.getStatus()).isEqualTo(SettlementPayoutStatus.SCHEDULED);
+        assertThat(undone.getFinalSettlementDate()).isNull();
+    }
+
+    /** One 11st channel of the seeded seller with one scheduled DAILY payout (remittance 2026-08-20) and its line. */
+    private Long seedElevenstPayout() {
+        Seller seller = sellerRepository.findAll().get(0);
+        MarketplaceAccount elevenst = marketplaceAccountRepository.save(MarketplaceAccount.builder()
+                .seller(seller).platform(Platform.ELEVENST).accountAlias("11번가").isActive(true).build());
+        SettlementPayout payout = settlementPayoutRepository.save(SettlementPayout.builder()
+                .marketplaceAccount(elevenst)
+                .settlementType(SettlementType.DAILY)
+                .revenueRecognitionMonth("2026-08")
+                .settlementDate(LocalDate.of(2026, 8, 20))
+                .finalAmount(new BigDecimal("9000"))
+                .status(SettlementPayoutStatus.SCHEDULED)
+                .reconStatus(SettlementReconStatus.NO_TOTAL)
+                .build());
+        settlementLineRepository.save(SettlementLine.builder()
+                .settlementPayout(payout).marketplaceAccount(elevenst)
+                .externalOrderId("E1").platformOptionId("1").saleType(SaleType.SALE)
+                .recognitionDate(LocalDate.of(2026, 8, 12))
+                .saleAmount(new BigDecimal("10000")).settlementAmount(new BigDecimal("9000"))
+                .build());
+        return payout.getId();
+    }
+
     @Test
     void syncTargets_adminToken_hidesCredentials() throws Exception {
         mockMvc.perform(get(TARGETS).header("Authorization", "Bearer " + adminToken))

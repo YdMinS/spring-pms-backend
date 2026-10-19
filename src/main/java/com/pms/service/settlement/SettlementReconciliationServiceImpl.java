@@ -20,6 +20,7 @@ import com.pms.dto.response.SettlementPayoutDetailResponse;
 import com.pms.repository.SettlementAdjustmentRepository;
 import com.pms.repository.SettlementLineRepository;
 import com.pms.repository.SettlementPayoutRepository;
+import com.pms.service.coupang.SyncWindow;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -275,6 +276,20 @@ public class SettlementReconciliationServiceImpl implements SettlementReconcilia
                 payout.getFinalAmount(),
                 payout.getStatus() == null ? null : payout.getStatus().name(),
                 payout.getReconStatus() == null ? null : payout.getReconStatus().name(),
-                lineCount);
+                lineCount,
+                paymentCheckNeeded(payout, account));
+    }
+
+    /**
+     * FEATURE_2610_20 / D40: an 11st payout still scheduled after its remittance date (before today, KST) waits for
+     * the person's 「지급 완료」 mark — the screens show 「입금 확인 필요」. Display only; the stored status is untouched,
+     * so the sales screen's "money to receive" keeps it.
+     */
+    private static boolean paymentCheckNeeded(SettlementPayout payout, MarketplaceAccount account) {
+        return account != null
+                && account.getPlatform() == Platform.ELEVENST
+                && payout.getStatus() == SettlementPayoutStatus.SCHEDULED
+                && payout.getSettlementDate() != null
+                && payout.getSettlementDate().isBefore(LocalDate.now(SyncWindow.KST));
     }
 }

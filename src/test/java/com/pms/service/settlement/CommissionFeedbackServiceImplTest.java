@@ -1,5 +1,6 @@
 package com.pms.service.settlement;
 
+import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.PriceChangeLog;
@@ -14,6 +15,7 @@ import com.pms.dto.response.CommissionApplyResponse;
 import com.pms.dto.response.CommissionSuggestionResponse;
 import com.pms.dto.response.CommissionSuggestionView;
 import com.pms.exception.BusinessException;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.PriceChangeLogRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -82,7 +84,7 @@ class CommissionFeedbackServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new CommissionFeedbackServiceImpl(settlementLineRepository, platformCategoryRepository,
-                masterChannelConfigService, new PriceHistoryRecorder(priceChangeLogRepository), VAT);
+                masterChannelConfigService, new PriceHistoryRecorder(priceChangeLogRepository), VAT, false);
     }
 
     // ── 집계 ────────────────────────────────────────────────────────────
@@ -130,6 +132,24 @@ class CommissionFeedbackServiceImplTest {
         assertThat(view.samples()).isEqualTo(5);
         assertThat(view.measuredRatio()).isEqualByComparingTo("0.1166");
         assertThat(view.measuredRate()).isEqualByComparingTo("0.106");
+    }
+
+    /** FEATURE_2610_20 / D8: 11st lines stay out of the suggestions until the switch is turned on. */
+    @Test
+    void elevenstLinesAreExcludedUntilEnabled() {
+        MarketplaceAccount elevenst = MarketplaceAccountFixture.elevenstStubBuilder("KEY").id(9L).build();
+        List<SettlementLine> elevenstLines = sales(5).stream()
+                .map(line -> line.toBuilder().marketplaceAccount(elevenst).build())
+                .toList();
+        givenLines(elevenstLines);
+        givenCategory(kimchiCell, kimchi);
+
+        assertThat(service.suggestions(null, FROM, TO, null).suggestions()).isEmpty();
+
+        CommissionFeedbackServiceImpl enabled = new CommissionFeedbackServiceImpl(settlementLineRepository,
+                platformCategoryRepository, masterChannelConfigService,
+                new PriceHistoryRecorder(priceChangeLogRepository), VAT, true);
+        assertThat(enabled.suggestions(null, FROM, TO, null).suggestions()).hasSize(1);
     }
 
     @Test

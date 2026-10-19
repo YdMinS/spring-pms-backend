@@ -177,6 +177,9 @@ oclyx:
     # Delta window (days) of the scheduled / manual refresh for 11st channels (FEATURE_2610_20 / D11). Same idea as
     # oklyx.coupang.revenue-delta-days, kept separate so 11st never borrows the Coupang value.
     elevenst-revenue-delta-days: 3
+    # 11st lines in the commission suggestions (FEATURE_2610_20 / D8). false until the first live check shows whether
+    # the 2% price-comparison and 3.3% shipping fees are mixed into 11st's selFee (D31 ②); true puts them back.
+    elevenst-commission-feedback-enabled: false
     # Reconciliation tolerance in KRW PER LINE (PLAN D9). The effective tolerance is
     # max(10, this x lineCount): truncation error accumulates per line, so a flat 10 KRW turns into a
     # false alarm on payouts with many lines. A payout with zero lines still gets the 10 KRW floor.
