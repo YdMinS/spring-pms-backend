@@ -1,6 +1,8 @@
 package com.pms.service;
 
+import com.pms.domain.CollageLayout;
 import com.pms.domain.GeneratedProductData;
+import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.dto.response.DetailPreviewResponse;
@@ -157,4 +159,11 @@ public interface ListingAssetService {
      *         (raised by {@link PriceCalculator})
      */
     PriceCalculator.PriceResult quoteOptionPrice(ProductListing cell, ProductListingOption option);
+
+    /**
+     * Collage preview JPEG for {@code cell} — nothing is uploaded or persisted (FEATURE_2610_21 D20 · D35 · D46).
+     * Same template, text bindings and collage renderer as {@link #regenerateAssets(ProductListing)}, drawn with
+     * the editor's unsaved {@code layout}.
+     */
+    byte[] previewCollage(ProductListing cell, CollageLayout layout, List<Product> products);
 }

@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.CollageLayout;
 import com.pms.domain.DetailTemplate;
 import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.GeneratedProductData;
@@ -447,6 +448,12 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                         .findFirst()
                         .orElse(null);
         return quote(cell, option, mo);
+    }
+
+    @Override
+    public byte[] previewCollage(ProductListing cell, CollageLayout layout, List<Product> products) {
+        ThumbnailTemplate template = channelTemplateResolver.resolveThumbnail(cell);
+        return collageThumbnailRenderer.render(template, buildTextBindings(template, cell), layout, products);
     }
 
     /**
