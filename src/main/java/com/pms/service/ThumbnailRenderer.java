@@ -139,7 +139,7 @@ public class ThumbnailRenderer {
     }
 
     /** First image element bound to the product photo (drawn as the base layer), or null if none. */
-    static TemplateElement firstProductImageElement(List<TemplateElement> elements) {
+    public static TemplateElement firstProductImageElement(List<TemplateElement> elements) {
         if (elements == null) {
             return null;
         }

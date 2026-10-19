@@ -24,6 +24,8 @@ import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
+import com.pms.service.collage.CollageThumbnailRenderer;
+import com.pms.service.collage.ThumbnailCollageResolver;
 import com.pms.service.listing.CellBomResolver;
 import com.pms.service.listing.ListingChannelResolver;
 import com.pms.service.price.PriceHistoryRecorder;
@@ -50,11 +52,13 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Auto-generates a channel cell's assets (FEATURE_2608_06 / 3b-2). See {@link ListingAssetService}.
  *
- * <p>Thumbnail input rules (mirroring FEATURE_2608_05 generation): the base photo is
+ * <p>Thumbnail input rules (mirroring FEATURE_2608_05 generation): a collage resolved for the cell
+ * ({@link ThumbnailCollageResolver}, FEATURE_2610_21) replaces the photo; otherwise the base photo is
  * {@code master.sourceImageUrl} override ?? the cell's first BOM product image; each text field is
  * {@code master.fieldValues[key] (non-blank) ?? registered-product info ?? template default}. The
  * template is the tenant default. Prices come from {@link PriceCalculator} (per option). The detail HTML
@@ -97,6 +101,9 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     private final CoupangShippingConfigResolver shippingConfigResolver;
     private final ElevenstShippingResolver elevenstShippingResolver;
     private final PriceHistoryRecorder priceHistoryRecorder;
+    /** Collage replacing the single photo when one resolves for the cell (FEATURE_2610_21 D8 · D37). */
+    private final ThumbnailCollageResolver thumbnailCollageResolver;
+    private final CollageThumbnailRenderer collageThumbnailRenderer;
 
     /**
      * 77: resolves the channel adapter that owns the {@code shippingReady} judgement.
@@ -358,17 +365,26 @@ public class ListingAssetServiceImpl implements ListingAssetService {
             thumbnailUrl = existing.getThumbnailUrl();               // preserved, not re-rendered/uploaded
             thumbSource = GeneratedContentSource.MANUAL_OVERRIDE;
         } else {
-            byte[] baseImage = resolveBaseImage(cell.getMasterProduct(), firstProduct);
+            // FEATURE_2610_21 D8 · D37: a collage resolved for this cell (listing ?? seller ?? master stage)
+            // replaces the single photo, the master cover-photo mapping included.
+            Optional<ThumbnailCollageResolver.ResolvedCollage> collage = thumbnailCollageResolver.resolve(cell);
+            byte[] baseImage = collage.isPresent() ? null : resolveBaseImage(cell.getMasterProduct(), firstProduct);
             // Channel template override (21): account's assigned thumbnail template ?? tenant default.
             ThumbnailTemplate template = channelTemplateResolver.resolveThumbnail(cell);
             Map<String, String> textBindings = buildTextBindings(template, cell);
-            // 2609_81: only the product photo is processed with the base layer's preset, in memory only
-            // (no intermediate upload); a transparent photo is flattened onto white first (D21).
-            // GRADIENT_AUTO then samples the processed photo.
-            List<ImageOp> ops = thumbnailPresetResolver.productImageOps(template);
-            byte[] productImage = ops.isEmpty() ? baseImage
-                    : imageProcessor.process(imageDecodeSupport.flattenOnWhite(baseImage), ops);
-            byte[] jpeg = thumbnailRenderer.render(template, textBindings, Map.of("productImage", productImage));
+            byte[] jpeg;
+            if (collage.isPresent()) {
+                jpeg = collageThumbnailRenderer.render(
+                        template, textBindings, collage.get().layout(), collage.get().products());
+            } else {
+                // 2609_81: only the product photo is processed with the base layer's preset, in memory only
+                // (no intermediate upload); a transparent photo is flattened onto white first (D21).
+                // GRADIENT_AUTO then samples the processed photo.
+                List<ImageOp> ops = thumbnailPresetResolver.productImageOps(template);
+                byte[] productImage = ops.isEmpty() ? baseImage
+                        : imageProcessor.process(imageDecodeSupport.flattenOnWhite(baseImage), ops);
+                jpeg = thumbnailRenderer.render(template, textBindings, Map.of("productImage", productImage));
+            }
             thumbnailUrl = imageStorageService.uploadBytes(
                     jpeg, STORAGE_CATEGORY,
                     "listing_" + cell.getId() + "_" + System.currentTimeMillis() + ".jpg", "image/jpeg");

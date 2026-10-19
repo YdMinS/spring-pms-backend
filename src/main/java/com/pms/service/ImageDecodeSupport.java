@@ -27,8 +27,9 @@ import java.io.IOException;
  * (pixels returned as decoded) — metadata must never fail a generation. Undecodable pixels keep the old
  * contract: {@link IllegalArgumentException} (→400).</p>
  *
- * <p>⚠️ Common component — {@code ImageProcessor} and {@code ThumbnailRenderer} delegate their
- * {@code decode} here. ❌ Do not call {@code ImageIO.read} directly for composite inputs.
+ * <p>⚠️ Common component — {@code ImageProcessor}, {@code ThumbnailRenderer} and {@code CollageThumbnailRenderer}
+ * (collage cell photos, FEATURE_2610_21) delegate their {@code decode} here. ❌ Do not call {@code ImageIO.read}
+ * directly for composite inputs.
  * ❌ Do not correct at upload time (stored originals stay byte-identical).
  * Out of scope: {@code service/barcode/BarcodeImageDecoder} (has its own rotation retries).</p>
  *

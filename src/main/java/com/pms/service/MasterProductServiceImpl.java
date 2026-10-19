@@ -218,7 +218,8 @@ public class MasterProductServiceImpl implements MasterProductService {
     @Override
     public boolean isBundle(Long masterId) {
         // 63: mixed-composition (AB) = 2+ components. master null (backfill transition) → SINGLE. Single entry
-        // point shared by the Coupang adapter (attributes skip + register validation) so the two can't diverge.
+        // point shared by the Coupang adapter (attributes skip + register validation) and the thumbnail collage
+        // gate (FEATURE_2610_21 D3) so they can't diverge.
         if (masterId == null) {
             return false;
         }
