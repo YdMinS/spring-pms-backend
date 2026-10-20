@@ -30,18 +30,11 @@ class InquiryReplyPolicyTest {
 
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 9, 6, 10, 0);
 
-    /** 쿠팡 어댑터 자리를 대신하는 최소 스텁 — 전송은 하지 않는다(정책은 존재 여부만 본다). */
-    private static final InquiryReplyAdapter COUPANG_ADAPTER = new InquiryReplyAdapter() {
-        @Override
-        public Platform platform() {
-            return Platform.COUPANG;
-        }
-
-        @Override
-        public void reply(MarketplaceAccount account, CustomerInquiry inquiry, ReplyCommand command) {
-            throw new UnsupportedOperationException("정책 테스트는 전송하지 않는다");
-        }
-    };
+    /**
+     * The real Coupang adapter without its send collaborators — the policy reads only its judgments (FEATURE_2610_23 /
+     * D12) and never sends.
+     */
+    private static final InquiryReplyAdapter COUPANG_ADAPTER = new CoupangInquiryReplyAdapter(null, null, null);
 
     private final InquiryReplyPolicy policy = new InquiryReplyPolicy(List.of(COUPANG_ADAPTER), mock(CarrierCodeService.class));
 
@@ -145,17 +138,8 @@ class InquiryReplyPolicyTest {
 
     // ---- FEATURE_2610_17 / D27 · D44 · D45 ----
 
-    private static final InquiryReplyAdapter ELEVENST_ADAPTER = new InquiryReplyAdapter() {
-        @Override
-        public Platform platform() {
-            return Platform.ELEVENST;
-        }
-
-        @Override
-        public void reply(MarketplaceAccount account, CustomerInquiry inquiry, ReplyCommand command) {
-            throw new UnsupportedOperationException("the policy test sends nothing");
-        }
-    };
+    /** The real 11st adapter without its client — the policy test sends nothing. */
+    private static final InquiryReplyAdapter ELEVENST_ADAPTER = new ElevenstInquiryReplyAdapter(null);
 
     @Test
     void evaluate_elevenstUrgentNoticeReRequested_canReplyWithMinLengthOne_noWingIdNeeded() {

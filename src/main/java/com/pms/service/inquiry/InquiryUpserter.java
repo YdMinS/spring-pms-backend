@@ -4,18 +4,11 @@ import com.pms.domain.CustomerInquiry;
 import com.pms.domain.CustomerInquiryReply;
 import com.pms.domain.InquiryAuthorRole;
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.CoupangOrderLine;
-import com.pms.domain.ElevenstOrderLine;
 import com.pms.domain.OrderLine;
-import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.repository.CustomerInquiryReplyRepository;
 import com.pms.repository.CustomerInquiryRepository;
-import com.pms.repository.CoupangOrderLineRepository;
-import com.pms.repository.ElevenstOrderLineRepository;
-import com.pms.repository.ProductListingOptionRepository;
-import com.pms.repository.ProductListingRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -51,29 +44,27 @@ public class InquiryUpserter {
 
     private final CustomerInquiryRepository customerInquiryRepository;
     private final CustomerInquiryReplyRepository customerInquiryReplyRepository;
-    private final CoupangOrderLineRepository coupangOrderLineRepository;
-    private final ProductListingOptionRepository productListingOptionRepository;
-    /** FEATURE_2610_17 / D16: 11st inquiries link by order number and 11st product number. */
-    private final ElevenstOrderLineRepository elevenstOrderLineRepository;
-    private final ProductListingRepository productListingRepository;
 
     /**
-     * 문의 1건을 저장한다. UNIQUE(account, inquiryType, inquiryId) 로 멱등이며, 값이 하나도 바뀌지
-     * 않으면 {@code save} 를 호출하지 않는다(불필요한 UPDATE·modified_date 갱신 방지).
+     * Saves one inquiry. Idempotent by UNIQUE(account, inquiryType, inquiryId); when no value changed, {@code save} is
+     * not called (no needless UPDATE · modified_date bump).
      *
-     * <p>주문 매칭에 실패해도 문의는 저장한다(D15) — 상품문의는 주문 없는 질문이 다수라 미연결이 정상이다.
+     * <p>A failed order match still saves the inquiry (D15) — product Q&A is mostly asked without an order, so no link
+     * is normal.
+     *
+     * @param adapter the marketplace adapter that read this record — it links the listing and the order line
+     *                (FEATURE_2610_23 / D12 · D21)
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void upsert(MarketplaceAccount account, InquiryRecord record) {
+    public void upsert(MarketplaceAccount account, InquiryRecord record, InquirySyncAdapter adapter) {
         Optional<CustomerInquiry> found = customerInquiryRepository
                 .findByMarketplaceAccount_IdAndInquiryTypeAndExternalInquiryId(
                         account.getId(), record.type(), record.externalInquiryId());
         LocalDateTime now = LocalDateTime.now();
 
-        boolean elevenst = account.getPlatform() == Platform.ELEVENST;
-        ProductListingOption option = elevenst ? null : matchOption(record.externalItemId());
-        ProductListing listing = elevenst ? elevenstListing(account, record)
-                : (option != null) ? option.getProductListing() : null;
+        InquirySyncAdapter.ListingMatch match = adapter.matchListing(account, record);
+        ProductListingOption option = match.option();
+        ProductListing listing = match.listing();
         String itemName = itemName(record, option);
 
         CustomerInquiry inquiry;
@@ -87,7 +78,7 @@ public class InquiryUpserter {
                     .externalOrderId(record.externalOrderId())
                     .externalProductId(record.externalProductId())
                     .productListing(listing)
-                    .orderLine(matchOrderLine(account, record))
+                    .orderLine(adapter.matchOrderLine(account, record))
                     .itemName(itemName)
                     .content(record.content())
                     .category(record.category())
@@ -98,7 +89,7 @@ public class InquiryUpserter {
                     .lastSyncedAt(now)
                     .build());
         } else {
-            inquiry = update(found.get(), account, record, listing, itemName, now);
+            inquiry = update(found.get(), account, record, listing, itemName, now, adapter);
         }
 
         syncReplies(inquiry, record.replies());
@@ -110,10 +101,10 @@ public class InquiryUpserter {
      */
     private CustomerInquiry update(CustomerInquiry existing, MarketplaceAccount account,
                                    InquiryRecord record, ProductListing listing,
-                                   String itemName, LocalDateTime now) {
+                                   String itemName, LocalDateTime now, InquirySyncAdapter adapter) {
         OrderLine orderLine = (existing.getOrderLine() != null)
                 ? existing.getOrderLine()
-                : matchOrderLine(account, record);
+                : adapter.matchOrderLine(account, record);
         ProductListing resolvedListing = (existing.getProductListing() != null)
                 ? existing.getProductListing()
                 : listing;
@@ -151,76 +142,6 @@ public class InquiryUpserter {
                 || existing.getStatus() != record.status()
                 || !Objects.equals(existing.getPlatformStatus(), record.platformStatus())
                 || !Objects.equals(existing.getAnsweredAt(), record.answeredAt());
-    }
-
-    /**
-     * 주문 라인 매칭 (D14·D15): {@code externalOrderId} + {@code externalItemId} 3키.
-     * 0건(주문 없는 문의)이거나 2건 이상(합포장으로 모호)이면 <b>연결하지 않는다</b> —
-     * 틀린 라인에 붙이느니 미연결이 낫다. 문의 자체는 그대로 저장된다.
-     */
-    private OrderLine matchOrderLine(MarketplaceAccount account, InquiryRecord record) {
-        if (account.getPlatform() == Platform.ELEVENST) {
-            return matchElevenstOrderLine(account, record);
-        }
-        if (record.externalOrderId() == null || record.externalItemId() == null) {
-            return null;
-        }
-        // 자연키는 core 가 아니라 쿠팡 거울이 소유한다(FEATURE_2609_26 / PLAN D3·D19) — 규칙은 그대로다.
-        List<CoupangOrderLine> candidates = coupangOrderLineRepository
-                .findByMarketplaceAccount_IdAndOrderIdRawAndVendorItemId(
-                        account.getId(), record.externalOrderId(), record.externalItemId());
-        if (candidates.size() == 1) {
-            return candidates.get(0).getOrderLine();
-        }
-        if (candidates.size() > 1) {
-            log.debug("Ambiguous order line for inquiry (multi-box shipment): account={} orderId={} itemId={} matches={}",
-                    account.getId(), record.externalOrderId(), record.externalItemId(), candidates.size());
-        }
-        return null;
-    }
-
-    /**
-     * 11st order line (FEATURE_2610_17 / D16): with {@code ordPrdSeq} (urgent notice) the exact line; with the order
-     * number only (Q&A {@code ordNoDe}) the line only when that order has exactly one — same "ambiguous → no link"
-     * rule as above.
-     */
-    private OrderLine matchElevenstOrderLine(MarketplaceAccount account, InquiryRecord record) {
-        if (record.externalOrderId() == null) {
-            return null;
-        }
-        if (record.externalItemId() != null) {
-            return elevenstOrderLineRepository
-                    .findByMarketplaceAccount_IdAndOrdNoAndOrdPrdSeq(account.getId(), record.externalOrderId(),
-                            record.externalItemId())
-                    .map(ElevenstOrderLine::getOrderLine)
-                    .orElse(null);
-        }
-        List<ElevenstOrderLine> lines =
-                elevenstOrderLineRepository.findByMarketplaceAccount_IdAndOrdNo(account.getId(), record.externalOrderId());
-        return lines.size() == 1 ? lines.get(0).getOrderLine() : null;
-    }
-
-    /** 11st listing of the same sales channel with this 11st product number (D16); none or several → no link. */
-    private ProductListing elevenstListing(MarketplaceAccount account, InquiryRecord record) {
-        if (record.externalProductId() == null) {
-            return null;
-        }
-        List<ProductListing> listings =
-                productListingRepository.findElevenstListings(account.getId(), record.externalProductId());
-        return listings.size() == 1 ? listings.get(0) : null;
-    }
-
-    /**
-     * 셀(옵션) 매칭 (D15): {@code external_item_id}(= vendorItemId) →
-     * {@link ProductListingOption#getPlatformOptionId()}.
-     *
-     * ❌ 이름이 비슷한 {@code sellerProductItemId}(상품수정용 식별자)는 다른 값이다 — 쓰지 말 것.
-     */
-    private ProductListingOption matchOption(String externalItemId) {
-        if (externalItemId == null) {
-            return null;
-        }
-        return productListingOptionRepository.findByPlatformOptionId(externalItemId).orElse(null);
     }
 
     /** 상품명은 응답 값이 우선, 없으면 연결된 셀/옵션 이름으로 채운다(화면 공백 방지). */

@@ -79,7 +79,7 @@ class ElevenstInquiryAdapterTest {
         ElevenstApiClient client = mock(ElevenstApiClient.class);
         when(client.get(any(), any())).thenReturn(EMPTY_NON_DELIVERY);
         ElevenstInquiryAdapter adapter = new ElevenstInquiryAdapter(api, client, mock(InquiryUpserter.class),
-                mock(InquiryStaleSweeper.class));
+                mock(InquiryStaleSweeper.class), null, null);
         MarketplaceAccount account = MarketplaceAccount.builder().id(7L).build();
         LocalDate today = LocalDate.now(SyncWindow.KST);
 

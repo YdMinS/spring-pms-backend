@@ -9,60 +9,43 @@ import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.security.TenantContext;
 import com.pms.service.coupang.AccountSyncLock;
-import com.pms.service.coupang.CoupangReturnSyncService;
-import com.pms.service.coupang.SyncStatusRecorder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.willAnswer;
 import static org.mockito.BDDMockito.willThrow;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 
 /**
- * ClaimSyncService — 반품·교환만 다시 가져오기 (FEATURE_2609_70 / D14·D15·D15-1).
+ * ClaimSyncService — the claims-only round (FEATURE_2609_70 / D14 · D15 · D15-1): the matching adapter runs under the
+ * lock and the account's tenant (FEATURE_2610_23 / D12 · D21). The rounds themselves are in
+ * {@code ClaimSyncAdapterClaimsOnlyTest}.
  *
- * 관심사는 넷이다: 파사드와 <b>같은 순서</b>로 기존 적재를 부르는가(재구현 금지) · 추적까지 끝난
- * 회차에만 마지막 시각을 찍는가 · 보정/추적 실패를 삼키지 않는가 · 이미 돌고 있으면 쿠팡을
- * 치지 않는가.
- *
- * <p>🔴 락은 목이 아니라 실인스턴스다(2609_48 Step 7-2 와 같은 방식) — 테스트가 미리
- * {@code tryAcquire} 해 "이미 돌고 있는" 상태를 만든다. 스레드로 동시성을 재현하지 않는다.
+ * <p>🔴 The lock is a real instance, not a mock (the same way as 2609_48 Step 7-2) — a test takes {@code tryAcquire}
+ * first to make the "already running" state. No threads.
  */
 @ExtendWith(MockitoExtension.class)
 class ClaimSyncServiceTest {
 
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
-    @Mock private CoupangReturnSyncService coupangReturnSyncService;
-    @Mock private ClaimOrderBackfillService claimOrderBackfillService;
-    @Mock private SyncStatusRecorder syncStatusRecorder;
-    @Mock private ClaimSyncAdapter claimSyncAdapter;
-
-    /**
-     * ⚠️ 목 리스트에 @Mock 이 자동 주입되지 않는다 — 어댑터가 필요한 테스트만 직접 넣는다
-     * (OrderSyncFacadeImplTest 와 같은 이유).
-     */
-    private final List<ClaimSyncAdapter> claimSyncAdapters = new ArrayList<>();
+    @Mock private ClaimSyncAdapter coupangAdapter;
+    @Mock private ClaimSyncAdapter elevenstAdapter;
 
     private AccountSyncLock accountSyncLock;
     private ClaimSyncServiceImpl service;
@@ -75,8 +58,7 @@ class ClaimSyncServiceTest {
         accountSyncLock = new AccountSyncLock(new CoupangProperties(),
                 Clock.fixed(Instant.parse("2026-09-22T00:00:00Z"), ZoneOffset.UTC));
         service = new ClaimSyncServiceImpl(marketplaceAccountRepository, accountSyncLock,
-                coupangReturnSyncService, claimSyncAdapters, claimOrderBackfillService,
-                syncStatusRecorder);
+                List.of(coupangAdapter, elevenstAdapter));
     }
 
     @AfterEach
@@ -84,94 +66,45 @@ class ClaimSyncServiceTest {
         TenantContext.clear();   // 테스트가 세팅한 요청 테넌트를 다음 테스트로 흘리지 않는다
     }
 
-    private void withAccount() {
-        given(marketplaceAccountRepository.findById(7L)).willReturn(Optional.of(account));
-    }
-
-    private void withExchangeAdapter() {
-        given(claimSyncAdapter.platform()).willReturn(Platform.COUPANG);
-        claimSyncAdapters.add(claimSyncAdapter);
-    }
-
     @Test
-    void sync_runsClaimStagesInFacadeOrder() {
-        // 🔴 syncCancels 가 신규 반품 적재를 겸한다(2609_18 D15) — 순서·존재 둘 다 회귀 대상이다.
-        withAccount();
-        withExchangeAdapter();
+    void sync_runsTheMatchingAdapterUnderTheAccountTenant() {
+        given(marketplaceAccountRepository.findById(7L)).willReturn(Optional.of(account));
+        given(coupangAdapter.platform()).willReturn(Platform.COUPANG);
+        AtomicReference<Long> tenantSeen = new AtomicReference<>();
+        willAnswer(invocation -> {
+            tenantSeen.set(TenantContext.get());
+            return null;
+        }).given(coupangAdapter).syncClaimsOnly(account);
 
         ClaimSyncResponse response = service.sync(7L);
 
         assertThat(response.accountId()).isEqualTo(7L);
         assertThat(response.skipped()).isFalse();
         assertThat(response.syncedAt()).isNotNull();
-
-        InOrder order = inOrder(coupangReturnSyncService, claimSyncAdapter, claimOrderBackfillService);
-        order.verify(coupangReturnSyncService).syncCancels(account);
-        order.verify(coupangReturnSyncService).trackOpenClaims(account);
-        order.verify(claimSyncAdapter).syncExchanges(account);
-        order.verify(claimOrderBackfillService).backfill(account);
-        order.verifyNoMoreInteractions();
+        assertThat(tenantSeen.get()).isEqualTo(1L);
+        verify(elevenstAdapter, never()).syncClaimsOnly(any());
     }
 
     @Test
-    void sync_recordsClaimSyncCompleted() {
-        withAccount();
-
-        service.sync(7L);
-
-        verify(syncStatusRecorder).recordClaimSyncCompleted(7L);
-    }
-
-    @Test
-    void sync_trackingFails_propagatesAndDoesNotRecord() {
-        // 실패한 회차에 시각을 갱신하면 놓친 구간이 다음 창에서 빠져 영구히 사라진다.
-        withAccount();
-        willThrow(new IllegalStateException("쿠팡 추적 실패"))
-                .given(coupangReturnSyncService).trackOpenClaims(account);
+    void sync_roundFails_propagates() {
+        // D15-1 — a 200 after a failed round would tell the screen "just became current".
+        given(marketplaceAccountRepository.findById(7L)).willReturn(Optional.of(account));
+        given(coupangAdapter.platform()).willReturn(Platform.COUPANG);
+        willThrow(new IllegalStateException("쿠팡 추적 실패")).given(coupangAdapter).syncClaimsOnly(account);
 
         assertThatThrownBy(() -> service.sync(7L)).isInstanceOf(IllegalStateException.class);
-
-        verify(syncStatusRecorder, never()).recordClaimSyncCompleted(anyLong());
-        verify(claimOrderBackfillService, never()).backfill(any());
     }
 
     @Test
-    void sync_exchangeFails_isIsolated() {
-        withAccount();
-        withExchangeAdapter();
-        willThrow(new IllegalStateException("교환 조회 실패"))
-                .given(claimSyncAdapter).syncExchanges(account);
-
-        ClaimSyncResponse response = service.sync(7L);
-
-        assertThat(response.skipped()).isFalse();
-        verify(claimOrderBackfillService).backfill(account);   // 교환 실패가 백필을 건너뛰게 하지 않는다
-        verify(syncStatusRecorder).recordClaimSyncCompleted(7L);
-    }
-
-    @Test
-    void sync_backfillFails_isIsolated() {
-        withAccount();
-        willThrow(new IllegalStateException("백필 실패"))
-                .given(claimOrderBackfillService).backfill(account);
-
-        ClaimSyncResponse response = service.sync(7L);
-
-        assertThat(response.skipped()).isFalse();
-        verify(syncStatusRecorder).recordClaimSyncCompleted(7L);
-    }
-
-    @Test
-    void sync_channelAlreadyRunning_skipsWithoutCallingCoupang() {
-        withAccount();
+    void sync_channelAlreadyRunning_skipsWithoutCallingTheAdapter() {
+        given(marketplaceAccountRepository.findById(7L)).willReturn(Optional.of(account));
+        given(coupangAdapter.platform()).willReturn(Platform.COUPANG);
         accountSyncLock.tryAcquire(AccountSyncLock.SyncWork.ORDER, 7L);   // 주문 동기화가 쥔 상태
 
         ClaimSyncResponse response = service.sync(7L);
 
         assertThat(response.skipped()).isTrue();
-        verify(coupangReturnSyncService, never()).syncCancels(any());
-        verify(coupangReturnSyncService, never()).trackOpenClaims(any());
-        verify(syncStatusRecorder, never()).recordClaimSyncCompleted(anyLong());
+        verify(coupangAdapter, never()).syncClaimsOnly(any());
     }
 
     @Test
@@ -182,42 +115,33 @@ class ClaimSyncServiceTest {
     }
 
     @Test
-    void sync_nonCoupangAccount_throwsBadRequest() {
+    void sync_platformWithoutAdapter_throwsBadRequest() {
+        // FEATURE_2610_23 / D14 — the same 400 and wording as before the adapters owned the round.
         MarketplaceAccount naver = MarketplaceAccountFixture.coupangStubBuilder("A0002", null)
                 .id(8L).platform(Platform.NAVER).tenantId(1L).build();
         given(marketplaceAccountRepository.findById(8L)).willReturn(Optional.of(naver));
+        given(coupangAdapter.platform()).willReturn(Platform.COUPANG);
+        given(elevenstAdapter.platform()).willReturn(Platform.ELEVENST);
 
         assertThatThrownBy(() -> service.sync(8L))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("지원하지 않는");
+                .hasMessage("클레임 조회를 지원하지 않는 채널입니다: NAVER");
 
-        verify(coupangReturnSyncService, never()).syncCancels(any());
+        verify(coupangAdapter, never()).syncClaimsOnly(any());
+        verify(elevenstAdapter, never()).syncClaimsOnly(any());
     }
 
+    /** FEATURE_2610_17 / D15: an 11st channel runs only the 11st adapter. */
     @Test
-    void sync_neverStampsOrderSyncStatus() {
-        // 🔴 클레임만 돌고 lastSyncStatus 를 SUCCESS 로 바꾸면 주문이 실패한 채널이 정상으로 보인다.
-        withAccount();
-
-        service.sync(7L);
-
-        verify(syncStatusRecorder, never()).recordSuccess(anyLong());
-        verify(syncStatusRecorder, never()).recordPartial(anyLong(), anyString(), anyBoolean(), anyBoolean());
-        verify(syncStatusRecorder, never()).recordFailure(anyLong(), any());
-    }
-
-    /** FEATURE_2610_17 / D15: an 11st channel runs only its adapter (returns + exchanges) — no Coupang step. */
-    @Test
-    void elevenst_runsTheElevenstAdapterOnly_andStampsClaimSync() {
+    void elevenst_runsTheElevenstAdapterOnly() {
         MarketplaceAccount eleven = MarketplaceAccountFixture.elevenstStubBuilder("KEY").id(9L).tenantId(1L).build();
         given(marketplaceAccountRepository.findById(9L)).willReturn(Optional.of(eleven));
-        given(claimSyncAdapter.platform()).willReturn(Platform.ELEVENST);
-        claimSyncAdapters.add(claimSyncAdapter);
+        given(coupangAdapter.platform()).willReturn(Platform.COUPANG);
+        given(elevenstAdapter.platform()).willReturn(Platform.ELEVENST);
 
         service.sync(9L);
 
-        verify(claimSyncAdapter).syncExchanges(eleven);
-        verify(syncStatusRecorder).recordClaimSyncCompleted(9L);
-        verifyNoInteractions(coupangReturnSyncService, claimOrderBackfillService);
+        verify(elevenstAdapter).syncClaimsOnly(eleven);
+        verify(coupangAdapter, never()).syncClaimsOnly(any());
     }
 }

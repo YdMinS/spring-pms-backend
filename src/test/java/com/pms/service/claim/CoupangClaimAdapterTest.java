@@ -62,10 +62,12 @@ class CoupangClaimAdapterTest {
                 .isActive(true).build();
 
         props = new CoupangProperties();
+        // FEATURE_2610_23 / D12: the claims-only round's collaborators are not used here (null).
         adapter = new CoupangClaimAdapter(
                 coupangApiClient, props, new ObjectMapper(), new CoupangExchangeClaimParser(),
                 claimUpserter, orderClaimRepository,
-                new ClaimStaleSweeper(orderClaimRepository, props), new ClaimTrackingSlicer());
+                new ClaimStaleSweeper(orderClaimRepository, props), new ClaimTrackingSlicer(),
+                null, null, null);
     }
 
     @Test

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.CustomerInquiry;
+import com.pms.domain.CustomerInquiryReply;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
@@ -13,8 +14,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * 쿠팡 고객문의 답변 전송 어댑터 (FEATURE_2609_23 / 04 Step 3).
@@ -37,6 +42,16 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class CoupangInquiryReplyAdapter implements InquiryReplyAdapter {
 
+    /** 답변 전송(04)이 성공 직후 넣는 로컬 임시 행의 식별자 접두 — {@code InquiryUpserter} 와 같은 값이다. */
+    private static final String LOCAL_REPLY_PREFIX = "local-";
+
+    /** 🔴 고객센터에서 "이제 판매자가 답할 차례" 를 뜻하는 쿠팡 원문. {@code parentAnswerId} 의 출처다. */
+    private static final String TRANSFER_REQUEST_ANSWER = "requestAnswer";
+
+    /** 상품문의는 한 글자도 허용, 고객센터는 쿠팡이 2자 미만을 거절한다 — 유형별로 다르다. */
+    private static final int MIN_LENGTH_PRODUCT_QNA = 1;
+    private static final int MIN_LENGTH_CALL_CENTER = 2;
+
     private final CoupangApiClient coupangApiClient;
     private final CoupangProperties coupangProperties;
     private final ObjectMapper objectMapper;
@@ -44,6 +59,73 @@ public class CoupangInquiryReplyAdapter implements InquiryReplyAdapter {
     @Override
     public Platform platform() {
         return Platform.COUPANG;
+    }
+
+    @Override
+    public int minLength(InquiryType type) {
+        return (type == InquiryType.CALL_CENTER) ? MIN_LENGTH_CALL_CENTER : MIN_LENGTH_PRODUCT_QNA;
+    }
+
+    /**
+     * The WING user id ({@code replyBy} source, D18 — owned by the Coupang credential since 2609_26) must be set. A
+     * missing account or credential folds to "no source" without throwing — the same block as the send path's 400.
+     */
+    @Override
+    public String accountBlockReason(MarketplaceAccount account) {
+        String wingUserId = (account == null || account.getPlatform() != platform()
+                || account.getCoupangCredential() == null)
+                ? null : CoupangCredentials.of(account).getVendorUserId();
+        if (wingUserId == null || wingUserId.isBlank()) {
+            return "채널에 WING 사용자 ID가 없습니다. 판매자 > 채널 수정에서 입력해 주세요.";
+        }
+        return null;
+    }
+
+    /**
+     * Drift guard — by §3.1 an UNANSWERED Coupang call-center inquiry always has a requestAnswer reply. Hitting this
+     * means the parser (01) or the status normalization drifted.
+     */
+    @Override
+    public String threadBlockReason(CustomerInquiry inquiry, List<CustomerInquiryReply> replies) {
+        if (inquiry.getInquiryType() == InquiryType.CALL_CENTER && requestAnswerReply(replies).isEmpty()) {
+            log.warn("Call-center inquiry is UNANSWERED but has no requestAnswer reply — parser or status "
+                    + "normalization drifted: inquiry={} platformStatus={}",
+                    inquiry.getId(), inquiry.getPlatformStatus());
+            return "판매자 답변이 요청된 문의가 아닙니다.";
+        }
+        return null;
+    }
+
+    /** Parent reply id of a call-center inquiry only; product Q&A is always null. */
+    @Override
+    public String parentReplyId(CustomerInquiry inquiry, List<CustomerInquiryReply> replies) {
+        if (inquiry.getInquiryType() != InquiryType.CALL_CENTER) {
+            return null;
+        }
+        return requestAnswerReply(replies)
+                .map(CustomerInquiryReply::getExternalReplyId)
+                .orElse(null);
+    }
+
+    /**
+     * {@code transfer_status = requestAnswer} 인 reply 중 <b>가장 최근</b> 것.
+     *
+     * ⚠️ {@code external_reply_id} 가 {@code local-} 로 시작하는 행(04 가 전송 직후 넣은 로컬 임시 행)은
+     * 후보에서 <b>제외</b>한다 — 쿠팡에 없는 식별자라 {@code parentAnswerId} 로 보내면 400 이다.
+     */
+    private Optional<CustomerInquiryReply> requestAnswerReply(List<CustomerInquiryReply> replies) {
+        if (replies == null) {
+            return Optional.empty();
+        }
+        return replies.stream()
+                .filter(reply -> TRANSFER_REQUEST_ANSWER.equalsIgnoreCase(reply.getTransferStatus()))
+                .filter(reply -> reply.getExternalReplyId() != null
+                        && !reply.getExternalReplyId().startsWith(LOCAL_REPLY_PREFIX))
+                .max(Comparator
+                        .comparing(CustomerInquiryReply::getRepliedAt,
+                                Comparator.nullsFirst(Comparator.<LocalDateTime>naturalOrder()))
+                        .thenComparing(CustomerInquiryReply::getId,
+                                Comparator.nullsFirst(Comparator.<Long>naturalOrder())));
     }
 
     @Override
