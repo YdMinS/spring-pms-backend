@@ -273,7 +273,7 @@ public class StockOutServiceImpl implements StockOutService {
                 m.getCreatedBy());
     }
 
-    /** Same source as StockLedgerServiceImpl / OrderCancelServiceImpl (PLAN 2609_28 D9). */
+    /** Same source as StockLedgerServiceImpl / OrderCancelAdapter.currentUsername() (PLAN 2609_28 D9). */
     private String currentUsername() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return (auth == null) ? null : auth.getName();

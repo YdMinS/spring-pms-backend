@@ -18,15 +18,15 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * MarketplaceAccountRepository 의 seller eager-fetch 회귀 테스트.
+ * Regression test of MarketplaceAccountRepository's seller eager fetch.
  *
- * 송장 접수시트({@code ShippingLabelServiceImpl})는 @Transactional 없이(외부 HTTP 루프) 계정의
- * seller.sellerName 을 접근한다. open-in-view=false 환경에서 seller 가 지연로딩이면 세션이 닫혀
- * LazyInitializationException 이 나고 결과가 빈 파일로 감춰졌다. finder 의 @EntityGraph(seller)
- * 로 seller 가 조회 시점에 즉시 초기화됨을 보장한다.
+ * The label sheet's row readers ({@code CoupangShippingLabelAdapter} · {@code ElevenstShippingLabelAdapter}) read the
+ * account's seller.sellerName without @Transactional (an external HTTP loop). With open-in-view=false a lazy seller
+ * met a closed session, threw LazyInitializationException and the result hid behind an empty file. The finder's
+ * @EntityGraph(seller) makes sure the seller is initialized when it is read.
  *
- * AesAttributeConverter 는 @Component(생성자 주입) 라 @DataJpaTest 슬라이스에 명시 @Import 한다
- * (secretKey 컬럼 암복호화에 필요; master-key 는 application-test.yml).
+ * AesAttributeConverter is a @Component (constructor injection), so the @DataJpaTest slice @Imports it explicitly
+ * (needed to encrypt / decrypt the secretKey column; the master key is in application-test.yml).
  */
 @DataJpaTest
 @ActiveProfiles("test")

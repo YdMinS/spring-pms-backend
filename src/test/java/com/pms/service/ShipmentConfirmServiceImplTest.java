@@ -104,10 +104,16 @@ class ShipmentConfirmServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new ShipmentConfirmServiceImpl(
-                coupangApiClient, coupangProperties, orderLineRepository, coupangOrderLineRepository,
-                marketplaceAccountRepository, carrierCodeService, objectMapper, orderUpserter,
-                shipmentParcelRecorder, orderAcknowledgeService, internalShipmentStageService, elevenstOrderActions, elevenstManualShipper);
+        // FEATURE_2610_23 / D21 · D23: the real adapters over the same mocks; Coupang opens the internal stage.
+        InvoiceWriteBack writeBack = new InvoiceWriteBack(orderLineRepository, shipmentParcelRecorder, carrierCodeService);
+        service = new ShipmentConfirmServiceImpl(orderLineRepository, carrierCodeService, orderAcknowledgeService,
+                internalShipmentStageService, writeBack,
+                new InternalStageMarkets(List.of(new CoupangOrderAcknowledgeAdapter(null, null, null, null))),
+                List.of(new CoupangShipmentInvoiceAdapter(coupangApiClient, coupangProperties, orderLineRepository,
+                                coupangOrderLineRepository, marketplaceAccountRepository, carrierCodeService,
+                                objectMapper, orderUpserter, shipmentParcelRecorder, writeBack),
+                        new ElevenstShipmentInvoiceAdapter(orderLineRepository, carrierCodeService,
+                                shipmentParcelRecorder, elevenstOrderActions, elevenstManualShipper, writeBack)));
         // vendorItemId 는 core 가 아니라 쿠팡 거울에 있다(2609_26 / 04 §3-3) — 배치 조회를 그대로 흉내낸다.
         lenient().when(coupangOrderLineRepository.findByOrderLine_IdIn(anyList()))
                 .thenAnswer(invocation -> {

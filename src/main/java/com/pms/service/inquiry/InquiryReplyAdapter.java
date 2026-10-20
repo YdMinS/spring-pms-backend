@@ -2,7 +2,11 @@ package com.pms.service.inquiry;
 
 import com.pms.domain.Platform;
 import com.pms.domain.CustomerInquiry;
+import com.pms.domain.CustomerInquiryReply;
+import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
+
+import java.util.List;
 
 /**
  * 플랫폼별 고객문의 답변 전송 seam (FEATURE_2609_23 / PLAN D19).
@@ -30,6 +34,27 @@ public interface InquiryReplyAdapter {
      * @throws RuntimeException            타임아웃·네트워크 오류 = <b>성공 여부 불명</b> (→서비스가 502 로 바꾼다)
      */
     void reply(MarketplaceAccount account, CustomerInquiry inquiry, ReplyCommand command);
+
+    /** The shortest reply this marketplace takes for the type (FEATURE_2610_23 / D12 — {@link InquiryReplyPolicy}). */
+    int minLength(InquiryType type);
+
+    /**
+     * Policy step 2 — why this account cannot reply, or {@code null}. Must not throw (the policy also answers the
+     * read API). Default: no account condition.
+     */
+    default String accountBlockReason(MarketplaceAccount account) {
+        return null;
+    }
+
+    /** Policy step 5 — why this reply thread cannot be answered, or {@code null}. Default: no thread condition. */
+    default String threadBlockReason(CustomerInquiry inquiry, List<CustomerInquiryReply> replies) {
+        return null;
+    }
+
+    /** The parent reply id this marketplace's reply must carry, or {@code null}. Default: none. */
+    default String parentReplyId(CustomerInquiry inquiry, List<CustomerInquiryReply> replies) {
+        return null;
+    }
 
     /**
      * Send command.

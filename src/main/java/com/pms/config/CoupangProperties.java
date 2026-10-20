@@ -267,10 +267,10 @@ public class CoupangProperties {
             "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/onlineInquiries/{inquiryId}/replies";
 
     /**
-     * 고객센터 문의 답변 전송 경로(POST). {vendorId}·{inquiryId} 치환. FEATURE_2609_23 / 04.
+     * Call-center inquiry reply path (POST). Replaces {vendorId} · {inquiryId}. FEATURE_2609_23 / 04.
      *
-     * 🔴 <b>되돌릴 수 없다</b>(D17). 바디에 {@code parentAnswerId}(숫자)가 필수이며 그 값의 출처는
-     * {@code transfer_status = requestAnswer} 인 답변 행이다({@code InquiryReplyPolicy}).
+     * 🔴 <b>Cannot be undone</b> (D17). The body needs {@code parentAnswerId} (a number); its source is the reply row
+     * with {@code transfer_status = requestAnswer} ({@code CoupangInquiryReplyAdapter}, FEATURE_2610_23 / D12).
      */
     private String callCenterInquiryReplyPath =
             "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/callCenterInquiries/{inquiryId}/replies";

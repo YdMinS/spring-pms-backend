@@ -1,11 +1,16 @@
 package com.pms.service.inquiry;
 
+import com.pms.domain.ElevenstOrderLine;
 import com.pms.domain.InquiryAuthorRole;
 import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.OrderLine;
 import com.pms.domain.Platform;
+import com.pms.domain.ProductListing;
 import com.pms.exception.BusinessException;
+import com.pms.repository.ElevenstOrderLineRepository;
+import com.pms.repository.ProductListingRepository;
 import com.pms.service.coupang.SyncWindow;
 import com.pms.service.elevenst.ElevenstApiClient;
 import com.pms.service.elevenst.ElevenstOrderApi;
@@ -69,10 +74,46 @@ public class ElevenstInquiryAdapter implements InquirySyncAdapter {
     private final ElevenstApiClient client;
     private final InquiryUpserter inquiryUpserter;
     private final InquiryStaleSweeper inquiryStaleSweeper;
+    /** FEATURE_2610_17 / D16 · FEATURE_2610_23 / D12: 11st inquiries link by order number and 11st product number. */
+    private final ElevenstOrderLineRepository elevenstOrderLineRepository;
+    private final ProductListingRepository productListingRepository;
 
     @Override
     public Platform platform() {
         return Platform.ELEVENST;
+    }
+
+    /** 11st listing of the same sales channel with this 11st product number (D16); none or several → no link. */
+    @Override
+    public ListingMatch matchListing(MarketplaceAccount account, InquiryRecord record) {
+        if (record.externalProductId() == null) {
+            return new ListingMatch(null, null);
+        }
+        List<ProductListing> listings =
+                productListingRepository.findElevenstListings(account.getId(), record.externalProductId());
+        return new ListingMatch(listings.size() == 1 ? listings.get(0) : null, null);
+    }
+
+    /**
+     * 11st order line (FEATURE_2610_17 / D16): with {@code ordPrdSeq} (urgent notice) the exact line; with the order
+     * number only (Q&A {@code ordNoDe}) the line only when that order has exactly one — same "ambiguous → no link"
+     * rule as the Coupang adapter.
+     */
+    @Override
+    public OrderLine matchOrderLine(MarketplaceAccount account, InquiryRecord record) {
+        if (record.externalOrderId() == null) {
+            return null;
+        }
+        if (record.externalItemId() != null) {
+            return elevenstOrderLineRepository
+                    .findByMarketplaceAccount_IdAndOrdNoAndOrdPrdSeq(account.getId(), record.externalOrderId(),
+                            record.externalItemId())
+                    .map(ElevenstOrderLine::getOrderLine)
+                    .orElse(null);
+        }
+        List<ElevenstOrderLine> lines =
+                elevenstOrderLineRepository.findByMarketplaceAccount_IdAndOrdNo(account.getId(), record.externalOrderId());
+        return lines.size() == 1 ? lines.get(0).getOrderLine() : null;
     }
 
     @Override
@@ -92,7 +133,7 @@ public class ElevenstInquiryAdapter implements InquirySyncAdapter {
         try {
             for (Element row : orderApi.listByDay(account, ElevenstPaths.QNA_LIST, Map.of("answerStatus", "00"),
                     "brdInfoNo", from, to)) {
-                inquiryUpserter.upsert(account, qna(ElevenstOrderApi.fields(row), now));
+                inquiryUpserter.upsert(account, qna(ElevenstOrderApi.fields(row), now), this);
                 upserted++;
             }
         } catch (RuntimeException e) {
@@ -111,7 +152,7 @@ public class ElevenstInquiryAdapter implements InquirySyncAdapter {
                         Map.of("emerNtceCrntCd", status), "emerNtceSeq", statusFrom, to)) {
                     InquiryRecord record = urgent(row, now);
                     if (record != null) {
-                        inquiryUpserter.upsert(account, record);
+                        inquiryUpserter.upsert(account, record, this);
                         upserted++;
                     }
                 }
@@ -123,7 +164,7 @@ public class ElevenstInquiryAdapter implements InquirySyncAdapter {
         calls++;
         try {
             for (Element row : nonDeliveryRows(account, to.minusDays(NON_DELIVERY_WINDOW_DAYS_BACK), to)) {
-                inquiryUpserter.upsert(account, nonDelivery(ElevenstOrderApi.fields(row), now));
+                inquiryUpserter.upsert(account, nonDelivery(ElevenstOrderApi.fields(row), now), this);
                 upserted++;
             }
         } catch (RuntimeException e) {

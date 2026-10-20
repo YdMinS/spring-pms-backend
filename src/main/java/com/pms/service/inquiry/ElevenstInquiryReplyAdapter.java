@@ -40,12 +40,19 @@ public class ElevenstInquiryReplyAdapter implements InquiryReplyAdapter {
     /** 6734 success, also for a report that was already handled (D68). */
     private static final String NON_DELIVERY_SUCCESS = "0";
     private static final String DELIVERY_METHOD_PARCEL = "01";
+    /** FEATURE_2610_17 / D27 · D68: 11st takes at least 1 character for every type. */
+    private static final int MIN_LENGTH_ELEVENST = 1;
 
     private final ElevenstApiClient client;
 
     @Override
     public Platform platform() {
         return Platform.ELEVENST;
+    }
+
+    @Override
+    public int minLength(InquiryType type) {
+        return MIN_LENGTH_ELEVENST;
     }
 
     @Override

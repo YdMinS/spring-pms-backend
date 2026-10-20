@@ -1,7 +1,6 @@
 package com.pms.service.coupang;
 
 import com.pms.domain.MarketplaceAccount;
-import com.pms.domain.Platform;
 import com.pms.domain.SyncStatus;
 import com.pms.dto.response.SyncTargetResponse;
 import com.pms.repository.MarketplaceAccountRepository;
@@ -14,9 +13,9 @@ import java.util.List;
 /**
  * {@link SyncTargetService} implementation.
  *
- * The target filter is the <b>same rule</b> as {@link OrderSyncFacadeImpl}'s manual syncEach (active + COUPANG or
- * ELEVENST, FEATURE_2610_17 / D9) — an account not listed here is not synced either, so the progress denominator
- * matches reality.
+ * The target filter is the <b>same rule</b> as {@link OrderSyncFacadeImpl}'s manual syncEach (active + a marketplace
+ * with an {@link OrderSyncAdapter}, FEATURE_2610_17 / D9 · FEATURE_2610_23 / D14) — an account not listed here is not
+ * synced either, so the progress denominator matches reality.
  *
  * The mapping copies every field except credentials (see the {@link SyncTargetResponse} comment).
  * Both finders fetch the seller eagerly with {@code @EntityGraph}, so there is no LazyInit risk.
@@ -27,6 +26,8 @@ import java.util.List;
 public class SyncTargetServiceImpl implements SyncTargetService {
 
     private final MarketplaceAccountRepository marketplaceAccountRepository;
+    /** FEATURE_2610_23 / D14: the marketplaces with an order sync round. */
+    private final List<OrderSyncAdapter> orderSyncAdapters;
 
     @Override
     public List<SyncTargetResponse> list(Long sellerId) {
@@ -35,8 +36,8 @@ public class SyncTargetServiceImpl implements SyncTargetService {
                 : marketplaceAccountRepository.findBySeller_IdAndIsActiveTrue(sellerId);
 
         return accounts.stream()
-                .filter(account -> Platform.COUPANG.equals(account.getPlatform())
-                        || Platform.ELEVENST.equals(account.getPlatform()))
+                .filter(account -> orderSyncAdapters.stream()
+                        .anyMatch(adapter -> adapter.platform().equals(account.getPlatform())))
                 .map(this::toResponse)
                 .toList();
     }

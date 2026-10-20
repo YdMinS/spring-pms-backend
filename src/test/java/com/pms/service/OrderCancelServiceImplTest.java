@@ -83,9 +83,12 @@ class OrderCancelServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new OrderCancelServiceImpl(coupangApiClient, coupangProperties,
-                orderLineRepository, coupangOrderLineRepository, orderCancelActionRepository, objectMapper,
-                elevenstSellerActions, elevenstOrderLineRepository);
+        // FEATURE_2610_23 / D21: the real adapters over the same mocks.
+        service = new OrderCancelServiceImpl(orderLineRepository, List.of(
+                new CoupangOrderCancelAdapter(coupangApiClient, coupangProperties, orderLineRepository,
+                        coupangOrderLineRepository, orderCancelActionRepository, objectMapper),
+                new ElevenstOrderCancelAdapter(elevenstSellerActions, elevenstOrderLineRepository,
+                        orderCancelActionRepository)));
     }
 
     @AfterEach

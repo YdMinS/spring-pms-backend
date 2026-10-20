@@ -1,25 +1,15 @@
 package com.pms.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.pms.config.CoupangProperties;
-import com.pms.domain.CoupangOrderLine;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderLine;
-import com.pms.domain.OrderShipment;
 import com.pms.domain.OrderStatus;
 import com.pms.domain.Platform;
 import com.pms.dto.request.ManualShipmentRequest;
-import com.pms.repository.CoupangOrderLineRepository;
-import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.service.ShipmentConfirmResult.FailedBox;
 import com.pms.service.ShipmentConfirmResult.SkippedOrder;
-import com.pms.service.coupang.CoupangApiClient;
-import com.pms.service.coupang.CoupangCredentials;
-import com.pms.service.coupang.OrderUpserter;
-import com.pms.service.coupang.SyncWindow;
-import com.pms.service.elevenst.ElevenstOrderActions;
+import com.pms.service.ShipmentInvoiceAdapter.FileOutcome;
+import com.pms.service.ShipmentInvoiceAdapter.ResultFile;
 import com.pms.service.reservation.InternalShipmentStageService;
 import com.pms.service.reservation.ReservedShipmentExecutor;
 import com.pms.service.reservation.ShipmentLocalState;
@@ -34,7 +24,6 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashMap;
@@ -44,38 +33,31 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
-import java.util.function.Function;
-import java.util.stream.Collectors;
+
+import static com.pms.service.InvoiceWriteBack.boxIdOf;
+import static com.pms.service.InvoiceWriteBack.statusName;
 
 /**
- * {@link ShipmentConfirmService} implementation — the shipment confirm leg for COUPANG and ELEVENST
- * (FEATURE_2610_17 / D2).
+ * {@link ShipmentConfirmService} implementation — the shipment confirm leg; each marketplace registers its invoices
+ * through its {@link ShipmentInvoiceAdapter} (FEATURE_2610_23 / D21 — {@link CoupangShipmentInvoiceAdapter} ·
+ * {@link ElevenstShipmentInvoiceAdapter}).
  *
- * Flow (Coupang): parse xlsx → expand order_line with {@code findByExternalOrderId} →
- * line (box) status filter (DEPARTURE and later are not sent and are reported as skipped, PLAN 2609_07 D1·D2) →
- * (orders missing from the DB go through the Coupang single-order fallback — the same filter on its box status, D6) →
- * group by account → one POST per account (a combined box shares shipmentBoxId · invoiceNumber, only vendorItemId
- * differs) → sum the responseList → write SHIPPED back to the succeeded boxes (D4).
- * Flow (11st): orders of an 11st account go to {@code shipElevenstFromFile} — one 1888 call per delivery number.
+ * Flow (result file): parse xlsx → find each order's lines with {@code findByExternalOrderId} → orders of a
+ * marketplace without an adapter are reported as unmatched (D14) → each adapter ships its own orders in the platform
+ * order (Coupang → 11st); the file's orders missing from the DB go to the Coupang adapter's lookup (D25) → the
+ * internal-stage orders of a marketplace that opens the internal stage are sent right after that marketplace by
+ * {@code shipInternalOrders} (acknowledge → invoice, FEATURE_2609_75 / D27 · FEATURE_2610_23 / D22 · D23).
  *
- * ⚠️ One account failing (carrier code not set IllegalStateException · send · parse error included) is isolated with
- *    a try/catch per account — the other batches continue. Other platforms (Naver etc.) are reported as unmatched.
- * ⚠️ The fallback (shipping-label PLAN D16) is the safety net that lets a sheet ship even when the sync failed and
- *    the order lines are empty — the normal path (DB match) never calls Coupang.
- * ⚠️ Boxes fetched by the fallback are loaded into {@code order_line} (PLAN 2609_13 D1·D9) — best-effort, so a failed
- *    save still sends the invoice (D6). Never put @Transactional on this service (D3).
+ * ⚠️ Never put @Transactional on this service (D3) — it runs external HTTP.
  *
  * <p>🔴 <b>Invoice numbers are no longer thrown away</b> (FEATURE_2609_40 / PLAN D5 ①·D8·D30): the result file's
  *    invoices are kept as {@code shipment_parcel} (physical boxes). An order with N invoices (parcel count raised) gets
  *    N rows <b>only when it has one delivery bundle</b> (the file has no bundle id), and <b>only one representative
  *    invoice goes to the marketplace</b> (send behaviour unchanged).
  *
- * <p>{@code confirmManual} (single manual, PLAN 2609_11) shares only the send helper ({@code postInvoices}) and judges
- * on its own: it expands <b>only the anchor line's box</b> (other boxes of the order are untouched, D1), the server picks
- * the mode — invoice update (updateInvoices) when the anchor is DEPARTURE or later, else a new upload (D3) — and writes
- * SHIPPED back <b>only on a new-upload success</b> (update mode never changes the status, D4). An 11st line goes to
- * {@code confirmManualElevenst} instead (no update mode, D21).
+ * <p>{@code confirmManual} (single manual, PLAN 2609_11) hands the anchor line to its marketplace's adapter.
  */
 @Slf4j
 @Service
@@ -85,57 +67,19 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
     private static final int COL_ORDER_ID = 5;    // 주문번호
     private static final int COL_INVOICE = 6;      // 운송장번호
 
-    /** 폴백 대상 주문 수 상한. 초과분은 조회하지 않고 미매칭으로 남긴다(쿠팡 호출 폭주 방지). */
-    private static final int MAX_FALLBACK_ORDERS = 50;
-    /** 연속 이 횟수만큼 후보 계정 전부에서 실패하면 폴백을 전면 중단한다(쿠팡 장애 시 스레드 점유 방지). */
-    private static final int FALLBACK_CIRCUIT_THRESHOLD = 3;
-
-    /**
-     * 전송하지 않을 상태 — 이 상태는 되돌아오지 않으므로(상태 단조성) 조회 없이 제외해도 누락이 불가능하다.
-     * ⚠️ 화이트리스트가 아니라 블랙리스트다: 모르는 상태값(매핑 실패·null)은 <b>전송</b>한다
-     *    (조용한 스킵 = 발송 누락, 전송 = 쿠팡이 판단). PLAN 2609_07 D1.
-     * ⚠️ {@code CANCELLED} 는 넣지 않는다 — 전량취소 라인은 지금도 라인 수 0 으로 걸러진다(판정 두 겹 금지).
-     */
-    private static final Set<OrderStatus> SKIP_STATUSES = Set.of(
-            OrderStatus.SHIPPED, OrderStatus.DELIVERING, OrderStatus.DELIVERED);
-    /** 신규 업로드 성공 시 로컬 라인이 갖는 상태(PLAN 2609_07 D4). */
-    private static final OrderStatus STATUS_SHIPPED = OrderStatus.SHIPPED;
-
-    /**
-     * 송장수정(UPDATE) 모드로 보낼 상태 — "배송지시 이상"이라는 뜻이 {@link #SKIP_STATUSES} 와 같으므로 같은 집합을 가리킨다.
-     * ⚠️ 이름을 갈라 두는 이유: 일괄 경로의 "전송 스킵"과 단건 경로의 "모드 판정"은 서로 다른 관심사다.
-     *    스킵 목록에 상태를 더할 일이 생기면 단건 모드가 조용히 UPDATE 로 뒤집히지 않게 여기서 분리할 것(PLAN 2609_11 D3).
-     */
-    private static final Set<OrderStatus> UPDATE_MODE_STATUSES = SKIP_STATUSES;
-
     /** 단건 발송처리 거절 — 내부 단계(결제완료) 배송 묶음(FEATURE_2609_75 / D27, PLAN §4-4). */
     public static final String INTERNAL_STAGE_MANUAL_MESSAGE =
             "내부 단계 주문은 여기서 발송처리할 수 없습니다. 「송장」에 송장을 저장한 뒤 출고관리의 [저장된 송장으로 발송]을 누르세요";
 
-    /** FEATURE_2610_17 / D2 · D20: an 11st paid order needs [발주처리] before its invoice. */
-    public static final String ELEVENST_ACKNOWLEDGE_FIRST_MESSAGE =
-            "11번가 주문은 [발주처리] 뒤에 송장을 등록할 수 있습니다.";
-    /** FEATURE_2610_17 / D21: 11st has no invoice-update API. */
-    public static final String ELEVENST_NO_INVOICE_UPDATE_MESSAGE =
-            "11번가는 송장 수정을 지원하지 않습니다. 11번가 셀러오피스에서 고쳐 주세요.";
-    /** Same wording as the Coupang manual path when a line has no box / delivery number. */
-    private static final String NO_BOX_MESSAGE = "박스 ID가 없습니다. 주문동기화 후 다시 시도하세요";
-
-    private final CoupangApiClient coupangApiClient;
-    private final CoupangProperties coupangProperties;
     private final OrderLineRepository orderLineRepository;
-    private final CoupangOrderLineRepository coupangOrderLineRepository;
-    private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final CarrierCodeService carrierCodeService;
-    private final ObjectMapper objectMapper;
-    private final OrderUpserter orderUpserter;
-    private final ShipmentParcelRecorder shipmentParcelRecorder;
     private final OrderAcknowledgeService orderAcknowledgeService;
     private final InternalShipmentStageService internalShipmentStageService;
-    /** FEATURE_2610_17 / D2: 11st shipping 1888 (one call per delivery number). */
-    private final ElevenstOrderActions elevenstOrderActions;
-    /** FEATURE_2610_17 / D64: 11st partial (1636) and split (6791) single shipments. */
-    private final ElevenstManualShipper elevenstManualShipper;
+    private final InvoiceWriteBack invoiceWriteBack;
+    /** FEATURE_2610_23 / D23 · D24: the marketplaces whose internal-stage orders this service sends. */
+    private final InternalStageMarkets internalStageMarkets;
+    /** FEATURE_2610_23 / D21: one invoice sender per marketplace. */
+    private final List<ShipmentInvoiceAdapter> shipmentInvoiceAdapters;
 
     @Override
     public ShipmentConfirmResult confirm(MultipartFile file) {
@@ -155,100 +99,62 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
 
         List<String> unmatched = new ArrayList<>();
         List<SkippedOrder> skipped = new ArrayList<>();
-        // DB 에 아예 없는 주문만 폴백 대상. 비-COUPANG 은 여기 넣지 않는다
-        // (네이버 주문을 쿠팡에 조회하게 되므로 unmatched 로만 유지).
-        List<String> fallbackCandidates = new ArrayList<>();
-        Map<Long, MarketplaceAccount> accountById = new LinkedHashMap<>();
-        Map<Long, List<InvoiceLine>> linesByAccount = new LinkedHashMap<>();
-        // 송장업로드 성공 시 status 를 갱신할 DB 라인(박스 단위).
-        // 폴백으로 확정된 주문도 조회 시점에 적재되므로(PLAN 2609_13 D9) 여기 편입된다.
-        Map<String, List<OrderLine>> dbLinesByBoxId = new LinkedHashMap<>();
+        // Orders with no line in the DB — only the Coupang adapter looks them up (FEATURE_2610_23 / D25); an order
+        // of another marketplace is never looked up at Coupang, it stays unmatched.
+        List<String> missingOrderIds = new ArrayList<>();
         // 택배사 코드는 플랫폼당 한 번만 읽는다(박스 저장용 — 없어도 송장은 저장된다, PLAN 2609_40 D6).
         Map<Platform, String> carrierCodeCache = new EnumMap<>(Platform.class);
         int matchedOrders = 0;
+        // FEATURE_2610_23 / D21: each marketplace's orders in file order — EnumMap keeps the platform order.
+        Map<Platform, Map<String, List<OrderLine>>> ordersByPlatform = new EnumMap<>(Platform.class);
         // FEATURE_2609_75 / D27 — 내부 단계 주문은 발주처리 → 송장 등록 순으로 따로 보낸다(아래 shipInternalOrders).
-        Map<String, List<OrderLine>> internalOrders = new LinkedHashMap<>();
-        // FEATURE_2610_17 / D2 — 11st orders are sent per delivery number after the Coupang batches (shipElevenstFromFile).
-        Map<String, List<OrderLine>> elevenstOrders = new LinkedHashMap<>();
+        Map<Platform, Map<String, List<OrderLine>>> internalByPlatform = new EnumMap<>(Platform.class);
 
         for (String orderId : invoicesByOrderId.keySet()) {
             List<OrderLine> lines = orderLineRepository.findByExternalOrderId(orderId);
             if (lines.isEmpty()) {
-                fallbackCandidates.add(orderId);
+                missingOrderIds.add(orderId);
                 continue;
             }
-            // One order = one account → its lines share the account. ELEVENST goes to the 11st path below; other
-            // non-COUPANG platforms are skipped as unmatched (no resolve / post).
-            MarketplaceAccount account = lines.get(0).getOrder().getMarketplaceAccount();
-            if (Platform.ELEVENST.equals(account.getPlatform())) {
-                elevenstOrders.put(orderId, lines);
-                continue;
-            }
-            if (!Platform.COUPANG.equals(account.getPlatform())) {
+            // One order = one account → its lines share the account. A marketplace without an adapter is reported
+            // as unmatched (no resolve / post — FEATURE_2610_23 / D14).
+            Platform platform = lines.get(0).getOrder().getMarketplaceAccount().getPlatform();
+            if (adapterFor(platform).isEmpty()) {
                 unmatched.add(orderId);
                 continue;
             }
-            if (hasInternalStage(lines)) {
-                internalOrders.put(orderId, lines);        // D27 — 실물 박스는 송장 등록 성공 뒤에 남긴다(D22)
+            if (internalStageMarkets.supports(platform) && InternalStageMarkets.hasInternalStage(lines)) {
+                // D27 — the physical box is recorded only after the invoice registration succeeds (D22).
+                internalByPlatform.computeIfAbsent(platform, k -> new LinkedHashMap<>()).put(orderId, lines);
                 continue;
             }
-            // 🔴 실물 박스 저장은 여기 한 곳이다(PLAN 2609_40 D8·D30) — 전송 전, 상태 필터 전.
-            //    전량 발송 완료로 아래에서 skip 되는 주문도 송장은 이미 발급됐으므로 박스를 남긴다.
-            recordParcels(orderId, lines, invoicesByOrderId.get(orderId), carrierCodeCache);
-            // 한 주문에 박스가 여러 개면 박스마다 상태가 다를 수 있다(order_line.status = box.status 의 거울).
-            List<OrderLine> sendable = lines.stream()
-                    .filter(this::sendable)
-                    .toList();
-            if (sendable.isEmpty()) {
-                // 전량 발송 완료 — 쿠팡 호출 0회. unmatched 가 아니다(계정도 라인도 확정돼 있다).
-                skipped.add(new SkippedOrder(orderId, statusName(lines.get(0)),
-                        ShipmentConfirmResult.ALREADY_SHIPPED_REASON));
-                continue;
-            }
-            matchedOrders++;
-            accountById.putIfAbsent(account.getId(), account);
-            linesByAccount.computeIfAbsent(account.getId(), k -> new ArrayList<>())
-                    .addAll(toInvoiceLines(sendable));
-            registerWriteBack(sendable, dbLinesByBoxId);
+            ordersByPlatform.computeIfAbsent(platform, k -> new LinkedHashMap<>()).put(orderId, lines);
         }
 
-        matchedOrders += fallback(fallbackCandidates, unmatched, skipped, accountById, linesByAccount,
-                dbLinesByBoxId, invoicesByOrderId, carrierCodeCache);
-
+        ResultFile resultFile = new ResultFile(invoicesByOrderId, missingOrderIds, carrierCodeCache);
         int succeeded = 0;
         List<FailedBox> failed = new ArrayList<>();
-        for (Map.Entry<Long, List<InvoiceLine>> entry : linesByAccount.entrySet()) {
-            MarketplaceAccount account = accountById.get(entry.getKey());
-            List<InvoiceLine> lines = entry.getValue();
-            try {
-                AccountResult result = sendBatch(account, lines, invoicesByOrderId);
-                succeeded += result.succeeded();
-                markDeparted(result.succeededBoxIds(), dbLinesByBoxId);
-                failed.addAll(result.failed());
-            } catch (Exception e) {
-                // 계정 격리: 이 계정의 박스 전체를 실패로(메시지=예외), 다른 계정 배치는 유지.
-                log.warn("발송처리 계정 배치 실패: account={} platform={}",
-                        account.getId(), account.getPlatform(), e);
-                for (String boxId : distinctBoxIds(lines)) {
-                    failed.add(new FailedBox(boxId, "ERROR", e.getMessage()));
-                }
+        for (Platform platform : Platform.values()) {
+            Optional<ShipmentInvoiceAdapter> adapter = adapterFor(platform);
+            if (adapter.isEmpty()) {
+                continue;
             }
-        }
+            FileOutcome outcome = adapter.get().shipFromFile(resultFile,
+                    ordersByPlatform.getOrDefault(platform, Map.of()));
+            matchedOrders += outcome.matchedOrders();
+            succeeded += outcome.succeeded();
+            failed.addAll(outcome.failed());
+            skipped.addAll(outcome.skipped());
+            unmatched.addAll(outcome.unmatched());
 
-        if (!internalOrders.isEmpty()) {
-            InternalShipOutcome internal = shipInternalFromFile(internalOrders, invoicesByOrderId);
-            matchedOrders += internalOrders.size();
-            succeeded += internal.succeeded();
-            failed.addAll(internal.failed());
-            skipped.addAll(internal.skipped());
-        }
-
-        if (!elevenstOrders.isEmpty()) {
-            ElevenstShipOutcome elevenst = shipElevenstFromFile(elevenstOrders, invoicesByOrderId, carrierCodeCache);
-            matchedOrders += elevenst.matchedOrders();
-            succeeded += elevenst.succeeded();
-            failed.addAll(elevenst.failed());
-            skipped.addAll(elevenst.skipped());
+            Map<String, List<OrderLine>> internalOrders = internalByPlatform.getOrDefault(platform, Map.of());
+            if (!internalOrders.isEmpty()) {
+                InternalShipOutcome internal = shipInternalFromFile(platform, internalOrders, invoicesByOrderId);
+                matchedOrders += internalOrders.size();
+                succeeded += internal.succeeded();
+                failed.addAll(internal.failed());
+                skipped.addAll(internal.skipped());
+            }
         }
 
         log.info("발송처리 결과: rows={} matched={} skipped={} unmatched={} succeeded={} failed={}",
@@ -275,74 +181,9 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
         OrderLine anchor = orderLineRepository.findWithAccountAndSellerById(request.orderItemId())
                 .orElseThrow(() -> new IllegalArgumentException("주문 라인을 찾을 수 없습니다"));
         MarketplaceAccount account = anchor.getOrder().getMarketplaceAccount();
-        if (Platform.ELEVENST.equals(account.getPlatform())) {
-            return confirmManualElevenst(request, anchor, account, invoiceNumber);   // FEATURE_2610_17 / D2
-        }
-        if (!Platform.COUPANG.equals(account.getPlatform())) {
-            throw new IllegalArgumentException("쿠팡 · 11번가 주문만 발송처리할 수 있습니다");     // D7 · FEATURE_2610_17 / D2
-        }
-        String boxId = boxIdOf(anchor);
-        if (boxId == null || boxId.isBlank()) {
-            throw new IllegalArgumentException("박스 ID가 없습니다. 주문동기화 후 다시 시도하세요");   // D7
-        }
-        String externalOrderId = anchor.getOrder().getExternalOrderId();
-        // 2) 박스 전개 — 같은 주문 + 같은 계정 + 같은 박스 라인 전부(D1). 취소 라인은 거르지 않는다(D8).
-        List<OrderLine> boxLines = orderLineRepository.findByExternalOrderId(externalOrderId)
-                .stream()
-                .filter(l -> l.getOrder().getMarketplaceAccount().getId().equals(account.getId()))
-                .filter(l -> boxId.equals(boxIdOf(l)))
-                .toList();
-        if (boxLines.isEmpty()) {
-            boxLines = List.of(anchor);      // 방어적: 앵커는 항상 그 박스의 라인이다
-        }
-        // FEATURE_2609_75 / D27 — 내부 단계 묶음은 발주처리 전이다. 송장만 보내면 쿠팡이 거절하고, 실물 박스만 남는다.
-        if (hasInternalStage(boxLines)) {
-            throw new IllegalArgumentException(INTERNAL_STAGE_MANUAL_MESSAGE);
-        }
-        // 3) 모드 판정 = 앵커 상태(박스 상태의 거울). 클라이언트는 관여하지 않는다(D3).
-        boolean update = anchor.getStatus() != null && UPDATE_MODE_STATUSES.contains(anchor.getStatus());
-        String mode = update ? "UPDATE" : "CREATE";
-        // 택배사 코드를 먼저 해석한다 — 미등록이면 400 이므로 설정(경로)을 읽기 전에 끝낸다.
-        String deliveryCompanyCode = carrierCodeService
-                .validateDeliveryCompanyCode(request.deliveryCompanyCode(), account.getPlatform());
-        String path = (update ? coupangProperties.getUpdateInvoicesPath() : coupangProperties.getInvoicesPath())
-                .replace("{vendorId}", CoupangCredentials.of(account).getVendorId());
-
-        // 🔴 실물 박스 저장(PLAN 2609_40 D5 ①) — 사용자가 입력한 송장·택배사 코드로 그 박스의 행 1개.
-        //    묶음이 앵커로 지정돼 있으므로 D30(다중 묶음 가드)과 무관하다. 이미 있으면 건너뛴다.
-        //    전송 성공 여부와 무관하게, 전송 전에 남긴다 — 송장은 이미 발급됐다.
-        try {
-            shipmentParcelRecorder.record(anchor.getOrderShipment(), invoiceNumber, deliveryCompanyCode, null);
-        } catch (Exception e) {
-            log.warn("단건 발송처리 실물 박스 저장 실패(전송은 계속): orderId={} box={}", externalOrderId, boxId, e);
-        }
-
-        List<InvoiceLine> lines = toInvoiceLines(boxLines);
-        AccountResult result;
-        try {
-            result = postInvoices(account, lines, orderId -> invoiceNumber, deliveryCompanyCode, path);
-        } catch (Exception e) {
-            // 일괄 경로의 계정 격리와 같은 형태로 실패 1건을 만든다(예외를 500 으로 새게 두지 않는다).
-            log.warn("단건 발송처리 전송 실패: orderItemId={} box={} mode={}",
-                    request.orderItemId(), boxId, mode, e);
-            return new ManualShipmentResult(externalOrderId, boxId, mode,
-                    lines.size(), 0, List.of(new FailedBox(boxId, "ERROR", e.getMessage())), null);
-        }
-        // 4) 신규 업로드 성공만 write-back(D4·D5). 수정 모드는 상태를 바꾸지 않는다.
-        //    ⚠️ resultStatus 는 write-back 성공 여부와 무관하게 SHIPPED 다 — markDeparted 는 실패해도 삼킨다.
-        //       클라이언트 표시가 다음 동기화로 수렴하는 쪽이, 성공을 실패로 보이게 하는 것보다 낫다.
-        String resultStatus = null;
-        if (!update && result.succeeded() > 0) {
-            Map<String, List<OrderLine>> byBox = new LinkedHashMap<>();
-            registerWriteBack(boxLines, byBox);
-            markDeparted(result.succeededBoxIds(), byBox);
-            resultStatus = STATUS_SHIPPED.name();
-        }
-        log.info("단건 발송처리: orderId={} box={} mode={} lines={} succeeded={} failed={}",
-                externalOrderId, boxId, mode,
-                lines.size(), result.succeeded(), result.failed().size());
-        return new ManualShipmentResult(externalOrderId, boxId, mode,
-                lines.size(), result.succeeded(), result.failed(), resultStatus);
+        ShipmentInvoiceAdapter adapter = adapterFor(account.getPlatform())
+                .orElseThrow(() -> new IllegalArgumentException("쿠팡 · 11번가 주문만 발송처리할 수 있습니다"));     // D7 · FEATURE_2610_17 / D2
+        return adapter.shipManual(request, anchor, account, invoiceNumber);
     }
 
     @Override
@@ -372,64 +213,25 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
             linesByShipment.computeIfAbsent(line.getOrderShipment().getId(), k -> new ArrayList<>()).add(line);
         }
 
-        // (계정, 택배사, 주문 안 순번) 묶음마다 1 POST. postInvoices 는 송장을 주문번호로 고른다 — 한 POST 에 같은 주문의
-        // 배송 묶음이 둘 들어가면 둘째 묶음이 첫 묶음 송장으로 나간다(되돌릴 수 없다). 주문 안 순번으로 갈라 막는다.
-        Map<String, List<Long>> shipmentIdsByGroup = new LinkedHashMap<>();
-        Map<String, MarketplaceAccount> accountByGroup = new LinkedHashMap<>();
-        Map<String, Integer> nthByOrderId = new HashMap<>();
+        // FEATURE_2610_23 / D23 · D24: each marketplace sends its own bundles through its adapter's internal-stage
+        // slot, in the platform order.
+        Map<Platform, List<ReservedInvoice>> invoicesByPlatform = new EnumMap<>(Platform.class);
         for (Long shipmentId : byShipmentId.keySet()) {
             List<OrderLine> lines = linesByShipment.get(shipmentId);
             if (lines == null || lines.isEmpty()) {
                 failed.put(shipmentId, "주문 라인을 찾을 수 없습니다");
                 continue;
             }
-            MarketplaceAccount account = lines.get(0).getOrder().getMarketplaceAccount();
-            ReservedInvoice reserved = byShipmentId.get(shipmentId);
-            int nth = nthByOrderId.merge(reserved.externalOrderId(), 1, Integer::sum);
-            String group = account.getId() + "|" + reserved.carrierCode() + "|" + nth;
-            accountByGroup.putIfAbsent(group, account);
-            shipmentIdsByGroup.computeIfAbsent(group, k -> new ArrayList<>()).add(shipmentId);
+            invoicesByPlatform.computeIfAbsent(platformOf(lines), k -> new ArrayList<>())
+                    .add(byShipmentId.get(shipmentId));
         }
-
-        for (Map.Entry<String, List<Long>> entry : shipmentIdsByGroup.entrySet()) {
-            MarketplaceAccount account = accountByGroup.get(entry.getKey());
-            List<Long> shipmentIds = entry.getValue();
-            String carrierCode = byShipmentId.get(shipmentIds.get(0)).carrierCode();
-            List<OrderLine> groupLines = new ArrayList<>();
-            Map<String, String> invoiceByOrderId = new LinkedHashMap<>();
-            Map<String, Long> shipmentIdByBoxId = new LinkedHashMap<>();
-            for (Long shipmentId : shipmentIds) {
-                ReservedInvoice reserved = byShipmentId.get(shipmentId);
-                List<OrderLine> lines = linesByShipment.get(shipmentId);
-                groupLines.addAll(lines);
-                invoiceByOrderId.putIfAbsent(reserved.externalOrderId(), reserved.invoiceNumbers().get(0));
-                shipmentIdByBoxId.put(boxIdOf(lines.get(0)), shipmentId);
-            }
-            Map<String, List<OrderLine>> dbLinesByBoxId = new LinkedHashMap<>();
-            registerWriteBack(groupLines, dbLinesByBoxId);
-            try {
-                String path = coupangProperties.getInvoicesPath()
-                        .replace("{vendorId}", CoupangCredentials.of(account).getVendorId());
-                AccountResult result = postInvoices(account, toInvoiceLines(groupLines), invoiceByOrderId::get,
-                        carrierCode, path);
-                markDeparted(result.succeededBoxIds(), dbLinesByBoxId);
-                for (String boxId : result.succeededBoxIds()) {
-                    Long shipmentId = shipmentIdByBoxId.get(boxId);
-                    if (shipmentId != null) {
-                        succeeded.add(shipmentId);
-                    }
-                }
-                for (FailedBox box : result.failed()) {
-                    Long shipmentId = shipmentIdByBoxId.get(box.shipmentBoxId());
-                    if (shipmentId != null) {
-                        failed.put(shipmentId, box.resultCode() + ": " + box.message());
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("예약 송장 등록 계정 배치 실패: account={}", account.getId(), e);
-                shipmentIds.forEach(id -> failed.put(id, e.getMessage()));
-            }
-        }
+        invoicesByPlatform.forEach((platform, platformInvoices) -> {
+            ReservedInvoiceResult sent = adapterFor(platform)
+                    .orElseThrow(() -> new IllegalStateException("내부 단계가 없는 마켓의 배송 묶음입니다: " + platform))
+                    .sendReservedInvoices(platformInvoices, linesByShipment);
+            succeeded.addAll(sent.succeededShipmentIds());
+            failed.putAll(sent.failedReasons());
+        });
 
         // 🔴 실물 박스는 송장 등록이 성공한 뒤에 만든다(D22) — 저장된 택배사 코드로(D27), 규칙은 recordParcels 그대로(2609_40 D30 다중 묶음 가드 포함).
         Set<String> recordedOrders = new HashSet<>();
@@ -439,8 +241,9 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
                 continue;
             }
             Map<Platform, String> carrierCodeCache = new EnumMap<>(Platform.class);
-            carrierCodeCache.put(Platform.COUPANG, reserved.carrierCode());
-            recordParcels(reserved.externalOrderId(), orderLineRepository.findByExternalOrderId(reserved.externalOrderId()),
+            carrierCodeCache.put(platformOf(linesByShipment.get(shipmentId)), reserved.carrierCode());
+            invoiceWriteBack.recordParcels(reserved.externalOrderId(),
+                    orderLineRepository.findByExternalOrderId(reserved.externalOrderId()),
                     reserved.invoiceNumbers(), carrierCodeCache);
         }
         log.info("예약 송장 등록: shipments={} succeeded={} failed={}", byShipmentId.size(), succeeded.size(), failed.size());
@@ -466,24 +269,20 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
                 outcome.succeeded(), outcome.failed(), outcome.skipped());
     }
 
-    /** D27 · D29 — 결제완료(PAID) 라인의 배송 묶음에 내부 단계가 있으면 [지금 발송]이 발주처리부터 한다. */
-    private boolean hasInternalStage(List<OrderLine> lines) {
-        return lines.stream().anyMatch(l -> l.getStatus() == OrderStatus.PAID && l.getOrderShipment() != null
-                && l.getOrderShipment().getInternalStage() != null);
-    }
-
     /**
-     * [지금 발송] 결과 파일 경로의 내부 단계 주문 (D27) — 택배사 = 지금 활성 택배사(기존 일괄 발송처리와 같다), 송장 = 파일.
-     * 택배사 코드가 없으면 발주처리도 하지 않는다 — 발주만 되고 송장이 못 가는 상태를 만들지 않는다.
+     * The internal-stage orders of a [지금 발송] result file (D27 · FEATURE_2610_23 / D22) — carrier = the
+     * marketplace's code of the active carrier (the same as the bulk shipment confirm), invoice = the file. Without a
+     * carrier code nothing is acknowledged either — an order is never left acknowledged while its invoice cannot go.
      */
-    private InternalShipOutcome shipInternalFromFile(Map<String, List<OrderLine>> internalOrders,
+    private InternalShipOutcome shipInternalFromFile(Platform platform, Map<String, List<OrderLine>> internalOrders,
                                                      Map<String, List<String>> invoicesByOrderId) {
         String carrierCode;
         try {
-            carrierCode = carrierCodeService.resolveDeliveryCompanyCode(Platform.COUPANG);
+            carrierCode = carrierCodeService.resolveDeliveryCompanyCode(platform);
         } catch (Exception e) {
             List<FailedBox> failed = new ArrayList<>();
-            internalOrders.values().forEach(lines -> lines.stream().map(this::boxIdOf).filter(Objects::nonNull)
+            internalOrders.values().forEach(lines -> lines.stream().map(InvoiceWriteBack::boxIdOf)
+                    .filter(Objects::nonNull)
                     .distinct().forEach(boxId -> failed.add(new FailedBox(boxId, "ERROR", e.getMessage()))));
             return new InternalShipOutcome(0, failed, List.of());
         }
@@ -642,509 +441,18 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
         return false;
     }
 
-    /**
-     * 11st orders of a result file (FEATURE_2610_17 / D2 · D21 · D47).
-     *
-     * <ul>
-     *   <li>Send target = lines in {@code PREPARING} (order confirmation done). An order with none of those is skipped:
-     *       paid → 「11번가에서 발주처리를 먼저 해 주세요.」, otherwise 「이미 발송처리된 상태입니다.」.</li>
-     *   <li>One 1888 call per delivery number ({@code dlvNo}) with the representative (first) invoice of the first
-     *       order seen under it — orders bundled under that number are shipped by the same call. Carrier = the
-     *       active carrier's 11st code; missing → every 11st delivery number fails with that message.</li>
-     *   <li>A delivery number that fails is reported and the next one is still sent. Success → those lines become
-     *       {@code SHIPPED} locally (same write-back as Coupang).</li>
-     * </ul>
-     * ⚠️ Never throws — every failure is a {@code FailedBox} (other orders of the same file keep their results).
-     */
-    private ElevenstShipOutcome shipElevenstFromFile(Map<String, List<OrderLine>> orders,
-                                                     Map<String, List<String>> invoicesByOrderId,
-                                                     Map<Platform, String> carrierCodeCache) {
-        List<FailedBox> failed = new ArrayList<>();
-        List<SkippedOrder> skipped = new ArrayList<>();
-        Map<String, List<OrderLine>> linesByDlvNo = new LinkedHashMap<>();
-        Map<String, String> invoiceByDlvNo = new LinkedHashMap<>();
-        Map<String, MarketplaceAccount> accountByDlvNo = new LinkedHashMap<>();
-        int matched = 0;
-        for (Map.Entry<String, List<OrderLine>> order : orders.entrySet()) {
-            String orderId = order.getKey();
-            List<OrderLine> lines = order.getValue();
-            recordParcels(orderId, lines, invoicesByOrderId.get(orderId), carrierCodeCache);
-            List<OrderLine> preparing = lines.stream().filter(l -> l.getStatus() == OrderStatus.PREPARING).toList();
-            if (preparing.isEmpty()) {
-                boolean paid = lines.stream().anyMatch(l -> l.getStatus() == OrderStatus.PAID);
-                skipped.add(new SkippedOrder(orderId, statusName(lines.get(0)), paid
-                        ? ShipmentConfirmResult.ELEVENST_ACKNOWLEDGE_FIRST_REASON
-                        : ShipmentConfirmResult.ALREADY_SHIPPED_REASON));
-                continue;
-            }
-            matched++;
-            for (OrderLine line : preparing) {
-                String dlvNo = boxIdOf(line);
-                if (dlvNo == null || dlvNo.isBlank()) {
-                    failed.add(new FailedBox("", "ERROR", NO_BOX_MESSAGE));
-                    continue;
-                }
-                linesByDlvNo.computeIfAbsent(dlvNo, k -> new ArrayList<>()).add(line);
-                invoiceByDlvNo.putIfAbsent(dlvNo, representativeInvoice(invoicesByOrderId, orderId));
-                accountByDlvNo.putIfAbsent(dlvNo, line.getOrder().getMarketplaceAccount());
-            }
-        }
-        if (linesByDlvNo.isEmpty()) {
-            return new ElevenstShipOutcome(matched, 0, failed, skipped);
-        }
-        String carrierCode;
-        try {
-            carrierCode = carrierCodeService.resolveDeliveryCompanyCode(Platform.ELEVENST);
-        } catch (Exception e) {
-            linesByDlvNo.keySet().forEach(dlvNo -> failed.add(new FailedBox(dlvNo, "ERROR", e.getMessage())));
-            return new ElevenstShipOutcome(matched, 0, failed, skipped);
-        }
-        int succeeded = 0;
-        for (Map.Entry<String, List<OrderLine>> entry : linesByDlvNo.entrySet()) {
-            String dlvNo = entry.getKey();
-            try {
-                elevenstOrderActions.ship(accountByDlvNo.get(dlvNo), dlvNo, carrierCode, invoiceByDlvNo.get(dlvNo),
-                        LocalDateTime.now(SyncWindow.KST));
-                succeeded++;
-                markDeparted(List.of(dlvNo), Map.of(dlvNo, entry.getValue()));
-            } catch (Exception e) {
-                log.warn("11번가 발송처리 실패: dlvNo={}", dlvNo, e);
-                failed.add(new FailedBox(dlvNo, "ERROR", e.getMessage()));
-            }
-        }
-        log.info("11번가 발송처리: orders={} matched={} dlvNos={} succeeded={} failed={} skipped={}",
-                orders.size(), matched, linesByDlvNo.size(), succeeded, failed.size(), skipped.size());
-        return new ElevenstShipOutcome(matched, succeeded, failed, skipped);
-    }
-
-    /** {@link #shipElevenstFromFile} result. */
-    private record ElevenstShipOutcome(int matchedOrders, int succeeded, List<FailedBox> failed,
-                                       List<SkippedOrder> skipped) {
-    }
-
-    /**
-     * Single 11st invoice (FEATURE_2610_17 / D2 · D20 · D21): only a {@code PREPARING} line, one 1888 call for its
-     * delivery number with the carrier the screen chose. Paid → 400 (D20), already shipped → 400 (D21, no update
-     * API). A rejected call comes back as one failed box (no exception — same shape as the Coupang path).
-     * {@code PARTIAL} · {@code SPLIT} go to {@link ElevenstManualShipper} after the same checks (D64).
-     */
-    private ManualShipmentResult confirmManualElevenst(ManualShipmentRequest request, OrderLine anchor,
-                                                       MarketplaceAccount account, String invoiceNumber) {
-        String dlvNo = boxIdOf(anchor);
-        if (dlvNo == null || dlvNo.isBlank()) {
-            throw new IllegalArgumentException(NO_BOX_MESSAGE);
-        }
-        if (anchor.getStatus() == OrderStatus.PAID) {
-            throw new IllegalArgumentException(ELEVENST_ACKNOWLEDGE_FIRST_MESSAGE);
-        }
-        if (anchor.getStatus() != null && anchor.getStatus().isTerminal()) {
-            throw new IllegalArgumentException(ELEVENST_NO_INVOICE_UPDATE_MESSAGE);
-        }
-        String externalOrderId = anchor.getOrder().getExternalOrderId();
-        String carrierCode = carrierCodeService.validateDeliveryCompanyCode(request.deliveryCompanyCode(),
-                Platform.ELEVENST);
-        if (ManualShipmentRequest.MODE_PARTIAL.equals(request.mode())
-                || ManualShipmentRequest.MODE_SPLIT.equals(request.mode())) {
-            return elevenstManualShipper.ship(request, anchor, account, carrierCode, invoiceNumber);
-        }
-        List<OrderLine> lines = orderLineRepository.findByExternalOrderId(externalOrderId).stream()
-                .filter(l -> l.getOrder().getMarketplaceAccount().getId().equals(account.getId()))
-                .filter(l -> dlvNo.equals(boxIdOf(l)))
-                .toList();
-        if (lines.isEmpty()) {
-            lines = List.of(anchor);
-        }
-        try {
-            shipmentParcelRecorder.record(anchor.getOrderShipment(), invoiceNumber, carrierCode, null);
-        } catch (Exception e) {
-            log.warn("11번가 단건 발송처리 실물 박스 저장 실패(전송은 계속): orderId={} dlvNo={}", externalOrderId, dlvNo, e);
-        }
-        try {
-            elevenstOrderActions.ship(account, dlvNo, carrierCode, invoiceNumber, LocalDateTime.now(SyncWindow.KST));
-        } catch (Exception e) {
-            log.warn("11번가 단건 발송처리 실패: orderItemId={} dlvNo={}", request.orderItemId(), dlvNo, e);
-            return new ManualShipmentResult(externalOrderId, dlvNo, "CREATE", lines.size(), 0,
-                    List.of(new FailedBox(dlvNo, "ERROR", e.getMessage())), null);
-        }
-        markDeparted(List.of(dlvNo), Map.of(dlvNo, lines));
-        return new ManualShipmentResult(externalOrderId, dlvNo, "CREATE", lines.size(), 1, List.of(),
-                STATUS_SHIPPED.name());
-    }
-
     /** {@link #shipInternalOrders} 결과 — 송장 등록에 성공한 배송 묶음 수 · 실패 박스 · 상태가 바뀌어 뺀 주문(D27 × D16). */
     private record InternalShipOutcome(int succeeded, List<FailedBox> failed, List<SkippedOrder> skipped) {
     }
 
-    /**
-     * Sets the local status of the boxes whose invoice upload succeeded to {@code SHIPPED} (PLAN 2609_07 D4).
-     * The 11st path calls it with the delivery numbers 11st accepted (FEATURE_2610_17 / D2).
-     *
-     * <p>A re-upload is filtered out at once, and the order list shows the new status without waiting for a sync.
-     * The next order sync writes the same value (Coupang DEPARTURE · 11st 401 list → SHIPPED), so nothing conflicts.</p>
-     *
-     * ⚠️ Never throw here — the marketplace already accepted the invoice; an exception caught by the per-account
-     *    catch would report the succeeded box as failed and make the user upload again (duplicate send, PLAN 2609_07 D5).
-     *    → the <b>whole body</b> is wrapped in try, not only saveAll (an exception while building entities must not leak).
-     */
-    private void markDeparted(List<String> succeededBoxIds, Map<String, List<OrderLine>> dbLinesByBoxId) {
-        try {
-            List<OrderLine> updated = new ArrayList<>();
-            for (String boxId : succeededBoxIds) {
-                for (OrderLine line : dbLinesByBoxId.getOrDefault(boxId, List.of())) {
-                    updated.add(line.toBuilder().status(STATUS_SHIPPED).build());   // 동기화 upsert 와 같은 패턴
-                }
-            }
-            if (updated.isEmpty()) {
-                return;                               // 폴백으로만 전송된 주문 = DB 행 없음
-            }
-            orderLineRepository.saveAll(updated);
-        } catch (Exception e) {
-            log.warn("발송처리 로컬 상태 갱신 실패(쿠팡 전송은 성공): boxes={}", succeededBoxIds, e);
-        }
+    /** The adapter whose platform matches — same lookup as {@code ClaimActionServiceImpl.resolve()}. */
+    private Optional<ShipmentInvoiceAdapter> adapterFor(Platform platform) {
+        return shipmentInvoiceAdapters.stream().filter(adapter -> adapter.platform() == platform).findFirst();
     }
 
-    /**
-     * 결과 파일의 송장을 실물 박스({@code shipment_parcel})로 남긴다 (PLAN 2609_40 D8 · D30).
-     *
-     * <p>🔴 <b>그 주문의 배송 묶음이 하나일 때만</b> 만든다. 결과 파일이 주는 것은 (주문번호, 송장번호) 뿐이고
-     * 묶음 식별자가 없어 <b>어느 묶음의 송장인지 알 수 없다</b> — 추측해서 붙이면 스캔한 송장이 남의 박스를 연다.
-     * 묶음이 2개 이상이면 경고만 남기고, 주문 동기화 백필이 묶음별로 정확히 채운다(D30).
-     *
-     * <p>🔴 묶음 수를 세는 소스는 <b>그 주문의 전체 라인</b>이다 — {@code sendable} 만 세면 박스 2개 중 하나가
-     * 이미 발송된 주문이 「묶음 1개」로 세어져 가드를 빠져나간다.
-     *
-     * <p>⚠️ 전송 성공 여부와 무관하게 저장한다(송장은 이미 발급됐고 작업자는 그걸 들고 싼다).
-     * ⚠️ 여기서 던지면 안 된다 — 박스 저장 실패가 발송처리를 막으면 안 된다.
-     */
-    private void recordParcels(String orderId, List<OrderLine> lines, List<String> invoiceNumbers,
-                               Map<Platform, String> carrierCodeCache) {
-        if (invoiceNumbers == null || invoiceNumbers.isEmpty() || lines.isEmpty()) {
-            return;
-        }
-        try {
-            Map<String, OrderShipment> shipmentsById = new LinkedHashMap<>();
-            for (OrderLine line : lines) {
-                String boxId = boxIdOf(line);
-                if (boxId != null && !boxId.isBlank() && line.getOrderShipment() != null) {
-                    shipmentsById.putIfAbsent(boxId, line.getOrderShipment());
-                }
-            }
-            if (shipmentsById.size() != 1) {
-                log.warn("발송처리 실물 박스 생성 생략 — 배송 묶음 {}개 · 송장 {}장: orderId={} (PLAN 2609_40 D30, "
-                                + "주문 동기화가 묶음별로 채운다)",
-                        shipmentsById.size(), invoiceNumbers.size(), orderId);
-                return;
-            }
-            OrderShipment shipment = shipmentsById.values().iterator().next();
-            Platform platform = lines.get(0).getOrder().getMarketplaceAccount().getPlatform();
-            String carrierCode = carrierCodeQuietly(platform, carrierCodeCache);
-            for (String invoiceNumber : invoiceNumbers) {
-                shipmentParcelRecorder.record(shipment, invoiceNumber, carrierCode, null);
-            }
-        } catch (Exception e) {
-            log.warn("발송처리 실물 박스 저장 실패(전송은 계속): orderId={}", orderId, e);
-        }
-    }
-
-    /**
-     * 박스에 적을 택배사 코드 — 못 얻어도 진행한다(PLAN 2609_40 D6).
-     *
-     * <p>전송용 {@code resolveDeliveryCompanyCode} 는 미설정 시 던지지만, 여기서는 코드가 없다고
-     * 송장번호까지 버릴 이유가 없다. 플랫폼당 1회만 읽고 캐시한다(실패도 캐시 — 재조회 무의미).
-     */
-    private String carrierCodeQuietly(Platform platform, Map<Platform, String> cache) {
-        if (platform == null) {
-            return null;
-        }
-        // ⚠️ computeIfAbsent 를 쓰지 않는다 — null(미해석)을 저장하지 않아 주문마다 다시 조회하게 된다.
-        if (cache.containsKey(platform)) {
-            return cache.get(platform);
-        }
-        String code = null;
-        try {
-            code = carrierCodeService.resolveDeliveryCompanyCode(platform);
-        } catch (Exception e) {
-            log.info("실물 박스 택배사 코드 미해석(송장번호만 저장): platform={} reason={}", platform, e.getMessage());
-        }
-        cache.put(platform, code);
-        return code;
-    }
-
-    /**
-     * 성공 시 write-back 할 DB 라인을 박스 id 로 색인한다.
-     *
-     * <p>배송 묶음은 nullable 이므로 널/공백 키는 담지 않는다. DB 값과 응답 {@code shipmentBoxId} 는
-     * 같은 쿠팡 id 의 문자열이므로(동기화가 {@code box.path("shipmentBoxId").asText()} 로 넣은 값)
-     * 숫자 변환·패딩 없이 문자열 그대로 비교한다.</p>
-     */
-    private void registerWriteBack(List<OrderLine> lines, Map<String, List<OrderLine>> target) {
-        for (OrderLine line : lines) {
-            String boxId = boxIdOf(line);
-            if (boxId == null || boxId.isBlank()) {
-                continue;
-            }
-            target.computeIfAbsent(boxId, k -> new ArrayList<>()).add(line);
-        }
-    }
-
-    /**
-     * DB 미매칭 주문을 쿠팡 단건 발주서 조회로 확정한다(PLAN 송장시트 D16).
-     *
-     * <p>동기화가 실패해 주문 라인이 비어도 시트만 있으면 발송처리가 되게 하는 안전망이다.
-     * 후보 계정(활성 COUPANG)을 순회해 박스가 나오는 첫 계정을 그 주문의 계정으로 확정하고,
-     * 그 계정을 다음 주문의 후보 맨 앞으로 옮긴다(한 파일은 대개 같은 계정).</p>
-     *
-     * <p>응답 {@code box.status} 가 배송지시 이상이면 그 박스를 제외하고, 남는 라인이 없으면
-     * {@code skipped} 로 보고한다(PLAN 2609_07 D6).</p>
-     *
-     * <p>조회로 받아온 박스는 전송 여부와 무관하게 {@code order_line} 에 적재되고(PLAN 2609_13 D9),
-     * 확정된 주문의 DB 라인은 {@code dbLinesByBoxId} 에 편입돼 성공 시 write-back 대상이 된다.</p>
-     *
-     * @return 폴백으로 확정된 주문 수(스킵분 제외). 실패한 주문은 {@code unmatched} 에 추가된다.
-     */
-    private int fallback(List<String> candidates, List<String> unmatched, List<SkippedOrder> skipped,
-                         Map<Long, MarketplaceAccount> accountById,
-                         Map<Long, List<InvoiceLine>> linesByAccount,
-                         Map<String, List<OrderLine>> dbLinesByBoxId,
-                         Map<String, List<String>> invoicesByOrderId,
-                         Map<Platform, String> carrierCodeCache) {
-        if (candidates.isEmpty()) {
-            return 0;                       // 정상 경로: 쿠팡 호출 0회
-        }
-
-        List<MarketplaceAccount> coupangAccounts = new ArrayList<>(
-                marketplaceAccountRepository.findByIsActiveTrue().stream()
-                        .filter(a -> Platform.COUPANG.equals(a.getPlatform()))
-                        .toList());
-        if (coupangAccounts.isEmpty()) {
-            unmatched.addAll(candidates);
-            log.warn("발송처리 폴백 불가 — 활성 쿠팡 계정 없음: 미매칭 {}건", candidates.size());
-            return 0;
-        }
-
-        int resolved = 0;
-        int consecutiveFailures = 0;
-        boolean circuitOpen = false;
-
-        for (int i = 0; i < candidates.size(); i++) {
-            String orderId = candidates.get(i);
-            if (circuitOpen) {
-                unmatched.add(orderId);
-                continue;
-            }
-            if (i >= MAX_FALLBACK_ORDERS) {
-                unmatched.add(orderId);
-                continue;
-            }
-
-            FallbackHit hit = lookupOrder(orderId, coupangAccounts);
-            if (hit == null) {
-                unmatched.add(orderId);
-                consecutiveFailures++;
-                if (consecutiveFailures >= FALLBACK_CIRCUIT_THRESHOLD) {
-                    circuitOpen = true;
-                    log.warn("발송처리 폴백 중단 — 연속 {}건 전 계정 실패", consecutiveFailures);
-                }
-                continue;
-            }
-
-            if (hit.lines().isEmpty()) {              // 이 분기에서 skippedStatus 는 non-null 이 보장된다
-                skipped.add(new SkippedOrder(orderId, hit.skippedStatus(),
-                        ShipmentConfirmResult.ALREADY_SHIPPED_REASON));
-                consecutiveFailures = 0;              // 응답은 정상이다 — 스킵은 실패가 아니다
-                promoteToFront(coupangAccounts, hit.account());   // 계정은 확정됐다
-                continue;                             // resolved 증가 없음(D8) · unmatched 에도 넣지 않는다
-            }
-
-            consecutiveFailures = 0;
-            resolved++;
-            MarketplaceAccount account = hit.account();
-            accountById.putIfAbsent(account.getId(), account);
-            linesByAccount.computeIfAbsent(account.getId(), k -> new ArrayList<>()).addAll(hit.lines());
-            // 조회 시점에 적재했으므로(fetchOrderLines) 이 주문도 write-back 대상이 된다(PLAN 2609_13 D9).
-            // upsertBox 가 자기 트랜잭션에서 커밋한 뒤라 여기서 읽으면 방금 저장한 라인이 보인다.
-            // 전송에서 빠진 박스(DEPARTURE 이상)가 섞여도 무해하다 — markDeparted 는 쿠팡이 성공을
-            // 돌려준 박스 id 만 갱신한다. 여기서 다시 거르면 폴백 경로에만 필터 규칙이 하나 더 생긴다.
-            List<OrderLine> storedLines = orderLineRepository.findByExternalOrderId(orderId);
-            registerWriteBack(storedLines, dbLinesByBoxId);
-            // 🔴 폴백으로 확정된 주문도 같은 헬퍼를 부른다(PLAN 2609_40) — 빠뜨리면 그 주문만
-            //    다음 주문 동기화 전까지 스캔되지 않는다.
-            recordParcels(orderId, storedLines, invoicesByOrderId.get(orderId), carrierCodeCache);
-            promoteToFront(coupangAccounts, account);
-            log.info("발송처리 폴백 확정: orderId={} account={} boxes={}",
-                    orderId, account.getId(), distinctBoxIds(hit.lines()).size());
-        }
-
-        int overLimit = candidates.size() - Math.min(candidates.size(), MAX_FALLBACK_ORDERS);
-        if (overLimit > 0) {
-            log.warn("발송처리 폴백 상한({}) 초과 — {}건은 조회 없이 미매칭 유지", MAX_FALLBACK_ORDERS, overLimit);
-        }
-        return resolved;
-    }
-
-    /** 다음 주문도 대개 같은 계정 → 후보 맨 앞으로. */
-    private void promoteToFront(List<MarketplaceAccount> candidates, MarketplaceAccount account) {
-        candidates.remove(account);
-        candidates.add(0, account);
-    }
-
-    /**
-     * 후보 계정을 순서대로 조회해 박스가 나오는 첫 계정을 반환. 전부 실패하면 null(그 주문만 미매칭).
-     *
-     * <p>라인이 0행이어도 상태로 걸러낸 것(={@code skippedStatus != null})이면 계정이 확정된 것이므로
-     * 다음 계정을 시도하지 않고 즉시 반환한다. 전량취소 등 기존 사유의 0행은 예전처럼 다음 계정을 시도한다.</p>
-     */
-    private FallbackHit lookupOrder(String orderId, List<MarketplaceAccount> candidates) {
-        for (MarketplaceAccount account : candidates) {
-            try {
-                OrderLookup lookup = fetchOrderLines(account, orderId);
-                if (!lookup.lines().isEmpty() || lookup.skippedStatus() != null) {
-                    return new FallbackHit(account, lookup.lines(), lookup.skippedStatus());
-                }
-            } catch (Exception e) {
-                // 이 계정에서 실패해도 다음 계정을 시도한다(주문이 어느 계정 것인지 모르므로).
-                log.warn("발송처리 폴백 조회 실패: orderId={} account={}", orderId, account.getId(), e);
-            }
-        }
-        return null;
-    }
-
-    /**
-     * 쿠팡 단건 발주서 조회 → 송장업로드 라인 추출.
-     *
-     * <p>⚠️ 경로 조립·봉투 검사가 {@code ShippingLabelServiceImpl.previewRowsByOrder} 와 중복이지만
-     * 공통 추출하지 않는다 — 검증이 끝난 시트 경로의 회귀 위험을 0으로 유지한다(PLAN 송장시트 D5 와 같은 판단).</p>
-     * <p>⚠️ 취소 라인 제외는 <b>폴백 경로에만</b> 있다(DB 경로는 기존 동작 유지 — 이번 스코프 아님).
-     * 규칙은 시트 생성 {@code flattenBox} 와 동일: {@code shippingCount - cancelCount <= 0} 이면 제외.</p>
-     * <p>⚠️ 배송지시 이상 박스는 제외하고 그 상태를 {@code skippedStatus} 로 남긴다(PLAN 2609_07 D6) —
-     * 전량취소로 0행이 된 경우와 반드시 구분된다.</p>
-     * <p>⚠️ 받아온 박스는 <b>skip 여부와 무관하게</b> {@code order_line} 에 적재한다(PLAN 2609_13 D9) —
-     * 다음 발송처리가 폴백을 타지 않게 하는 것이 이 저장의 목적이다. 추가 API 호출은 없다.</p>
-     */
-    private OrderLookup fetchOrderLines(MarketplaceAccount account, String orderId) {
-        String path = coupangProperties.getOrdersheetByOrderPath()
-                .replace("{vendorId}", CoupangCredentials.of(account).getVendorId())
-                .replace("{orderId}", orderId);
-
-        JsonNode parsed = readTree(coupangApiClient.get(path, "", account));
-        JsonNode data = parsed.path("data");
-        if (parsed.path("code").asInt(200) != 200 || !data.isArray()) {
-            // 잘못된 orderId 에도 200 + 비정상 봉투가 올 수 있어 "0행"과 "실패"를 여기서 분리한다.
-            throw new IllegalStateException("쿠팡 발주서 단건 응답 이상: code=" + parsed.path("code").asText());
-        }
-
-        List<InvoiceLine> lines = new ArrayList<>();
-        String skippedStatus = null;
-        for (JsonNode box : data) {
-            String boxStatus = box.path("status").asText("");
-            // 조회 응답은 이미 정확하다 — 전송 대상에서 빠지는 박스도 저장한다(PLAN 2609_13 D9).
-            // ⚠️ 전송이 우선이다(D6). 저장 실패가 발송처리를 막으면 안 되므로 박스 단위로 삼킨다(D4·D5).
-            try {
-                orderUpserter.upsertBox(account, box);
-            } catch (Exception e) {
-                log.warn("발송처리 폴백 주문 적재 실패(전송은 계속): orderId={} account={}",
-                        orderId, account.getId(), e);
-            }
-            // 원문 → 중립 상태로 옮겨 같은 블랙리스트로 판정한다. 매핑 실패(모르는 코드)는 전송한다.
-            OrderStatus mapped = OrderStatus.fromCoupang(boxStatus).orElse(null);
-            if (mapped != null && SKIP_STATUSES.contains(mapped)) {
-                if (skippedStatus == null) {
-                    skippedStatus = mapped.name();              // 첫 번째로 걸러진 박스의 상태만 기억
-                }
-                continue;                                       // 이미 발송된 박스는 전송하지 않는다
-            }
-            String boxId = box.path("shipmentBoxId").asText("");
-            for (JsonNode item : box.path("orderItems")) {
-                int quantity = item.path("shippingCount").asInt(0) - item.path("cancelCount").asInt(0);
-                if (quantity <= 0) {
-                    continue;                                   // 전량 확정취소 라인은 미발송
-                }
-                lines.add(new InvoiceLine(boxId, orderId, item.path("vendorItemId").asText("")));
-            }
-        }
-        return new OrderLookup(lines, skippedStatus);
-    }
-
-    /**
-     * 계정의 (박스×라인)을 dto/라인 으로 조립해 1 POST 전송하고 응답을 집계.
-     *
-     * <p>🔴 송장이 여러 장인 주문도 <b>대표 1장(첫 송장)만</b> 보낸다(PLAN 2609_40 D8) — 쿠팡은 배송 묶음
-     * 하나에 송장 하나만 받는다. 나머지 송장은 실물 박스({@code shipment_parcel})에만 남는다.
-     */
-    private AccountResult sendBatch(MarketplaceAccount account, List<InvoiceLine> lines,
-                                    Map<String, List<String>> invoicesByOrderId) throws Exception {
-        // deliveryCompanyCode 는 계정당 1회 (하드코딩 금지, 미설정 시 IllegalStateException).
-        String deliveryCompanyCode = carrierCodeService.resolveDeliveryCompanyCode(account.getPlatform());
-        String path = coupangProperties.getInvoicesPath()
-                .replace("{vendorId}", CoupangCredentials.of(account).getVendorId());
-        return postInvoices(account, lines, orderId -> representativeInvoice(invoicesByOrderId, orderId),
-                deliveryCompanyCode, path);
-    }
-
-    /** The representative invoice sent to the marketplace = the first one in file order (D8 · FEATURE_2610_17 / D2). */
-    private String representativeInvoice(Map<String, List<String>> invoicesByOrderId, String orderId) {
-        List<String> invoices = invoicesByOrderId.get(orderId);
-        return (invoices == null || invoices.isEmpty()) ? null : invoices.get(0);
-    }
-
-    /**
-     * dto 조립 → 1 POST → responseList 집계. 일괄(xlsx)·단건 공용 (PLAN 2609_11 D10).
-     * 경로만 다르면 송장수정도 같은 바디다(dto 구조 동일).
-     *
-     * ⚠️ 이름을 {@code post} 로 짓지 말 것 — 본문에서 {@code coupangApiClient.post(...)} 와 섞여 읽힌다.
-     */
-    private AccountResult postInvoices(MarketplaceAccount account, List<InvoiceLine> lines,
-                                       Function<String, String> invoiceResolver,
-                                       String deliveryCompanyCode, String path) throws Exception {
-        List<Map<String, Object>> dtos = new ArrayList<>();
-        for (InvoiceLine line : lines) {
-            Map<String, Object> dto = new LinkedHashMap<>();
-            // external*Id 는 String → 요청 바디는 long 으로 변환.
-            dto.put("shipmentBoxId", Long.parseLong(line.shipmentBoxId()));
-            dto.put("orderId", Long.parseLong(line.orderId()));
-            dto.put("deliveryCompanyCode", deliveryCompanyCode);
-            dto.put("invoiceNumber", invoiceResolver.apply(line.orderId()));
-            dto.put("vendorItemId", Long.parseLong(line.vendorItemId()));
-            dto.put("splitShipping", false);
-            dto.put("preSplitShipped", false);
-            dto.put("estimatedShippingDate", "");
-            dtos.add(dto);
-        }
-
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("vendorId", CoupangCredentials.of(account).getVendorId());
-        body.put("orderSheetInvoiceApplyDtos", dtos);
-
-        String json = objectMapper.writeValueAsString(body);
-        String response = coupangApiClient.post(path, json, account);
-
-        return parseResponse(response);
-    }
-
-    /** 응답 data.responseList 집계. data/responseList 없으면 예외(→ 계정 격리). */
-    private AccountResult parseResponse(String json) {
-        JsonNode data = readTree(json).path("data");
-        if (data.isMissingNode() || data.path("responseList").isMissingNode()) {
-            throw new IllegalStateException("쿠팡 송장업로드 응답 파싱 실패");
-        }
-        int succeeded = 0;
-        List<String> succeededBoxIds = new ArrayList<>();
-        List<FailedBox> failed = new ArrayList<>();
-        for (JsonNode r : data.path("responseList")) {
-            if (r.path("succeed").asBoolean(false)) {
-                succeeded++;                                    // 요약 숫자는 쿠팡 응답과 1:1
-                String boxId = r.path("shipmentBoxId").asText("");
-                if (!boxId.isBlank()) {
-                    succeededBoxIds.add(boxId);
-                }
-            } else {
-                failed.add(new FailedBox(
-                        r.path("shipmentBoxId").asText(""),
-                        r.path("resultCode").asText(""),
-                        r.path("resultMessage").asText("")));
-            }
-        }
-        return new AccountResult(succeeded, succeededBoxIds.stream().distinct().toList(), failed);
+    /** The marketplace of a bundle's lines (one bundle = one account). */
+    private static Platform platformOf(List<OrderLine> lines) {
+        return lines.get(0).getOrder().getMarketplaceAccount().getPlatform();
     }
 
     /** 택배사 결과 xlsx 파싱 → 주문번호(5)·운송장번호(6)만 사용, 공백행 스킵. */
@@ -1183,92 +491,7 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
         return formatter.formatCellValue(cell).trim();
     }
 
-    /**
-     * DB 라인(order_line) → 송장업로드 라인.
-     *
-     * <p>{@code vendorItemId} 는 core 가 아니라 쿠팡 거울({@code coupang_order_line})에 있으므로
-     * 라인 id 묶음으로 <b>한 번에</b> 읽는다(FEATURE_2609_26 / 04 §3-3).
-     * 거울 행이 없는 라인은 전송 식별자를 만들 수 없어 제외한다(쿠팡 주문에는 항상 있다).
-     */
-    private List<InvoiceLine> toInvoiceLines(List<OrderLine> lines) {
-        Map<Long, CoupangOrderLine> mirrors = mirrorsOf(lines);
-        List<InvoiceLine> invoiceLines = new ArrayList<>();
-        for (OrderLine line : lines) {
-            CoupangOrderLine mirror = mirrors.get(line.getId());
-            if (mirror == null) {
-                log.warn("발송처리 라인 제외 — 쿠팡 거울 행 없음: line={}", line.getId());
-                continue;
-            }
-            invoiceLines.add(new InvoiceLine(boxIdOf(line),
-                    line.getOrder().getExternalOrderId(), mirror.getVendorItemId()));
-        }
-        return invoiceLines;
-    }
-
-    /** 라인 id → 쿠팡 거울 행. 빈 목록으로 IN 을 날리지 않는다. */
-    private Map<Long, CoupangOrderLine> mirrorsOf(List<OrderLine> lines) {
-        if (lines.isEmpty()) {
-            return Map.of();
-        }
-        List<Long> ids = lines.stream().map(OrderLine::getId).toList();
-        return coupangOrderLineRepository.findByOrderLine_IdIn(ids).stream()
-                .collect(Collectors.toMap(m -> m.getOrderLine().getId(), Function.identity(), (a, b) -> a));
-    }
-
-    /** Delivery bundle id (Coupang shipmentBoxId · 11st dlvNo). Null when there is no bundle. */
-    private String boxIdOf(OrderLine line) {
-        return (line.getOrderShipment() == null) ? null : line.getOrderShipment().getExternalShipmentId();
-    }
-
-    /** 블랙리스트 판정 — 상태를 모르면(null) 전송한다(D1). */
-    private boolean sendable(OrderLine line) {
-        return line.getStatus() == null || !SKIP_STATUSES.contains(line.getStatus());
-    }
-
-    /** 스킵 보고용 상태 이름 — 중립 상태다(원문 라벨 변환은 클라이언트 몫, D9). */
-    private String statusName(OrderLine line) {
-        return (line.getStatus() == null) ? null : line.getStatus().name();
-    }
-
-    private List<String> distinctBoxIds(List<InvoiceLine> lines) {
-        return lines.stream().map(InvoiceLine::shipmentBoxId).distinct().toList();
-    }
-
-    private JsonNode readTree(String json) {
-        try {
-            return objectMapper.readTree(json);
-        } catch (Exception e) {
-            throw new IllegalStateException("쿠팡 송장업로드 응답 파싱 실패", e);
-        }
-    }
-
     /** 업로드 xlsx 한 행에서 사용하는 두 열. */
     private record UploadRow(String orderId, String invoiceNumber) {
-    }
-
-    /** 송장업로드 dto 1건에 필요한 최소 식별자(DB 라인·쿠팡 폴백 라인 공통). */
-    private record InvoiceLine(String shipmentBoxId, String orderId, String vendorItemId) {
-    }
-
-    /**
-     * 폴백 단건조회 결과. lines 가 빈 이유를 반드시 구분한다:
-     * <ul>
-     *   <li>{@code skippedStatus != null} → 상태로 걸러냄(이미 발송) = 스킵 보고 대상</li>
-     *   <li>{@code skippedStatus == null} → 전량취소(shippingCount-cancelCount&lt;=0) 등 기존 사유 = 기존과 동일하게 0행 취급</li>
-     * </ul>
-     */
-    private record OrderLookup(List<InvoiceLine> lines, String skippedStatus) {
-    }
-
-    /** 폴백으로 확정된 주문의 계정과 라인(라인이 비면 상태 스킵 — skippedStatus 참고). */
-    private record FallbackHit(MarketplaceAccount account, List<InvoiceLine> lines, String skippedStatus) {
-    }
-
-    /**
-     * 계정 배치 결과. succeeded 는 응답 건수 그대로, succeededBoxIds 는 write-back 가능한(공백 아닌) 박스만.
-     * ⚠️ 합포장은 같은 shipmentBoxId 로 dto N개를 보내므로 responseList 도 박스당 N행일 수 있다
-     *    → succeededBoxIds 는 <b>distinct</b> (기존 실패 경로가 distinctBoxIds() 를 쓰는 것과 같은 이유).
-     */
-    private record AccountResult(int succeeded, List<String> succeededBoxIds, List<FailedBox> failed) {
     }
 }

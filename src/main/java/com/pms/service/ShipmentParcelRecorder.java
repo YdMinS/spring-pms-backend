@@ -12,23 +12,24 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Optional;
 
 /**
- * 송장번호 → 실물 박스 행 생성의 <b>유일한 창구</b> (FEATURE_2609_40 / PLAN D5 · D7).
+ * The <b>one door</b> for creating physical-box rows from invoice numbers (FEATURE_2609_40 / PLAN D5 · D7).
  *
- * <p>저장 경로는 둘이고 둘 다 여기를 통한다:
+ * <p>There are two save paths and both go through here:
  * <ul>
- *   <li>발송처리 — {@link ShipmentConfirmServiceImpl}(택배사 결과 파일 일괄 · 단건 수동)</li>
- *   <li>주문 동기화 백필 — {@link com.pms.service.coupang.OrderUpserter}</li>
+ *   <li>Shipment confirm — {@link InvoiceWriteBack} (the carrier result file, bulk) · the marketplaces'
+ *       {@link ShipmentInvoiceAdapter}s and {@link ElevenstManualShipper} (single manual) — FEATURE_2610_23 / D21</li>
+ *   <li>Order sync backfill — {@link com.pms.service.coupang.OrderUpserter}</li>
  * </ul>
  *
- * <p>🔴 <b>이미 있는 (배송묶음, 송장번호) 는 손대지 않는다</b>. 동기화는 반복 실행되므로 여기서 갱신하면
- * ① 실행마다 박스가 늘거나(유일 제약이 막는다) ② {@code PACKED} 인 박스의 포장 결과를 덮어
- * 원장과 화면이 갈라진다.
+ * <p>🔴 <b>An existing (delivery bundle, invoice number) is never touched</b>. The sync runs again and again, so
+ * updating here would ① add a box every run (the unique constraint stops it) or ② overwrite the packing result of a
+ * {@code PACKED} box, splitting the ledger from the screen.
  *
- * <p>🔴 {@code parcel_seq} 는 <b>그 배송 묶음의 현재 행 수 + 1</b> 이다. 총 개수 컬럼을 두지 않는 이유와 같다
- * (세면 나오는 값을 두 곳에 적지 않는다).
+ * <p>🔴 {@code parcel_seq} is <b>the bundle's current row count + 1</b> — the same reason there is no total-count
+ * column (a value you can count is not written in two places).
  *
- * <p>⚠️ 호출자는 <b>실패를 삼켜야 한다</b> — 박스 저장이 발송처리·주문 동기화를 깨뜨리면 안 된다.
- * 이 클래스는 예외를 감추지 않는다(호출 지점마다 어떤 로그를 남길지는 호출자가 안다).
+ * <p>⚠️ Callers <b>must swallow failures</b> — a box save must not break the shipment confirm or the order sync.
+ * This class does not hide exceptions (each call site knows which log it wants).
  */
 @Slf4j
 @Service

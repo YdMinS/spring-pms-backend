@@ -36,7 +36,7 @@ import java.util.stream.Collectors;
 /**
  * The two 11st single-shipment modes besides 「한 번에 모두」 (FEATURE_2610_17 / D64): 「일부 줄만 보내기」 (1636 —
  * chosen lines of a delivery, one invoice) and 「한 줄을 송장 여러 장으로」 (6791 — one line over 2~10 invoices).
- * Called by {@code ShipmentConfirmServiceImpl.confirmManual} after it checked the line is an 11st line in preparing.
+ * Called by {@code ElevenstShipmentInvoiceAdapter.shipManual} after it checked the line is an 11st line in preparing.
  *
  * <ul>
  *   <li>Candidates = lines of the same order ({@code ordNo}) and the same delivery ({@code dlvNo}) that are still in

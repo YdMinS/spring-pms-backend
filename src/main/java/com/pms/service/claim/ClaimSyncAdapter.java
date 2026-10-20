@@ -6,9 +6,10 @@ import com.pms.domain.MarketplaceAccount;
 /**
  * Per-platform claim sync entry (FEATURE_2609_18 / PLAN D21 — the seam only).
  *
- * Coupang: exchanges only — Coupang returns ride on the cancel-correction response (D15) and stay outside this seam;
- * moving them would add Coupang calls. 11st: returns and exchanges both (FEATURE_2610_17 / D15 — the 11st round has
- * no cancel-correction step to carry the returns).
+ * Coupang: {@link #syncExchanges} loads exchanges only — Coupang returns ride on the cancel-correction response (D15),
+ * which the order round and {@link #syncClaimsOnly} call; moving them into {@link #syncExchanges} would add Coupang
+ * calls. 11st: returns and exchanges both (FEATURE_2610_17 / D15 — the 11st round has no cancel-correction step to
+ * carry the returns).
  *
  * <p>⚠️ Only {@code platform()} — callers pick the one adapter whose platform matches the account;
  * {@code supports(account)} · {@code priority()} are not needed for that.
@@ -20,6 +21,14 @@ public interface ClaimSyncAdapter {
 
     /** New-window load (+ open-claim tracking for Coupang). Result of one account. */
     ClaimSyncResult syncExchanges(MarketplaceAccount account);
+
+    /**
+     * The claim screen's claims-only round of one account (FEATURE_2609_70 / D14 · D15-1, moved here by
+     * FEATURE_2610_23 / D12 · D21). Runs under the caller's lock and the account's tenant. A load or tracking failure
+     * propagates, and only a round that finished its tracking stamps {@code last_claim_sync_at} — never the order
+     * sync status.
+     */
+    void syncClaimsOnly(MarketplaceAccount account);
 
     /**
      * 회차 결과 — 로그·검증용.

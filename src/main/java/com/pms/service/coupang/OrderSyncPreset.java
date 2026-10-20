@@ -1,19 +1,21 @@
 package com.pms.service.coupang;
 
 /**
- * 동기화 한 번의 <b>의도</b> (FEATURE_2609_49 / D6·D7).
+ * The <b>intent</b> of one sync (FEATURE_2609_49 / D6·D7).
  *
- * <p>{@link OrderSyncScope} 와 역할이 다르다 — scope 는 "어떤 상태를 조회하는가"(서비스 계층의 상태
- * 집합)이고, preset 은 "누가 왜 부르는가"(경계의 계약)다. preset 이 scope 와 <b>창</b>을 함께 고른다.
+ * <p>Its role differs from {@link OrderSyncScope} — the scope is "which statuses are read" (the service layer's status
+ * set), the preset is "who calls and why" (the boundary's contract). The preset picks the scope and the
+ * <b>window</b> together.
  *
- * <p>단계(취소 보정·반품 추적·교환·백필·문의)는 <b>두 프리셋이 동일하게 전부</b> 돈다. 15분 티어가
- * 필요한 단계와 수동 버튼이 필요한 단계가 같고, 야간과의 차이는 주문 조회뿐이기 때문이다 — 단계별
- * on/off 축을 만들지 말 것(조합만 늘고 쓰는 곳이 없다).
+ * <p>The steps (cancel correction · return tracking · exchanges · backfill · inquiries) run <b>all and the same for
+ * both presets</b>. The steps the 15-minute tier needs are the steps the manual button needs, and the only difference
+ * from the night round is the order lookup — do not make a per-step on/off axis (only combinations grow, nobody uses
+ * them).
  *
- * <p>🔴 <b>이 enum 에 메서드를 만들지 말 것.</b> {@code scope()} 같은 매핑을 넣으면 RECONCILE 쪽 값이
- * 죽은 코드가 된다 — 그 경로는 {@code syncAccount(account, SyncWindow)} 오버로드를 쓰고, 그 오버로드가
- * 내부에서 FULL 을 스스로 박기 때문이다({@code CoupangOrderSyncServiceImpl:68}). 분기는 파사드의
- * switch 한 곳에만 둔다.
+ * <p>🔴 <b>Do not add methods to this enum.</b> A mapping such as {@code scope()} would make the RECONCILE value dead
+ * code — that path uses the {@code syncAccount(account, SyncWindow)} overload, which sets FULL inside on its own
+ * ({@code CoupangOrderSyncServiceImpl:68}). The branch stays in one place: the switch of the Coupang order round
+ * ({@code CoupangOrderSyncAdapter}, FEATURE_2610_23 / D21).
  */
 public enum OrderSyncPreset {
 

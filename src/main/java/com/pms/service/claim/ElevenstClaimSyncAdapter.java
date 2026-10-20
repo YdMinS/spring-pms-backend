@@ -6,6 +6,7 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
 import com.pms.domain.Platform;
 import com.pms.repository.OrderClaimRepository;
+import com.pms.service.coupang.SyncStatusRecorder;
 import com.pms.service.coupang.SyncWindow;
 import com.pms.service.elevenst.ElevenstOrderApi;
 import com.pms.service.elevenst.ElevenstPaths;
@@ -44,10 +45,24 @@ public class ElevenstClaimSyncAdapter implements ClaimSyncAdapter {
     private final ElevenstClaimUpserter claimUpserter;
     private final OrderClaimRepository orderClaimRepository;
     private final ClaimStaleSweeper claimStaleSweeper;
+    /** FEATURE_2610_23 / D12: stamps the claims-only round. */
+    private final SyncStatusRecorder syncStatusRecorder;
 
     @Override
     public Platform platform() {
         return Platform.ELEVENST;
+    }
+
+    /**
+     * 11st claims-only round (FEATURE_2610_17 / D15): {@link #syncExchanges} loads returns and exchanges in one call; a
+     * failure propagates (same D15-1 contract as the Coupang round). Moved from {@code ClaimSyncServiceImpl} unchanged
+     * (FEATURE_2610_23 / D3 · D12).
+     */
+    @Override
+    public void syncClaimsOnly(MarketplaceAccount account) {
+        syncExchanges(account);
+        syncStatusRecorder.recordClaimSyncCompleted(account.getId());
+        log.info("Claim-only sync (11st): account={}", account.getId());
     }
 
     @Override

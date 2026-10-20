@@ -61,9 +61,10 @@ class CoupangInquiryAdapterTest {
 
     @BeforeEach
     void setUp() {
+        // FEATURE_2610_23 / D12: the link repositories are not used here (the upserter is a mock).
         adapter = new CoupangInquiryAdapter(coupangApiClient, coupangProperties, new ObjectMapper(),
                 coupangProductInquiryParser, coupangCallCenterInquiryParser, inquiryUpserter,
-                inquiryStaleSweeper, customerInquiryRepository);
+                inquiryStaleSweeper, customerInquiryRepository, null, null);
     }
 
     @Test
@@ -164,7 +165,8 @@ class CoupangInquiryAdapterTest {
         assertThatThrownBy(() -> adapter.syncInquiries(account))
                 .isInstanceOf(IllegalStateException.class);
 
-        // 실패를 결과 필드로 돌려주면 파사드가 성공으로 보고 lastInquirySyncAt 을 갱신해 구간이 사라진다.
+        // A failure returned as a result field would let the order round take it as a success and stamp
+        // lastInquirySyncAt — the window would be lost.
         verify(coupangApiClient).get(contains("callCenterInquiries"), anyString(), eq(account));
     }
 
