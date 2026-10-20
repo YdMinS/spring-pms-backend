@@ -88,9 +88,12 @@ class ShippingLabelServiceImplTest {
         CoupangProperties props = new CoupangProperties();
         props.setInstructDays(14);
 
-        service = new ShippingLabelServiceImpl(
-                coupangApiClient, props, marketplaceAccountRepository, new ObjectMapper(),
-                orderLineRepository, orderUpserter, orderShipmentRepository, elevenstOrderApi, elevenstOrderUpserter);
+        // FEATURE_2610_23 / D21 · D23: the real adapters over the same mocks; Coupang opens the internal stage.
+        service = new ShippingLabelServiceImpl(marketplaceAccountRepository, orderLineRepository,
+                orderShipmentRepository, List.of(
+                        new CoupangShippingLabelAdapter(coupangApiClient, props, new ObjectMapper(), orderUpserter),
+                        new ElevenstShippingLabelAdapter(props, elevenstOrderApi, elevenstOrderUpserter)),
+                new InternalStageMarkets(List.of(new CoupangOrderAcknowledgeAdapter(null, null, null, null))));
     }
 
     @Test

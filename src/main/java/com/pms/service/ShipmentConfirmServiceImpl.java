@@ -1010,16 +1010,18 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
     }
 
     /**
-     * 쿠팡 단건 발주서 조회 → 송장업로드 라인 추출.
+     * Coupang single-order ordersheet lookup → invoice-upload lines.
      *
-     * <p>⚠️ 경로 조립·봉투 검사가 {@code ShippingLabelServiceImpl.previewRowsByOrder} 와 중복이지만
-     * 공통 추출하지 않는다 — 검증이 끝난 시트 경로의 회귀 위험을 0으로 유지한다(PLAN 송장시트 D5 와 같은 판단).</p>
-     * <p>⚠️ 취소 라인 제외는 <b>폴백 경로에만</b> 있다(DB 경로는 기존 동작 유지 — 이번 스코프 아님).
-     * 규칙은 시트 생성 {@code flattenBox} 와 동일: {@code shippingCount - cancelCount <= 0} 이면 제외.</p>
-     * <p>⚠️ 배송지시 이상 박스는 제외하고 그 상태를 {@code skippedStatus} 로 남긴다(PLAN 2609_07 D6) —
-     * 전량취소로 0행이 된 경우와 반드시 구분된다.</p>
-     * <p>⚠️ 받아온 박스는 <b>skip 여부와 무관하게</b> {@code order_line} 에 적재한다(PLAN 2609_13 D9) —
-     * 다음 발송처리가 폴백을 타지 않게 하는 것이 이 저장의 목적이다. 추가 API 호출은 없다.</p>
+     * <p>⚠️ The path building and the envelope check duplicate {@code CoupangShippingLabelAdapter.collectOrderRows},
+     * but they are not extracted — the verified sheet path keeps zero regression risk (the same call as shipping-label
+     * PLAN D5).</p>
+     * <p>⚠️ Cancelled lines are excluded <b>only on the fallback path</b> (the DB path keeps its behaviour — out of
+     * scope). The rule is the same as the sheet's {@code flattenBox}: excluded when
+     * {@code shippingCount - cancelCount <= 0}.</p>
+     * <p>⚠️ A box at DEPARTURE or later is excluded and its status is kept as {@code skippedStatus} (PLAN 2609_07
+     * D6) — it must stay distinct from the zero rows of a fully cancelled order.</p>
+     * <p>⚠️ Fetched boxes are loaded into {@code order_line} <b>whether skipped or not</b> (PLAN 2609_13 D9) — the
+     * point of this save is that the next shipment confirm does not take the fallback. No extra API call.</p>
      */
     private OrderLookup fetchOrderLines(MarketplaceAccount account, String orderId) {
         String path = coupangProperties.getOrdersheetByOrderPath()
