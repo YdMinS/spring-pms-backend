@@ -11,7 +11,10 @@ import com.pms.domain.MarketplaceAccount;
  */
 public interface CoupangReturnSyncService {
 
-    /** 계정 1개의 취소 보정. OrderSyncFacade 가 ordersheets 동기화 뒤 호출한다. */
+    /**
+     * One account's cancel correction. The Coupang order round ({@code CoupangOrderSyncAdapter}) calls it after the
+     * ordersheets sync; the claim screen's claims-only round calls it too.
+     */
     CancelSyncResult syncCancels(MarketplaceAccount account);
 
     /**

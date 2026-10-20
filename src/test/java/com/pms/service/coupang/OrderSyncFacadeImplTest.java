@@ -67,7 +67,7 @@ class OrderSyncFacadeImplTest {
 
     @Mock private InquirySyncAdapter inquirySyncAdapter;
 
-    /** FEATURE_2610_17 / D11 — the 11st round the facade hands an 11st account to. */
+    /** FEATURE_2610_17 / D11 — the 11st round the 11st adapter hands an 11st account to. */
     @Mock private ElevenstOrderSyncService elevenstOrderSyncService;
 
     /** D10 — real instance so a test can switch 11st calls off. */
@@ -76,9 +76,10 @@ class OrderSyncFacadeImplTest {
     private static final Instant LOCK_T0 = Instant.parse("2026-09-15T00:00:00Z");
 
     /**
-     * ⚠️ @InjectMocks 를 쓰지 않는다 — 생성자의 {@code List<ClaimSyncAdapter>} 에는 목이 주입되지 않아
-     * null 이 들어가고, 파사드의 격리 try/catch 가 그 NPE 를 삼켜 어댑터 호출이 조용히 사라진다.
-     * 기본은 빈 리스트(= local/test 프로파일과 같은 상태)이고, 어댑터가 필요한 테스트만 직접 넣는다.
+     * ⚠️ No @InjectMocks — a mock is not injected into the {@code List<ClaimSyncAdapter>} of the Coupang round's
+     * constructor, so null would go in and the round's isolating try/catch would swallow that NPE and silently drop
+     * the adapter call. The default is an empty list (the same state as the local/test profile); only the tests that
+     * need an adapter put one in.
      */
     private final List<ClaimSyncAdapter> claimSyncAdapters = new ArrayList<>();
 
@@ -99,10 +100,13 @@ class OrderSyncFacadeImplTest {
         // 파사드와 락이 같은 설정 인스턴스를 본다 — 따로 만들면 설정값 변경이 한쪽에만 먹는다.
         CoupangProperties coupangProperties = new CoupangProperties();
         accountSyncLock = new AccountSyncLock(coupangProperties, new MutableClock(LOCK_T0));
-        facade = new OrderSyncFacadeImpl(marketplaceAccountRepository, coupangProperties,
+        // FEATURE_2610_23 / D21: the real adapters over the same mocks — the Coupang round moved into its adapter.
+        CoupangOrderSyncAdapter coupangAdapter = new CoupangOrderSyncAdapter(coupangProperties,
                 coupangOrderSyncService, coupangReturnSyncService, syncStatusRecorder,
-                claimOrderBackfillService, claimSyncAdapters, inquirySyncAdapters,
-                new SameThreadExecutorService(), accountSyncLock, elevenstOrderSyncService, elevenstProperties);
+                claimOrderBackfillService, claimSyncAdapters, inquirySyncAdapters);
+        facade = new OrderSyncFacadeImpl(marketplaceAccountRepository, coupangProperties, coupangOrderSyncService,
+                List.of(coupangAdapter, new ElevenstOrderSyncAdapter(elevenstOrderSyncService, elevenstProperties)),
+                new SameThreadExecutorService(), accountSyncLock, coupangAdapter);
     }
 
     @AfterEach

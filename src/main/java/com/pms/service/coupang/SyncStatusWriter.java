@@ -47,8 +47,9 @@ class SyncStatusWriter {
     }
 
     /**
-     * 부분 성공(D18). 완료된 단계의 시각만 갱신한다 — 완료되지 않은 단계는 "마지막 성공 시각"을 흐리지
-     * 않도록 미변경으로 둔다. reason 문구는 호출자(파사드)가 확정한다.
+     * Partial success (D18). Only the finished steps' times are stamped — an unfinished step stays unchanged so it does
+     * not blur the "last success time". The caller (the marketplace's order round — FEATURE_2610_23 / D21) fixes the
+     * reason text.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     void writePartial(Long accountId, String reason, boolean orderDone, boolean cancelDone) {

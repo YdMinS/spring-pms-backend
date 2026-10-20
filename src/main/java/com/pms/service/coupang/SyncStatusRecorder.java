@@ -39,8 +39,9 @@ public class SyncStatusRecorder {
     }
 
     /**
-     * 부분 성공(PLAN D18). 완료된 단계의 시각만 갱신한다 — 부분 성공한 단계는 "마지막 성공 시각"을
-     * 흐리지 않도록 미변경으로 둔다. reason 문구는 호출자(파사드)가 확정한다.
+     * Partial success (PLAN D18). Only the finished steps' times are stamped — a partly successful step stays unchanged
+     * so it does not blur the "last success time". The caller (the marketplace's order round — FEATURE_2610_23 / D21)
+     * fixes the reason text.
      */
     public void recordPartial(Long accountId, String reason,
                               boolean orderSyncCompleted, boolean cancelSyncCompleted) {

@@ -7,9 +7,9 @@ import com.pms.domain.SyncStatus;
 import com.pms.dto.response.SyncTargetResponse;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -22,14 +22,23 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 /**
- * SyncTargetServiceImpl — target filter (active COUPANG / ELEVENST, FEATURE_2610_17 / D9) and the seller-scoped query.
+ * SyncTargetServiceImpl — target filter (active + a marketplace with an order sync adapter, FEATURE_2610_17 / D9 ·
+ * FEATURE_2610_23 / D14) and the seller-scoped query.
  */
 @ExtendWith(MockitoExtension.class)
 class SyncTargetServiceImplTest {
 
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
 
-    @InjectMocks private SyncTargetServiceImpl service;
+    private SyncTargetServiceImpl service;
+
+    @BeforeEach
+    void setUp() {
+        // FEATURE_2610_23 / D14: the real adapters — the service reads only platform().
+        service = new SyncTargetServiceImpl(marketplaceAccountRepository, List.of(
+                new CoupangOrderSyncAdapter(null, null, null, null, null, List.of(), List.of()),
+                new ElevenstOrderSyncAdapter(null, null)));
+    }
 
     private MarketplaceAccount account(Long id, Platform platform, String sellerName) {
         Seller seller = Seller.builder().id(id * 10).sellerName(sellerName).build();
