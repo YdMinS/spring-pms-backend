@@ -21,6 +21,7 @@ import com.pms.repository.OrderShipmentRepository;
 import com.pms.repository.ReservedShipmentItemRepository;
 import com.pms.repository.ReservedShipmentRepository;
 import com.pms.service.CarrierCodeService;
+import com.pms.service.InternalStageMarkets;
 import com.pms.service.InvoiceNumbers;
 import com.pms.service.ReservedInvoice;
 import com.pms.service.ShipmentConfirmResult;
@@ -37,6 +38,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -85,6 +87,8 @@ public class ReservedShipmentServiceImpl implements ReservedShipmentService {
     private final ReservedShipmentSettler reservedShipmentSettler;
     private final InternalShipmentStageService internalShipmentStageService;
     private final ReservedShipmentExecutor reservedShipmentExecutor;
+    /** FEATURE_2610_23 / D23 · D24: the marketplaces whose orders can be reserved. */
+    private final InternalStageMarkets internalStageMarkets;
 
     @Override
     @Transactional
@@ -94,7 +98,7 @@ public class ReservedShipmentServiceImpl implements ReservedShipmentService {
         if (invoicesByOrderId.isEmpty()) {
             throw new IllegalArgumentException("파일에 주문번호·운송장번호가 있는 행이 없습니다");
         }
-        String carrierCode = resolveCarrierCode();
+        Map<Platform, String> carrierCodes = resolveCarrierCodes();
 
         ReservedShipment reservation = null;
         int reserved = 0;
@@ -109,10 +113,12 @@ public class ReservedShipmentServiceImpl implements ReservedShipmentService {
                 excluded.add(new ExcludedOrder(orderId, "주문을 찾을 수 없습니다"));
                 continue;
             }
-            if (!Platform.COUPANG.equals(lines.get(0).getOrder().getMarketplaceAccount().getPlatform())) {
+            Platform platform = lines.get(0).getOrder().getMarketplaceAccount().getPlatform();
+            if (!internalStageMarkets.supports(platform)) {
                 excluded.add(new ExcludedOrder(orderId, "쿠팡 주문이 아닙니다"));
                 continue;
             }
+            String carrierCode = carrierCodes.get(platform);
             Map<Long, OrderShipment> paid = paidInternal(lines);
             List<OrderShipment> internal = paid.values().stream()
                     .filter(s -> s.getInternalStage() == InternalShipmentStage.INTERNAL_PREPARING).toList();
@@ -279,8 +285,8 @@ public class ReservedShipmentServiceImpl implements ReservedShipmentService {
     @Transactional
     public StoredInvoiceResponse changeInvoice(Long orderShipmentId, String deliveryCompanyCode, String invoiceNumber) {
         String invoice = InvoiceNumbers.normalizeRequired(invoiceNumber);
-        String carrierCode = carrierCodeService.validateDeliveryCompanyCode(deliveryCompanyCode, Platform.COUPANG);
         List<OrderLine> lines = orderLineRepository.findWithAccountByOrderShipment_IdIn(List.of(orderShipmentId));
+        String carrierCode = validateCarrier(deliveryCompanyCode, lines);
         ReservedShipmentItem live = liveItems(List.of(orderShipmentId)).get(orderShipmentId);
         OrderShipment shipment = invoiceTarget(lines, orderShipmentId, live);
         if (shipment == null) {
@@ -493,13 +499,43 @@ public class ReservedShipmentServiceImpl implements ReservedShipmentService {
         return item.getLastRunAt() != null ? item.getLastRunAt() : item.getReservedShipment().getExecuteAt();
     }
 
-    /** 택배사 코드 — 지금 활성 택배사(기존 일괄 발송처리와 같은 규칙). 미설정이면 500 이 아니라 400. */
-    private String resolveCarrierCode() {
-        try {
-            return carrierCodeService.resolveDeliveryCompanyCode(Platform.COUPANG);
-        } catch (IllegalStateException e) {
-            throw new IllegalArgumentException(e.getMessage());
+    /**
+     * Carrier codes of the active carrier for every marketplace that opens the internal stage (the same rule as the
+     * bulk shipment confirm; FEATURE_2610_23 / D23 · D24), read before the file's orders. Not set → 400, not 500.
+     */
+    private Map<Platform, String> resolveCarrierCodes() {
+        Map<Platform, String> codes = new EnumMap<>(Platform.class);
+        for (Platform platform : Platform.values()) {
+            if (!internalStageMarkets.supports(platform)) {
+                continue;
+            }
+            try {
+                codes.put(platform, carrierCodeService.resolveDeliveryCompanyCode(platform));
+            } catch (IllegalStateException e) {
+                throw new IllegalArgumentException(e.getMessage());
+            }
         }
+        return codes;
+    }
+
+    /**
+     * FEATURE_2610_23 / D23 · D24: the carrier is checked against the bundle's marketplace when that marketplace opens
+     * the internal stage; otherwise (no line, or a marketplace without the internal stage — the request then ends in
+     * {@link #NOT_INTERNAL_MESSAGE}) against every marketplace that opens it, which keeps the order of the two 400s
+     * (D3).
+     */
+    private String validateCarrier(String deliveryCompanyCode, List<OrderLine> lines) {
+        Platform bundle = lines.isEmpty() ? null : lines.get(0).getOrder().getMarketplaceAccount().getPlatform();
+        if (bundle != null && internalStageMarkets.supports(bundle)) {
+            return carrierCodeService.validateDeliveryCompanyCode(deliveryCompanyCode, bundle);
+        }
+        String code = null;
+        for (Platform platform : Platform.values()) {
+            if (internalStageMarkets.supports(platform)) {
+                code = carrierCodeService.validateDeliveryCompanyCode(deliveryCompanyCode, platform);
+            }
+        }
+        return code;
     }
 
     private String joinInvoices(String orderId, List<String> invoices) {

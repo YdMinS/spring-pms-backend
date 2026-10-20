@@ -77,9 +77,12 @@ class OrderAcknowledgeServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new OrderAcknowledgeServiceImpl(
-                coupangApiClient, coupangProperties, orderLineRepository, objectMapper, internalShipmentStageService,
-                elevenstOrderActions, elevenstOrderLineRepository);
+        // FEATURE_2610_23 / D21: the real adapters over the same mocks.
+        service = new OrderAcknowledgeServiceImpl(orderLineRepository, internalShipmentStageService, List.of(
+                new CoupangOrderAcknowledgeAdapter(coupangApiClient, coupangProperties, orderLineRepository,
+                        objectMapper),
+                new ElevenstOrderAcknowledgeAdapter(elevenstOrderActions, elevenstOrderLineRepository,
+                        orderLineRepository)));
     }
 
     @Test

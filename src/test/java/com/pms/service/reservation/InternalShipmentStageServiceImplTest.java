@@ -15,11 +15,14 @@ import com.pms.domain.ReservedShipmentStatus;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.OrderShipmentRepository;
 import com.pms.repository.ReservedShipmentItemRepository;
+import com.pms.service.CoupangOrderAcknowledgeAdapter;
+import com.pms.service.InternalStageMarkets;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
@@ -41,6 +44,9 @@ class InternalShipmentStageServiceImplTest {
     @Mock private OrderShipmentRepository orderShipmentRepository;
     @Mock private ReservedShipmentItemRepository reservedShipmentItemRepository;
     @Mock private ReservedShipmentSettler reservedShipmentSettler;
+    /** FEATURE_2610_23 / D23 · D24: the real switch — Coupang opens the internal stage (only platform() is read). */
+    @Spy private InternalStageMarkets internalStageMarkets =
+            new InternalStageMarkets(List.of(new CoupangOrderAcknowledgeAdapter(null, null, null, null)));
     @InjectMocks private InternalShipmentStageServiceImpl service;
 
     @Test

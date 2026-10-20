@@ -20,6 +20,8 @@ import com.pms.repository.OrderShipmentRepository;
 import com.pms.repository.ReservedShipmentItemRepository;
 import com.pms.repository.ReservedShipmentRepository;
 import com.pms.service.CarrierCodeService;
+import com.pms.service.CoupangOrderAcknowledgeAdapter;
+import com.pms.service.InternalStageMarkets;
 import com.pms.service.ReservedInvoice;
 import com.pms.service.ShipmentConfirmResult;
 import com.pms.service.ShipmentConfirmService;
@@ -28,6 +30,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
 
@@ -61,6 +64,9 @@ class ReservedShipmentServiceImplTest {
     @Mock private ReservedShipmentSettler reservedShipmentSettler;
     @Mock private InternalShipmentStageService internalShipmentStageService;
     @Mock private ReservedShipmentExecutor reservedShipmentExecutor;
+    /** FEATURE_2610_23 / D23 · D24: the real switch — Coupang opens the internal stage (only platform() is read). */
+    @Spy private InternalStageMarkets internalStageMarkets =
+            new InternalStageMarkets(List.of(new CoupangOrderAcknowledgeAdapter(null, null, null, null)));
     @InjectMocks private ReservedShipmentServiceImpl service;
 
     private final MockMultipartFile file = new MockMultipartFile("file", "r.xlsx", "application/octet-stream", new byte[]{1});
