@@ -198,7 +198,7 @@ public class PriceHistoryRecorder {
         }
     }
 
-    /** Same helper as {@code OrderCancelServiceImpl.currentUsername()} — batch context yields null. */
+    /** Same helper as {@code OrderCancelAdapter.currentUsername()} — batch context yields null. */
     private String currentUsername() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return (auth == null) ? null : auth.getName();

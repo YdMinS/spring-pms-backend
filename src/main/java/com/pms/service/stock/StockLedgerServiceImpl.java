@@ -304,7 +304,7 @@ public class StockLedgerServiceImpl implements StockLedgerService {
         return value == null || value.trim().isEmpty();
     }
 
-    /** Same source as OrderCancelServiceImpl (PLAN 2609_28 D9) — do not introduce a second way. */
+    /** Same source as OrderCancelAdapter.currentUsername() (PLAN 2609_28 D9) — do not introduce a second way. */
     private String currentUsername() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return (auth == null) ? null : auth.getName();
