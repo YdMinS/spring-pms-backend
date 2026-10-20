@@ -80,10 +80,16 @@ class ShipmentConfirmSkipRegressionTest {
 
     @BeforeEach
     void setUp() {
-        service = new ShipmentConfirmServiceImpl(
-                coupangApiClient, coupangProperties, orderLineRepository, coupangOrderLineRepository,
-                marketplaceAccountRepository, carrierCodeService, new ObjectMapper(), orderUpserter,
-                shipmentParcelRecorder, orderAcknowledgeService, internalShipmentStageService, elevenstOrderActions, null);
+        // FEATURE_2610_23 / D21 · D23: the real adapters over the same mocks; Coupang opens the internal stage.
+        InvoiceWriteBack writeBack = new InvoiceWriteBack(orderLineRepository, shipmentParcelRecorder, carrierCodeService);
+        service = new ShipmentConfirmServiceImpl(orderLineRepository, carrierCodeService, orderAcknowledgeService,
+                internalShipmentStageService, writeBack,
+                new InternalStageMarkets(List.of(new CoupangOrderAcknowledgeAdapter(null, null, null, null))),
+                List.of(new CoupangShipmentInvoiceAdapter(coupangApiClient, coupangProperties, orderLineRepository,
+                                coupangOrderLineRepository, marketplaceAccountRepository, carrierCodeService,
+                                new ObjectMapper(), orderUpserter, shipmentParcelRecorder, writeBack),
+                        new ElevenstShipmentInvoiceAdapter(orderLineRepository, carrierCodeService,
+                                shipmentParcelRecorder, elevenstOrderActions, null, writeBack)));
 
         Seller seller = Seller.builder().id(1L).sellerName("셀러A").businessRegistration("123-45-67890").build();
         account = MarketplaceAccountFixture.coupangStubBuilder("A001", null)

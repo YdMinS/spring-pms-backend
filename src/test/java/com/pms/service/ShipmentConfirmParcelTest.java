@@ -102,10 +102,17 @@ class ShipmentConfirmParcelTest {
 
     @BeforeEach
     void setUp() {
-        service = new ShipmentConfirmServiceImpl(
-                coupangApiClient, coupangProperties, orderLineRepository, coupangOrderLineRepository,
-                marketplaceAccountRepository, carrierCodeService, objectMapper, orderUpserter,
-                new ShipmentParcelRecorder(shipmentParcelRepository), orderAcknowledgeService, internalShipmentStageService, elevenstOrderActions, null);
+        // FEATURE_2610_23 / D21 · D23: the real adapters over the same mocks; Coupang opens the internal stage.
+        ShipmentParcelRecorder parcelRecorder = new ShipmentParcelRecorder(shipmentParcelRepository);
+        InvoiceWriteBack writeBack = new InvoiceWriteBack(orderLineRepository, parcelRecorder, carrierCodeService);
+        service = new ShipmentConfirmServiceImpl(orderLineRepository, carrierCodeService, orderAcknowledgeService,
+                internalShipmentStageService, writeBack,
+                new InternalStageMarkets(List.of(new CoupangOrderAcknowledgeAdapter(null, null, null, null))),
+                List.of(new CoupangShipmentInvoiceAdapter(coupangApiClient, coupangProperties, orderLineRepository,
+                                coupangOrderLineRepository, marketplaceAccountRepository, carrierCodeService,
+                                objectMapper, orderUpserter, parcelRecorder, writeBack),
+                        new ElevenstShipmentInvoiceAdapter(orderLineRepository, carrierCodeService,
+                                parcelRecorder, elevenstOrderActions, null, writeBack)));
 
         account = account();
 
