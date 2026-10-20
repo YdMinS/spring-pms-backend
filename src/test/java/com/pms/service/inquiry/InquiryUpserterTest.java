@@ -14,6 +14,7 @@ import com.pms.repository.CustomerInquiryReplyRepository;
 import com.pms.repository.CustomerInquiryRepository;
 import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -50,6 +51,14 @@ class InquiryUpserterTest {
     @Mock private CoupangOrderLineRepository coupangOrderLineRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @InjectMocks private InquiryUpserter upserter;
+    /** FEATURE_2610_23 / D12: the Coupang adapter links the listing and the order line over the same mocks. */
+    private CoupangInquiryAdapter linker;
+
+    @BeforeEach
+    void setUp() {
+        linker = new CoupangInquiryAdapter(null, null, null, null, null, upserter, null, null,
+                productListingOptionRepository, coupangOrderLineRepository);
+    }
 
     private final MarketplaceAccount account = MarketplaceAccountFixture.coupangStubBuilder("A0001", null)
             .id(7L).platform(Platform.COUPANG).build();
@@ -62,7 +71,7 @@ class InquiryUpserterTest {
         given(customerInquiryRepository.findByMarketplaceAccount_IdAndInquiryTypeAndExternalInquiryId(
                 any(), any(), any())).willReturn(Optional.empty());
 
-        upserter.upsert(account, record(InquiryStatus.UNANSWERED, "O-1", List.of()));
+        upserter.upsert(account, record(InquiryStatus.UNANSWERED, "O-1", List.of()), linker);
 
         ArgumentCaptor<CustomerInquiry> saved = ArgumentCaptor.forClass(CustomerInquiry.class);
         verify(customerInquiryRepository).save(saved.capture());
@@ -79,7 +88,7 @@ class InquiryUpserterTest {
         given(customerInquiryRepository.findByMarketplaceAccount_IdAndInquiryTypeAndExternalInquiryId(
                 7L, InquiryType.PRODUCT_QNA, "I-1")).willReturn(Optional.of(existing));
 
-        upserter.upsert(account, record(InquiryStatus.UNANSWERED, null, List.of()));
+        upserter.upsert(account, record(InquiryStatus.UNANSWERED, null, List.of()), linker);
 
         verify(customerInquiryRepository, never()).save(any());
     }
@@ -91,7 +100,7 @@ class InquiryUpserterTest {
         given(coupangOrderLineRepository.findByMarketplaceAccount_IdAndOrderIdRawAndVendorItemId(
                 7L, "O-9", "V-1")).willReturn(List.of());
 
-        upserter.upsert(account, record(InquiryStatus.UNANSWERED, "O-9", List.of()));
+        upserter.upsert(account, record(InquiryStatus.UNANSWERED, "O-9", List.of()), linker);
 
         ArgumentCaptor<CustomerInquiry> saved = ArgumentCaptor.forClass(CustomerInquiry.class);
         verify(customerInquiryRepository).save(saved.capture());
@@ -110,7 +119,7 @@ class InquiryUpserterTest {
                         mirror(OrderLine.builder().id(11L).build()),
                         mirror(OrderLine.builder().id(12L).build())));
 
-        upserter.upsert(account, record(InquiryStatus.UNANSWERED, "O-1", List.of()));
+        upserter.upsert(account, record(InquiryStatus.UNANSWERED, "O-1", List.of()), linker);
 
         ArgumentCaptor<CustomerInquiry> saved = ArgumentCaptor.forClass(CustomerInquiry.class);
         verify(customerInquiryRepository).save(saved.capture());
@@ -134,7 +143,7 @@ class InquiryUpserterTest {
         InquiryRecord.ReplyRecord incoming = new InquiryRecord.ReplyRecord(
                 "5001", null, InquiryAuthorRole.SELLER, null, "내일 출고 예정입니다.", null,
                 LocalDateTime.of(2026, 9, 1, 11, 0));
-        upserter.upsert(account, record(InquiryStatus.ANSWERED, null, List.of(incoming)));
+        upserter.upsert(account, record(InquiryStatus.ANSWERED, null, List.of(incoming)), linker);
 
         ArgumentCaptor<List<CustomerInquiryReply>> deleted = ArgumentCaptor.forClass(List.class);
         verify(customerInquiryReplyRepository).deleteAll(deleted.capture());

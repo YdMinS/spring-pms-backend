@@ -47,8 +47,8 @@ public class MarketplaceAccount extends BaseEntity {
     private String accountAlias;
 
     // Platform credentials live in their own table (FEATURE_2609_26 / PLAN D15) — core stays neutral.
-    // 🔴 EAGER on purpose: ~52 call sites read the credential and several of them (ShipmentConfirmServiceImpl,
-    // OrderAcknowledgeServiceImpl) run with NO @Transactional under open-in-view=false. The real defence is
+    // 🔴 EAGER on purpose: ~52 call sites read the credential and several of them (the Coupang order confirmation
+    // and invoice upload) run with NO @Transactional under open-in-view=false. The real defence is
     // still OrderLineRepository's @EntityGraph(order.marketplaceAccount) — once the account is loaded the EAGER
     // child comes with it inside the same transaction. Do NOT remove those graphs.
     // ⚠️ Do NOT flip this to the owning side: an optional inverse @OneToOne is loaded immediately anyway,

@@ -2,6 +2,9 @@ package com.pms.service.inquiry;
 
 import com.pms.domain.Platform;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.OrderLine;
+import com.pms.domain.ProductListing;
+import com.pms.domain.ProductListingOption;
 
 /**
  * Per-platform customer inquiry sync entry (FEATURE_2609_23 / PLAN D19 — the seam only). Implementations: Coupang ·
@@ -30,6 +33,25 @@ public interface InquirySyncAdapter {
      */
     default InquirySyncResult syncInquiries(MarketplaceAccount account, boolean nightly) {
         return syncInquiries(account);
+    }
+
+    /**
+     * The listing of a loaded inquiry — and its option when this marketplace links by option (FEATURE_2610_23 / D12 ·
+     * D21). {@link InquiryUpserter} calls it inside its transaction for every row it loads.
+     */
+    ListingMatch matchListing(MarketplaceAccount account, InquiryRecord record);
+
+    /**
+     * The order line of a loaded inquiry (D14 · D15); {@code null} when there is none or more than one — a wrong line
+     * is worse than no link. {@link InquiryUpserter} calls it only while the row has no line.
+     */
+    OrderLine matchOrderLine(MarketplaceAccount account, InquiryRecord record);
+
+    /**
+     * @param listing the linked listing, or {@code null}
+     * @param option  the linked option — the item name falls back to it; {@code null} when there is none
+     */
+    record ListingMatch(ProductListing listing, ProductListingOption option) {
     }
 
     /**

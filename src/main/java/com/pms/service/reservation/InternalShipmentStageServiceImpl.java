@@ -4,13 +4,13 @@ import com.pms.domain.InternalShipmentStage;
 import com.pms.domain.OrderLine;
 import com.pms.domain.OrderShipment;
 import com.pms.domain.OrderStatus;
-import com.pms.domain.Platform;
 import com.pms.domain.ReservedItemResult;
 import com.pms.domain.ReservedShipmentItem;
 import com.pms.domain.ReservedShipmentStatus;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.OrderShipmentRepository;
 import com.pms.repository.ReservedShipmentItemRepository;
+import com.pms.service.InternalStageMarkets;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -48,6 +48,8 @@ public class InternalShipmentStageServiceImpl implements InternalShipmentStageSe
     private final OrderShipmentRepository orderShipmentRepository;
     private final ReservedShipmentItemRepository reservedShipmentItemRepository;
     private final ReservedShipmentSettler reservedShipmentSettler;
+    /** FEATURE_2610_23 / D23 · D24: only a marketplace that opens the internal stage can be marked. */
+    private final InternalStageMarkets internalStageMarkets;
 
     @Override
     @Transactional
@@ -151,7 +153,8 @@ public class InternalShipmentStageServiceImpl implements InternalShipmentStageSe
         for (OrderLine line : lines) {
             String orderId = line.getOrder().getExternalOrderId();
             OrderShipment shipment = line.getOrderShipment();
-            if (!Platform.COUPANG.equals(line.getOrder().getMarketplaceAccount().getPlatform()) || shipment == null) {
+            if (!internalStageMarkets.supports(line.getOrder().getMarketplaceAccount().getPlatform())
+                    || shipment == null) {
                 if (!unsupported.contains(orderId)) {
                     unsupported.add(orderId);
                 }

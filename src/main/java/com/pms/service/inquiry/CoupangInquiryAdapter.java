@@ -3,12 +3,17 @@ package com.pms.service.inquiry;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.config.CoupangProperties;
+import com.pms.domain.CoupangOrderLine;
 import com.pms.domain.CustomerInquiry;
 import com.pms.domain.InquiryStatus;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.OrderLine;
 import com.pms.domain.Platform;
+import com.pms.domain.ProductListingOption;
+import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.CustomerInquiryRepository;
+import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangCredentials;
 import com.pms.service.coupang.SyncWindow;
@@ -25,18 +30,18 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * 쿠팡 고객문의 동기화 (FEATURE_2609_23 / D8·D9·D10·D11·D19).
+ * Coupang customer inquiry sync (FEATURE_2609_23 / D8·D9·D10·D11·D19).
  *
- * 유형 2종(상품문의 · 고객센터문의)을 각각 돌린다. 두 API 는 경로·필수 파라미터·페이지 크기가 모두
- * 달라서 하나로 합칠 수 없다 — 합류 지점은 {@link InquiryUpserter} 다.
+ * The two types (product Q&A · call-center inquiry) run one after the other. The two APIs differ in path, required
+ * parameters and page size, so they cannot be merged — they meet at {@link InquiryUpserter}.
  *
- * <p>⚠️ 클래스 레벨 {@code @Transactional} 을 붙이지 않는다 — 외부 HTTP 루프다. DB 쓰기는
- * {@link InquiryUpserter}(REQUIRES_NEW)·{@link InquiryStaleSweeper} 에서만 일어난다
- * ({@code CoupangClaimAdapter} 와 같은 자세).
+ * <p>⚠️ No class-level {@code @Transactional} — an external HTTP loop. DB writes happen only in
+ * {@link InquiryUpserter} (REQUIRES_NEW) · {@link InquiryStaleSweeper} (the same stance as {@code CoupangClaimAdapter}).
  *
- * <p>⚠️ 한 유형이 실패해도 다른 유형은 계속 진행하고, <b>둘을 다 돌린 뒤 마지막에 예외를 다시 던진다</b>.
- * 결과만 돌려주면 파사드가 성공으로 보고 {@code lastInquirySyncAt} 을 갱신해, 실패한 유형이 놓친
- * 구간이 영구히 사라진다. 회차 격리는 파사드가 catch 로 담당한다.
+ * <p>⚠️ One type failing does not stop the other, and <b>the exception is rethrown at the end, after both ran</b>.
+ * Returning only a result would let the caller (the Coupang order round · the inquiry-only sync) take it as a success
+ * and stamp {@code lastInquirySyncAt}, losing the window the failed type missed for good. The caller isolates the
+ * round with its catch (FEATURE_2610_23 / D21).
  */
 @Slf4j
 @Component
@@ -69,10 +74,58 @@ public class CoupangInquiryAdapter implements InquirySyncAdapter {
     private final InquiryUpserter inquiryUpserter;
     private final InquiryStaleSweeper inquiryStaleSweeper;
     private final CustomerInquiryRepository customerInquiryRepository;
+    /** FEATURE_2610_23 / D12: the option link of a Coupang inquiry. */
+    private final ProductListingOptionRepository productListingOptionRepository;
+    /** FEATURE_2610_23 / D12: the order link of a Coupang inquiry. */
+    private final CoupangOrderLineRepository coupangOrderLineRepository;
 
     @Override
     public Platform platform() {
         return Platform.COUPANG;
+    }
+
+    /** Coupang links by option: {@code external_item_id} (= vendorItemId) → the option → its listing (D15). */
+    @Override
+    public ListingMatch matchListing(MarketplaceAccount account, InquiryRecord record) {
+        ProductListingOption option = matchOption(record.externalItemId());
+        return new ListingMatch(option != null ? option.getProductListing() : null, option);
+    }
+
+    /**
+     * 주문 라인 매칭 (D14·D15): {@code externalOrderId} + {@code externalItemId} 3키.
+     * 0건(주문 없는 문의)이거나 2건 이상(합포장으로 모호)이면 <b>연결하지 않는다</b> —
+     * 틀린 라인에 붙이느니 미연결이 낫다. 문의 자체는 그대로 저장된다.
+     */
+    @Override
+    public OrderLine matchOrderLine(MarketplaceAccount account, InquiryRecord record) {
+        if (record.externalOrderId() == null || record.externalItemId() == null) {
+            return null;
+        }
+        // 자연키는 core 가 아니라 쿠팡 거울이 소유한다(FEATURE_2609_26 / PLAN D3·D19) — 규칙은 그대로다.
+        List<CoupangOrderLine> candidates = coupangOrderLineRepository
+                .findByMarketplaceAccount_IdAndOrderIdRawAndVendorItemId(
+                        account.getId(), record.externalOrderId(), record.externalItemId());
+        if (candidates.size() == 1) {
+            return candidates.get(0).getOrderLine();
+        }
+        if (candidates.size() > 1) {
+            log.debug("Ambiguous order line for inquiry (multi-box shipment): account={} orderId={} itemId={} matches={}",
+                    account.getId(), record.externalOrderId(), record.externalItemId(), candidates.size());
+        }
+        return null;
+    }
+
+    /**
+     * 셀(옵션) 매칭 (D15): {@code external_item_id}(= vendorItemId) →
+     * {@link ProductListingOption#getPlatformOptionId()}.
+     *
+     * ❌ 이름이 비슷한 {@code sellerProductItemId}(상품수정용 식별자)는 다른 값이다 — 쓰지 말 것.
+     */
+    private ProductListingOption matchOption(String externalItemId) {
+        if (externalItemId == null) {
+            return null;
+        }
+        return productListingOptionRepository.findByPlatformOptionId(externalItemId).orElse(null);
     }
 
     @Override
@@ -247,7 +300,7 @@ public class CoupangInquiryAdapter implements InquirySyncAdapter {
             if (record == null) {
                 return false;
             }
-            inquiryUpserter.upsert(account, record);
+            inquiryUpserter.upsert(account, record, this);
             return true;
         } catch (Exception e) {
             log.warn("Inquiry ingest failed: account={} type={} inquiryId={}", account.getId(), type,

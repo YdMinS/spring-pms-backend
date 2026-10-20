@@ -11,6 +11,8 @@ import com.pms.domain.Platform;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.CoupangCredentials;
+import com.pms.service.coupang.CoupangReturnSyncService;
+import com.pms.service.coupang.SyncStatusRecorder;
 import com.pms.service.coupang.SyncWindow;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,21 +26,24 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
 
 /**
- * 쿠팡 교환 클레임 동기화 (FEATURE_2609_18 / 06 · D17 · D21).
+ * Coupang claim sync (FEATURE_2609_18 / 06 · D17 · D21) — the exchange load, and the claim screen's claims-only round
+ * ({@link #syncClaimsOnly}, FEATURE_2610_23 / D12).
  *
- * 반품과 달리 <b>이 기능에서 유일하게 쿠팡 호출이 느는 경로</b>다 — 취소 보정 응답에 얹을 수 없어
- * exchangeRequests 를 따로 친다. 계정당 호출은 신규 창 1 + 추적 슬라이스(상한
- * {@code claim-tracking-max-slices}) 다.
+ * Unlike returns, the exchange load is <b>the one path of this feature that adds Coupang calls</b> — it cannot ride on
+ * the cancel-correction response, so exchangeRequests is called on its own. Calls per account = 1 new window +
+ * tracking slices (cap {@code claim-tracking-max-slices}).
  *
- * <p>⚠️ 클래스 레벨 {@code @Transactional} 을 붙이지 않는다 — 외부 HTTP 루프다. DB 쓰기는
- * {@link ClaimUpserter}(REQUIRES_NEW)·{@link ClaimStaleSweeper} 의 트랜잭션에서 일어난다.
+ * <p>⚠️ No class-level {@code @Transactional} — an external HTTP loop. The exchange load writes in the transactions of
+ * {@link ClaimUpserter} (REQUIRES_NEW) · {@link ClaimStaleSweeper}; the claims-only round also writes through
+ * {@code CoupangReturnSyncService} · {@code ClaimOrderBackfillService} · {@code SyncStatusRecorder} (their own
+ * transactions).
  *
- * <p>⚠️ {@code CoupangReturnSyncServiceImpl.collect()} 를 재사용하지 말 것 — 안의 {@code applyCancel}
- * 이 교환 응답에 얹힌다(D16 위반). 페이징 모양만 같게 유지한다.
+ * <p>⚠️ Do not reuse {@code CoupangReturnSyncServiceImpl.collect()} — its {@code applyCancel} would ride on the
+ * exchange response (against D16). Keep only the paging shape the same.
  *
- * <p>⚠️ 교환은 정상 상태에서도 슬라이스가 최대 5개다(STALE 30일 ÷ 7일 폭) — 반품이 1개인 것과 다르다.
- * 상한 6은 이 값을 전제로 한 여유분이지 "안 걸리는 안전망"이 아니다. 429 가 보이면
- * {@code claim-tracking-max-slices} 를 낮춘다(반품·교환 슬라이스 수를 함께 자른다).
+ * <p>⚠️ Exchanges have up to 5 slices even in a normal state (STALE 30 days ÷ 7-day width) — unlike the returns' 1.
+ * The cap 6 is a margin built on that value, not a "never hit" safety net. When 429 shows up, lower
+ * {@code claim-tracking-max-slices} (it cuts the return and exchange slice counts together).
  */
 @Slf4j
 @Component
@@ -58,10 +63,55 @@ public class CoupangClaimAdapter implements ClaimSyncAdapter {
     private final OrderClaimRepository orderClaimRepository;
     private final ClaimStaleSweeper claimStaleSweeper;
     private final ClaimTrackingSlicer claimTrackingSlicer;
+    /** FEATURE_2610_23 / D12: the claims-only round — returns ride on the cancel correction (2609_18 D15). */
+    private final CoupangReturnSyncService coupangReturnSyncService;
+    private final ClaimOrderBackfillService claimOrderBackfillService;
+    private final SyncStatusRecorder syncStatusRecorder;
 
     @Override
     public Platform platform() {
         return Platform.COUPANG;
+    }
+
+    /**
+     * The order is the claim part of the Coupang order round (cancel correction → tracking → exchanges → backfill),
+     * moved from {@code ClaimSyncServiceImpl} unchanged (FEATURE_2610_23 / D3 · D12).
+     *
+     * <p>🔴 Cancel-correction and tracking failures propagate (2609_70 D15-1) — the order round swallows a tracking
+     * failure because the orders are its subject; here the user pressed [동기화] for the claims only, so a 200 after a
+     * failed tracking would tell the screen "just became current". Exchange and backfill failures stay isolated.
+     *
+     * <p>🔴 No ordersheets or inquiry dependency, and {@link SyncStatusRecorder} only through
+     * {@code recordClaimSyncCompleted} — stamping {@code lastSyncStatus} SUCCESS from a claims-only round would make a
+     * channel whose orders failed look healthy.
+     */
+    @Override
+    public void syncClaimsOnly(MarketplaceAccount account) {
+        // 🔴 신규 반품 적재가 취소 보정 응답에 얹혀 있다(2609_18 D15) — 빼면 반품이 안 들어온다.
+        coupangReturnSyncService.syncCancels(account);
+
+        coupangReturnSyncService.trackOpenClaims(account);
+        // Stamped only on a round that finished its tracking (the same as the Coupang order round). Moving it would
+        // lose the missed window for good.
+        syncStatusRecorder.recordClaimSyncCompleted(account.getId());
+
+        // 교환 적재는 백필 앞이다 — 새로 생긴 미연결 claim 을 같은 회차에 처리하려면 백필이 뒤여야 한다.
+        try {
+            syncExchanges(account);
+        } catch (Exception e) {
+            // An exchange failure does not break the round — the returns (Stage A) are already loaded (the same call
+            // as the Coupang order round).
+            log.warn("Exchange claim sync failed (isolated): account={}", account.getId(), e);
+        }
+
+        try {
+            claimOrderBackfillService.backfill(account);
+        } catch (Exception e) {
+            // 백필은 정확도 보정이다 — 실패해도 미연결 클레임은 화면에 "주문 미연결" 로 이미 보인다.
+            log.warn("Claim order backfill failed (isolated): account={}", account.getId(), e);
+        }
+
+        log.info("Claim-only sync: account={}", account.getId());
     }
 
     @Override

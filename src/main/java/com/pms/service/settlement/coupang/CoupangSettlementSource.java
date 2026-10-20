@@ -139,10 +139,10 @@ public class CoupangSettlementSource implements SettlementSource {
     }
 
     /**
-     * 한 구간을 페이징하며 읽는다. 페이지 하나를 읽을 때마다 콜백한다.
+     * Reads one window page by page, calling back after every page.
      *
-     * <p>페이징 규약은 {@code ShippingLabelServiceImpl} 의 nextToken 루프를 그대로 따른다 —
-     * <b>토큰이 직전과 같으면 중단</b>(무한루프 가드) + {@link #MAX_PAGES} 상한.
+     * <p>The paging rule follows the nextToken loop of {@code CoupangShippingLabelAdapter} as is — <b>stop when the
+     * token equals the previous one</b> (infinite-loop guard) + the {@link #MAX_PAGES} cap.
      */
     private void fetchWindow(MarketplaceAccount account, String vendorId, Window window,
                              Consumer<List<SettlementLineDraft>> pageConsumer) {
