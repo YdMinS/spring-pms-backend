@@ -62,6 +62,11 @@ public class MarketplaceAccount extends BaseEntity {
     @OneToOne(mappedBy = "marketplaceAccount", fetch = FetchType.EAGER, optional = true)
     private ElevenstAccountCredential elevenstCredential;
 
+    // FEATURE_2610_26 / D4: the ESM (Gmarket · Auction) keys, same inverse-EAGER shape as coupangCredential (same reasons).
+    // Read via EsmCredentials.of(account) — no convenience getters here.
+    @OneToOne(mappedBy = "marketplaceAccount", fetch = FetchType.EAGER, optional = true)
+    private EsmAccountCredential esmCredential;
+
     @Column(name = "is_active", nullable = false)
     private Boolean isActive;
 

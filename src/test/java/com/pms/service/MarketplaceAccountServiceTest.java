@@ -1,30 +1,37 @@
 package com.pms.service;
 
+import com.pms.config.EsmProperties;
 import com.pms.domain.CoupangAccountCredential;
 import com.pms.domain.DetailTemplate;
 import com.pms.domain.ElevenstAccountCredential;
 import com.pms.domain.ElevenstChannelDefault;
+import com.pms.domain.EsmAccountCredential;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Seller;
 import com.pms.domain.ThumbnailTemplate;
 import com.pms.dto.request.ElevenstNoticesRequest;
 import com.pms.dto.request.MarketplaceAccountRequest;
 import com.pms.dto.response.MarketplaceAccountResponse;
+import com.pms.exception.BusinessException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.DetailTemplateRepository;
 import com.pms.repository.ElevenstAccountCredentialRepository;
 import com.pms.repository.ElevenstChannelDefaultRepository;
+import com.pms.repository.EsmAccountCredentialRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.ThumbnailTemplateRepository;
+import com.pms.service.esm.EsmApiClient;
+import com.pms.service.esm.EsmKey;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 
 import java.util.Optional;
 
@@ -48,6 +55,9 @@ class MarketplaceAccountServiceTest {
     @Mock private SellerRepository sellerRepository;
     @Mock private ThumbnailTemplateRepository thumbnailTemplateRepository;
     @Mock private DetailTemplateRepository detailTemplateRepository;
+    @Mock private EsmAccountCredentialRepository esmCredentialRepository;
+    @Mock private EsmApiClient esmApiClient;
+    @Mock private EsmProperties esmProperties;
     @InjectMocks private MarketplaceAccountServiceImpl service;
 
     private static final Long SELLER_ID = 1L;
@@ -311,5 +321,93 @@ class MarketplaceAccountServiceTest {
         assertThat(elevenst.getReturnExchangeNotice()).isEqualTo("반품 글");
         assertThat(coupang.getAsNotice()).isNull();
         verify(elevenstChannelDefaultRepository, org.mockito.Mockito.never()).findByMarketplaceAccountId(50L);
+    }
+
+    // FEATURE_2610_26 / D4 · D5 · D7: an ESM account stores four values; the key is checked with ESM first.
+    private MarketplaceAccountRequest.MarketplaceAccountRequestBuilder esmRequest() {
+        return MarketplaceAccountRequest.builder().sellerId(SELLER_ID).platform("ESM")
+                .esmMasterId(" master ").esmSecretKey(" SECRET ").gmarketSellerId(" g-id ").auctionSellerId(" a-id ");
+    }
+
+    @Test
+    void create_esm_checksKeyThenSavesFourValues_andNeverExposesTheSecret() {
+        given(esmProperties.isOutboundEnabled()).willReturn(true);
+        given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(seller()));
+        given(repository.save(org.mockito.ArgumentMatchers.any())).willAnswer(inv -> inv.getArgument(0));
+        given(esmCredentialRepository.save(org.mockito.ArgumentMatchers.any())).willAnswer(inv -> inv.getArgument(0));
+
+        MarketplaceAccountResponse response = service.create(esmRequest().build());
+
+        verify(esmApiClient).get("/item/v1/shipping/places?pageSize=1&pageIndex=1",
+                new EsmKey("master", "SECRET", "g-id", "a-id"));
+        ArgumentCaptor<EsmAccountCredential> captor = ArgumentCaptor.forClass(EsmAccountCredential.class);
+        verify(esmCredentialRepository).save(captor.capture());
+        assertThat(captor.getValue().getMasterId()).isEqualTo("master");
+        assertThat(captor.getValue().getSecretKey()).isEqualTo("SECRET");
+        assertThat(captor.getValue().getGmarketSellerId()).isEqualTo("g-id");
+        assertThat(captor.getValue().getAuctionSellerId()).isEqualTo("a-id");
+        verify(credentialRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
+        assertThat(response.getPlatform()).isEqualTo("ESM");
+        assertThat(response.getEsmMasterId()).isEqualTo("master");
+        assertThat(response.getGmarketSellerId()).isEqualTo("g-id");
+        assertThat(response.getAuctionSellerId()).isEqualTo("a-id");
+        assertThat(response.getVendorId()).isNull();
+    }
+
+    @Test
+    void create_esm_withOneSellerIdMissing_rejected() {
+        assertThatThrownBy(() -> service.create(esmRequest().auctionSellerId(" ").build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("G마켓 판매자 ID 와 옥션 판매자 ID 를 모두 입력하세요");
+        verify(repository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void create_esm_keyRefusedByEsm_is400WithEsmText_andNothingSaved() {
+        given(esmProperties.isOutboundEnabled()).willReturn(true);
+        given(esmApiClient.get(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any()))
+                .willThrow(new BusinessException("The user does not have right access to the api",
+                        HttpStatus.BAD_GATEWAY));
+
+        assertThatThrownBy(() -> service.create(esmRequest().build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("The user does not have right access to the api");
+        verify(repository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
+        verify(esmCredentialRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void create_esm_onAServerThatDoesNotCallEsm_savesWithoutTheCheck() {
+        given(esmProperties.isOutboundEnabled()).willReturn(false);
+        given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(seller()));
+        given(repository.save(org.mockito.ArgumentMatchers.any())).willAnswer(inv -> inv.getArgument(0));
+        given(esmCredentialRepository.save(org.mockito.ArgumentMatchers.any())).willAnswer(inv -> inv.getArgument(0));
+
+        service.create(esmRequest().build());
+
+        verify(esmApiClient, org.mockito.Mockito.never())
+                .get(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any());
+        verify(esmCredentialRepository).save(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void update_esm_blankSecretAndSameValues_keepsTheSecret_andDoesNotCallEsm() {
+        EsmAccountCredential stored = EsmAccountCredential.builder().id(9L)
+                .masterId("master").secretKey("SECRET").gmarketSellerId("g-id").auctionSellerId("a-id").build();
+        MarketplaceAccount existing = MarketplaceAccountFixture.esmStubBuilder("master", "SECRET", "g-id", "a-id")
+                .id(70L).seller(seller()).esmCredential(stored).build();
+        given(repository.findById(70L)).willReturn(Optional.of(existing));
+        given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(seller()));
+        given(repository.save(org.mockito.ArgumentMatchers.any())).willAnswer(inv -> inv.getArgument(0));
+        given(esmCredentialRepository.save(org.mockito.ArgumentMatchers.any())).willAnswer(inv -> inv.getArgument(0));
+
+        service.update(70L, esmRequest().esmSecretKey("").build());
+
+        verify(esmApiClient, org.mockito.Mockito.never())
+                .get(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any());
+        ArgumentCaptor<EsmAccountCredential> captor = ArgumentCaptor.forClass(EsmAccountCredential.class);
+        verify(esmCredentialRepository).save(captor.capture());
+        assertThat(captor.getValue().getId()).isEqualTo(9L);
+        assertThat(captor.getValue().getSecretKey()).isEqualTo("SECRET");
     }
 }
