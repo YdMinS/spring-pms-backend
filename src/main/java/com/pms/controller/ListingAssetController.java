@@ -16,6 +16,7 @@ import com.pms.dto.response.ShippingConfigResponse;
 import com.pms.service.ListingAssetService;
 import com.pms.service.listing.ListingCategorySourceService;
 import com.pms.service.listing.shipping.ElevenstShippingRepricer;
+import com.pms.service.listing.shipping.EsmShippingRepricer;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -42,6 +43,7 @@ public class ListingAssetController {
     private final ListingAssetService listingAssetService;
     private final ListingCategorySourceService listingCategorySourceService;
     private final ElevenstShippingRepricer elevenstShippingRepricer;
+    private final EsmShippingRepricer esmShippingRepricer;
 
     @PostMapping("/{id}/regenerate")
     @Operation(summary = "Regenerate a cell's thumbnail + detail + option prices (backfill consumer)")
@@ -145,9 +147,11 @@ public class ListingAssetController {
             @PathVariable Long id, @RequestBody ShippingOverrideRequest request) {
         listingAssetService.updateShippingOverride(id, request.getOverride());
         // FEATURE_2610_13 / D117 · D123: an 11st cell is re-priced AFTER the save has committed (a Coupang cell is
-        // skipped). A failed re-price keeps the saved shipping and is only counted (D120). Re-read so the body
-        // carries the new prices.
-        int failed = elevenstShippingRepricer.repriceListings(List.of(id));
+        // skipped) — and so is an ESM cell (FEATURE_2610_26 / D65; each repricer skips the other platforms). A
+        // failed re-price keeps the saved shipping and is only counted (D120). Re-read so the body carries the new
+        // prices.
+        int failed = elevenstShippingRepricer.repriceListings(List.of(id))
+                + esmShippingRepricer.repriceListings(List.of(id));
         GeneratedProductResponse body = listingAssetService.getGenerated(id);
         return ResponseEntity.ok(ResponseDTO.success(body.toBuilder().priceRecalcFailedCount(failed).build()));
     }
@@ -164,6 +168,13 @@ public class ListingAssetController {
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<Map<String, String>>> resolveInheritedElevenstShipping(@PathVariable Long id) {
         return ResponseEntity.ok(ResponseDTO.success(listingAssetService.resolveInheritedElevenstShipping(id)));
+    }
+
+    @GetMapping("/{id}/esm-shipping-inherited")
+    @Operation(summary = "An ESM cell's inherited shipping baseline (FEATURE_2610_26 / D36; esm.* keys, channel layer)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<Map<String, String>>> resolveInheritedEsmShipping(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(listingAssetService.resolveInheritedEsmShipping(id)));
     }
 
     @PatchMapping("/{id}/category-source")

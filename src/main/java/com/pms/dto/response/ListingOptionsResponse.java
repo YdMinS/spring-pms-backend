@@ -76,6 +76,14 @@ public class ListingOptionsResponse {
                 example = "AUTO")
         private String priceSource;
 
+        @Schema(description = "FEATURE_2610_26 / D50: Auction selling price of an ESM option (sellingPrice = Gmarket); "
+                + "null on every other platform", nullable = true, example = "13000.00")
+        private BigDecimal auctionSellingPrice;
+
+        @Schema(description = "FEATURE_2610_26 / D50: origin of auctionSellingPrice (AUTO / MANUAL_OVERRIDE); "
+                + "null on every other platform", nullable = true, example = "AUTO")
+        private String auctionPriceSource;
+
         @Schema(description = "Origin of the option name (2609_22/D3): AUTO = follows the master option, "
                 + "MANUAL_OVERRIDE = named for this channel. optionName is the effective name either way.",
                 example = "AUTO")
@@ -113,6 +121,9 @@ public class ListingOptionsResponse {
                     .stockQuantity(option.getStockQuantity())
                     .maxStock(ListingStockPolicy.ceiling(master))
                     .priceSource(option.getPriceSource() != null ? option.getPriceSource().name() : null)
+                    .auctionSellingPrice(option.getAuctionSellingPrice())
+                    .auctionPriceSource(option.getAuctionPriceSource() != null
+                            ? option.getAuctionPriceSource().name() : null)
                     .optionNameSource(option.getOptionNameSource() != null
                             ? option.getOptionNameSource().name() : null)
                     .channelOnly(option.isChannelOnly())

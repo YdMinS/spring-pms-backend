@@ -29,16 +29,17 @@ public final class MarketOptionPolicy {
     }
 
     /**
-     * The option belongs to a cell put on a market — any platform with a product id, Coupang or 11st
-     * (FEATURE_2610_13 / D121) — and is {@link #onMarket}: the condition for the delete lock and 「변경 미반영」.
+     * The option belongs to a cell put on a market — any platform with a product id, Coupang, 11st or ESM
+     * (FEATURE_2610_13 / D121 · FEATURE_2610_26 / D65) — and is {@link #onMarket}: the condition for the delete lock
+     * and 「변경 미반영」.
      */
     public static boolean carriedOnMarket(ProductListing cell, ProductListingOption option) {
         return cell.getPlatformProductId() != null && onMarket(option);
     }
 
     /**
-     * The option belongs to a cell put on a market (Coupang or 11st, FEATURE_2610_13 / D107) but has no option id
-     * yet. The approval result finds such an option <b>by name only</b>
+     * The option belongs to a cell put on a market (Coupang, 11st or ESM — FEATURE_2610_13 / D107 · FEATURE_2610_26 /
+     * D47) but has no option id yet. The approval result finds such an option <b>by name only</b>
      * ({@code ListingRegistrationServiceImpl.fetchStatus}), so renaming it breaks the match.
      */
     public static boolean awaitingMarketId(ProductListing cell, ProductListingOption option) {

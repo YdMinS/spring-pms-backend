@@ -100,6 +100,11 @@ public class ListingMatrixResponse {
         @Schema(description = "Selling price of the (single-SKU) listing option", example = "12999.99")
         private BigDecimal sellingPrice;
 
+        /** FEATURE_2610_26 / D50: the Auction price of the same option on an ESM cell; null on every other cell. */
+        @Schema(description = "Auction selling price of that option (ESM cells only; null elsewhere)",
+                example = "13000.00")
+        private BigDecimal auctionSellingPrice;
+
         @Schema(description = "Auto-generated registration name from this channel's active options (67)", example = "노브랜드 생수 x 6")
         private String registrationName;
 

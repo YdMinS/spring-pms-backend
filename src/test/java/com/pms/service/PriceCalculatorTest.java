@@ -351,4 +351,81 @@ class PriceCalculatorTest {
 
         assertThat(price).isEqualByComparingTo("10940");
     }
+
+    // FEATURE_2610_26 / D52 · D58: an ESM option's Auction price = the same formula with the Auction commission and
+    // the Auction target margin (cost / delivery / box shared).
+    private final ProductListing esmCell = ProductListing.builder()
+            .id(2L).platform(Platform.ESM)
+            .seller(Seller.builder().id(7L).sellerName("판매자").build())
+            .build();
+
+    private PlatformCategory esmCategory(String gmarket, String auction) {
+        return PlatformCategory.builder().id(4L).platform(Platform.ESM).code("esm-1")
+                .commissionRate(gmarket == null ? null : new BigDecimal(gmarket))
+                .auctionCommissionRate(auction == null ? null : new BigDecimal(auction)).build();
+    }
+
+    @Test
+    void calculateAuctionPrice_usesAuctionCommissionAndAuctionMargin() {
+        // cost 5000 + delivery 2500 + box 500 = 8000; 1 − 0.12 × 1.1 − 0.20 = 0.668; 8000/0.668 = 11976.05 → 11980
+        given(masterChannelConfigService.resolvePlatformCategory(esmCell)).willReturn(esmCategory("0.10", "0.12"));
+        given(masterChannelConfigService.resolveDelivery(esmCell, masterOption))
+                .willReturn(CarrierRate.builder().cost(new BigDecimal("2500")).build());
+        given(masterChannelConfigService.resolvePackage(esmCell, masterOption))
+                .willReturn(Package.builder().cost(new BigDecimal("500")).build());
+        given(marginPolicyRepository.findBySellerIdAndPlatform(7L, Platform.ESM))
+                .willReturn(Optional.of(MarginPolicy.builder().marginRate(new BigDecimal("0.15"))
+                        .auctionMarginRate(new BigDecimal("0.20")).build()));
+
+        BigDecimal auction = priceCalculator.calculateAuctionPrice(esmCell, masterOption, new BigDecimal("5000"));
+
+        assertThat(auction).isEqualByComparingTo("11980");
+    }
+
+    @Test
+    void calculateAuctionPrice_auctionCommissionUnset_throws400() {
+        given(masterChannelConfigService.resolvePlatformCategory(esmCell)).willReturn(esmCategory("0.10", null));
+
+        assertThatThrownBy(() -> priceCalculator.calculateAuctionPrice(esmCell, masterOption, new BigDecimal("5000")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("옥션 수수료 미설정 — 카테고리 시드 필요");
+    }
+
+    @Test
+    void calculateAuctionPrice_auctionMarginUnset_throws400() {
+        given(masterChannelConfigService.resolvePlatformCategory(esmCell)).willReturn(esmCategory("0.10", "0.12"));
+        given(marginPolicyRepository.findBySellerIdAndPlatform(7L, Platform.ESM))
+                .willReturn(Optional.of(MarginPolicy.builder().marginRate(new BigDecimal("0.15")).build()));
+
+        assertThatThrownBy(() -> priceCalculator.calculateAuctionPrice(esmCell, masterOption, new BigDecimal("5000")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("옥션 목표 마진율 미설정");
+    }
+
+    // FEATURE_2610_26 / D60: an ESM cell adds 3.3% of the chosen policy's prepaid fee, on both site prices.
+    @Test
+    void esmCell_paidBundlePolicy_addsTheDeliveryFeeCommission() {
+        com.pms.service.listing.shipping.EsmShippingResolver esmResolver =
+                org.mockito.Mockito.mock(com.pms.service.listing.shipping.EsmShippingResolver.class);
+        PriceCalculator withEsm = new PriceCalculator(marginPolicyRepository, masterChannelConfigService, VAT, null,
+                esmResolver);
+        given(esmResolver.resolve(esmCell)).willReturn(java.util.Map.of(
+                com.pms.service.listing.shipping.EsmShippingKeys.BUNDLE_FEE_TYPE, "2",
+                com.pms.service.listing.shipping.EsmShippingKeys.BUNDLE_FEE, "3000",
+                com.pms.service.listing.shipping.EsmShippingKeys.BUNDLE_PREPAY, "true"));
+        given(masterChannelConfigService.resolvePlatformCategory(esmCell)).willReturn(esmCategory("0.10", "0.12"));
+        given(masterChannelConfigService.resolveDelivery(esmCell, masterOption))
+                .willReturn(CarrierRate.builder().cost(new BigDecimal("2500")).build());
+        given(masterChannelConfigService.resolvePackage(esmCell, masterOption))
+                .willReturn(Package.builder().cost(new BigDecimal("500")).build());
+        given(marginPolicyRepository.findBySellerIdAndPlatform(7L, Platform.ESM))
+                .willReturn(Optional.of(MarginPolicy.builder().marginRate(new BigDecimal("0.15"))
+                        .auctionMarginRate(new BigDecimal("0.20")).build()));
+
+        // Gmarket: (8000 + 3000 × 0.033 = 8099) / 0.74 = 10944.59 → 10940
+        assertThat(withEsm.calculatePrice(esmCell, masterOption, new BigDecimal("5000"))).isEqualByComparingTo("10940");
+        // Auction: 8099 / 0.668 = 12124.25 → 12120
+        assertThat(withEsm.calculateAuctionPrice(esmCell, masterOption, new BigDecimal("5000")))
+                .isEqualByComparingTo("12120");
+    }
 }

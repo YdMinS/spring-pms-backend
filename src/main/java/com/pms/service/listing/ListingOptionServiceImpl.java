@@ -5,6 +5,7 @@ import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
+import com.pms.domain.Platform;
 import com.pms.domain.PriceChangeReason;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -24,6 +25,7 @@ import com.pms.service.OptionCheckSuffixResolver;
 import com.pms.service.PriceCalculator;
 import com.pms.service.RegistrationNameGenerator;
 import com.pms.service.elevenst.ElevenstListingRules;
+import com.pms.service.esm.EsmPriceRules;
 import com.pms.service.price.PriceHistoryRecorder;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -197,7 +199,8 @@ public class ListingOptionServiceImpl implements ListingOptionService {
      * (D4), and an option is saved only once the market has accepted it (D6) — so the market call happens
      * <em>before</em> {@code saveAll}, and its failures are caught rather than thrown (a thrown exception
      * would roll back the options that did succeed). An 11st listing pushes nothing — every option is saved
-     * locally (FEATURE_2610_13 / D9 ⑤ · D56).
+     * locally (FEATURE_2610_13 / D9 ⑤ · D56); an ESM listing likewise, and it carries the Auction price too
+     * (FEATURE_2610_26 / D53 ②).
      */
     @Override
     @Transactional
@@ -223,6 +226,9 @@ public class ListingOptionServiceImpl implements ListingOptionService {
         //    to AUTO that cannot be priced must fail the whole request rather than leave a half-applied batch
         //    (D16) — PriceCalculator throws IllegalArgumentException → 400, message passed through.
         Map<Long, TargetPrice> targets = new LinkedHashMap<>();
+        // 2610_26/D53 ②: an ESM listing also works out each option's Auction price (same AUTO / MANUAL rule).
+        boolean esm = listing.getPlatform() == Platform.ESM;
+        Map<Long, TargetPrice> auctionTargets = new LinkedHashMap<>();
         for (SetOptionPricesRequest.OptionPrice price : prices) {
             ProductListingOption option = byId.get(price.getOptionId());
             if (price.getSellingPrice() != null) {
@@ -230,6 +236,10 @@ public class ListingOptionServiceImpl implements ListingOptionService {
                 // 2610_13/D71: an 11st listing takes 10-won units only — refuse the whole request.
                 if (ElevenstListingRules.isElevenst(listing) && !ElevenstListingRules.isTenWonUnit(salePrice)) {
                     throw new IllegalArgumentException(ElevenstListingRules.PRICE_UNIT_MESSAGE);
+                }
+                // 2610_26/D53 ②: so does an ESM listing, with its own message.
+                if (esm && !EsmPriceRules.isTenWonUnit(salePrice)) {
+                    throw new IllegalArgumentException(EsmPriceRules.PRICE_UNIT_MESSAGE);
                 }
                 targets.put(option.getId(), new TargetPrice(salePrice,
                         priceCalculator.displayOriginalPrice(listing, salePrice),
@@ -241,12 +251,16 @@ public class ListingOptionServiceImpl implements ListingOptionService {
                 targets.put(option.getId(), new TargetPrice(quoted.salePrice(), quoted.originalPrice(),
                         GeneratedContentSource.AUTO));
             }
+            if (esm) {
+                auctionTargets.put(option.getId(), auctionTarget(listing, option, price.getAuctionSellingPrice()));
+            }
         }
 
         // 2. Push to the market, then keep only what it accepted.
         // 2610_13 / D9 ⑤ · D56: 11st has no per-option price push — its price travels with the next [수정 요청],
-        // so an 11st listing takes the "no adapter" path (saved locally, reported in skipped).
-        ListingChannel adapter = ElevenstListingRules.isElevenst(listing)
+        // so an 11st listing takes the "no adapter" path (saved locally, reported in skipped). 2610_26 / D53 ②: an
+        // ESM listing takes the same path.
+        ListingChannel adapter = ElevenstListingRules.isElevenst(listing) || esm
                 ? null
                 : resolver.resolveOptional(listing.getPlatform()).orElse(null);
         List<String> skipped = new ArrayList<>();
@@ -266,12 +280,12 @@ public class ListingOptionServiceImpl implements ListingOptionService {
             if (adapter == null || !StringUtils.hasText(option.getPlatformOptionId())) {
                 skipped.add(option.getOptionName());
                 // pushed=false: nothing reached the market, so market_price must stay as it was (2609_39/D19).
-                toSave.put(option.getId(), applied(option, target, false));
+                toSave.put(option.getId(), applied(option, target, auctionTargets.get(option.getId()), false));
                 continue;
             }
             try {
                 adapter.updateOptionPrice(option, target.salePrice(), account);
-                toSave.put(option.getId(), applied(option, target, true));
+                toSave.put(option.getId(), applied(option, target, null, true));
                 pushed++;
             } catch (Exception e) {
                 // Caught, not propagated: a rejected option must not roll back the ones that went through,
@@ -290,6 +304,15 @@ public class ListingOptionServiceImpl implements ListingOptionService {
                                 byId.get(saved.getId()).getSellingPrice(), saved.getSellingPrice()))
                         .toList(),
                 PriceChangeReason.MANUAL);
+        // 2610_26/D53 ③: the Auction side of the same save, as its own target type.
+        if (esm) {
+            priceHistoryRecorder.recordAuctionSellingPrices(listing,
+                    toSave.values().stream()
+                            .map(saved -> new PriceHistoryRecorder.SellingPriceChange(saved,
+                                    byId.get(saved.getId()).getAuctionSellingPrice(), saved.getAuctionSellingPrice()))
+                            .toList(),
+                    PriceChangeReason.MANUAL);
+        }
 
         // Return the full option set with the saved rows swapped in (setOptionStocks' closing block).
         List<ProductListingOption> merged = options.stream()
@@ -349,7 +372,7 @@ public class ListingOptionServiceImpl implements ListingOptionService {
                 throw new IllegalArgumentException("채널 전용 옵션은 되돌릴 마스터 옵션명이 없습니다");
             }
             toSave.put(option.getId(), option.toBuilder()
-                    .optionName(ElevenstListingRules.nameForCell(listing, master.getName()))
+                    .optionName(ListingOptionNames.nameForCell(listing, master.getName()))
                     .optionNameSource(GeneratedContentSource.AUTO)
                     .build());
         }
@@ -407,8 +430,9 @@ public class ListingOptionServiceImpl implements ListingOptionService {
             if (master == null) {
                 continue;   // channel-only option (2609_22/D2) — no master name to take
             }
-            // 2610_13/D66: an 11st cell compares against and takes the 11st-safe form of the master name.
-            String masterName = ElevenstListingRules.nameForCell(listing, master.getName());
+            // 2610_13/D66 · 2610_26/D26: an 11st cell compares against and takes the 11st-safe form of the master
+            // name, an ESM cell its 50-byte cut.
+            String masterName = ListingOptionNames.nameForCell(listing, master.getName());
             boolean alreadyApplied = masterName.equals(option.getOptionName())
                     && option.getOptionNameSource() == GeneratedContentSource.AUTO;
             if (alreadyApplied) {
@@ -463,15 +487,36 @@ public class ListingOptionServiceImpl implements ListingOptionService {
     }
 
     /**
+     * 2610_26/D53 ②: an ESM option's Auction target — a typed price (10-won unit, else the whole request is 400) is
+     * MANUAL_OVERRIDE, null is the calculated Auction price as AUTO. {@code originalPrice} stays null (D52).
+     */
+    private TargetPrice auctionTarget(ProductListing listing, ProductListingOption option, BigDecimal requested) {
+        if (requested != null) {
+            BigDecimal auction = normalize(requested);
+            if (!EsmPriceRules.isTenWonUnit(auction)) {
+                throw new IllegalArgumentException(EsmPriceRules.PRICE_UNIT_MESSAGE);
+            }
+            return new TargetPrice(auction, null, GeneratedContentSource.MANUAL_OVERRIDE);
+        }
+        return new TargetPrice(listingAssetService.quoteAuctionOptionPrice(listing, option), null,
+                GeneratedContentSource.AUTO);
+    }
+
+    /**
      * @param pushed true only when the marketplace accepted this exact price — then and only then is it also
      *               the price that is live on the market (2609_39/D19 ②). Writing {@code marketPrice} for an
      *               option we never sent would make that column lie on its very first day.
+     * @param auction the Auction target of an ESM option (2610_26/D53 ②), null on every other platform
      */
-    private static ProductListingOption applied(ProductListingOption option, TargetPrice target, boolean pushed) {
+    private static ProductListingOption applied(ProductListingOption option, TargetPrice target, TargetPrice auction,
+                                                boolean pushed) {
         ProductListingOption.ProductListingOptionBuilder builder = option.toBuilder()
                 .sellingPrice(target.salePrice())
                 .originalPrice(target.originalPrice())
                 .priceSource(target.source());
+        if (auction != null) {
+            builder.auctionSellingPrice(auction.salePrice()).auctionPriceSource(auction.source());
+        }
         if (pushed) {
             builder.marketPrice(target.salePrice()).marketPriceAt(LocalDateTime.now());
         }

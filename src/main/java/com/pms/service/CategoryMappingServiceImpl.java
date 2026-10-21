@@ -52,13 +52,11 @@ public class CategoryMappingServiceImpl implements CategoryMappingService {
         // FEATURE_2610_05 / D38: a new and an updated mapping both link the platform_category row of
         // (platform, code) — price, category meta and settlement resolve the marketplace category through that FK.
         // A code missing from the list → 400 before anything is saved; saving an old FK-less mapping again fills it.
-        // FEATURE_2610_10 / D21 ④: the rejection names the platform — 11st has its own text, every other
-        // platform keeps the Coupang text.
+        // FEATURE_2610_10 / D21 ④ · FEATURE_2610_26 / D40: the rejection names the platform — 11st and ESM have their
+        // own text, every other platform keeps the Coupang text.
         PlatformCategory platformCategory = platformCategoryRepository
                 .findByPlatformAndCode(platform, request.getPlatformCategoryId())
-                .orElseThrow(() -> new IllegalArgumentException(platform == Platform.ELEVENST
-                        ? "11번가 카테고리 목록에 없는 코드입니다."
-                        : "쿠팡 카테고리 목록에 없는 코드입니다."));
+                .orElseThrow(() -> new IllegalArgumentException(unknownCodeMessage(platform)));
         CategoryMapping existing = categoryMappingRepository
                 .findByCategoryIdAndPlatform(categoryId, platform).orElse(null);
         CategoryMapping toSave = existing != null
@@ -103,6 +101,20 @@ public class CategoryMappingServiceImpl implements CategoryMappingService {
             throw new IllegalArgumentException("이 카테고리를 쓰는 마스터가 있어 마지막 연결은 지울 수 없습니다.");
         }
         categoryMappingRepository.delete(existing);
+    }
+
+    /**
+     * FEATURE_2610_10 / D21 ④ · FEATURE_2610_26 / D40: the 400 text for a code missing from the platform's list,
+     * naming the marketplace. Also used by {@code MasterPlatformCategoryServiceImpl} (same rule, same texts).
+     */
+    static String unknownCodeMessage(Platform platform) {
+        if (platform == Platform.ELEVENST) {
+            return "11번가 카테고리 목록에 없는 코드입니다.";
+        }
+        if (platform == Platform.ESM) {
+            return "G마켓 · 옥션 카테고리 목록에 없는 코드입니다.";
+        }
+        return "쿠팡 카테고리 목록에 없는 코드입니다.";
     }
 
     private CategoryMappingResponse toResponse(CategoryMapping mapping) {

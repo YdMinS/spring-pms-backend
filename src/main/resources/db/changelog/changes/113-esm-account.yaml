@@ -1,0 +1,42 @@
+# ESM (Gmarket · Auction) account credential (FEATURE_2610_26 / D4 · D5).
+#   esm_account_credential = the seller's own ESM+ master ID, secret key and the two site seller IDs, 1:1 with
+#   marketplace_account (UNIQUE), next to coupang_account_credential / elevenst_account_credential.
+# ⚠️ secret_key is VARCHAR(512): the value is AES-GCM CIPHERTEXT (AesAttributeConverter, D4).
+# ⚠️ No boolean column -> the 006 BIT follow-up is not needed.
+databaseChangeLog:
+
+  - changeSet:
+      id: 113-esm-account-credential
+      author: oclyx
+      comment: "FEATURE_2610_26: esm_account_credential (1:1 with marketplace_account, UNIQUE)."
+      changes:
+        - createTable:
+            tableName: esm_account_credential
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: marketplace_account_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: master_id, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: secret_key, type: VARCHAR(512), constraints: { nullable: false } }
+              - column: { name: gmarket_seller_id, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: auction_seller_id, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_esm_cred_tenant
+            baseTableName: esm_account_credential
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_esm_cred_account
+            baseTableName: esm_account_credential
+            baseColumnNames: marketplace_account_id
+            referencedTableName: marketplace_account
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            constraintName: uq_esm_cred_account
+            tableName: esm_account_credential
+            columnNames: marketplace_account_id
+      rollback:
+        - dropTable: { tableName: esm_account_credential }

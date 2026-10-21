@@ -71,6 +71,10 @@ public interface ListingOptionService {
      * <p>FEATURE_2610_13: on an 11st listing a typed price off the 10-won unit → 400 (D71), and nothing is pushed —
      * every option is saved locally and reported in {@code skipped}; 11st gets the price with [수정 요청] (D9 ⑤ ·
      * D56).</p>
+     *
+     * <p>FEATURE_2610_26 / D53 ②: on an ESM listing each row also carries {@code auctionSellingPrice} (null = back to
+     * the calculated Auction price; only the typed site turns {@code MANUAL_OVERRIDE}), a typed Gmarket or Auction
+     * price off the 10-won unit → 400, and nothing is pushed — the same local save as 11st.</p>
      */
     ChannelPriceUpdateResponse setOptionPrices(Long listingId, List<SetOptionPricesRequest.OptionPrice> prices);
 
@@ -83,7 +87,8 @@ public interface ListingOptionService {
      * option's name and {@code AUTO}; a <b>channel-only</b> option (D2) has no name to go back to → 400.</p>
      *
      * <p>FEATURE_2610_13: on an 11st listing a typed name breaking the 11st rule → 400 (D71), and the restored
-     * master name is its 11st-safe form (D66, {@code ElevenstListingRules.nameForCell}).</p>
+     * master name is its 11st-safe form (D66) — on an ESM listing its 50-byte cut (FEATURE_2610_26 / D26), both through
+     * {@code ListingOptionNames.nameForCell}.</p>
      *
      * <p>Empty list → 400; ids not belonging to the listing → 400; duplicate names within the cell → 400
      * (Coupang rejects a duplicate {@code itemName}). Every check runs before {@code saveAll}, so a rejected

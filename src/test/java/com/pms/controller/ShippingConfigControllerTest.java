@@ -2,6 +2,7 @@ package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.ElevenstAccountCredential;
+import com.pms.domain.EsmAccountCredential;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.domain.Seller;
@@ -12,8 +13,11 @@ import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.CoupangShippingConfigRepository;
 import com.pms.repository.ElevenstAccountCredentialRepository;
 import com.pms.repository.ElevenstShippingConfigRepository;
+import com.pms.repository.EsmAccountCredentialRepository;
+import com.pms.repository.EsmShippingConfigRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.service.coupang.CoupangApiClient;
+import com.pms.service.esm.EsmApiClient;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,8 +49,11 @@ class ShippingConfigControllerTest extends BaseIntegrationTest {
     @Autowired private CoupangShippingConfigRepository shippingConfigRepository;
     @Autowired private ElevenstAccountCredentialRepository elevenstCredentialRepository;
     @Autowired private ElevenstShippingConfigRepository elevenstShippingConfigRepository;
+    @Autowired private EsmAccountCredentialRepository esmCredentialRepository;
+    @Autowired private EsmShippingConfigRepository esmShippingConfigRepository;
 
     @MockBean private CoupangApiClient coupangApiClient;
+    @MockBean private EsmApiClient esmApiClient;
 
     private Long accountId;
 
@@ -74,6 +81,8 @@ class ShippingConfigControllerTest extends BaseIntegrationTest {
         shippingConfigRepository.deleteAll();
         elevenstShippingConfigRepository.deleteAll();
         elevenstCredentialRepository.deleteAll();
+        esmShippingConfigRepository.deleteAll();
+        esmCredentialRepository.deleteAll();
         credentialRepository.deleteAll();          // FK child first
         marketplaceAccountRepository.deleteAll();
         sellerRepository.deleteAll();
@@ -170,6 +179,62 @@ class ShippingConfigControllerTest extends BaseIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("11번가 판매채널이 아닙니다."));
+    }
+
+    // FEATURE_2610_26 / D66: the chosen bundle-fee policy is read from ESM (post 18) and its four facts are written by
+    // the server — a client-sent policy key is dropped.
+    @Test
+    void upsertEsmConfig_writesThePolicyFactsFromEsm_andDropsClientPolicyKeys() throws Exception {
+        Long esmId = seedEsmAccount();
+        given(esmApiClient.get(org.mockito.ArgumentMatchers.eq("/item/v1/shipping/places/176042/policies"), any()))
+                .willReturn(objectMapper.readTree("{\"placeNo\":176042,\"policies\":[{\"policyNo\":662995,"
+                        + "\"feeType\":3,\"fee\":2500,\"isPrepayment\":true,\"isCashOnDelivery\":false,"
+                        + "\"shippingFee\":[{\"condition\":20000}]}]}"));
+
+        mockMvc.perform(put("/api/admin/marketplace-account/" + esmId + "/esm-shipping-config")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json")
+                        .content(objectMapper.writeValueAsString(Map.of("settings", Map.of(
+                                "esm.placeNo", "176042",
+                                "esm.bundlePolicyNo", "662995",
+                                "esm.returnFee", "3000",
+                                "esm.bundleFee", "1")))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.settings['esm.bundleFeeType']").value("3"))
+                .andExpect(jsonPath("$.data.settings['esm.bundleFee']").value("2500"))
+                .andExpect(jsonPath("$.data.settings['esm.bundleFreeOver']").value("20000"))
+                .andExpect(jsonPath("$.data.settings['esm.bundlePrepay']").value("true"))
+                .andExpect(jsonPath("$.data.settings['esm.returnFee']").value("3000"))
+                .andExpect(jsonPath("$.data.priceRecalcFailedCount").value(0));
+    }
+
+    @Test
+    void upsertEsmConfig_policyNotOfThePlace_returns400() throws Exception {
+        Long esmId = seedEsmAccount();
+        given(esmApiClient.get(org.mockito.ArgumentMatchers.eq("/item/v1/shipping/places/176042/policies"), any()))
+                .willReturn(objectMapper.readTree("{\"placeNo\":176042,\"policies\":[]}"));
+
+        mockMvc.perform(put("/api/admin/marketplace-account/" + esmId + "/esm-shipping-config")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json")
+                        .content(objectMapper.writeValueAsString(Map.of("settings", Map.of(
+                                "esm.placeNo", "176042",
+                                "esm.bundlePolicyNo", "662995")))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("고른 묶음배송비는 이 출하지의 정책이 아닙니다"));
+    }
+
+    private Long seedEsmAccount() {
+        Seller seller = sellerRepository.save(Seller.builder()
+                .sellerName("지마켓상회").businessRegistration("333-44-55555").build());
+        MarketplaceAccount account = marketplaceAccountRepository.save(MarketplaceAccount.builder()
+                .seller(seller).platform(Platform.ESM).isActive(true).build());
+        EsmAccountCredential credential = esmCredentialRepository.save(EsmAccountCredential.builder()
+                .marketplaceAccount(account).masterId("master").secretKey("SECRET")
+                .gmarketSellerId("g-id").auctionSellerId("a-id").build());
+        // mappedBy inverse: the same persistence context hands back this instance, so fill it like the fixture does.
+        org.springframework.test.util.ReflectionTestUtils.setField(account, "esmCredential", credential);
+        return account.getId();
     }
 
     private Long seedElevenstAccount() {

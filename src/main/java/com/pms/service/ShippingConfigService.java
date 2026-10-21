@@ -2,6 +2,8 @@ package com.pms.service;
 
 import com.pms.dto.request.ShippingConfigRequest;
 import com.pms.dto.response.ElevenstShippingConfigResponse;
+import com.pms.dto.response.EsmChoiceResponse;
+import com.pms.dto.response.EsmShippingConfigResponse;
 import com.pms.dto.response.ShippingConfigResponse;
 import com.pms.service.listing.shipping.OutboundPlace;
 import com.pms.service.listing.shipping.ReturnCenter;
@@ -14,8 +16,9 @@ import java.util.Map;
  * centers (platform lookup when supported, else an empty list = manual entry) + upsert of the per-account
  * shipping config. Lookup-picked values and manually-entered values take the same save path.
  *
- * <p>Scope = outbound/return lookup seam + config persistence. Consumed by register (73), which is the final
- * guard for missing required values.</p>
+ * <p>Scope = outbound/return lookup seam + config persistence — and, for an ESM sales channel, the lookups of the
+ * ESM choices (bundle-fee policies of a place, dispatch policies, couriers; FEATURE_2610_26 / D37). Consumed by
+ * register (73), which is the final guard for missing required values.</p>
  */
 public interface ShippingConfigService {
 
@@ -66,4 +69,29 @@ public interface ShippingConfigService {
      * @throws IllegalArgumentException (→ 400) when the account is not on 11st or the tiers do not chain
      */
     ElevenstShippingConfigResponse upsertElevenstConfig(Long accountId, Map<String, String> settings);
+
+    /**
+     * FEATURE_2610_26 / D36: the ESM shipping settings of an ESM sales channel (empty map when none yet).
+     *
+     * @throws IllegalArgumentException (→ 400) when the account is not on ESM
+     */
+    EsmShippingConfigResponse getEsmConfig(Long accountId);
+
+    /**
+     * FEATURE_2610_26 / D36 · D60 · D66: replace the ESM shipping settings — the six input keys kept, the chosen
+     * bundle-fee policy checked against its shipping place on ESM and its four facts stored with it.
+     *
+     * @throws IllegalArgumentException (→ 400) when the account is not on ESM, the policy is not the place's, or the
+     *         return fee is not a whole number ≥ 0
+     */
+    EsmShippingConfigResponse upsertEsmConfig(Long accountId, Map<String, String> settings);
+
+    /** FEATURE_2610_26 / D37: the bundle-fee policies of one shipping place of an ESM sales channel. */
+    List<EsmChoiceResponse> listEsmBundlePolicies(Long accountId, String placeNo);
+
+    /** FEATURE_2610_26 / D37 · D68: the dispatch policies of an ESM sales channel. */
+    List<EsmChoiceResponse> listEsmDispatchPolicies(Long accountId);
+
+    /** FEATURE_2610_26 / D37: the couriers ESM accepts. */
+    List<EsmChoiceResponse> listEsmDeliveryCompanies(Long accountId);
 }

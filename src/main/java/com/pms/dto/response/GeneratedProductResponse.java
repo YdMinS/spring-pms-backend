@@ -66,6 +66,10 @@ public class GeneratedProductResponse {
         /** 2609_19/D1: origin of sellingPrice — "AUTO" (calculated) or "MANUAL_OVERRIDE" (user-set for this
          *  channel). The price in {@code sellingPrice} is the effective one either way. */
         private String priceSource;
+        /** FEATURE_2610_26 / D50: the Auction price of an ESM option ({@code sellingPrice} = Gmarket); null elsewhere. */
+        private BigDecimal auctionSellingPrice;
+        /** FEATURE_2610_26 / D50: origin of {@code auctionSellingPrice} ("AUTO" / "MANUAL_OVERRIDE"); null elsewhere. */
+        private String auctionPriceSource;
         /** 2609_22/D3: origin of optionName — "AUTO" (follows the master option) or "MANUAL_OVERRIDE"
          *  (named for this channel). {@code optionName} is the effective name either way. */
         private String optionNameSource;

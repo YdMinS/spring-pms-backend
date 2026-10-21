@@ -121,6 +121,20 @@ public class PriceHistoryRecorder {
      */
     public void recordSellingPrices(ProductListing cell, List<SellingPriceChange> changes,
                                     PriceChangeReason reason) {
+        recordListingPrices(cell, changes, reason, PriceTargetType.LISTING_SELLING);
+    }
+
+    /**
+     * FEATURE_2610_26 / D53 ③: an ESM cell's Auction price movements — the same rules and the same single
+     * {@code saveAll} as {@link #recordSellingPrices}, written as {@link PriceTargetType#LISTING_SELLING_AUCTION}.
+     */
+    public void recordAuctionSellingPrices(ProductListing cell, List<SellingPriceChange> changes,
+                                           PriceChangeReason reason) {
+        recordListingPrices(cell, changes, reason, PriceTargetType.LISTING_SELLING_AUCTION);
+    }
+
+    private void recordListingPrices(ProductListing cell, List<SellingPriceChange> changes,
+                                     PriceChangeReason reason, PriceTargetType targetType) {
         if (changes == null || changes.isEmpty() || isDraft(cell)) {
             return;
         }
@@ -130,7 +144,7 @@ public class PriceHistoryRecorder {
                 continue;
             }
             rows.add(PriceChangeLog.builder()
-                    .targetType(PriceTargetType.LISTING_SELLING)
+                    .targetType(targetType)
                     .listingOption(change.option())
                     .oldPrice(change.oldPrice())
                     .newPrice(change.newPrice())

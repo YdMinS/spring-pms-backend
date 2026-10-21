@@ -35,6 +35,15 @@ public class MarginPolicyRequest {
     @Schema(description = "Net-profit ratio (0.1500 = 15%)", example = "0.1500")
     private BigDecimal marginRate;
 
+    /**
+     * FEATURE_2610_26 / D58 · D59: the Auction target margin. Required for an ESM preset (checked in the service);
+     * ignored and stored as null for every other platform.
+     */
+    @DecimalMin(value = "0.0", message = "auctionMarginRate must be >= 0")
+    @DecimalMax(value = "0.9999", message = "auctionMarginRate must be <= 0.9999")
+    @Schema(description = "Auction net-profit ratio (ESM only, required there; 0.1500 = 15%)", example = "0.1500")
+    private BigDecimal auctionMarginRate;
+
     // Optional display discount rate for originalPrice reverse-calc (73). Upper-bounded at 0.5; null = keep
     // existing on update / no discount on create.
     @DecimalMin(value = "0.0", message = "displayDiscountRate must be >= 0")

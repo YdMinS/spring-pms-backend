@@ -53,5 +53,20 @@ public class SetOptionPricesRequest {
         @Schema(description = "Manual selling price for this channel; null = back to the calculated price",
                 nullable = true, example = "15000")
         private BigDecimal sellingPrice;
+
+        /**
+         * FEATURE_2610_26 / D53 ②: the Auction price of an ESM option ({@code sellingPrice} is then the Gmarket one);
+         * null = back to the calculated Auction price. Ignored on every other platform.
+         */
+        @DecimalMin(value = "10", message = "판매가는 10원 이상이어야 합니다")
+        @DecimalMax(value = "99999999", message = "판매가가 너무 큽니다")
+        @Schema(description = "Manual Auction price (ESM only); null = back to the calculated Auction price",
+                nullable = true, example = "15000")
+        private BigDecimal auctionSellingPrice;
+
+        /** The two-field form (every platform but ESM) — {@code auctionSellingPrice} stays null. */
+        public OptionPrice(Long optionId, BigDecimal sellingPrice) {
+            this(optionId, sellingPrice, null);
+        }
     }
 }

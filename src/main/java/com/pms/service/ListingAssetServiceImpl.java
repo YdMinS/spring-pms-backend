@@ -34,6 +34,8 @@ import com.pms.service.listing.ListingStockPolicy;
 import com.pms.service.listing.shipping.CoupangShippingConfigResolver;
 import com.pms.service.listing.shipping.ElevenstShippingKeys;
 import com.pms.service.listing.shipping.ElevenstShippingResolver;
+import com.pms.service.listing.shipping.EsmShippingPolicies;
+import com.pms.service.listing.shipping.EsmShippingResolver;
 import com.pms.service.listing.shipping.ShippingOverrideKeys;
 import com.pms.dto.response.ShippingConfigResponse;
 import java.util.function.Function;
@@ -101,6 +103,8 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     private final com.pms.service.listing.TagMergeService tagMergeService;
     private final CoupangShippingConfigResolver shippingConfigResolver;
     private final ElevenstShippingResolver elevenstShippingResolver;
+    private final EsmShippingResolver esmShippingResolver;
+    private final EsmShippingPolicies esmShippingPolicies;
     private final PriceHistoryRecorder priceHistoryRecorder;
     /** Collage replacing the single photo when one resolves for the cell (FEATURE_2610_21 D8 · D37). */
     private final ThumbnailCollageResolver thumbnailCollageResolver;
@@ -246,11 +250,16 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     public GeneratedProductResponse updateShippingOverride(Long listingId, Map<String, String> override) {
         ProductListing cell = requireScopedCell(listingId);
         // Key whitelist only (register 72/73 is the final value guard); null/empty (after filter) clears it.
-        // No regenerateAssets — shipping is not a thumbnail/detail binding, so nothing to re-render. An 11st cell's
-        // price does read shipping (D117): the controller re-prices it after this commit (D123), not in here.
+        // No regenerateAssets — shipping is not a thumbnail/detail binding, so nothing to re-render. An 11st or ESM
+        // cell's price does read shipping (D117 · 2610_26/D65): the controller re-prices it after this commit
+        // (D123), not in here.
         // FEATURE_2610_13 / D104 · D106: the cell's platform decides the key set; 11st quantity tiers must chain.
         Map<String, String> filtered = ShippingOverrideKeys.filterListing(override, cell.getPlatform());
         ElevenstShippingKeys.validateTiers(filtered);
+        // FEATURE_2610_26 / D66: an ESM cell sets place + bundle fee together; the policy is checked on ESM.
+        if (cell.getPlatform() == Platform.ESM) {
+            filtered = esmShippingPolicies.forListing(cell, filtered);
+        }
         ProductListing updated = productListingRepository.save(
                 cell.toBuilder().shippingOverride(filtered).build());
         GeneratedProductData data = generatedProductDataRepository.findByProductListingId(listingId).orElse(null);
@@ -274,6 +283,17 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         }
         // D104: master ?? channel default (this cell's own override excluded) — the 11st modal's placeholder.
         return elevenstShippingResolver.resolveInherited(cell);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<String, String> resolveInheritedEsmShipping(Long listingId) {
+        ProductListing cell = requireScopedCell(listingId);
+        if (cell.getPlatform() != Platform.ESM) {
+            throw new IllegalArgumentException("G마켓 · 옥션 판매상품이 아닙니다.");
+        }
+        // 2610_26/D36: the channel layer (no master layer) — the ESM modal's placeholder.
+        return esmShippingResolver.resolveInherited(cell);
     }
 
     @Override
@@ -416,25 +436,42 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         // 🔴 Price history hook ③ (PLAN 2609_28 D23). It sits INSIDE this seam and not inside
         // regenerateAssets on purpose: MasterProductServiceImpl calls this method directly, so a hook
         // placed one level up would miss every "master edited → channels repriced" change. Rows are
-        // collected and written with ONE saveAll — a propagation touches hundreds of options.
+        // collected and written with ONE saveAll per price kind (an ESM cell's Auction rows are a second one,
+        // FEATURE_2610_26 / D53 ③) — a propagation touches hundreds of options.
         List<PriceHistoryRecorder.SellingPriceChange> priceChanges = new ArrayList<>();
+        // FEATURE_2610_26 / D53 ①: an ESM option also gets its Auction price, recorded as its own target type (③).
+        boolean esm = cell.getPlatform() == Platform.ESM;
+        List<PriceHistoryRecorder.SellingPriceChange> auctionChanges = new ArrayList<>();
         for (ProductListingOption option : productListingOptionRepository.findByProductListingId(cell.getId())) {
             // 2609_19/D2: a price the user set for this channel only is not touched by a regeneration
             // (same rule as the MANUAL_OVERRIDE detail HTML above).
-            if (option.getPriceSource() == GeneratedContentSource.MANUAL_OVERRIDE) {
+            boolean autoPrice = option.getPriceSource() != GeneratedContentSource.MANUAL_OVERRIDE;
+            // D53 ①: the Auction price follows the same rule on its own source.
+            boolean autoAuction = esm && option.getAuctionPriceSource() != GeneratedContentSource.MANUAL_OVERRIDE;
+            if (!autoPrice && !autoAuction) {
                 continue;
             }
             MasterProductOption mo = linkedMaster(option, masterOptionsById);
-            PriceCalculator.PriceResult price = quote(cell, option, mo);
-            priceChanges.add(new PriceHistoryRecorder.SellingPriceChange(
-                    option, option.getSellingPrice(), price.salePrice()));
-            productListingOptionRepository.save(option.toBuilder()
-                    .sellingPrice(price.salePrice())
-                    .originalPrice(price.originalPrice())
-                    .build());
+            ProductListingOption.ProductListingOptionBuilder builder = option.toBuilder();
+            if (autoPrice) {
+                PriceCalculator.PriceResult price = quote(cell, option, mo);
+                priceChanges.add(new PriceHistoryRecorder.SellingPriceChange(
+                        option, option.getSellingPrice(), price.salePrice()));
+                builder.sellingPrice(price.salePrice()).originalPrice(price.originalPrice());
+            }
+            if (autoAuction) {
+                BigDecimal auction = priceCalculator.calculateAuctionPrice(cell, mo, optionCostSum(option));
+                auctionChanges.add(new PriceHistoryRecorder.SellingPriceChange(
+                        option, option.getAuctionSellingPrice(), auction));
+                builder.auctionSellingPrice(auction).auctionPriceSource(GeneratedContentSource.AUTO);
+            }
+            productListingOptionRepository.save(builder.build());
         }
         // Unchanged options and DRAFT cells are filtered by the recorder, not here.
         priceHistoryRecorder.recordSellingPrices(cell, priceChanges, PriceChangeReason.PROPAGATION);
+        if (esm) {
+            priceHistoryRecorder.recordAuctionSellingPrices(cell, auctionChanges, PriceChangeReason.PROPAGATION);
+        }
     }
 
     @Override
@@ -448,6 +485,18 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                         .findFirst()
                         .orElse(null);
         return quote(cell, option, mo);
+    }
+
+    @Override
+    public BigDecimal quoteAuctionOptionPrice(ProductListing cell, ProductListingOption option) {
+        // Same single-option matching as quoteOptionPrice above (FK axis, no id→master map).
+        Long masterOptionId = linkedMasterOptionId(option);
+        MasterProductOption mo = masterOptionId == null || cell.getMasterProduct() == null ? null
+                : masterProductOptionRepository.findByMasterProductId(cell.getMasterProduct().getId()).stream()
+                        .filter(m -> masterOptionId.equals(m.getId()))
+                        .findFirst()
+                        .orElse(null);
+        return priceCalculator.calculateAuctionPrice(cell, mo, optionCostSum(option));
     }
 
     @Override
@@ -650,6 +699,9 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                         // 2609_19: lets the matrix mark a manually priced option (the price itself is
                         // already the effective one in sellingPrice — this is only its origin).
                         .priceSource(o.getPriceSource() != null ? o.getPriceSource().name() : null)
+                        // FEATURE_2610_26 / D50: the Auction price of an ESM option (null elsewhere).
+                        .auctionSellingPrice(o.getAuctionSellingPrice())
+                        .auctionPriceSource(o.getAuctionPriceSource() != null ? o.getAuctionPriceSource().name() : null)
                         .build())
                 .toList();
         return GeneratedProductResponse.builder()

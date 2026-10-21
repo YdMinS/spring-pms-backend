@@ -44,12 +44,10 @@ public class MasterPlatformCategoryServiceImpl implements MasterPlatformCategory
     public MasterPlatformCategoryResponse upsert(Long masterId, MasterPlatformCategoryRequest request) {
         MasterProduct master = requireScopedMaster(masterId);
         Platform platform = Platform.from(request.getPlatform());
-        // Same rule and texts as the standard category mapping (2610_05 / D38 · 2610_10 / D21 ④).
+        // Same rule and texts as the standard category mapping (2610_05 / D38 · 2610_10 / D21 ④ · 2610_26 / D40).
         PlatformCategory platformCategory = platformCategoryRepository
                 .findByPlatformAndCode(platform, request.getPlatformCategoryId())
-                .orElseThrow(() -> new IllegalArgumentException(platform == Platform.ELEVENST
-                        ? "11번가 카테고리 목록에 없는 코드입니다."
-                        : "쿠팡 카테고리 목록에 없는 코드입니다."));
+                .orElseThrow(() -> new IllegalArgumentException(CategoryMappingServiceImpl.unknownCodeMessage(platform)));
         MasterPlatformCategory existing = masterPlatformCategoryRepository
                 .findByMasterProductIdAndPlatform(masterId, platform).orElse(null);
         MasterPlatformCategory toSave = existing != null

@@ -50,6 +50,20 @@ public class MarketplaceAccountRequest {
             + "blank on update keeps existing.")
     private String apiKey;
 
+    // FEATURE_2610_26 / D4 · D5: ESM only — all four required (the secret may be blank on update = keep).
+    @Schema(description = "ESM+ master ID (ESM only, required there)", example = "esm_master")
+    private String esmMasterId;
+
+    @Schema(description = "ESM secret key (ESM only, write-only, stored encrypted). Required on create; "
+            + "blank on update keeps existing.")
+    private String esmSecretKey;
+
+    @Schema(description = "Gmarket seller ID (ESM only, required there)", example = "gmarket_seller")
+    private String gmarketSellerId;
+
+    @Schema(description = "Auction seller ID (ESM only, required there)", example = "auction_seller")
+    private String auctionSellerId;
+
     @Schema(description = "Active flag (null defaults to true on create)", example = "true")
     private Boolean isActive;
 

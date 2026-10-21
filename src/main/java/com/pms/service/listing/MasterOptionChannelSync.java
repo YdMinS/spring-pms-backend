@@ -71,8 +71,8 @@ public interface MasterOptionChannelSync {
      * MANUAL_OVERRIDE sibling may legitimately hold that name, and duplicate names within one cell are a
      * marketplace error (Coupang {@code itemName}).</p>
      *
-     * <p>FEATURE_2610_13 / D66: an 11st cell takes the 11st-safe form of {@code newName}
-     * ({@code ElevenstListingRules.nameForCell}).</p>
+     * <p>FEATURE_2610_13 / D66 · FEATURE_2610_26 / D26: an 11st cell takes the 11st-safe form of {@code newName}, an
+     * ESM cell its 50-byte cut ({@code ListingOptionNames.nameForCell}).</p>
      *
      * <p>2609_74: a cell option that is on the market but has no option id yet is skipped (D25), and a cell
      * whose market-carried option name actually moved gets {@code needsMarketSync = true} (D16).</p>

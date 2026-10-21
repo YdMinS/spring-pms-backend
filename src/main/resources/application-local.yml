@@ -36,6 +36,9 @@ oklyx:
   elevenst:
     # FEATURE_2610_13 / D116 — local never calls the keyed 11st API either (no 11st mock; live checks run on prod by hand).
     outbound-enabled: false
+  esm:
+    # FEATURE_2610_26 / D10 — local never calls Gmarket · Auction either (no ESM mock; live checks run on prod by hand).
+    outbound-enabled: false
 
 # 이미지 로컬 디스크 저장 경로 override. base(application.yml)의 /app/uploads/products 는 컨테이너 경로라
 # Mac 로컬에선 쓰기 불가("Failed to store bytes"). 홈 아래 쓰기 가능한 경로로 돌린다(썸네일/마스터 이미지 업로드).

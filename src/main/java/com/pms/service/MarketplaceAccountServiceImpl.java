@@ -1,9 +1,11 @@
 package com.pms.service;
 
+import com.pms.config.EsmProperties;
 import com.pms.domain.CoupangAccountCredential;
 import com.pms.domain.DetailTemplate;
 import com.pms.domain.ElevenstAccountCredential;
 import com.pms.domain.ElevenstChannelDefault;
+import com.pms.domain.EsmAccountCredential;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.domain.Seller;
@@ -12,15 +14,20 @@ import com.pms.dto.request.ElevenstNoticesRequest;
 import com.pms.dto.request.MarketplaceAccountRequest;
 import com.pms.dto.request.OptionCheckSuffixRequest;
 import com.pms.dto.response.MarketplaceAccountResponse;
+import com.pms.exception.BusinessException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.DetailTemplateRepository;
 import com.pms.repository.ElevenstAccountCredentialRepository;
 import com.pms.repository.ElevenstChannelDefaultRepository;
+import com.pms.repository.EsmAccountCredentialRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.ThumbnailTemplateRepository;
 import com.pms.service.elevenst.ElevenstCredentials;
+import com.pms.service.esm.EsmApiClient;
+import com.pms.service.esm.EsmKey;
+import com.pms.service.esm.EsmPaths;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,16 +38,17 @@ import java.util.List;
 
 /**
  * {@link MarketplaceAccountService} implementation. JPA persistence + the conditional key replacement (secretKey,
- * and since FEATURE_2610_13 the 11st apiKey).
+ * since FEATURE_2610_13 the 11st apiKey, and since FEATURE_2610_26 the ESM esmSecretKey).
  *
  * Transaction boundary: class readOnly=true, @Transactional on the write methods.
  *
- * <p>🔴 The account (core) and its platform credential — Coupang ({@link CoupangAccountCredential}) or 11st
- * ({@link ElevenstAccountCredential}, FEATURE_2610_13 / D2) — are saved separately in <b>one transaction</b>
- * (FEATURE_2609_26 / PLAN D15). The request/response DTOs stay flat (vendorId/accessKey/secretKey + apiKey).
+ * <p>🔴 The account (core) and its platform credential — Coupang ({@link CoupangAccountCredential}), 11st
+ * ({@link ElevenstAccountCredential}, FEATURE_2610_13 / D2) or ESM ({@link EsmAccountCredential}, FEATURE_2610_26 /
+ * D4) — are saved separately in <b>one transaction</b> (FEATURE_2609_26 / PLAN D15). The request/response DTOs stay
+ * flat (vendorId/accessKey/secretKey + apiKey + esmMasterId/esmSecretKey/gmarketSellerId/auctionSellerId).
  *
  * <p>⚠️ An update refreshes the existing credential row with {@code toBuilder()} — saving a new instance violates
- * {@code uq_coupang_cred_account} / {@code uq_elevenst_cred_account}.
+ * {@code uq_coupang_cred_account} / {@code uq_elevenst_cred_account} / {@code uq_esm_cred_account}.
  *
  * @see MarketplaceAccountService
  * @see com.pms.security.crypto.AesAttributeConverter
@@ -57,6 +65,14 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
     private final SellerRepository sellerRepository;
     private final ThumbnailTemplateRepository thumbnailTemplateRepository;
     private final DetailTemplateRepository detailTemplateRepository;
+    private final EsmAccountCredentialRepository esmCredentialRepository;
+    private final EsmApiClient esmApiClient;
+    private final EsmProperties esmProperties;
+
+    /** FEATURE_2610_26 / D4 · D5: the four ESM fields of the sales-channel form. */
+    static final String ESM_MASTER_ID_REQUIRED = "ESM+ 마스터 ID 를 입력하세요.";
+    static final String ESM_SECRET_KEY_REQUIRED = "비밀키를 입력하세요.";
+    static final String ESM_SELLER_IDS_REQUIRED = "G마켓 판매자 ID 와 옥션 판매자 ID 를 모두 입력하세요";
 
     @Override
     @Transactional
@@ -68,8 +84,15 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
             if (!StringUtils.hasText(req.getSecretKey())) {
                 throw new IllegalArgumentException("secretKey is required");
             }
-        } else if (!StringUtils.hasText(req.getApiKey())) {
-            throw new IllegalArgumentException("11번가 API 키를 입력하세요.");
+        } else if (platform == Platform.ELEVENST) {
+            if (!StringUtils.hasText(req.getApiKey())) {
+                throw new IllegalArgumentException("11번가 API 키를 입력하세요.");
+            }
+        }
+        // FEATURE_2610_26 / D5 · D7: all four ESM values, checked against ESM before anything is saved.
+        EsmKey esmKey = platform == Platform.ESM ? requireEsmKey(req, null) : null;
+        if (esmKey != null) {
+            verifyEsmKey(esmKey);
         }
 
         Seller seller = sellerRepository.findById(req.getSellerId())
@@ -94,7 +117,17 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                     .apiKey(req.getApiKey().trim())
                     .keyLastUsedAt(LocalDateTime.now())
                     .build());
-            return mapToResponse(saved, null, elevenst);
+            return mapToResponse(saved, null, elevenst, null);
+        }
+        if (platform == Platform.ESM) {
+            EsmAccountCredential esm = esmCredentialRepository.save(EsmAccountCredential.builder()
+                    .marketplaceAccount(saved)
+                    .masterId(esmKey.masterId())
+                    .secretKey(esmKey.secretKey())
+                    .gmarketSellerId(esmKey.gmarketSellerId())
+                    .auctionSellerId(esmKey.auctionSellerId())
+                    .build());
+            return mapToResponse(saved, null, null, esm);
         }
 
         // ⚠️ tenantId 는 넣지 않는다 — Hibernate 가 INSERT 시 스탬프한다(직접 세팅하면 assigned != current).
@@ -108,13 +141,14 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
 
         // 🔴 saved.getCoupangCredential() 은 읽기전용 역방향(mappedBy)이라 이 시점에도 null 이다 —
         //    방금 만든 인스턴스를 그대로 넘긴다(refresh 우회 금지).
-        return mapToResponse(saved, credential, null);
+        return mapToResponse(saved, credential, null, null);
     }
 
     @Override
     public MarketplaceAccountResponse get(Long id) {
         MarketplaceAccount account = findOrThrow(id);
-        return mapToResponse(account, account.getCoupangCredential(), account.getElevenstCredential());
+        return mapToResponse(account, account.getCoupangCredential(), account.getElevenstCredential(),
+                account.getEsmCredential());
     }
 
     @Override
@@ -124,7 +158,8 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                 : repository.findAll();
         return accounts.stream()
                 // EAGER 라 자격증명은 이미 로딩돼 있다(FetchType.EAGER, 2609_26).
-                .map(a -> mapToResponse(a, a.getCoupangCredential(), a.getElevenstCredential()))
+                .map(a -> mapToResponse(a, a.getCoupangCredential(), a.getElevenstCredential(),
+                        a.getEsmCredential()))
                 .toList();
     }
 
@@ -153,6 +188,14 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                 throw new IllegalArgumentException("secretKey is required");
             }
         }
+        // FEATURE_2610_26 / D4 · D7: a blank secret keeps the stored one; ESM is called only when a value changed.
+        EsmKey esmKey = null;
+        if (platform == Platform.ESM) {
+            esmKey = requireEsmKey(req, existing.getEsmCredential());
+            if (esmKeyChanged(esmKey, existing.getEsmCredential())) {
+                verifyEsmKey(esmKey);
+            }
+        }
 
         // Template override: null keeps existing (secretKey convention), a value re-validates (404) and replaces.
         ThumbnailTemplate thumbnailTemplate = req.getThumbnailTemplateId() != null
@@ -173,7 +216,10 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
         MarketplaceAccount saved = repository.save(updated);
 
         if (platform == Platform.ELEVENST) {
-            return mapToResponse(saved, null, upsertElevenstKey(saved, existing.getElevenstCredential(), req));
+            return mapToResponse(saved, null, upsertElevenstKey(saved, existing.getElevenstCredential(), req), null);
+        }
+        if (platform == Platform.ESM) {
+            return mapToResponse(saved, null, null, upsertEsmKey(saved, existing.getEsmCredential(), esmKey));
         }
 
         // 🔴 기존 행을 toBuilder() 로 갱신한다(id 유지 → UPDATE). 새 인스턴스면 uq_coupang_cred_account 위반.
@@ -189,7 +235,7 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                 .secretKey(secretKey)
                 .build();
 
-        return mapToResponse(saved, credentialRepository.save(credential), null);
+        return mapToResponse(saved, credentialRepository.save(credential), null, null);
     }
 
     /**
@@ -213,6 +259,64 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                 .build());
     }
 
+    /**
+     * FEATURE_2610_26 / D4 · D5: the ESM key of a create/update request. The master ID and both seller IDs are
+     * required; a blank secret keeps the stored one on update (required on create). The two seller IDs may differ.
+     */
+    private static EsmKey requireEsmKey(MarketplaceAccountRequest req, EsmAccountCredential existing) {
+        if (!StringUtils.hasText(req.getEsmMasterId())) {
+            throw new IllegalArgumentException(ESM_MASTER_ID_REQUIRED);
+        }
+        String secretKey = StringUtils.hasText(req.getEsmSecretKey())
+                ? req.getEsmSecretKey().trim()
+                : (existing != null ? existing.getSecretKey() : null);
+        if (!StringUtils.hasText(secretKey)) {
+            throw new IllegalArgumentException(ESM_SECRET_KEY_REQUIRED);
+        }
+        if (!StringUtils.hasText(req.getGmarketSellerId()) || !StringUtils.hasText(req.getAuctionSellerId())) {
+            throw new IllegalArgumentException(ESM_SELLER_IDS_REQUIRED);
+        }
+        return new EsmKey(req.getEsmMasterId().trim(), secretKey,
+                req.getGmarketSellerId().trim(), req.getAuctionSellerId().trim());
+    }
+
+    /** D7: true when none of the four stored values exists yet or one of them differs from {@code key}. */
+    private static boolean esmKeyChanged(EsmKey key, EsmAccountCredential existing) {
+        return existing == null
+                || !key.masterId().equals(existing.getMasterId())
+                || !key.secretKey().equals(existing.getSecretKey())
+                || !key.gmarketSellerId().equals(existing.getGmarketSellerId())
+                || !key.auctionSellerId().equals(existing.getAuctionSellerId());
+    }
+
+    /**
+     * D7: one shipping-place lookup (post 17, one row) with the key about to be saved. An ESM refusal becomes a 400
+     * carrying ESM's text and nothing is saved. A server that does not call ESM (D10) saves without the check.
+     */
+    private void verifyEsmKey(EsmKey key) {
+        if (!esmProperties.isOutboundEnabled()) {
+            return;
+        }
+        try {
+            esmApiClient.get(EsmPaths.SHIPPING_PLACES + "?pageSize=1&pageIndex=1", key);
+        } catch (BusinessException e) {
+            throw new IllegalArgumentException(e.getMessage());
+        }
+    }
+
+    /** D4: refresh the existing ESM row ({@code toBuilder} keeps its id — UNIQUE per account) or create it. */
+    private EsmAccountCredential upsertEsmKey(MarketplaceAccount saved, EsmAccountCredential existing, EsmKey key) {
+        EsmAccountCredential.EsmAccountCredentialBuilder builder = existing != null
+                ? existing.toBuilder()
+                : EsmAccountCredential.builder().marketplaceAccount(saved);
+        return esmCredentialRepository.save(builder
+                .masterId(key.masterId())
+                .secretKey(key.secretKey())
+                .gmarketSellerId(key.gmarketSellerId())
+                .auctionSellerId(key.auctionSellerId())
+                .build());
+    }
+
     @Override
     @Transactional
     public MarketplaceAccountResponse updateRegistrationNameSuffix(Long id, OptionCheckSuffixRequest req) {
@@ -222,7 +326,7 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                 .optionCheckSuffix(normalizeSuffix(req.getSuffix()))
                 .build();
         return mapToResponse(repository.save(updated), existing.getCoupangCredential(),
-                existing.getElevenstCredential());
+                existing.getElevenstCredential(), existing.getEsmCredential());
     }
 
     @Override
@@ -256,14 +360,15 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
     }
 
     /**
-     * Platform parsing + supported set: COUPANG and, since FEATURE_2610_13 (D5), ELEVENST.
+     * Platform parsing + supported set: COUPANG, since FEATURE_2610_13 (D5) ELEVENST, and since FEATURE_2610_26 (D4)
+     * ESM.
      *
      * <p>NAVER still has no credential table (expiring OAuth token), so creating one would leave an account
      * without credentials — refuse it with 400 instead.</p>
      */
     private static Platform requireSupported(String rawPlatform) {
         Platform platform = Platform.from(rawPlatform);
-        if (platform != Platform.COUPANG && platform != Platform.ELEVENST) {
+        if (platform != Platform.COUPANG && platform != Platform.ELEVENST && platform != Platform.ESM) {
             throw new IllegalArgumentException("네이버 계정은 아직 지원하지 않습니다");
         }
         return platform;
@@ -318,7 +423,7 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
      * cred 가 null 이면(자격증명 없는 계정) 세 필드는 null 로 내려간다.
      */
     private MarketplaceAccountResponse mapToResponse(MarketplaceAccount a, CoupangAccountCredential cred,
-                                                     ElevenstAccountCredential elevenst) {
+                                                     ElevenstAccountCredential elevenst, EsmAccountCredential esm) {
         // FEATURE_2610_16 / D7: only an 11st channel carries notice defaults — no lookup for other platforms.
         ElevenstChannelDefault notices = a.getPlatform() == Platform.ELEVENST
                 ? elevenstChannelDefaultRepository.findByMarketplaceAccountId(a.getId()).orElse(null)
@@ -344,6 +449,10 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                         ? ElevenstCredentials.renewalNeeded(elevenst, LocalDateTime.now()) : null)
                 .asNotice(notices != null ? notices.getAsNotice() : null)
                 .returnExchangeNotice(notices != null ? notices.getReturnExchangeNotice() : null)
+                // FEATURE_2610_26 / D4: ESM identifiers only — the secret key is never mapped.
+                .esmMasterId(esm != null ? esm.getMasterId() : null)
+                .gmarketSellerId(esm != null ? esm.getGmarketSellerId() : null)
+                .auctionSellerId(esm != null ? esm.getAuctionSellerId() : null)
                 .createdAt(a.getCreatedAt())
                 .updatedAt(a.getUpdatedAt())
                 .build();

@@ -2,6 +2,7 @@ package com.pms.fixture;
 
 import com.pms.domain.CoupangAccountCredential;
 import com.pms.domain.ElevenstAccountCredential;
+import com.pms.domain.EsmAccountCredential;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.domain.Seller;
@@ -109,6 +110,21 @@ public final class MarketplaceAccountFixture {
                 .platform(Platform.ELEVENST)
                 .isActive(true)
                 .elevenstCredential(ElevenstAccountCredential.builder().apiKey(apiKey).build());
+    }
+
+    /** FEATURE_2610_26 / D44: an active ESM account stub with its four key values attached (pure unit tests). */
+    public static MarketplaceAccount.MarketplaceAccountBuilder esmStubBuilder(String masterId, String secretKey,
+                                                                           String gmarketSellerId,
+                                                                           String auctionSellerId) {
+        return MarketplaceAccount.builder()
+                .platform(Platform.ESM)
+                .isActive(true)
+                .esmCredential(EsmAccountCredential.builder()
+                        .masterId(masterId)
+                        .secretKey(secretKey)
+                        .gmarketSellerId(gmarketSellerId)
+                        .auctionSellerId(auctionSellerId)
+                        .build());
     }
 
     /** 자격증명이 <b>없는</b> 계정(미설정 방어 경로 검증용). */
