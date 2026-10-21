@@ -736,6 +736,49 @@ class ListingAssetServiceTest {
         org.mockito.Mockito.verifyNoInteractions(priceChangeLogRepository);
     }
 
+    // FEATURE_2610_26 / D53 ① ③: an ESM option gets both prices, each skipped on its own MANUAL_OVERRIDE, and the
+    // Auction movement is recorded as its own target type.
+    @Test
+    @SuppressWarnings("unchecked")
+    void recalculateOptionPrices_esm_setsBothPrices_skipsManualAuction_recordsAuctionHistory() {
+        ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.ESM).name("셀")
+                .status(com.pms.domain.ListingStatus.SELLING).build();
+        ProductListingOption bothAuto = ProductListingOption.builder().id(50L).optionName("자동")
+                .sellingPrice(new BigDecimal("6000")).priceSource(com.pms.domain.GeneratedContentSource.AUTO)
+                .auctionSellingPrice(new BigDecimal("6500"))
+                .auctionPriceSource(com.pms.domain.GeneratedContentSource.AUTO).build();
+        ProductListingOption manualAuction = ProductListingOption.builder().id(51L).optionName("옥션 수동")
+                .sellingPrice(new BigDecimal("6000")).priceSource(com.pms.domain.GeneratedContentSource.AUTO)
+                .auctionSellingPrice(new BigDecimal("9990"))
+                .auctionPriceSource(com.pms.domain.GeneratedContentSource.MANUAL_OVERRIDE).build();
+        given(productListingOptionRepository.findByProductListingId(CELL_ID))
+                .willReturn(List.of(bothAuto, manualAuction));
+        given(priceCalculator.calculatePrices(any(), any(), any()))
+                .willReturn(new PriceCalculator.PriceResult(new BigDecimal("10670"), new BigDecimal("13340")));
+        given(priceCalculator.calculateAuctionPrice(any(), any(), any())).willReturn(new BigDecimal("11980"));
+        given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.UNMAPPED);
+
+        service.recalculateOptionPrices(cell);
+
+        org.mockito.ArgumentCaptor<ProductListingOption> saved =
+                org.mockito.ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository, times(2)).save(saved.capture());
+        assertThat(saved.getAllValues().get(0).getSellingPrice()).isEqualByComparingTo("10670");
+        assertThat(saved.getAllValues().get(0).getAuctionSellingPrice()).isEqualByComparingTo("11980");
+        assertThat(saved.getAllValues().get(1).getSellingPrice()).isEqualByComparingTo("10670");
+        assertThat(saved.getAllValues().get(1).getAuctionSellingPrice()).isEqualByComparingTo("9990");
+        verify(priceCalculator, times(1)).calculateAuctionPrice(any(), any(), any());
+
+        org.mockito.ArgumentCaptor<List<com.pms.domain.PriceChangeLog>> rows =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(priceChangeLogRepository, times(2)).saveAll(rows.capture());
+        assertThat(rows.getAllValues().get(1)).singleElement().satisfies(row -> {
+            assertThat(row.getTargetType()).isEqualTo(com.pms.domain.PriceTargetType.LISTING_SELLING_AUCTION);
+            assertThat(row.getListingOption().getId()).isEqualTo(50L);
+            assertThat(row.getNewPrice()).isEqualByComparingTo("11980");
+        });
+    }
+
     // ---- detail-template preview + pin (2609_20) ----
 
     private DetailTemplate detailTemplate(Long id) {

@@ -53,8 +53,8 @@ import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
-import com.pms.service.elevenst.ElevenstListingRules;
 import com.pms.service.listing.CellBomResolver;
+import com.pms.service.listing.ListingOptionNames;
 import com.pms.service.listing.ListingStockPolicy;
 import com.pms.service.listing.MarketOptionPolicy;
 import com.pms.service.listing.MasterOptionChannelSync;
@@ -243,6 +243,14 @@ public class MasterProductServiceImpl implements MasterProductService {
                         o -> o.getProductListing().getId(),
                         o -> o.getSellingPrice(),
                         (first, dup) -> first));   // single SKU expected; keep first on dupes
+        // FEATURE_2610_26 / D50: the Auction price of that same first option — null on every non-ESM cell, so a
+        // plain loop (Collectors.toMap rejects null values).
+        Map<Long, BigDecimal> auctionPriceByListing = new LinkedHashMap<>();
+        for (ProductListingOption o : allOptions) {
+            if (!auctionPriceByListing.containsKey(o.getProductListing().getId())) {
+                auctionPriceByListing.put(o.getProductListing().getId(), o.getAuctionSellingPrice());
+            }
+        }
         // 2609_22/D7: the registration name generator resolves the single-option case through the option's
         // master FK (falling back to the cell's own BOM), so it needs the option ROWS, not their names.
         Map<Long, List<ProductListingOption>> activeOptionsByListing = new LinkedHashMap<>();
@@ -307,6 +315,7 @@ public class MasterProductServiceImpl implements MasterProductService {
                         .name(pl.getName())
                         .platformProductId(pl.getPlatformProductId())
                         .sellingPrice(priceByListing.get(pl.getId()))
+                        .auctionSellingPrice(auctionPriceByListing.get(pl.getId()))
                         .registrationName(registrationNameGenerator.generate(master, activeOptions, suffix))
                         .status(pl.getStatus() != null ? pl.getStatus().name() : null)
                         .categoryCode(category == null ? null : category.category().getCode())
@@ -1191,7 +1200,8 @@ public class MasterProductServiceImpl implements MasterProductService {
                     productListingOptionRepository.findByProductListingId(cell.getId());
 
             // Build the whole cell's post-reset view first: a channel-only option (D2) keeps its own name,
-            // a linked one takes the master's (its 11st-safe form on an 11st cell — FEATURE_2610_13 / D66).
+            // a linked one takes the master's (its 11st-safe form on an 11st cell — FEATURE_2610_13 / D66, its
+            // 50-byte cut on an ESM cell — FEATURE_2610_26 / D26).
             // Nothing is saved until the cell passes the name check.
             List<ProductListingOption> toSave = new ArrayList<>();
             Set<String> resultingNames = new LinkedHashSet<>();
@@ -1200,9 +1210,10 @@ public class MasterProductServiceImpl implements MasterProductService {
             boolean marketNameChanged = false;
             for (ProductListingOption option : options) {
                 MasterProductOption linked = option.getMasterProductOption();
-                // 2610_13/D66: an 11st cell compares against and takes the 11st-safe form of the master name.
+                // 2610_13/D66 · 2610_26/D26: an 11st cell compares against and takes the 11st-safe form of the master
+                // name, an ESM cell its 50-byte cut.
                 String masterName = linked == null ? null
-                        : ElevenstListingRules.nameForCell(cell, masterNamesById.get(linked.getId()));
+                        : ListingOptionNames.nameForCell(cell, masterNamesById.get(linked.getId()));
                 boolean alreadyApplied = masterName == null
                         || (masterName.equals(option.getOptionName())
                             && option.getOptionNameSource() == GeneratedContentSource.AUTO);

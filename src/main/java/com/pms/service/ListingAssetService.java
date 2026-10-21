@@ -11,6 +11,7 @@ import com.pms.dto.response.GeneratedProductResponse;
 import com.pms.dto.response.ShippingConfigResponse;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
@@ -142,6 +143,10 @@ public interface ListingAssetService {
      *
      * <p>⚠️ Options whose {@code priceSource} is {@code MANUAL_OVERRIDE} are skipped (2609_19/D2): a price
      * the user set for that one channel survives a regeneration.</p>
+     *
+     * <p>FEATURE_2610_26 / D53 ①: an ESM option gets both prices — the Gmarket one into {@code sellingPrice} and the
+     * Auction one into {@code auctionSellingPrice}; each is skipped on its own when its source is
+     * {@code MANUAL_OVERRIDE}.</p>
      */
     void recalculateOptionPrices(ProductListing cell);
 
@@ -159,6 +164,15 @@ public interface ListingAssetService {
      *         (raised by {@link PriceCalculator})
      */
     PriceCalculator.PriceResult quoteOptionPrice(ProductListing cell, ProductListingOption option);
+
+    /**
+     * FEATURE_2610_26 / D53 ②: the auto-calculated Auction price of ONE ESM option — nothing is persisted. The
+     * Auction twin of {@link #quoteOptionPrice} (same matching, {@link PriceCalculator#calculateAuctionPrice}).
+     *
+     * @throws IllegalArgumentException (→400) when the Auction commission or Auction target margin is unset, or on
+     *         the gaps {@link #quoteOptionPrice} raises
+     */
+    BigDecimal quoteAuctionOptionPrice(ProductListing cell, ProductListingOption option);
 
     /**
      * Collage preview JPEG for {@code cell} — nothing is uploaded or persisted (FEATURE_2610_21 D20 · D35 · D46).

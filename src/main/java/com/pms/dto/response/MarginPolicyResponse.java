@@ -31,6 +31,10 @@ public class MarginPolicyResponse {
     @Schema(description = "Net-profit ratio (0.1500 = 15%)", example = "0.1500")
     private BigDecimal marginRate;
 
+    /** FEATURE_2610_26 / D59: the Auction target margin of an ESM preset; null for every other platform. */
+    @Schema(description = "Auction net-profit ratio (ESM only; null elsewhere)", example = "0.1500")
+    private BigDecimal auctionMarginRate;
+
     @Schema(description = "Display discount rate (0.2000 = 20% strike-through)", example = "0.2000")
     private BigDecimal displayDiscountRate;
 

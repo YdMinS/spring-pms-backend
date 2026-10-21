@@ -132,6 +132,42 @@ public class PriceCalculator {
                 customerShippingFee(cell));
     }
 
+    /**
+     * FEATURE_2610_26 / D52 · D58: the Auction selling price of one ESM option — {@link #prices} with the mapped
+     * category's Auction commission and the preset's Auction target margin; cost, delivery, box and the buyer
+     * shipping fee are the Gmarket ones. Only the sale price: the display original price is computed from the
+     * Gmarket price alone (D52).
+     *
+     * @throws IllegalArgumentException (→400) on the same gaps as {@link #calculatePrices}, plus an unset Auction
+     *         commission or Auction target margin
+     */
+    public BigDecimal calculateAuctionPrice(ProductListing cell, MasterProductOption masterOption,
+                                            BigDecimal costSum) {
+        return prices(resolveBasis(resolveAuctionCellBasis(cell), cell, masterOption), costSum).salePrice();
+    }
+
+    /**
+     * D52: {@link #resolveCellBasis} for the Auction price — {@code auctionCommissionRate} of the mapped category and
+     * {@code auctionMarginRate} of the seller×platform preset. Both unset → 400, never a fallback to the Gmarket value.
+     */
+    public CellPricingBasis resolveAuctionCellBasis(ProductListing cell) {
+        PlatformCategory platformCategory = masterChannelConfigService.resolvePlatformCategory(cell);
+        BigDecimal commissionRate = platformCategory.getAuctionCommissionRate();
+        if (commissionRate == null) {
+            throw new IllegalArgumentException("옥션 수수료 미설정 — 카테고리 시드 필요");
+        }
+        MarginPolicy margin = marginPolicyRepository
+                .findBySellerIdAndPlatform(cell.getSeller().getId(), cell.getPlatform())
+                .orElseThrow(() -> new IllegalArgumentException("마진 프리셋 없음"));
+        if (margin.getAuctionMarginRate() == null) {
+            throw new IllegalArgumentException("옥션 목표 마진율 미설정");
+        }
+        BigDecimal effectiveCommission = commissionRate.multiply(BigDecimal.ONE.add(feeVatRate));
+        return new CellPricingBasis(commissionRate, effectiveCommission, margin.getAuctionMarginRate(),
+                margin.getDisplayDiscountRate(), margin.getMinMarginAmount(), margin.getMinMarginRate(),
+                customerShippingFee(cell));
+    }
+
     /** FEATURE_2610_13 / D16 · D92 · D111: 11st cells only; every other platform pays no delivery-fee commission. */
     private CustomerShippingFee customerShippingFee(ProductListing cell) {
         if (cell.getPlatform() != Platform.ELEVENST || elevenstShippingResolver == null) {

@@ -4,13 +4,13 @@ import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.OptionApprovalStatus;
+import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.service.ListingAssetService;
-import com.pms.service.elevenst.ElevenstListingRules;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -80,8 +80,9 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
         }
         Map<Long, List<ProductListingOption>> optionsByCell = optionsByCell(cells);
         for (ProductListing cell : cells) {
-            // 2610_13/D66: an 11st cell takes the 11st-safe form of the new master name.
-            String cellName = ElevenstListingRules.nameForCell(cell, newName);
+            // 2610_13/D66 · 2610_26/D26: an 11st cell takes the 11st-safe form of the new master name, an ESM cell
+            // its 50-byte cut.
+            String cellName = ListingOptionNames.nameForCell(cell, newName);
             List<ProductListingOption> cellOptions = optionsByCell.get(cell.getId());
             boolean newNameTaken = cellOptions.stream()
                     .filter(cellOption -> !masterOptionId.equals(masterOptionId(cellOption)))
@@ -264,9 +265,13 @@ public class MasterOptionChannelSyncImpl implements MasterOptionChannelSync {
                 // 🔴 2609_22/D1: without this FK the new row would be born channel-only and be skipped by
                 // propagation, price recalculation and the stock clamp for ever (D2) — silently.
                 .masterProductOption(masterOption)
-                // 2610_13/D66: an 11st cell stores the 11st-safe form of the master name.
-                .optionName(ElevenstListingRules.nameForCell(cell, masterOption.getName()))
+                // 2610_13/D66 · 2610_26/D26: an 11st cell stores the 11st-safe form of the master name, an ESM cell
+                // its 50-byte cut.
+                .optionName(ListingOptionNames.nameForCell(cell, masterOption.getName()))
                 .sellingPrice(BigDecimal.ZERO)          // placeholder; recalculateOptionPrices fills the real one
+                // 2610_26/D50: an ESM option starts its Auction price the same way.
+                .auctionSellingPrice(cell.getPlatform() == Platform.ESM ? BigDecimal.ZERO : null)
+                .auctionPriceSource(cell.getPlatform() == Platform.ESM ? GeneratedContentSource.AUTO : null)
                 .active(false)                          // ⚠️ never auto-sell a newly propagated option
                 .platformOptionId(null)                 // issued by the 3c push
                 .approvalStatus(OptionApprovalStatus.NOT_APPROVED)

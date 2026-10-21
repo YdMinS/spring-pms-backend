@@ -919,4 +919,74 @@ class ListingOptionServiceTest {
         verify(resolver, never()).resolveOptional(any());
         verify(adapter, never()).updateOptionPrice(any(), any(), any());
     }
+
+    // ---------------------------------------------------------------- 2610_26 / D53 ②: ESM per-site manual price
+
+    private ProductListing esmPricingListing() {
+        return ProductListing.builder().id(LISTING_ID).platform(Platform.ESM).name("셀")
+                .status(ListingStatus.SELLING)
+                .seller(com.pms.domain.Seller.builder().id(7L).sellerName("행복상회").build())
+                .build();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void setOptionPrices_esm_typedAuctionIsManual_nullGmarketGoesAuto_nothingPushed() {
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(esmPricingListing()));
+        ProductListingOption option = pricedOption(1L, "1").toBuilder()
+                .auctionSellingPrice(new BigDecimal("6500.00"))
+                .auctionPriceSource(GeneratedContentSource.AUTO).build();
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID)).willReturn(List.of(option));
+        given(listingAssetService.quoteOptionPrice(any(), any()))
+                .willReturn(new com.pms.service.PriceCalculator.PriceResult(
+                        new BigDecimal("9000.00"), new BigDecimal("11250.00")));
+
+        ChannelPriceUpdateResponse response = service.setOptionPrices(LISTING_ID,
+                List.of(new OptionPrice(1L, null, new BigDecimal("12340"))));
+
+        ProductListingOption saved = captureSaved().get(0);
+        assertThat(saved.getSellingPrice()).isEqualByComparingTo("9000");
+        assertThat(saved.getPriceSource()).isEqualTo(GeneratedContentSource.AUTO);
+        assertThat(saved.getAuctionSellingPrice()).isEqualByComparingTo("12340");
+        assertThat(saved.getAuctionPriceSource()).isEqualTo(GeneratedContentSource.MANUAL_OVERRIDE);
+        verify(resolver, never()).resolveOptional(any());
+        assertThat(response.pushed()).isZero();
+        ArgumentCaptor<List<com.pms.domain.PriceChangeLog>> rows = ArgumentCaptor.forClass(List.class);
+        verify(priceChangeLogRepository, org.mockito.Mockito.times(2)).saveAll(rows.capture());
+        assertThat(rows.getAllValues().get(1)).singleElement().satisfies(row ->
+                assertThat(row.getTargetType()).isEqualTo(com.pms.domain.PriceTargetType.LISTING_SELLING_AUCTION));
+    }
+
+    @Test
+    void setOptionPrices_esm_nullAuction_takesTheQuotedAuctionPriceAsAuto() {
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(esmPricingListing()));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, null).toBuilder()
+                        .auctionSellingPrice(new BigDecimal("7770.00"))
+                        .auctionPriceSource(GeneratedContentSource.MANUAL_OVERRIDE).build()));
+        given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("18750.00"));
+        given(listingAssetService.quoteAuctionOptionPrice(any(), any())).willReturn(new BigDecimal("11980.00"));
+
+        service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, new BigDecimal("15000"), null)));
+
+        ProductListingOption saved = captureSaved().get(0);
+        assertThat(saved.getSellingPrice()).isEqualByComparingTo("15000");
+        assertThat(saved.getPriceSource()).isEqualTo(GeneratedContentSource.MANUAL_OVERRIDE);
+        assertThat(saved.getAuctionSellingPrice()).isEqualByComparingTo("11980");
+        assertThat(saved.getAuctionPriceSource()).isEqualTo(GeneratedContentSource.AUTO);
+    }
+
+    @Test
+    void setOptionPrices_esm_offTenWonUnit_rejectsWholeRequest() {
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(esmPricingListing()));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, null)));
+        given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("18750.00"));
+
+        assertThatThrownBy(() -> service.setOptionPrices(LISTING_ID,
+                List.of(new OptionPrice(1L, new BigDecimal("15000"), new BigDecimal("12345")))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("G마켓 · 옥션 판매가는 10원 단위로 입력하세요");
+        verify(productListingOptionRepository, never()).saveAll(any());
+    }
 }

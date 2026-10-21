@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
@@ -20,7 +21,7 @@ import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.SellerRepository;
-import com.pms.service.elevenst.ElevenstListingRules;
+import com.pms.service.listing.ListingOptionNames;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -128,9 +129,13 @@ public class ChannelAddServiceImpl implements ChannelAddService {
                     // option of a new channel "channel-only" (D2) — silently skipped by propagation, price
                     // recalculation and the stock clamp for ever.
                     .masterProductOption(masterOption)
-                    // 2610_13/D66: an 11st cell stores the 11st-safe form of the master name.
-                    .optionName(ElevenstListingRules.nameForCell(cell, masterOption.getName()))
+                    // 2610_13/D66 · 2610_26/D26: an 11st cell stores the 11st-safe form of the master name, an
+                    // ESM cell its 50-byte cut.
+                    .optionName(ListingOptionNames.nameForCell(cell, masterOption.getName()))
                     .sellingPrice(BigDecimal.ZERO)    // placeholder; regenerate fills the real price below
+                    // 2610_26/D50: an ESM option starts its Auction price the same way (regenerate fills it).
+                    .auctionSellingPrice(cell.getPlatform() == Platform.ESM ? BigDecimal.ZERO : null)
+                    .auctionPriceSource(cell.getPlatform() == Platform.ESM ? GeneratedContentSource.AUTO : null)
                     .platformOptionId(null)           // issued by 3c
                     .build());
         }

@@ -168,6 +168,23 @@ public class ProductListingOption extends BaseEntity {
     private GeneratedContentSource priceSource = GeneratedContentSource.AUTO;
 
     /**
+     * FEATURE_2610_26 / D50: the Auction selling price of an ESM option ({@link #sellingPrice} is then the Gmarket
+     * price). {@code null} on every other platform — never fill it there.
+     */
+    @Column(precision = 10, scale = 2, name = "auction_selling_price")
+    @Schema(description = "Auction selling price (ESM options only; null elsewhere)", example = "13000.00")
+    private BigDecimal auctionSellingPrice;
+
+    /**
+     * FEATURE_2610_26 / D50 · D53: origin of {@link #auctionSellingPrice} — AUTO or MANUAL_OVERRIDE, the same contract
+     * as {@link #priceSource}. {@code null} on every other platform.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "auction_price_source", length = 20)
+    @Schema(description = "Origin of the Auction selling price (ESM options only; null elsewhere)", example = "AUTO")
+    private GeneratedContentSource auctionPriceSource;
+
+    /**
      * 이 셀 옵션이 가리키는 마스터 옵션(2609_22/D1). null = 채널 전용 옵션 — 마스터 전파가 건드리지 않는다(D2).
      * ⚠️ 마스터↔셀 매칭은 이 FK 가 유일한 축이다. optionName 으로 다시 매칭하는 코드를 만들지 말 것.
      *
