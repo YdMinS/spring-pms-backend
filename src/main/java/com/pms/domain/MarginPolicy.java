@@ -70,4 +70,12 @@ public class MarginPolicy extends BaseEntity {
      */
     @Column(name = "min_margin_rate", precision = 5, scale = 4)
     private BigDecimal minMarginRate;
+
+    /**
+     * FEATURE_2610_26 / D58 · D59: the Auction target margin of an ESM preset ({@link #marginRate} is then the Gmarket
+     * one). Required on an ESM row, {@code null} on every other platform. The display discount rate and the alert
+     * thresholds stay single (they never reach an ESM price).
+     */
+    @Column(name = "auction_margin_rate", precision = 5, scale = 4)
+    private BigDecimal auctionMarginRate;
 }

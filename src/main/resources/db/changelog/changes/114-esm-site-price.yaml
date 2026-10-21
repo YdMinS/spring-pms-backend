@@ -1,0 +1,34 @@
+# ESM per-site price · commission · margin (FEATURE_2610_26 / D50 · D51 · D59) — one changeset (D50).
+#   product_listing_option.auction_selling_price · auction_price_source = the Auction selling price and its origin
+#     (AUTO · MANUAL_OVERRIDE). selling_price · price_source stay = the Gmarket price on an ESM option (D50).
+#   platform_category.auction_commission_rate = the Auction commission of an ESM category row; commission_rate
+#     stays = the Gmarket one (D51).
+#   margin_policy.auction_margin_rate = the Auction target margin of an ESM preset; margin_rate stays = the Gmarket
+#     one (D59).
+#   All nullable, no backfill: rows of every other platform keep them NULL (D50 · D51 · D59).
+# ⚠️ No boolean column -> the 006 BIT follow-up is not needed.
+databaseChangeLog:
+
+  - changeSet:
+      id: 114-esm-site-price
+      author: oclyx
+      comment: "FEATURE_2610_26 D50 · D51 · D59: Auction price / commission / margin columns."
+      changes:
+        - addColumn:
+            tableName: product_listing_option
+            columns:
+              - column: { name: auction_selling_price, type: "DECIMAL(10,2)" }
+              - column: { name: auction_price_source, type: VARCHAR(20) }
+        - addColumn:
+            tableName: platform_category
+            columns:
+              - column: { name: auction_commission_rate, type: "DECIMAL(5,4)" }
+        - addColumn:
+            tableName: margin_policy
+            columns:
+              - column: { name: auction_margin_rate, type: "DECIMAL(5,4)" }
+      rollback:
+        - dropColumn: { tableName: margin_policy, columnName: auction_margin_rate }
+        - dropColumn: { tableName: platform_category, columnName: auction_commission_rate }
+        - dropColumn: { tableName: product_listing_option, columnName: auction_price_source }
+        - dropColumn: { tableName: product_listing_option, columnName: auction_selling_price }

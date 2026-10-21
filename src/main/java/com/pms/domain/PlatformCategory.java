@@ -80,4 +80,11 @@ public class PlatformCategory extends BaseEntity {
      */
     @Column(name = "commission_rate", precision = 5, scale = 4)
     private BigDecimal commissionRate;
+
+    /**
+     * FEATURE_2610_26 / D51: the Auction commission of an ESM row ({@link #commissionRate} is then the Gmarket one).
+     * {@code null} on every other platform — never fill it there.
+     */
+    @Column(name = "auction_commission_rate", precision = 5, scale = 4)
+    private BigDecimal auctionCommissionRate;
 }

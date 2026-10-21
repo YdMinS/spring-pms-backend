@@ -11,6 +11,7 @@ import com.pms.dto.response.GeneratedProductResponse;
 import com.pms.dto.response.ShippingConfigResponse;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
@@ -92,7 +93,8 @@ public interface ListingAssetService {
      * (register 72/73 is the final value guard); an empty/null map clears the override. No asset regeneration
      * (shipping is not a thumbnail/detail binding). An 11st cell's selling price does read shipping
      * (FEATURE_2610_13 / D117): the controller re-prices it after this save has committed (D123), never in here.
-     * Returns the cell's current generated view.
+     * So does an ESM cell's (FEATURE_2610_26 / D65), whose place + bundle-fee policy is checked on ESM here and
+     * whose four policy keys are written by the server (D66). Returns the cell's current generated view.
      */
     GeneratedProductResponse updateShippingOverride(Long listingId, Map<String, String> override);
 
@@ -108,6 +110,12 @@ public interface ListingAssetService {
      * override excluded) as {@code elevenst.*} key → value. 400 when the cell is not on 11st.
      */
     Map<String, String> resolveInheritedElevenstShipping(Long listingId);
+
+    /**
+     * FEATURE_2610_26 / D36: an ESM cell's inherited shipping baseline (the channel layer, its own override
+     * excluded) as {@code esm.*} key → value. 400 when the cell is not on ESM.
+     */
+    Map<String, String> resolveInheritedEsmShipping(Long listingId);
 
     /**
      * Override the cell's thumbnail with an uploaded image (thumbnailSource=MANUAL_OVERRIDE) for a
@@ -142,6 +150,10 @@ public interface ListingAssetService {
      *
      * <p>⚠️ Options whose {@code priceSource} is {@code MANUAL_OVERRIDE} are skipped (2609_19/D2): a price
      * the user set for that one channel survives a regeneration.</p>
+     *
+     * <p>FEATURE_2610_26 / D53 ①: an ESM option gets both prices — the Gmarket one into {@code sellingPrice} and the
+     * Auction one into {@code auctionSellingPrice}; each is skipped on its own when its source is
+     * {@code MANUAL_OVERRIDE}.</p>
      */
     void recalculateOptionPrices(ProductListing cell);
 
@@ -159,6 +171,15 @@ public interface ListingAssetService {
      *         (raised by {@link PriceCalculator})
      */
     PriceCalculator.PriceResult quoteOptionPrice(ProductListing cell, ProductListingOption option);
+
+    /**
+     * FEATURE_2610_26 / D53 ②: the auto-calculated Auction price of ONE ESM option — nothing is persisted. The
+     * Auction twin of {@link #quoteOptionPrice} (same matching, {@link PriceCalculator#calculateAuctionPrice}).
+     *
+     * @throws IllegalArgumentException (→400) when the Auction commission or Auction target margin is unset, or on
+     *         the gaps {@link #quoteOptionPrice} raises
+     */
+    BigDecimal quoteAuctionOptionPrice(ProductListing cell, ProductListingOption option);
 
     /**
      * Collage preview JPEG for {@code cell} — nothing is uploaded or persisted (FEATURE_2610_21 D20 · D35 · D46).

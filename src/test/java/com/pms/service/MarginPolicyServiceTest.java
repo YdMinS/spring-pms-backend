@@ -120,4 +120,34 @@ class MarginPolicyServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
         verify(marginPolicyRepository, never()).save(any());
     }
+
+    // FEATURE_2610_26 / D59: an ESM preset needs the Auction target margin; any other platform stores null.
+    @Test
+    void create_esm_withoutAuctionMargin_rejected_andNotSaved() {
+        given(marginPolicyRepository.findBySellerIdAndPlatform(3L, Platform.ESM)).willReturn(Optional.empty());
+        given(sellerRepository.findById(3L)).willReturn(Optional.of(seller()));
+
+        assertThatThrownBy(() -> service.createMarginPolicy(request("ESM")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("옥션 목표 마진율을 입력하세요");
+        verify(marginPolicyRepository, never()).save(any());
+    }
+
+    @Test
+    void create_storesAuctionMarginOnEsmOnly() {
+        given(marginPolicyRepository.findBySellerIdAndPlatform(3L, Platform.ESM)).willReturn(Optional.empty());
+        given(marginPolicyRepository.findBySellerIdAndPlatform(3L, Platform.COUPANG)).willReturn(Optional.empty());
+        given(sellerRepository.findById(3L)).willReturn(Optional.of(seller()));
+        given(marginPolicyRepository.save(any())).willAnswer(inv -> inv.getArgument(0));
+
+        MarginPolicyResponse esm = service.createMarginPolicy(MarginPolicyRequest.builder()
+                .sellerId(3L).platform("ESM").marginRate(new BigDecimal("0.1500"))
+                .auctionMarginRate(new BigDecimal("0.2000")).build());
+        MarginPolicyResponse coupang = service.createMarginPolicy(MarginPolicyRequest.builder()
+                .sellerId(3L).platform("COUPANG").marginRate(new BigDecimal("0.1500"))
+                .auctionMarginRate(new BigDecimal("0.2000")).build());
+
+        assertThat(esm.getAuctionMarginRate()).isEqualByComparingTo("0.2000");
+        assertThat(coupang.getAuctionMarginRate()).isNull();
+    }
 }

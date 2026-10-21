@@ -4,8 +4,11 @@ import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.response.CategoryImportResult;
 import com.pms.dto.response.ElevenstCategoryImportResult;
 import com.pms.dto.response.ElevenstFeeImportResult;
+import com.pms.dto.response.EsmCategoryImportResult;
+import com.pms.dto.response.EsmFeeImportResult;
 import com.pms.service.category.CategoryImportService;
 import com.pms.service.category.ElevenstCategoryImportService;
+import com.pms.service.category.EsmCategoryImportService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -22,7 +25,8 @@ import java.io.UncheckedIOException;
 
 /**
  * Marketplace category bulk-import — admin only. Coupang xlsx (FEATURE_2608_06 / 53) · 11st public tree and
- * 11st fee notice page (FEATURE_2610_10 / D21 ① · D22).
+ * 11st fee notice page (FEATURE_2610_10 / D21 ① · D22) · ESM tree and ESM fee table file, both read with one ESM
+ * sales channel's key (FEATURE_2610_26 / D12 · D14 · D63).
  *
  * <p>ADMIN-only via the global {@code POST /api/admin/**} rule (SecurityConfig) — no per-method
  * {@code @PreAuthorize}. Idempotent upsert (not a destructive re-seed); a confirm gate belongs to the
@@ -36,6 +40,7 @@ public class CategoryImportController {
 
     private final CategoryImportService categoryImportService;
     private final ElevenstCategoryImportService elevenstCategoryImportService;
+    private final EsmCategoryImportService esmCategoryImportService;
 
     @PostMapping(value = "/coupang", consumes = "multipart/form-data")
     @Operation(summary = "Import a Coupang category xlsx (PlatformCategory tree + oclyx mirror + mappings)")
@@ -64,6 +69,26 @@ public class CategoryImportController {
             @RequestParam("file") MultipartFile file) {
         try {
             return ResponseEntity.ok(ResponseDTO.success(elevenstCategoryImportService.importFees(file.getBytes())));
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to read uploaded category file", e);
+        }
+    }
+
+    @PostMapping("/esm")
+    @Operation(summary = "Import the ESM category tree into platform_category with one ESM sales channel's key")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<EsmCategoryImportResult>> importEsm(@RequestParam("accountId") Long accountId) {
+        return ResponseEntity.ok(ResponseDTO.success(esmCategoryImportService.importTree(accountId)));
+    }
+
+    @PostMapping(value = "/esm-fee", consumes = "multipart/form-data")
+    @Operation(summary = "Import ESM leaf commissions (Gmarket + Auction) from the ESM+ fee table xlsx")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<EsmFeeImportResult>> importEsmFee(
+            @RequestParam("file") MultipartFile file, @RequestParam("accountId") Long accountId) {
+        try {
+            return ResponseEntity.ok(ResponseDTO.success(esmCategoryImportService.importFees(accountId,
+                    file.getBytes())));
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to read uploaded category file", e);
         }

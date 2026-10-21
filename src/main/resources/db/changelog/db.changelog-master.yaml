@@ -224,3 +224,9 @@ databaseChangeLog:
       file: db/changelog/changes/111-elevenst-settlement.yaml
   - include:
       file: db/changelog/changes/112-thumbnail-collage.yaml
+  - include:
+      file: db/changelog/changes/113-esm-account.yaml
+  - include:
+      file: db/changelog/changes/114-esm-site-price.yaml
+  - include:
+      file: db/changelog/changes/115-esm-shipping-config.yaml

@@ -132,4 +132,18 @@ class CategoryImportControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("11번가 카테고리 목록을 먼저 들여와야 합니다."));
     }
+
+    // FEATURE_2610_26 / D12 · D14: the two ESM entrances sit behind the same ADMIN rule.
+    @Test
+    void importEsm_userToken_returns403() throws Exception {
+        mockMvc.perform(post("/api/admin/category-import/esm").param("accountId", "1")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void importEsmFee_noToken_returns401() throws Exception {
+        mockMvc.perform(multipart("/api/admin/category-import/esm-fee").file(fixtureFile()).param("accountId", "1"))
+                .andExpect(status().isUnauthorized());
+    }
 }

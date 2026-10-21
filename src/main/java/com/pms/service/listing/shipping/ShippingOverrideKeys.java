@@ -21,7 +21,8 @@ import java.util.Set;
  *
  * <p>FEATURE_2610_13 / D104: the master map also carries the 11st master keys ({@link ElevenstShippingKeys},
  * {@code elevenst.*}), and an 11st listing takes only the 11st keys — {@link #filterListing} picks the set by
- * the listing's platform.</p>
+ * the listing's platform. FEATURE_2610_26 / D36: an ESM listing takes only the ESM keys ({@link EsmShippingKeys},
+ * {@code esm.*}; the master has none).</p>
  */
 public final class ShippingOverrideKeys {
 
@@ -79,13 +80,17 @@ public final class ShippingOverrideKeys {
 
     /**
      * Filter a raw override map to the whitelist of a listing on {@code platform} (unknown keys dropped):
-     * an 11st listing takes only the {@code elevenst.*} keys, every other listing only the Coupang keys
-     * (FEATURE_2610_13 / D104). {@code null} when empty.
+     * an 11st listing takes only the {@code elevenst.*} keys (FEATURE_2610_13 / D104), an ESM listing only the
+     * {@code esm.*} keys (FEATURE_2610_26 / D36 · D40), every other listing the Coupang keys. {@code null} when empty.
      */
     public static Map<String, String> filterListing(Map<String, String> raw, Platform platform) {
-        return platform == Platform.ELEVENST
-                ? filter(raw, ElevenstShippingKeys.ALL_KEYS)
-                : filter(raw, LISTING_KEYS);
+        if (platform == Platform.ELEVENST) {
+            return filter(raw, ElevenstShippingKeys.ALL_KEYS);
+        }
+        if (platform == Platform.ESM) {
+            return filter(raw, EsmShippingKeys.ALL_KEYS);
+        }
+        return filter(raw, LISTING_KEYS);
     }
 
     @SafeVarargs

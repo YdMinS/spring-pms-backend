@@ -64,6 +64,9 @@ oklyx:
   elevenst:
     # FEATURE_2610_13 / D12 — dev never calls the keyed 11st API (same vendor keys as prod).
     outbound-enabled: false
+  esm:
+    # FEATURE_2610_26 / D10 — dev never calls Gmarket · Auction (category lookups included; no ESM mock).
+    outbound-enabled: false
 
 oclyx:
   order-sync:

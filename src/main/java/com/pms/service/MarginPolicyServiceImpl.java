@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -25,6 +26,9 @@ import java.util.List;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class MarginPolicyServiceImpl implements MarginPolicyService {
+
+    /** FEATURE_2610_26 / D59: an ESM preset needs the Auction target margin too. */
+    static final String AUCTION_MARGIN_REQUIRED = "옥션 목표 마진율을 입력하세요";
 
     private final MarginPolicyRepository marginPolicyRepository;
     private final SellerRepository sellerRepository;
@@ -40,6 +44,7 @@ public class MarginPolicyServiceImpl implements MarginPolicyService {
                 .seller(seller)
                 .platform(platform)
                 .marginRate(request.getMarginRate())
+                .auctionMarginRate(auctionMarginRate(platform, request))
                 .displayDiscountRate(request.getDisplayDiscountRate())
                 // 2609_39/D4: alert thresholds. null is a meaningful value here (= condition unused).
                 .minMarginAmount(request.getMinMarginAmount())
@@ -72,6 +77,8 @@ public class MarginPolicyServiceImpl implements MarginPolicyService {
                 .seller(seller)
                 .platform(platform)
                 .marginRate(request.getMarginRate())
+                // FEATURE_2610_26 / D59: written straight through like marginRate (required on ESM, null elsewhere).
+                .auctionMarginRate(auctionMarginRate(platform, request))
                 // null = keep existing (optional field convention).
                 .displayDiscountRate(request.getDisplayDiscountRate() != null
                         ? request.getDisplayDiscountRate() : existing.getDisplayDiscountRate())
@@ -98,6 +105,17 @@ public class MarginPolicyServiceImpl implements MarginPolicyService {
                 });
     }
 
+    /** D59: required on an ESM preset (400 when missing); every other platform stores null. */
+    private static BigDecimal auctionMarginRate(Platform platform, MarginPolicyRequest request) {
+        if (platform != Platform.ESM) {
+            return null;
+        }
+        if (request.getAuctionMarginRate() == null) {
+            throw new IllegalArgumentException(AUCTION_MARGIN_REQUIRED);
+        }
+        return request.getAuctionMarginRate();
+    }
+
     private Seller requireSeller(Long sellerId) {
         return sellerRepository.findById(sellerId)
                 .orElseThrow(() -> new ResourceNotFoundException("Seller", sellerId));
@@ -116,6 +134,7 @@ public class MarginPolicyServiceImpl implements MarginPolicyService {
                 .sellerName(policy.getSeller().getSellerName())
                 .platform(policy.getPlatform().name())
                 .marginRate(policy.getMarginRate())
+                .auctionMarginRate(policy.getAuctionMarginRate())
                 .displayDiscountRate(policy.getDisplayDiscountRate())
                 .minMarginAmount(policy.getMinMarginAmount())
                 .minMarginRate(policy.getMinMarginRate())

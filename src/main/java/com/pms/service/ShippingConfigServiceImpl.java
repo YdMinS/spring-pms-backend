@@ -3,15 +3,21 @@ package com.pms.service;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.CoupangShippingConfig;
 import com.pms.domain.ElevenstShippingConfig;
+import com.pms.domain.EsmShippingConfig;
 import com.pms.domain.Platform;
 import com.pms.dto.request.ShippingConfigRequest;
 import com.pms.dto.response.ElevenstShippingConfigResponse;
+import com.pms.dto.response.EsmChoiceResponse;
+import com.pms.dto.response.EsmShippingConfigResponse;
 import com.pms.dto.response.ShippingConfigResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.CoupangShippingConfigRepository;
 import com.pms.repository.ElevenstShippingConfigRepository;
+import com.pms.repository.EsmShippingConfigRepository;
+import com.pms.service.esm.EsmShippingLookups;
 import com.pms.service.listing.shipping.ElevenstShippingKeys;
+import com.pms.service.listing.shipping.EsmShippingPolicies;
 import com.pms.service.listing.shipping.OutboundPlace;
 import com.pms.service.listing.shipping.ReturnCenter;
 import com.pms.service.listing.shipping.ShippingPlaceProvider;
@@ -46,6 +52,9 @@ public class ShippingConfigServiceImpl implements ShippingConfigService {
     private final CoupangShippingConfigRepository shippingConfigRepository;
     private final ElevenstShippingConfigRepository elevenstShippingConfigRepository;
     private final ShippingPlaceProviderResolver providerResolver;
+    private final EsmShippingConfigRepository esmShippingConfigRepository;
+    private final EsmShippingPolicies esmShippingPolicies;
+    private final EsmShippingLookups esmShippingLookups;
 
     @Override
     public List<OutboundPlace> listOutbound(Long accountId) {
@@ -134,6 +143,67 @@ public class ShippingConfigServiceImpl implements ShippingConfigService {
                 .marketplaceAccountId(accountId)
                 .settings(saved.getSettings() != null ? saved.getSettings() : Map.of())
                 .build();
+    }
+
+    @Override
+    public EsmShippingConfigResponse getEsmConfig(Long accountId) {
+        requireEsm(findAccount(accountId));
+        Map<String, String> settings = esmShippingConfigRepository.findByMarketplaceAccountId(accountId)
+                .map(EsmShippingConfig::getSettings)
+                .orElse(null);
+        return EsmShippingConfigResponse.builder()
+                .marketplaceAccountId(accountId)
+                .settings(settings != null ? settings : Map.of())
+                .build();
+    }
+
+    @Override
+    @Transactional
+    public EsmShippingConfigResponse upsertEsmConfig(Long accountId, Map<String, String> settings) {
+        MarketplaceAccount account = requireEsm(findAccount(accountId));
+        // D66: input keys only, the bundle-fee policy checked on ESM and its four facts written by us.
+        Map<String, String> checked = esmShippingPolicies.forChannel(account, settings);
+        // toBuilder from the existing row keeps its id (UNIQUE per account); a new one starts fresh.
+        EsmShippingConfig.EsmShippingConfigBuilder builder = esmShippingConfigRepository
+                .findByMarketplaceAccountId(accountId)
+                .map(EsmShippingConfig::toBuilder)
+                .orElseGet(() -> EsmShippingConfig.builder().marketplaceAccount(account));
+        EsmShippingConfig saved = esmShippingConfigRepository.save(builder.settings(checked).build());
+        return EsmShippingConfigResponse.builder()
+                .marketplaceAccountId(accountId)
+                .settings(saved.getSettings() != null ? saved.getSettings() : Map.of())
+                .build();
+    }
+
+    @Override
+    public List<EsmChoiceResponse> listEsmBundlePolicies(Long accountId, String placeNo) {
+        MarketplaceAccount account = requireEsm(findAccount(accountId));
+        return esmShippingLookups.bundlePolicies(account, placeNo).stream()
+                .map(policy -> new EsmChoiceResponse(policy.policyNo(), policy.name()))
+                .toList();
+    }
+
+    @Override
+    public List<EsmChoiceResponse> listEsmDispatchPolicies(Long accountId) {
+        MarketplaceAccount account = requireEsm(findAccount(accountId));
+        return esmShippingLookups.dispatchPolicies(account).stream()
+                .map(choice -> new EsmChoiceResponse(choice.code(), choice.name()))
+                .toList();
+    }
+
+    @Override
+    public List<EsmChoiceResponse> listEsmDeliveryCompanies(Long accountId) {
+        MarketplaceAccount account = requireEsm(findAccount(accountId));
+        return esmShippingLookups.deliveryCompanies(account).stream()
+                .map(choice -> new EsmChoiceResponse(choice.code(), choice.name()))
+                .toList();
+    }
+
+    private static MarketplaceAccount requireEsm(MarketplaceAccount account) {
+        if (account.getPlatform() != Platform.ESM) {
+            throw new IllegalArgumentException("G마켓 · 옥션 판매채널이 아닙니다.");
+        }
+        return account;
     }
 
     private static MarketplaceAccount requireElevenst(MarketplaceAccount account) {

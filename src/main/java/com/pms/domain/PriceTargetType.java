@@ -8,8 +8,8 @@ package com.pms.domain;
  * make that a union query forever.
  *
  * <p>⚠️ Exactly one reference column is filled per row — {@code product_id} for
- * {@link #PRODUCT_COST}, {@code product_listing_option_id} for {@link #LISTING_SELLING}, and
- * <b>neither</b> for {@link #PLATFORM_COMMISSION}. The DB cannot express that rule;
+ * {@link #PRODUCT_COST}, {@code product_listing_option_id} for {@link #LISTING_SELLING} and
+ * {@link #LISTING_SELLING_AUCTION}, and <b>neither</b> for {@link #PLATFORM_COMMISSION}. The DB cannot express that rule;
  * {@code PriceHistoryRecorder} is the only writer and enforces it.
  */
 public enum PriceTargetType {
@@ -17,8 +17,17 @@ public enum PriceTargetType {
     /** {@code Product.price} — the purchase cost baseline. Tenant-wide: it has no seller axis. */
     PRODUCT_COST,
 
-    /** {@code ProductListingOption.sellingPrice} — the price of one option on one channel. */
+    /**
+     * {@code ProductListingOption.sellingPrice} — the price of one option on one channel (the Gmarket price on an ESM
+     * channel, FEATURE_2610_26 / D50).
+     */
     LISTING_SELLING,
+
+    /**
+     * {@code ProductListingOption.auctionSellingPrice} — the Auction price of one ESM option (FEATURE_2610_26 / D53 ③).
+     * Same reference column as {@link #LISTING_SELLING}.
+     */
+    LISTING_SELLING_AUCTION,
 
     /**
      * {@code PlatformCategory.commissionRate} — the commission the price engine reverse-calcs with

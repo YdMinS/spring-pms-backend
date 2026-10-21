@@ -40,6 +40,10 @@ public class MarketplaceAccountResponse {
     // FEATURE_2610_16 / D7: 11st only (null for other platforms) — the channel's notice defaults.
     private String asNotice;
     private String returnExchangeNotice;
+    // FEATURE_2610_26 / D4: ESM only (null for other platforms). The secret key is never exposed.
+    private String esmMasterId;
+    private String gmarketSellerId;
+    private String auctionSellerId;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     // secretKey: 응답에 절대 포함하지 않음
