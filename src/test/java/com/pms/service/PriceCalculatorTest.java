@@ -401,4 +401,31 @@ class PriceCalculatorTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("옥션 목표 마진율 미설정");
     }
+
+    // FEATURE_2610_26 / D60: an ESM cell adds 3.3% of the chosen policy's prepaid fee, on both site prices.
+    @Test
+    void esmCell_paidBundlePolicy_addsTheDeliveryFeeCommission() {
+        com.pms.service.listing.shipping.EsmShippingResolver esmResolver =
+                org.mockito.Mockito.mock(com.pms.service.listing.shipping.EsmShippingResolver.class);
+        PriceCalculator withEsm = new PriceCalculator(marginPolicyRepository, masterChannelConfigService, VAT, null,
+                esmResolver);
+        given(esmResolver.resolve(esmCell)).willReturn(java.util.Map.of(
+                com.pms.service.listing.shipping.EsmShippingKeys.BUNDLE_FEE_TYPE, "2",
+                com.pms.service.listing.shipping.EsmShippingKeys.BUNDLE_FEE, "3000",
+                com.pms.service.listing.shipping.EsmShippingKeys.BUNDLE_PREPAY, "true"));
+        given(masterChannelConfigService.resolvePlatformCategory(esmCell)).willReturn(esmCategory("0.10", "0.12"));
+        given(masterChannelConfigService.resolveDelivery(esmCell, masterOption))
+                .willReturn(CarrierRate.builder().cost(new BigDecimal("2500")).build());
+        given(masterChannelConfigService.resolvePackage(esmCell, masterOption))
+                .willReturn(Package.builder().cost(new BigDecimal("500")).build());
+        given(marginPolicyRepository.findBySellerIdAndPlatform(7L, Platform.ESM))
+                .willReturn(Optional.of(MarginPolicy.builder().marginRate(new BigDecimal("0.15"))
+                        .auctionMarginRate(new BigDecimal("0.20")).build()));
+
+        // Gmarket: (8000 + 3000 × 0.033 = 8099) / 0.74 = 10944.59 → 10940
+        assertThat(withEsm.calculatePrice(esmCell, masterOption, new BigDecimal("5000"))).isEqualByComparingTo("10940");
+        // Auction: 8099 / 0.668 = 12124.25 → 12120
+        assertThat(withEsm.calculateAuctionPrice(esmCell, masterOption, new BigDecimal("5000")))
+                .isEqualByComparingTo("12120");
+    }
 }

@@ -29,8 +29,9 @@ public final class MarketOptionPolicy {
     }
 
     /**
-     * The option belongs to a cell put on a market — any platform with a product id, Coupang or 11st
-     * (FEATURE_2610_13 / D121) — and is {@link #onMarket}: the condition for the delete lock and 「변경 미반영」.
+     * The option belongs to a cell put on a market — any platform with a product id, Coupang, 11st or ESM
+     * (FEATURE_2610_13 / D121 · FEATURE_2610_26 / D65) — and is {@link #onMarket}: the condition for the delete lock
+     * and 「변경 미반영」.
      */
     public static boolean carriedOnMarket(ProductListing cell, ProductListingOption option) {
         return cell.getPlatformProductId() != null && onMarket(option);

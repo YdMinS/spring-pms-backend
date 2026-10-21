@@ -1,0 +1,39 @@
+# ESM (Gmarket · Auction) shipping settings per sales channel (FEATURE_2610_26 / D36 · D60 · D66).
+#   esm_shipping_config = the channel layer of the ESM shipping keys, 1:1 with marketplace_account, next to
+#   coupang_shipping_config / elevenst_shipping_config. The values are ONE map (settings, JSON TEXT) whose keys are
+#   exactly the listing override keys ("esm.*", EsmShippingKeys) — the two layers share one vocabulary.
+# ⚠️ No boolean column -> the 006 BIT follow-up is not needed.
+databaseChangeLog:
+
+  - changeSet:
+      id: 115-esm-shipping-config
+      author: oclyx
+      comment: "FEATURE_2610_26: esm_shipping_config (1:1 with marketplace_account, UNIQUE)."
+      changes:
+        - createTable:
+            tableName: esm_shipping_config
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: marketplace_account_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: settings, type: TEXT }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_esm_shipcfg_tenant
+            baseTableName: esm_shipping_config
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_esm_shipcfg_account
+            baseTableName: esm_shipping_config
+            baseColumnNames: marketplace_account_id
+            referencedTableName: marketplace_account
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            constraintName: uq_esm_shipcfg_account
+            tableName: esm_shipping_config
+            columnNames: marketplace_account_id
+      rollback:
+        - dropTable: { tableName: esm_shipping_config }

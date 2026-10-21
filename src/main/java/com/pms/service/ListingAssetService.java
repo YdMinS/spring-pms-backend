@@ -93,7 +93,8 @@ public interface ListingAssetService {
      * (register 72/73 is the final value guard); an empty/null map clears the override. No asset regeneration
      * (shipping is not a thumbnail/detail binding). An 11st cell's selling price does read shipping
      * (FEATURE_2610_13 / D117): the controller re-prices it after this save has committed (D123), never in here.
-     * Returns the cell's current generated view.
+     * So does an ESM cell's (FEATURE_2610_26 / D65), whose place + bundle-fee policy is checked on ESM here and
+     * whose four policy keys are written by the server (D66). Returns the cell's current generated view.
      */
     GeneratedProductResponse updateShippingOverride(Long listingId, Map<String, String> override);
 
@@ -109,6 +110,12 @@ public interface ListingAssetService {
      * override excluded) as {@code elevenst.*} key → value. 400 when the cell is not on 11st.
      */
     Map<String, String> resolveInheritedElevenstShipping(Long listingId);
+
+    /**
+     * FEATURE_2610_26 / D36: an ESM cell's inherited shipping baseline (the channel layer, its own override
+     * excluded) as {@code esm.*} key → value. 400 when the cell is not on ESM.
+     */
+    Map<String, String> resolveInheritedEsmShipping(Long listingId);
 
     /**
      * Override the cell's thumbnail with an uploaded image (thumbnailSource=MANUAL_OVERRIDE) for a

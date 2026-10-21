@@ -62,6 +62,7 @@ import com.pms.service.listing.MasterPropagationService;
 import com.pms.service.listing.OptionCheckSuffix;
 import com.pms.service.listing.TagMergeService;
 import com.pms.service.listing.shipping.ElevenstShippingKeys;
+import com.pms.service.listing.shipping.EsmShippingKeys;
 import com.pms.service.listing.shipping.ShippingOverrideKeys;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -1013,7 +1014,8 @@ public class MasterProductServiceImpl implements MasterProductService {
         MasterProduct master = requireScopedMaster(id);
         // 79: the master's settings are WRITTEN ONTO each selected cell (overwrite), not just cleared —
         // afterwards the cell's shipping settings are exactly the master's for the cell's platform, and the cell
-        // owns them.
+        // owns them. An ESM cell is the exception: the master has no ESM key, so its own esm.* keys are left as
+        // they are (FEATURE_2610_26 / D36).
         // Master-level keys the master leaves empty are removed from the cell (so the cell matches the master
         // and those fields fall through to the account default). Place keys (outbound / return center) are the
         // account's own registered centers — never touched.
@@ -1023,10 +1025,20 @@ public class MasterProductServiceImpl implements MasterProductService {
         List<ProductListing> changed = new ArrayList<>();
         for (ProductListing cell : targets) {
             // FEATURE_2610_13 / D104: copy only the keys of THIS cell's platform — an 11st cell gets the
-            // elevenst.* keys, every other cell the Coupang keys. Its own address keys stay.
-            boolean elevenst = cell.getPlatform() == Platform.ELEVENST;
-            Set<String> placeKeys = elevenst ? ElevenstShippingKeys.PLACE_KEYS : ShippingOverrideKeys.PLACE_KEYS;
-            Set<String> platformKeys = elevenst ? ElevenstShippingKeys.MASTER_KEYS : ShippingOverrideKeys.MASTER_KEYS;
+            // elevenst.* keys, an ESM cell nothing (no master ESM key — it keeps all its own esm.* keys,
+            // FEATURE_2610_26 / D36 · D40), every other cell the Coupang keys. Its own address keys stay.
+            Set<String> placeKeys;
+            Set<String> platformKeys;
+            if (cell.getPlatform() == Platform.ELEVENST) {
+                placeKeys = ElevenstShippingKeys.PLACE_KEYS;
+                platformKeys = ElevenstShippingKeys.MASTER_KEYS;
+            } else if (cell.getPlatform() == Platform.ESM) {
+                placeKeys = EsmShippingKeys.ALL_KEYS;
+                platformKeys = Set.of();
+            } else {
+                placeKeys = ShippingOverrideKeys.PLACE_KEYS;
+                platformKeys = ShippingOverrideKeys.MASTER_KEYS;
+            }
             Map<String, String> current = cell.getShippingOverride();
             Map<String, String> next = new LinkedHashMap<>();
             if (current != null) {

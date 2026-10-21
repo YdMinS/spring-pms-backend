@@ -34,6 +34,8 @@ import com.pms.service.listing.ListingStockPolicy;
 import com.pms.service.listing.shipping.CoupangShippingConfigResolver;
 import com.pms.service.listing.shipping.ElevenstShippingKeys;
 import com.pms.service.listing.shipping.ElevenstShippingResolver;
+import com.pms.service.listing.shipping.EsmShippingPolicies;
+import com.pms.service.listing.shipping.EsmShippingResolver;
 import com.pms.service.listing.shipping.ShippingOverrideKeys;
 import com.pms.dto.response.ShippingConfigResponse;
 import java.util.function.Function;
@@ -101,6 +103,8 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     private final com.pms.service.listing.TagMergeService tagMergeService;
     private final CoupangShippingConfigResolver shippingConfigResolver;
     private final ElevenstShippingResolver elevenstShippingResolver;
+    private final EsmShippingResolver esmShippingResolver;
+    private final EsmShippingPolicies esmShippingPolicies;
     private final PriceHistoryRecorder priceHistoryRecorder;
     /** Collage replacing the single photo when one resolves for the cell (FEATURE_2610_21 D8 · D37). */
     private final ThumbnailCollageResolver thumbnailCollageResolver;
@@ -246,11 +250,16 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     public GeneratedProductResponse updateShippingOverride(Long listingId, Map<String, String> override) {
         ProductListing cell = requireScopedCell(listingId);
         // Key whitelist only (register 72/73 is the final value guard); null/empty (after filter) clears it.
-        // No regenerateAssets — shipping is not a thumbnail/detail binding, so nothing to re-render. An 11st cell's
-        // price does read shipping (D117): the controller re-prices it after this commit (D123), not in here.
+        // No regenerateAssets — shipping is not a thumbnail/detail binding, so nothing to re-render. An 11st or ESM
+        // cell's price does read shipping (D117 · 2610_26/D65): the controller re-prices it after this commit
+        // (D123), not in here.
         // FEATURE_2610_13 / D104 · D106: the cell's platform decides the key set; 11st quantity tiers must chain.
         Map<String, String> filtered = ShippingOverrideKeys.filterListing(override, cell.getPlatform());
         ElevenstShippingKeys.validateTiers(filtered);
+        // FEATURE_2610_26 / D66: an ESM cell sets place + bundle fee together; the policy is checked on ESM.
+        if (cell.getPlatform() == Platform.ESM) {
+            filtered = esmShippingPolicies.forListing(cell, filtered);
+        }
         ProductListing updated = productListingRepository.save(
                 cell.toBuilder().shippingOverride(filtered).build());
         GeneratedProductData data = generatedProductDataRepository.findByProductListingId(listingId).orElse(null);
@@ -274,6 +283,17 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         }
         // D104: master ?? channel default (this cell's own override excluded) — the 11st modal's placeholder.
         return elevenstShippingResolver.resolveInherited(cell);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<String, String> resolveInheritedEsmShipping(Long listingId) {
+        ProductListing cell = requireScopedCell(listingId);
+        if (cell.getPlatform() != Platform.ESM) {
+            throw new IllegalArgumentException("G마켓 · 옥션 판매상품이 아닙니다.");
+        }
+        // 2610_26/D36: the channel layer (no master layer) — the ESM modal's placeholder.
+        return esmShippingResolver.resolveInherited(cell);
     }
 
     @Override
