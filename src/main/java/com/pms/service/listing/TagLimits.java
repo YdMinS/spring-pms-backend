@@ -16,7 +16,9 @@ public final class TagLimits {
 
     /** Confirmed per-platform caps. */
     // FEATURE_2610_13 / D57: 11st takes no search tags from a regular seller → 0 (the merge sends an empty list).
-    public static final Map<Platform, Integer> BY_PLATFORM = Map.of(Platform.COUPANG, 20, Platform.ELEVENST, 0);
+    // FEATURE_2610_26 / D34: ESM has no search-word field on the goods body → 0 as well.
+    public static final Map<Platform, Integer> BY_PLATFORM =
+            Map.of(Platform.COUPANG, 20, Platform.ELEVENST, 0, Platform.ESM, 0);
 
     private TagLimits() {
     }

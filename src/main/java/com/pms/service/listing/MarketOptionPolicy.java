@@ -38,8 +38,8 @@ public final class MarketOptionPolicy {
     }
 
     /**
-     * The option belongs to a cell put on a market (Coupang or 11st, FEATURE_2610_13 / D107) but has no option id
-     * yet. The approval result finds such an option <b>by name only</b>
+     * The option belongs to a cell put on a market (Coupang, 11st or ESM — FEATURE_2610_13 / D107 · FEATURE_2610_26 /
+     * D47) but has no option id yet. The approval result finds such an option <b>by name only</b>
      * ({@code ListingRegistrationServiceImpl.fetchStatus}), so renaming it breaks the match.
      */
     public static boolean awaitingMarketId(ProductListing cell, ProductListingOption option) {

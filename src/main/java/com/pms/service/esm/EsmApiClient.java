@@ -93,7 +93,7 @@ public class EsmApiClient {
      * ESM's own text: {@code message} (most posts) · {@code Message} (post 18) · {@code status.message} (the
      * authentication gate, guide example). None → 「G마켓 · 옥션 응답 오류(HTTP {n})」.
      */
-    static String messageOf(JsonNode node, int httpStatus) {
+    public static String messageOf(JsonNode node, int httpStatus) {
         for (JsonNode candidate : new JsonNode[]{node.get("message"), node.get("Message"),
                 node.path("status").get("message")}) {
             if (candidate != null && candidate.isTextual() && !candidate.asText().isBlank()) {
