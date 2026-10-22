@@ -43,6 +43,6 @@ public class ListingMarginController {
     public ResponseEntity<ResponseDTO<ListingMarginResponse.SiteMargin>> preview(
             @PathVariable Long id, @PathVariable Long optionId, @Valid @RequestBody MarginPreviewRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(
-                listingMarginService.preview(id, optionId, request.getPrice(), request.isAuction())));
+                listingMarginService.preview(id, optionId, request.getPrice(), request.getSite())));
     }
 }
