@@ -1,0 +1,19 @@
+# Auction market price (FEATURE_2610_27 / D17 · D29) — one changeset.
+#   product_listing_option.auction_market_price = the Auction price last confirmed on the market for an ESM option
+#     (market_price stays = the Gmarket one on an ESM option). Its check time shares market_price_at (D17).
+#   Nullable, no backfill: rows of every other platform keep it NULL, and ESM rows get it on the next status refresh
+#     or the 02:05 market price batch (D13).
+# ⚠️ No boolean column -> the 006 BIT follow-up is not needed.
+databaseChangeLog:
+
+  - changeSet:
+      id: 116-auction-market-price
+      author: oclyx
+      comment: "FEATURE_2610_27 D17 · D29: Auction market price column."
+      changes:
+        - addColumn:
+            tableName: product_listing_option
+            columns:
+              - column: { name: auction_market_price, type: "DECIMAL(10,2)" }
+      rollback:
+        - dropColumn: { tableName: product_listing_option, columnName: auction_market_price }

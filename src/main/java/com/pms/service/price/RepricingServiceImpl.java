@@ -23,6 +23,7 @@ import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.service.ListingAssetService;
 import com.pms.service.PriceCalculator;
+import com.pms.service.coupang.SyncWindow;
 import com.pms.service.listing.CellBomResolver;
 import com.pms.service.listing.ListingChannel;
 import com.pms.service.listing.ListingChannelResolver;
@@ -295,7 +296,7 @@ public class RepricingServiceImpl implements RepricingService {
         channel.updateOptionPrice(option, price, account);
         productListingOptionRepository.save(option.toBuilder()
                 .marketPrice(price)
-                .marketPriceAt(LocalDateTime.now())
+                .marketPriceAt(LocalDateTime.now(SyncWindow.KST))
                 .build());
     }
 

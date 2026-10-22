@@ -2,11 +2,13 @@ package com.pms.service.listing;
 
 import com.pms.domain.ListingStatus;
 
+import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Result of {@link ListingChannel#fetchStatus} (FEATURE_2608_06 / 3c): the cell's market status plus, per
- * option, the ids issued by the market once approved.
+ * option, the ids issued by the market once approved, and (FEATURE_2610_27) the prices the same call returned.
  *
  * <p>Matching key = {@link OptionId#optionName()} (option names are unique within a cell). The orchestration
  * ({@code ListingRegistrationService.fetchStatus}) matches these against the cell's options by name; unmatched
@@ -15,12 +17,20 @@ import java.util.List;
  * @param status  the cell status mapped from the market statusName
  * @param options per-option ids parsed from the market response (empty until approved)
  * @param statusName the market's own status text (null when the adapter did not read it)
+ * @param prices the prices the same status call already returned (FEATURE_2610_27 / D13 · D16) — handed to
+ *               {@link ListingChannel#readMarketPrices} so the status call is not repeated; null when the adapter did
+ *               not read them
  */
-public record FetchResult(ListingStatus status, List<OptionId> options, String statusName) {
+public record FetchResult(ListingStatus status, List<OptionId> options, String statusName, Prices prices) {
 
     /** 2609_74 이전의 2인자 형태를 쓰는 호출부(테스트)를 위한 편의 생성자 — {@code statusName = null}. */
     public FetchResult(ListingStatus status, List<OptionId> options) {
-        this(status, options, null);
+        this(status, options, null, null);
+    }
+
+    /** The 3-argument form used before FEATURE_2610_27 — {@code prices = null}. */
+    public FetchResult(ListingStatus status, List<OptionId> options, String statusName) {
+        this(status, options, statusName, null);
     }
 
     /**
@@ -32,5 +42,15 @@ public record FetchResult(ListingStatus status, List<OptionId> options, String s
      * @param sellerProductItemId Coupang sellerProductItemId → stored for option updates
      */
     public record OptionId(String optionName, String vendorItemId, String sellerProductItemId) {
+    }
+
+    /**
+     * Prices read by the status call (FEATURE_2610_27 / D16 · D37).
+     *
+     * @param base             11st {@code selPrc} · ESM Gmarket price; null on Coupang or when absent
+     * @param auctionBase      ESM Auction price; null elsewhere or when absent
+     * @param byMarketOptionId Coupang {@code vendorItemId} → {@code salePrice}; empty elsewhere
+     */
+    public record Prices(BigDecimal base, BigDecimal auctionBase, Map<String, BigDecimal> byMarketOptionId) {
     }
 }

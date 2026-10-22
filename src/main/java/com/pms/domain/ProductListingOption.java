@@ -225,23 +225,41 @@ public class ProductListingOption extends BaseEntity {
     private Map<String, String> categoryNotices;
 
     /**
-     * 마켓에 <b>실제로 걸린 판매가</b>(FEATURE_2609_39 / PLAN D5). null = 알 수 없음(한 번도 밀린 적이 없거나
-     * 089 백필 대상이 아니었던 행).
+     * The selling price <b>actually live on the market</b> (FEATURE_2609_39 / PLAN D5) — the Gmarket price on an ESM
+     * option. null = unknown (never pushed nor read, and not covered by the 089 backfill).
      *
-     * <p>⚠️ {@link #sellingPrice} 와 역할이 다르다: 그쪽은 <b>로컬</b> 값이라 재계산이 덮어쓴다. 재계산 후에는
-     * "지금 마켓에서 얼마에 팔리는지"도 "무엇이 아직 안 밀렸는지"도 이 칸으로만 알 수 있다.</p>
+     * <p>⚠️ A different role from {@link #sellingPrice}: that one is the <b>local</b> value a recalculation overwrites.
+     * After a recalculation, "what does the market sell it for now" and "what has not been pushed yet" are answered by
+     * this column only.</p>
      *
-     * <p>🔴 채우는 자리는 넷뿐이다(PLAN D19): 옵션 편집 화면의 <b>전송 성공</b> · 등록 승인 동기화(식별자를 처음
-     * 받는 순간) · 편입(마켓에서 읽어온 실가격) · 일괄 마켓 반영. 전송하지 않은 옵션에 이 값을 쓰면 거짓이 된다.</p>
+     * <p>🔴 Written only where the market price is known (PLAN D19, widened by FEATURE_2610_27 / D16): a <b>successful
+     * push</b> from the option edit screen · the approval sync (the moment the option first gets a market id) · the
+     * import and the manual market option link (the real price read from the market) · the bulk market push · a market
+     * price read on [승인 새로고침] · the 02:05 market price batch (FEATURE_2610_27 / D13). Writing it for an option
+     * that was neither sent nor read makes it a lie.</p>
      */
     @Column(precision = 10, scale = 2, name = "market_price")
     @Schema(description = "Price actually live on the marketplace", example = "12999.99")
     private BigDecimal marketPrice;
 
-    /** {@link #marketPrice} 가 마켓에 전송된 시각. 과거 시각은 알 수 없으므로 백필하지 않는다(NULL 허용). */
+    /**
+     * When our server last confirmed {@link #marketPrice} (and {@link #auctionMarketPrice}) — by sending it or by reading
+     * it from the market (FEATURE_2610_27 / D26). A <b>KST wall clock</b> written as
+     * {@code LocalDateTime.now(SyncWindow.KST)} (D32) — not a time the market gave us. Older rows written before D32 hold
+     * the server's UTC clock and are not rewritten (D33). Not backfilled: a past time cannot be known (NULL allowed).
+     */
     @Column(name = "market_price_at")
-    @Schema(description = "When the market price was last pushed")
+    @Schema(description = "When the market price was last confirmed (sent or read), KST wall clock")
     private LocalDateTime marketPriceAt;
+
+    /**
+     * FEATURE_2610_27 / D17 · D29: the Auction price live on the market for an ESM option ({@link #marketPrice} is then
+     * the Gmarket one). Its check time is {@link #marketPriceAt}. {@code null} on every other platform — never fill it
+     * there.
+     */
+    @Column(precision = 10, scale = 2, name = "auction_market_price")
+    @Schema(description = "Auction price live on the market (ESM options only; null elsewhere)", example = "13000.00")
+    private BigDecimal auctionMarketPrice;
 
     /** 채널 전용 옵션 = 마스터에 대응 옵션이 없다(2609_22/D2). */
     public boolean isChannelOnly() {

@@ -22,20 +22,22 @@ import java.util.List;
 /**
  * Records cost / selling price movements (FEATURE_2609_28 / PLAN D23).
  *
- * <p><b>용도</b>: 가격 변경 이력({@code price_change_log})을 쓰는 <b>유일한 컴포넌트</b>.
- * <b>필수 규칙</b>: 가격을 바꾸는 코드는 반드시 이 클래스를 거친다.
- * <b>파일</b>: {@code service/price/PriceHistoryRecorder.java}
+ * <p><b>Purpose</b>: the <b>only component</b> that writes the price change log ({@code price_change_log}).
+ * <b>Required rule</b>: code that changes a price always goes through this class.
+ * <b>File</b>: {@code service/price/PriceHistoryRecorder.java}
  *
  * <p>⚠️ A second copy of this logic would drift on the "unchanged → no row" rule and quietly fill
- * the log with noise. There are four call sites and they all come here:
+ * the log with noise. Every call site comes here:
  * <ol>
  *   <li>{@code CostPropagationServiceImpl.updateBasePrice} — {@code PURCHASE_UPDATE}</li>
  *   <li>{@code ProductServiceImpl.updateProduct} — {@code PRODUCT_EDIT}</li>
  *   <li>{@code ListingAssetServiceImpl.recalculateOptionPrices} — {@code PROPAGATION}</li>
- *   <li>{@code ListingOptionServiceImpl.setOptionPrices} — {@code MANUAL}</li>
+ *   <li>{@code ListingOptionServiceImpl.setOptionPrices} · {@code RepricingServiceImpl.overrideOne} — {@code MANUAL}</li>
+ *   <li>{@code MarketPriceApplier.apply} — {@code MARKET_SYNC} (FEATURE_2610_27 / D15)</li>
+ *   <li>{@code CommissionFeedbackServiceImpl.apply} — {@code SETTLEMENT_FEEDBACK} (a commission rate)</li>
  * </ol>
  *
- * <p><b>사용 예제</b>:
+ * <p><b>Usage</b>:
  * <pre>{@code
  * // ① cost, with the purchase that moved it
  * priceHistoryRecorder.recordProductCost(product, product.getPrice(), newPrice,

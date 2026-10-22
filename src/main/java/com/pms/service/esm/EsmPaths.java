@@ -22,7 +22,10 @@ public final class EsmPaths {
     public static final String SD_CATEGORY_SITE_CATS = "/item/v1/categories/sd-cats/%s/site-cats";
     /** [4] site categories — no code = the top level of the site in the token. */
     public static final String SITE_CATEGORIES = "/item/v1/categories/site-cats";
-    /** [20] register ({@code POST}) · update ({@code PUT .../{goodsNo}}). */
+    /**
+     * [20] register ({@code POST}) · update ({@code PUT .../{goodsNo}}) · read ({@code GET .../{goodsNo}},
+     * FEATURE_2610_27 / D16).
+     */
     public static final String GOODS = "/item/v1/goods";
     /** [21] price · stock · selling status — {@code /item/v1/goods/{goodsNo}/sell-status}. */
     public static final String SELL_STATUS = "/item/v1/goods/%s/sell-status";
