@@ -290,8 +290,8 @@ public class PriceCalculator {
     }
 
     /**
-     * Split the margin of a price that is <b>already live</b> (PLAN 2609_39 / D3) — the reverse of
-     * {@link #prices}. Persists nothing, sends nothing.
+     * Split the margin of a given price — one that is <b>already live</b> (PLAN 2609_39 / D3) or one typed in the
+     * [가격 설정] window (FEATURE_2610_27 / D20) — the reverse of {@link #prices}. Persists nothing, sends nothing.
      *
      * <pre>
      *   costTotal    = costSum + delivery + box
