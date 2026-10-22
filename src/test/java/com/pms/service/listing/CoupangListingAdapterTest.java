@@ -745,6 +745,27 @@ class CoupangListingAdapterTest {
         assertThat(result.statusName()).isEqualTo("부분승인완료");
     }
 
+    // ---- FEATURE_2610_27 / D13 · D16: the market price read reuses the status GET ----
+
+    @Test
+    void readMarketPrices_reusesStatusGet_pairsByPlatformOptionId() {
+        given(client.get(anyString(), eq(""), any())).willReturn(
+                "{\"code\":\"SUCCESS\",\"data\":{\"statusName\":\"승인완료\",\"items\":["
+                        + "{\"itemName\":\"1세트\",\"vendorItemId\":111,\"sellerProductItemId\":222,\"salePrice\":12900},"
+                        + "{\"itemName\":\"2세트\",\"vendorItemId\":333,\"sellerProductItemId\":444,\"salePrice\":23900}]}}");
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("1세트").sellingPrice(new BigDecimal("12000"))
+                        .platformOptionId("111").build(),
+                ProductListingOption.builder().id(2L).optionName("새 옵션").sellingPrice(new BigDecimal("5000")).build()));
+
+        FetchResult fetched = adapter.fetchStatus(cell(), acct());
+        MarketPrices prices = adapter.readMarketPrices(cell(), acct(), fetched);
+
+        assertThat(prices.byOptionId()).containsOnlyKeys(1L);
+        assertThat(prices.byOptionId().get(1L).price()).isEqualByComparingTo("12900");
+        verify(client).get(anyString(), eq(""), any());
+    }
+
     // ---------------------------------------------------------------- 2609_74: 심사 사유 조회
 
     /** Order deliberately shuffled — the newest-first assumption must not be what makes this pass. */

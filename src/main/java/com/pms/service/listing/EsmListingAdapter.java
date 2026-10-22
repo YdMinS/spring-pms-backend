@@ -1,6 +1,7 @@
 package com.pms.service.listing;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.MissingNode;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
@@ -33,6 +34,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -153,7 +155,47 @@ public class EsmListingAdapter implements ListingChannel {
                 }
             }
         }
-        return new FetchResult(status, options, statusName);
+        // FEATURE_2610_27 / D37: the same answer carries each site's price (itemBasicInfo.Price) — kept for
+        // readMarketPrices.
+        JsonNode price = child(child(body, "itemBasicInfo"), "Price");
+        return new FetchResult(status, options, statusName, new FetchResult.Prices(
+                decimalOrNull(child(price, "gmkt")), decimalOrNull(child(price, "iac")), Map.of()));
+    }
+
+    /**
+     * FEATURE_2610_27 / D16 · D30 · D37: one goods GET (post 20). Option price per site = the site price from
+     * {@link #fetchStatus} + {@code addAmntSite.gmkt} / {@code .iac}, paired by {@code manageCode} (= our option id). When
+     * no pair is found and the cell has exactly one active option, that option takes the site prices (a single option
+     * is sent as {@code type} 0 — {@link #buildPayload}). Keys are matched ignoring case (D37).
+     */
+    @Override
+    public MarketPrices readMarketPrices(ProductListing cell, MarketplaceAccount acct, FetchResult fetched) {
+        BigDecimal gmarketBase = fetched.prices() == null ? null : fetched.prices().base();
+        BigDecimal auctionBase = fetched.prices() == null ? null : fetched.prices().auctionBase();
+        JsonNode goods = client.get(EsmPaths.GOODS + "/" + cell.getPlatformProductId(), EsmCredentials.of(acct));
+        JsonNode details = child(child(child(child(goods, "itemAddtionalInfo"), "recommendedOpts"), "independent"),
+                "details");
+        List<ProductListingOption> options = productListingOptionRepository.findByProductListingId(cell.getId());
+        Set<String> ourIds = options.stream().map(o -> String.valueOf(o.getId())).collect(Collectors.toSet());
+        Map<Long, MarketPrices.OptionPrice> byOptionId = new LinkedHashMap<>();
+        for (JsonNode detail : details) {
+            String id = child(detail, "manageCode").asText("");
+            if (!ourIds.contains(id)) {
+                continue;
+            }
+            JsonNode add = child(detail, "addAmntSite");
+            byOptionId.put(Long.valueOf(id), new MarketPrices.OptionPrice(
+                    sum(gmarketBase, decimalOrNull(child(add, "gmkt"))),
+                    sum(auctionBase, decimalOrNull(child(add, "iac")))));
+        }
+        if (byOptionId.isEmpty()) {
+            List<ProductListingOption> active = options.stream()
+                    .filter(o -> Boolean.TRUE.equals(o.getActive())).toList();
+            if (active.size() == 1) {
+                byOptionId.put(active.get(0).getId(), new MarketPrices.OptionPrice(gmarketBase, auctionBase));
+            }
+        }
+        return new MarketPrices(byOptionId);
     }
 
     /** D33: both sites to 「판매중지」 through post 21 — the delete API (post 29) is never called. */
@@ -363,6 +405,39 @@ public class EsmListingAdapter implements ListingChannel {
             lines.add(new Line(option, linked, gmarket, auction, ListingStockPolicy.resolve(option, linked)));
         }
         return lines;
+    }
+
+    /** FEATURE_2610_27 / D37: the field of {@code node} named {@code name} ignoring case — a missing node otherwise. */
+    private static JsonNode child(JsonNode node, String name) {
+        if (node != null && node.isObject()) {
+            for (Iterator<String> it = node.fieldNames(); it.hasNext(); ) {
+                String field = it.next();
+                if (field.equalsIgnoreCase(name)) {
+                    return node.get(field);
+                }
+            }
+        }
+        return MissingNode.getInstance();
+    }
+
+    /** A number or numeric text written by ESM, or null when it is absent or not a number (FEATURE_2610_27 / D36). */
+    private static BigDecimal decimalOrNull(JsonNode node) {
+        if (node == null || node.isNull() || node.isMissingNode()) {
+            return null;
+        }
+        if (node.isNumber()) {
+            return node.decimalValue();
+        }
+        try {
+            return new BigDecimal(node.asText().trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** base + add, or null when either is unknown. */
+    private static BigDecimal sum(BigDecimal base, BigDecimal add) {
+        return base == null || add == null ? null : base.add(add);
     }
 
     private static Map<String, Object> sites(boolean gmarket, boolean auction) {

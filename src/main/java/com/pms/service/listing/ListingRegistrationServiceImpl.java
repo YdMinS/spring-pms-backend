@@ -17,6 +17,7 @@ import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
+import com.pms.service.coupang.SyncWindow;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,8 +37,9 @@ import java.util.stream.Collectors;
 /**
  * Channel registration orchestration (FEATURE_2608_06 / 3c). See {@link ListingRegistrationService}.
  *
- * <p>Each write method is {@code @Transactional} (DB save atomicity); the single HTTP call runs inside the
- * transaction once, with no approval wait. {@code syncApprovals} reuses the private refresh core (same
+ * <p>Each write method is {@code @Transactional} (DB save atomicity); its marketplace HTTP calls run inside the
+ * transaction — one call per write, plus the market price read of a refresh (FEATURE_2610_27 / D13 ①: Coupang none
+ * extra · 11st and ESM one extra) — with no approval wait. {@code syncApprovals} reuses the private refresh core (same
  * code path) — the inner call is a self-invocation, so its {@code @Transactional} is intentionally not a new
  * boundary: the sweep is one transaction and a caught per-listing failure (pre-flush: account/HTTP error)
  * does not poison it, so successful promotions persist.</p>
@@ -59,6 +61,7 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final ListingChannelResolver resolver;
     private final TagMergeService tagMergeService;
+    private final MarketPriceApplier marketPriceApplier;
 
     @Override
     @Transactional
@@ -240,9 +243,14 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
                         .approvalStatus(OptionApprovalStatus.APPROVED);
                 if (option.getPlatformOptionId() == null) {
                     // 2609_39/D19 ③: the option just got its first market identifier, so the price that went
-                    // out in the register payload is now the one live on the market. An option that ALREADY
-                    // had an identifier is only being re-synced — no price was sent, so market_price stands.
-                    builder.marketPrice(option.getSellingPrice()).marketPriceAt(LocalDateTime.now());
+                    // out in the register payload is now the one live on the market (FEATURE_2610_27 / D17: the
+                    // Auction price too on an ESM option). An option that ALREADY had an identifier is only being
+                    // re-synced — no price was sent, so this block leaves market_price alone; the market price read
+                    // below (FEATURE_2610_27 / D13 ①) then overwrites both kinds of option with what the market shows.
+                    builder.marketPrice(option.getSellingPrice()).marketPriceAt(LocalDateTime.now(SyncWindow.KST));
+                    if (cell.getPlatform() == Platform.ESM) {
+                        builder.auctionMarketPrice(option.getAuctionSellingPrice());
+                    }
                 }
                 ProductListingOption updated = builder.build();
                 productListingOptionRepository.save(updated);
@@ -250,6 +258,18 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
             } else {
                 optionStatuses.add(ListingStatusResponse.OptionStatus.from(option));
             }
+        }
+
+        // FEATURE_2610_27 / D13 ① · D28: read the market prices AFTER the id sync above and store them. A failed read
+        // keeps the previous prices and never fails the refresh — the status was already saved.
+        MarketPrices prices = null;
+        try {
+            prices = adapter.readMarketPrices(cell, acct, result);
+        } catch (Exception e) {
+            log.warn("[LISTING-MARKET-PRICE] listingId={} read failed: {}", listingId, e.getMessage());
+        }
+        if (prices != null) {
+            marketPriceApplier.apply(cell, prices);
         }
 
         return new Refreshed(cell, acct, adapter, result, optionStatuses);
@@ -343,7 +363,7 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
                 .sellerProductItemId(market.sellerProductItemId())
                 .approvalStatus(OptionApprovalStatus.APPROVED);
         if (market.salePrice() != null) {
-            builder.marketPrice(market.salePrice()).marketPriceAt(LocalDateTime.now());
+            builder.marketPrice(market.salePrice()).marketPriceAt(LocalDateTime.now(SyncWindow.KST));
         }
         return ListingStatusResponse.OptionStatus.from(productListingOptionRepository.save(builder.build()));
     }

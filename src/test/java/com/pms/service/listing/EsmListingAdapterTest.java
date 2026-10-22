@@ -192,4 +192,52 @@ class EsmListingAdapterTest {
         verify(client).put(eq("/item/v1/goods/2103374786/sell-status"), body.capture(), eq(key));
         assertThat(JSON.writeValueAsString(body.getValue())).isEqualTo("{\"isSell\":{\"gmkt\":false,\"iac\":false}}");
     }
+
+    // ---- FEATURE_2610_27 / D16 · D30 · D37: market price read ----
+
+    @Test
+    void fetchStatus_keepsBothSitePricesForThePriceRead() throws Exception {
+        given(client.get(eq("/item/v1/goods/2103374786/sell-status"), eq(key))).willReturn(JSON.readTree(
+                "{\"IsSell\":{\"gmkt\":true,\"iac\":true},"
+                        + "\"itemBasicInfo\":{\"Price\":{\"gmkt\":10000.0,\"iac\":10500.0}}}"));
+
+        FetchResult result = adapter.fetchStatus(cell, account);
+
+        assertThat(result.prices().base()).isEqualByComparingTo("10000");
+        assertThat(result.prices().auctionBase()).isEqualByComparingTo("10500");
+    }
+
+    @Test
+    void readMarketPrices_sitePricePlusSiteSurcharge_pairedByManageCode_ignoringCase() throws Exception {
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                option(7, "작은", "10000", "10500", 5), option(8, "큰", "12000", "12500", 5)));
+        given(client.get(eq("/item/v1/goods/2103374786"), eq(key))).willReturn(JSON.readTree(
+                "{\"ItemAddtionalInfo\":{\"RecommendedOpts\":{\"Independent\":{\"Details\":["
+                        + "{\"ManageCode\":\"7\",\"AddAmntSite\":{\"Gmkt\":0,\"Iac\":0}},"
+                        + "{\"ManageCode\":\"8\",\"AddAmntSite\":{\"Gmkt\":2000,\"Iac\":2500}}]}}}}"));
+        FetchResult fetched = new FetchResult(ListingStatus.SELLING, List.of(), null,
+                new FetchResult.Prices(new BigDecimal("10000"), new BigDecimal("10500"), Map.of()));
+
+        MarketPrices prices = adapter.readMarketPrices(cell, account, fetched);
+
+        assertThat(prices.byOptionId()).containsOnlyKeys(7L, 8L);
+        assertThat(prices.byOptionId().get(8L).price()).isEqualByComparingTo("12000");
+        assertThat(prices.byOptionId().get(8L).auctionPrice()).isEqualByComparingTo("13000");
+    }
+
+    @Test
+    void readMarketPrices_singleActiveOptionWithoutPair_takesSitePrices() throws Exception {
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                option(7, "하나", "10000", "10500", 5)));
+        given(client.get(eq("/item/v1/goods/2103374786"), eq(key)))
+                .willReturn(JSON.readTree("{\"itemAddtionalInfo\":{\"recommendedOpts\":{\"type\":0}}}"));
+        FetchResult fetched = new FetchResult(ListingStatus.SELLING, List.of(), null,
+                new FetchResult.Prices(new BigDecimal("11000"), new BigDecimal("11500"), Map.of()));
+
+        MarketPrices prices = adapter.readMarketPrices(cell, account, fetched);
+
+        assertThat(prices.byOptionId()).containsOnlyKeys(7L);
+        assertThat(prices.byOptionId().get(7L).price()).isEqualByComparingTo("11000");
+        assertThat(prices.byOptionId().get(7L).auctionPrice()).isEqualByComparingTo("11500");
+    }
 }

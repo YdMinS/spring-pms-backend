@@ -327,10 +327,11 @@ public class PriceCalculator {
     }
 
     /**
-     * Display (strike-through) original price that goes with a <b>manually set</b> sale price
-     * (FEATURE_2609_19 / D7). The register / [수정 요청] payload always carries {@code originalPrice}, so a
-     * manual price that is saved without refreshing it would leave a "sale price > original price" inversion
-     * on the market. The margin preset lookup lives here so callers don't duplicate it.
+     * Display (strike-through) original price that goes with a sale price the automatic calculation did not make —
+     * a <b>manually set</b> one (FEATURE_2609_19 / D7) or one that followed the market (FEATURE_2610_27 / D31). The
+     * register / [수정 요청] payload always carries {@code originalPrice}, so such a price that is saved without
+     * refreshing it would leave a "sale price > original price" inversion on the market. The margin preset lookup
+     * lives here so callers don't duplicate it.
      *
      * @param cell      the channel cell (source of seller + platform for the preset)
      * @param salePrice the sale price to derive the display price from

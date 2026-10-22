@@ -199,4 +199,48 @@ class ElevenstListingAdapterTest {
         assertThat(suspended.statusName()).isEqualTo("판매금지");
         assertThat(suspended.options()).isEmpty();
     }
+
+    // ---- FEATURE_2610_27 / D16 · D30 · D37: market price read ----
+
+    @Test
+    void fetchStatus_keepsSelPrcForThePriceRead() {
+        given(client.post(eq(ElevenstListingAdapter.STATUS_PATH), anyString(), any())).willReturn(ElevenstXml.document(
+                "<Products><product><selStatCd>103</selStatCd><selPrc>9900</selPrc></product></Products>"));
+
+        assertThat(adapter.fetchStatus(cell, null).prices().base()).isEqualByComparingTo("9900");
+    }
+
+    @Test
+    void readMarketPrices_selPrcPlusAddPrc_pairedBySellerStockCd() {
+        options(option(11L, "작은", "9900.00", 5, null), option(12L, "큰", "12900.00", 5, null));
+        given(client.post(eq(ElevenstListingAdapter.STOCKS_PATH), anyString(), any())).willReturn(ElevenstXml.document(
+                "<ProductStocks><ProductStocks><prdNo>5551</prdNo>"
+                        + "<ProductStock><addPrc>0</addPrc><sellerStockCd>11</sellerStockCd></ProductStock>"
+                        + "<ProductStock><addPrc>3000</addPrc><sellerStockCd>12</sellerStockCd></ProductStock>"
+                        + "<ProductStock><addPrc>500</addPrc><sellerStockCd>999</sellerStockCd></ProductStock>"
+                        + "</ProductStocks></ProductStocks>"));
+        FetchResult fetched = new FetchResult(ListingStatus.SELLING, List.of(), "판매중",
+                new FetchResult.Prices(new BigDecimal("9900"), null, Map.of()));
+
+        MarketPrices prices = adapter.readMarketPrices(cell, null, fetched);
+
+        assertThat(prices.byOptionId()).containsOnlyKeys(11L, 12L);
+        assertThat(prices.byOptionId().get(11L).price()).isEqualByComparingTo("9900");
+        assertThat(prices.byOptionId().get(12L).price()).isEqualByComparingTo("12900");
+    }
+
+    @Test
+    void readMarketPrices_singleActiveOptionWithoutPair_takesSelPrc() {
+        ProductListingOption off = option(13L, "꺼짐", "9900.00", 1, null).toBuilder().active(false).build();
+        options(option(11L, "단품", "9900.00", 5, null), off);
+        given(client.post(eq(ElevenstListingAdapter.STOCKS_PATH), anyString(), any())).willReturn(ElevenstXml.document(
+                "<ProductStocks><ProductStocks><prdNo>5551</prdNo></ProductStocks></ProductStocks>"));
+        FetchResult fetched = new FetchResult(ListingStatus.SELLING, List.of(), "판매중",
+                new FetchResult.Prices(new BigDecimal("10900"), null, Map.of()));
+
+        MarketPrices prices = adapter.readMarketPrices(cell, null, fetched);
+
+        assertThat(prices.byOptionId()).containsOnlyKeys(11L);
+        assertThat(prices.byOptionId().get(11L).price()).isEqualByComparingTo("10900");
+    }
 }

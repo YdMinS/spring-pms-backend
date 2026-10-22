@@ -30,6 +30,7 @@ import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.service.ListingAssetService;
+import com.pms.service.coupang.SyncWindow;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -260,7 +261,7 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
                     // 2609_39/D19 ④: an imported option's price was READ FROM the market, so the two columns
                     // start out equal. Without this the cell would look "아직 안 밀림" from its first day.
                     .marketPrice(market.salePrice())
-                    .marketPriceAt(LocalDateTime.now())
+                    .marketPriceAt(LocalDateTime.now(SyncWindow.KST))
                     .stockQuantity(market.stockQuantity())
                     .platformOptionId(market.vendorItemId())
                     .sellerProductItemId(market.sellerProductItemId())

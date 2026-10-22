@@ -26,11 +26,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.w3c.dom.Document;
+import org.w3c.dom.Element;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -57,6 +59,8 @@ public class ElevenstListingAdapter implements ListingChannel {
     static final String PRODUCT_PATH = "/rest/prodservices/product";
     static final String STATUS_PATH = "/rest/prodmarketservice/prodmarket";
     static final String STOP_PATH = "/rest/prodstatservice/stat/stopdisplay/";
+    /** FEATURE_2610_27 / D16 · D37: 1009 multi-product stock lookup — per option {@code addPrc} + {@code sellerStockCd}. */
+    static final String STOCKS_PATH = "/rest/prodmarketservice/prodmarket/stocks";
 
     static final String MISSING_NOTICE_MESSAGE = "A/S 안내 · 반품/교환 안내를 넣으세요";
     static final String MISSING_BRAND_MESSAGE = "브랜드를 넣으세요";
@@ -175,7 +179,8 @@ public class ElevenstListingAdapter implements ListingChannel {
         ElevenstXml.element(body, "prdNo", cell.getPlatformProductId());
         body.append("</SearchProduct>");
         byte[] raw = client.post(STATUS_PATH, body.toString(), acct);
-        String code = ElevenstXml.firstText(ElevenstXml.parseOrNull(raw), "selStatCd");
+        Document doc = ElevenstXml.parseOrNull(raw);
+        String code = ElevenstXml.firstText(doc, "selStatCd");
         ListingStatus status = code == null ? null : STATUS_BY_CODE.get(code);
         if (status == null) {
             throw new BusinessException("11번가 상태를 읽지 못했습니다: " + ElevenstXml.messageOf(raw),
@@ -190,7 +195,49 @@ public class ElevenstListingAdapter implements ListingChannel {
                 }
             }
         }
-        return new FetchResult(status, options, STATUS_NAME_BY_CODE.get(code));
+        // FEATURE_2610_27 / D37: the same 1007 answer carries the product price (selPrc) — kept for readMarketPrices.
+        return new FetchResult(status, options, STATUS_NAME_BY_CODE.get(code),
+                new FetchResult.Prices(decimalOrNull(ElevenstXml.firstText(doc, "selPrc")), null, Map.of()));
+    }
+
+    /**
+     * FEATURE_2610_27 / D16 · D30 · D37: one 1009 call. Option price = 1007 {@code selPrc} + the option's {@code addPrc},
+     * paired by {@code sellerStockCd} (= our option id sent as {@code colSellerStockCd}). When no pair is found and the
+     * cell has exactly one active option, that option takes {@code selPrc} (a single option is sent without an option
+     * block — {@link #buildPayload}).
+     */
+    @Override
+    public MarketPrices readMarketPrices(ProductListing cell, MarketplaceAccount acct, FetchResult fetched) {
+        BigDecimal base = fetched.prices() == null ? null : fetched.prices().base();
+        StringBuilder body = new StringBuilder("<ProductStocks><ProductStock>");
+        ElevenstXml.element(body, "prdNo", cell.getPlatformProductId());
+        body.append("</ProductStock></ProductStocks>");
+        byte[] raw = client.post(STOCKS_PATH, body.toString(), acct);
+        Document doc = ElevenstXml.parseOrNull(raw);
+        if (doc == null) {
+            throw new BusinessException("11번가 옵션 가격을 읽지 못했습니다: " + ElevenstXml.messageOf(raw),
+                    HttpStatus.BAD_GATEWAY);
+        }
+        List<ProductListingOption> options = productListingOptionRepository.findByProductListingId(cell.getId());
+        Set<String> ourIds = options.stream().map(o -> String.valueOf(o.getId())).collect(Collectors.toSet());
+        Map<Long, MarketPrices.OptionPrice> byOptionId = new LinkedHashMap<>();
+        for (Element stock : ElevenstXml.elements(doc, "ProductStock")) {
+            String id = ElevenstXml.firstText(stock, "sellerStockCd");
+            if (id == null || !ourIds.contains(id)) {
+                continue;
+            }
+            BigDecimal add = decimalOrNull(ElevenstXml.firstText(stock, "addPrc"));
+            byOptionId.put(Long.valueOf(id),
+                    new MarketPrices.OptionPrice(base == null || add == null ? null : base.add(add), null));
+        }
+        if (byOptionId.isEmpty()) {
+            List<ProductListingOption> active = options.stream()
+                    .filter(o -> Boolean.TRUE.equals(o.getActive())).toList();
+            if (active.size() == 1) {
+                byOptionId.put(active.get(0).getId(), new MarketPrices.OptionPrice(base, null));
+            }
+        }
+        return new MarketPrices(byOptionId);
     }
 
     @Override
@@ -380,6 +427,18 @@ public class ElevenstListingAdapter implements ListingChannel {
 
     private static String won(BigDecimal amount) {
         return amount.setScale(0, RoundingMode.HALF_UP).toPlainString();
+    }
+
+    /** A number written by 11st, or null when it is absent or not a number (FEATURE_2610_27 / D36). */
+    private static BigDecimal decimalOrNull(String text) {
+        if (!StringUtils.hasText(text)) {
+            return null;
+        }
+        try {
+            return new BigDecimal(text.trim().replace(",", ""));
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private static String value(Map<String, String> settings, String key) {

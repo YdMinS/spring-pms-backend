@@ -29,5 +29,11 @@ public enum PriceChangeReason {
      * automatic: measured ratios wobble (promotional fee discounts, mis-mapped categories, one-line
      * samples), so the log records a human decision, not a batch.
      */
-    SETTLEMENT_FEEDBACK
+    SETTLEMENT_FEEDBACK,
+
+    /**
+     * The system selling price followed the price read from the market (FEATURE_2610_27 / D15 · D29) — on
+     * [승인 새로고침] or the 02:05 market price batch. Screen text 「마켓 가격 따라감」.
+     */
+    MARKET_SYNC
 }

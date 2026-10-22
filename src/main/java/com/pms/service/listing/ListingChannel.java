@@ -147,4 +147,21 @@ public interface ListingChannel {
     default void updateOptionPrice(ProductListingOption option, BigDecimal price, MarketplaceAccount acct) {
         throw new UnsupportedOperationException("가격 부분수정 미지원 플랫폼: " + platform());
     }
+
+    /**
+     * Read the prices that are live on the market and pair them with our options (FEATURE_2610_27 / D13 · D16 · D30 ·
+     * D37). <b>Read only</b> — nothing is sent and nothing is stored here; {@link MarketPriceApplier} stores the result.
+     *
+     * <p>{@code fetched} is the result of {@link #fetchStatus} for the same cell — its {@link FetchResult#prices()} are
+     * reused so the status call is not repeated (Coupang: no extra call · 11st: + 1 call · ESM: + 1 call). A failed
+     * read throws; the caller keeps the previous values (D24 · D28).</p>
+     *
+     * @param cell    the cell on the market (has platformProductId)
+     * @param acct    the marketplace account (credentials)
+     * @param fetched this cell's {@link #fetchStatus} result
+     * @return the prices per our option id
+     */
+    default MarketPrices readMarketPrices(ProductListing cell, MarketplaceAccount acct, FetchResult fetched) {
+        throw new UnsupportedOperationException("마켓 가격 읽기 미지원 플랫폼: " + platform());
+    }
 }

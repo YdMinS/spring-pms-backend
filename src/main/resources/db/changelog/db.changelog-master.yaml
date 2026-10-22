@@ -230,3 +230,5 @@ databaseChangeLog:
       file: db/changelog/changes/114-esm-site-price.yaml
   - include:
       file: db/changelog/changes/115-esm-shipping-config.yaml
+  - include:
+      file: db/changelog/changes/116-auction-market-price.yaml
