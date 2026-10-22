@@ -78,6 +78,9 @@ oclyx:
   settlement:
     revenue-sync-cron: "-"
     payout-sync-cron: "-"
+  listing:
+    # FEATURE_2610_27 / D25 — market price batch OFF on dev (same Coupang vendor as prod).
+    market-price-sync-cron: "-"
 
 app:
   merge:

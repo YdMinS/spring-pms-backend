@@ -185,6 +185,13 @@ oclyx:
     # false alarm on payouts with many lines. A payout with zero lines still gets the 10 KRW floor.
     recon-tolerance-per-line: 1
 
+  listing:
+    # Market price batch (FEATURE_2610_27 / D27) — every day 02:05 KST, reads the live price of every Coupang · 11st ·
+    # ESM listing on a market and makes the system price follow it. Clear of 02:00 (15-minute order sync), 03:00, 04:30
+    # and Monday 05:00.
+    # ⚠️ Interpreted in Asia/Seoul (zone on @Scheduled), NOT the container's UTC. "-" disables it (dev, D25).
+    market-price-sync-cron: "0 5 2 * * *"
+
   pricing:
     # Commission VAT rate (PLAN 2609_30 D19). Coupang charges the commission PLUS 10% VAT on that
     # commission, so the fee we should expect is commission x (1 + this). The settlement difference
