@@ -24,7 +24,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * FEATURE_2610_27 / D9 · D12: margin endpoints — authority (401 / 403), the margin view wiring (a listing whose
- * margin cannot be calculated answers 200 with the reason, not 400) and the preview body check.
+ * margin cannot be calculated answers 200 with the reason, not 400) and the preview body check. FEATURE_2610_28 /
+ * D20 · D21: one site entry per option on a Coupang listing.
  */
 class ListingMarginControllerTest extends BaseIntegrationTest {
 
@@ -79,10 +80,11 @@ class ListingMarginControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.platform").value("COUPANG"))
                 .andExpect(jsonPath("$.data.options[0].optionId").value(optionId))
-                .andExpect(jsonPath("$.data.options[0].margin.judgedPrice").value(6500))
-                .andExpect(jsonPath("$.data.options[0].margin.marginAmount").doesNotExist())
-                .andExpect(jsonPath("$.data.options[0].margin.reason").isNotEmpty())
-                .andExpect(jsonPath("$.data.options[0].auctionMargin").doesNotExist());
+                .andExpect(jsonPath("$.data.options[0].sites.length()").value(1))
+                .andExpect(jsonPath("$.data.options[0].sites[0].site").value("COUPANG"))
+                .andExpect(jsonPath("$.data.options[0].sites[0].judgedPrice").value(6500))
+                .andExpect(jsonPath("$.data.options[0].sites[0].marginAmount").doesNotExist())
+                .andExpect(jsonPath("$.data.options[0].sites[0].reason").isNotEmpty());
     }
 
     @Test
@@ -95,7 +97,7 @@ class ListingMarginControllerTest extends BaseIntegrationTest {
     @Test
     void preview_userToken_returns403() throws Exception {
         mockMvc.perform(post(previewPath()).header("Authorization", "Bearer " + userToken)
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"price\":7000}"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"price\":7000,\"site\":\"COUPANG\"}"))
                 .andExpect(status().isForbidden());
     }
 
