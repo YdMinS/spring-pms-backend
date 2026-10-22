@@ -24,6 +24,7 @@ import com.pms.service.ListingAssetService;
 import com.pms.service.OptionCheckSuffixResolver;
 import com.pms.service.PriceCalculator;
 import com.pms.service.RegistrationNameGenerator;
+import com.pms.service.coupang.SyncWindow;
 import com.pms.service.elevenst.ElevenstListingRules;
 import com.pms.service.esm.EsmPriceRules;
 import com.pms.service.price.PriceHistoryRecorder;
@@ -504,8 +505,8 @@ public class ListingOptionServiceImpl implements ListingOptionService {
 
     /**
      * @param pushed true only when the marketplace accepted this exact price — then and only then is it also
-     *               the price that is live on the market (2609_39/D19 ②). Writing {@code marketPrice} for an
-     *               option we never sent would make that column lie on its very first day.
+     *               the price that is live on the market (2609_39/D19 ②). Writing {@code marketPrice} here for an
+     *               option this path never sent would make that column lie on its very first day.
      * @param auction the Auction target of an ESM option (2610_26/D53 ②), null on every other platform
      */
     private static ProductListingOption applied(ProductListingOption option, TargetPrice target, TargetPrice auction,
@@ -518,7 +519,7 @@ public class ListingOptionServiceImpl implements ListingOptionService {
             builder.auctionSellingPrice(auction.salePrice()).auctionPriceSource(auction.source());
         }
         if (pushed) {
-            builder.marketPrice(target.salePrice()).marketPriceAt(LocalDateTime.now());
+            builder.marketPrice(target.salePrice()).marketPriceAt(LocalDateTime.now(SyncWindow.KST));
         }
         return builder.build();
     }

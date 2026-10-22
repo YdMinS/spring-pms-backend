@@ -63,6 +63,7 @@ class ListingRegistrationServiceTest {
     @Mock private ListingChannelResolver resolver;
     @Mock private ListingChannel adapter;
     @Mock private TagMergeService tagMergeService;
+    @Mock private MarketPriceApplier marketPriceApplier;
     @InjectMocks private ListingRegistrationServiceImpl service;
 
     private static final Long CELL_ID = 100L;
@@ -469,6 +470,64 @@ class ListingRegistrationServiceTest {
         assertThat(savedFresh.getMarketPriceAt()).isNotNull();
         assertThat(savedResynced.getMarketPrice()).isNull();
         assertThat(savedResynced.getMarketPriceAt()).isNull();
+    }
+
+    // ---- FEATURE_2610_27 / D13 ① · D17 · D28: market price read on refresh ----
+
+    @Test
+    void fetchStatus_readsMarketPricesAfterIdSync_thenApplies() {
+        ProductListing cell = cell(ListingStatus.SUBMITTED, "SP-1");
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell));
+        stubAccountAndAdapter();
+        FetchResult fetched = new FetchResult(ListingStatus.SELLING, List.of(new FetchResult.OptionId("기본", "111", "222")));
+        given(adapter.fetchStatus(any(), any())).willReturn(fetched);
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+        MarketPrices prices = new MarketPrices(java.util.Map.of(50L,
+                new MarketPrices.OptionPrice(new BigDecimal("6500"), null)));
+        given(adapter.readMarketPrices(eq(cell), any(), eq(fetched))).willReturn(prices);
+
+        service.fetchStatus(CELL_ID);
+
+        InOrder order = inOrder(productListingOptionRepository, adapter, marketPriceApplier);
+        order.verify(productListingOptionRepository).save(any(ProductListingOption.class));
+        order.verify(adapter).readMarketPrices(eq(cell), any(), eq(fetched));
+        order.verify(marketPriceApplier).apply(cell, prices);
+    }
+
+    @Test
+    void fetchStatus_marketPriceReadFails_statusStillSaved_nothingApplied() {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.SUBMITTED, "SP-1")));
+        stubAccountAndAdapter();
+        given(adapter.fetchStatus(any(), any())).willReturn(new FetchResult(ListingStatus.SELLING, List.of()));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+        given(adapter.readMarketPrices(any(), any(), any())).willThrow(new IllegalStateException("boom"));
+
+        ListingStatusResponse response = service.fetchStatus(CELL_ID);
+
+        assertThat(response.getStatus()).isEqualTo("SELLING");
+        verify(productListingRepository).save(any(ProductListing.class));
+        verifyNoInteractions(marketPriceApplier);
+    }
+
+    @Test
+    void fetchStatus_esmFirstIdentifier_recordsAuctionMarketPriceToo() {
+        ProductListing esmCell = cell(ListingStatus.SUBMITTED, "G-1").toBuilder().platform(Platform.ESM).build();
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(esmCell));
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(eq(SELLER_ID), eq(Platform.ESM)))
+                .willReturn(Optional.of(account()));
+        given(resolver.resolve(Platform.ESM)).willReturn(adapter);
+        given(adapter.fetchStatus(any(), any())).willReturn(new FetchResult(
+                ListingStatus.SELLING, List.of(new FetchResult.OptionId("기본", "50", null))));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(
+                option().toBuilder().auctionSellingPrice(new BigDecimal("6300")).build()));
+
+        service.fetchStatus(CELL_ID);
+
+        ArgumentCaptor<ProductListingOption> captor = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository).save(captor.capture());
+        assertThat(captor.getValue().getMarketPrice()).isEqualByComparingTo("6000");
+        assertThat(captor.getValue().getAuctionMarketPrice()).isEqualByComparingTo("6300");
     }
 
     // ---- 2609_74/D13: market option list + manual link ----

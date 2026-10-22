@@ -23,6 +23,7 @@ import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.service.ListingAssetService;
 import com.pms.service.PriceCalculator;
+import com.pms.service.coupang.SyncWindow;
 import com.pms.service.listing.CellBomResolver;
 import com.pms.service.listing.ListingChannel;
 import com.pms.service.listing.ListingChannelResolver;
@@ -295,7 +296,7 @@ public class RepricingServiceImpl implements RepricingService {
         channel.updateOptionPrice(option, price, account);
         productListingOptionRepository.save(option.toBuilder()
                 .marketPrice(price)
-                .marketPriceAt(LocalDateTime.now())
+                .marketPriceAt(LocalDateTime.now(SyncWindow.KST))
                 .build());
     }
 
@@ -481,7 +482,7 @@ public class RepricingServiceImpl implements RepricingService {
     }
 
     /** Σ(product.price × quantity) per option, from ONE BOM query (null price = 0). */
-    private static BigDecimal costSum(CellBomResolver.Bom bom) {
+    static BigDecimal costSum(CellBomResolver.Bom bom) {
         BigDecimal sum = BigDecimal.ZERO;
         for (CellBomResolver.Line line : bom.lines()) {
             BigDecimal price = line.product().getPrice();
@@ -550,7 +551,7 @@ public class RepricingServiceImpl implements RepricingService {
      * 대응 필요 판정(D4): 기준값이 <b>하나라도</b> 밑돌면 true. NULL 기준 = 그 조건 미사용이므로 두 기준이 다
      * 비어 있으면 마진이 음수여도 경보하지 않는다(지어낸 기본선으로 전 상품을 대응 필요로 만들지 않는다).
      */
-    private static boolean below(PriceCalculator.CellPricingBasis basis, PriceCalculator.CostBreakdown breakdown) {
+    static boolean below(PriceCalculator.CellPricingBasis basis, PriceCalculator.CostBreakdown breakdown) {
         BigDecimal minAmount = basis.minMarginAmount();
         BigDecimal minRate = basis.minMarginRate();
         return (minAmount != null && breakdown.marginAmount().compareTo(minAmount) < 0)

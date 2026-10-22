@@ -161,15 +161,40 @@ public class CoupangListingAdapter implements ListingChannel {
 
     @Override
     public FetchResult fetchStatus(ProductListing cell, MarketplaceAccount acct) {
-        // 2609_22: same GET, one parser. fetchStatus keeps its old contract and just projects the status +
-        // option ids out of the fuller read — so the two paths can never drift on what a Coupang key means.
+        // 2609_22: same GET, one parser. fetchStatus keeps its old contract and projects the status, the option ids
+        // and (FEATURE_2610_27) the option prices out of the fuller read — so the two paths can never drift on what a
+        // Coupang key means.
         ImportedProduct product = fetchProduct(cell.getPlatformProductId(), acct);
         List<FetchResult.OptionId> options = new ArrayList<>();
+        // FEATURE_2610_27 / D13: the same GET already carries each item's salePrice — kept for readMarketPrices.
+        Map<String, BigDecimal> priceByVendorItemId = new LinkedHashMap<>();
         for (ImportedProduct.Option option : product.options()) {
             options.add(new FetchResult.OptionId(
                     option.itemName(), option.vendorItemId(), option.sellerProductItemId()));
+            if (option.vendorItemId() != null) {
+                priceByVendorItemId.put(option.vendorItemId(), option.salePrice());
+            }
         }
-        return new FetchResult(product.status(), options, product.statusName());
+        return new FetchResult(product.status(), options, product.statusName(),
+                new FetchResult.Prices(null, null, priceByVendorItemId));
+    }
+
+    /**
+     * FEATURE_2610_27 / D16: no extra call — the prices come from the {@link #fetchStatus} GET. An option is paired by
+     * the vendorItemId it already carries ({@code platformOptionId}); an option without one is left out.
+     */
+    @Override
+    public MarketPrices readMarketPrices(ProductListing cell, MarketplaceAccount acct, FetchResult fetched) {
+        Map<String, BigDecimal> priceByVendorItemId = fetched.prices() == null
+                ? Map.of() : fetched.prices().byMarketOptionId();
+        Map<Long, MarketPrices.OptionPrice> byOptionId = new LinkedHashMap<>();
+        for (ProductListingOption option : productListingOptionRepository.findByProductListingId(cell.getId())) {
+            String vendorItemId = option.getPlatformOptionId();
+            if (vendorItemId != null && priceByVendorItemId.containsKey(vendorItemId)) {
+                byOptionId.put(option.getId(), new MarketPrices.OptionPrice(priceByVendorItemId.get(vendorItemId), null));
+            }
+        }
+        return new MarketPrices(byOptionId);
     }
 
     @Override
