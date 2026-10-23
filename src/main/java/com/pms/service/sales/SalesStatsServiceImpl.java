@@ -240,10 +240,11 @@ public class SalesStatsServiceImpl implements SalesStatsService {
     // ── ⑤ per date (FEATURE_2610_29 D22) ────────────────────────────────
 
     @Override
-    public List<DailySalesResponse> daily(LocalDate from, LocalDate to) {
+    public List<DailySalesResponse> daily(LocalDate from, LocalDate to, Long sellerId) {
         Period period = Period.of(from, to);
         Map<LocalDate, DailySalesRow> byDate = new HashMap<>();
-        for (DailySalesRow row : orderLineRepository.aggregateDailySales(period.fromTime(), period.toExclusive())) {
+        for (DailySalesRow row : orderLineRepository.aggregateDailySales(period.fromTime(), period.toExclusive(),
+                sellerId)) {
             byDate.put(LocalDate.of(row.year(), row.month(), row.day()), row);
         }
         List<DailySalesResponse> rows = new ArrayList<>();

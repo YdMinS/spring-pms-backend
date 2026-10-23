@@ -19,8 +19,10 @@ public enum DashboardCardType {
     SETTLEMENT_PAYOUTS(true, EnumSet.noneOf(DashboardPeriod.class)),
     PURCHASE_LIST(true, EnumSet.noneOf(DashboardPeriod.class)),
     RESERVED_SHIPMENTS(true, EnumSet.noneOf(DashboardPeriod.class)),
-    DAILY_SALES_CHART(true, EnumSet.of(DashboardPeriod.DAYS_7, DashboardPeriod.DAYS_30)),
-    CHANNEL_SALES_CHART(true, EnumSet.of(DashboardPeriod.DAYS_7, DashboardPeriod.DAYS_30));
+    DAILY_SALES_CHART(true, EnumSet.of(DashboardPeriod.DAYS_7, DashboardPeriod.DAYS_30, DashboardPeriod.THIS_MONTH,
+            DashboardPeriod.LAST_MONTH)),
+    CHANNEL_SALES_CHART(true, EnumSet.of(DashboardPeriod.DAYS_7, DashboardPeriod.DAYS_30, DashboardPeriod.THIS_MONTH,
+            DashboardPeriod.LAST_MONTH));
 
     private final boolean adminOnly;
     private final Set<DashboardPeriod> periods;
