@@ -2,6 +2,7 @@ package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.response.ChannelSalesResponse;
+import com.pms.dto.response.DailySalesResponse;
 import com.pms.dto.response.ProductProfitResponse;
 import com.pms.dto.response.SalesLineView;
 import com.pms.dto.response.SellerSalesResponse;
@@ -86,5 +87,16 @@ public class SalesStatsController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
             @RequestParam Long accountId) {
         return ResponseEntity.ok(ResponseDTO.success(salesStatsService.lines(from, to, accountId)));
+    }
+
+    /**
+     * ⑤ Sales per sale date — the dashboard sales chart (FEATURE_2610_29 D22). One row per date of the period, a
+     * date without sales included with zeros. Same period defaults and 400 as the endpoints above.
+     */
+    @GetMapping("/daily")
+    public ResponseEntity<ResponseDTO<List<DailySalesResponse>>> daily(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return ResponseEntity.ok(ResponseDTO.success(salesStatsService.daily(from, to)));
     }
 }

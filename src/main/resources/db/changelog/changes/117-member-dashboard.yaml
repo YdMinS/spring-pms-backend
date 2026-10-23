@@ -1,0 +1,35 @@
+# Dashboard cards per member (FEATURE_2610_29 / D6 · D11).
+#   117-1 member_dashboard = one row per member. cards = JSON TEXT array of the chosen cards — card type, period,
+#         web place and size, mobile order and width (web and mobile are stored apart, D11). The row is made by the
+#         first save; no row = the member has not saved yet and the screen draws the default cards (D19). Deleting the
+#         member deletes the row (ON DELETE CASCADE).
+# ⚠️ No boolean column -> the 006 BIT follow-up is not needed. H2 constraint names are schema-global unique ->
+#    table-prefixed names.
+databaseChangeLog:
+
+  - changeSet:
+      id: 117-1-member-dashboard
+      author: oclyx
+      comment: "FEATURE_2610_29 D6 · D11: member_dashboard (dashboard cards per member)."
+      changes:
+        - createTable:
+            tableName: member_dashboard
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: member_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: cards, type: TEXT, constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_memberdashboard_member
+            baseTableName: member_dashboard
+            baseColumnNames: member_id
+            referencedTableName: member
+            referencedColumnNames: id
+            onDelete: CASCADE
+        - addUniqueConstraint:
+            constraintName: uq_member_dashboard_member
+            tableName: member_dashboard
+            columnNames: member_id
+      rollback:
+        - dropTable: { tableName: member_dashboard }

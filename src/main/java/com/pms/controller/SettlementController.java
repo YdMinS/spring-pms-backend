@@ -12,11 +12,13 @@ import com.pms.dto.response.SaleMonthSettlement;
 import com.pms.dto.response.ReconLineView;
 import com.pms.dto.response.ReconReportResponse;
 import com.pms.dto.response.SettlementPayoutDetailResponse;
+import com.pms.dto.response.SettlementMonthSummaryResponse;
 import com.pms.dto.response.SettlementPayoutSyncResponse;
 import com.pms.dto.response.SettlementSyncResponse;
 import com.pms.dto.response.SettlementSyncTargetResponse;
 import com.pms.service.sales.ElevenstFirstMonthService;
 import com.pms.service.settlement.CommissionFeedbackService;
+import com.pms.service.settlement.SettlementMonthSummaryService;
 import com.pms.service.settlement.SettlementPaymentService;
 import com.pms.service.settlement.SettlementPayoutSyncService;
 import com.pms.service.settlement.SettlementReconciliationService;
@@ -69,6 +71,7 @@ public class SettlementController {
     private final CommissionFeedbackService commissionFeedbackService;
     private final SettlementPaymentService settlementPaymentService;
     private final ElevenstFirstMonthService elevenstFirstMonthService;
+    private final SettlementMonthSummaryService settlementMonthSummaryService;
 
     /**
      * 수동 갱신 — delta 창만 다시 읽는다. 우선순위: accountId &gt; sellerId &gt; 전체.
@@ -125,6 +128,17 @@ public class SettlementController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
         return ResponseEntity.ok(ResponseDTO.success(
                 settlementReconciliationService.payouts(sellerId, accountId, from, to)));
+    }
+
+    /**
+     * This month's payouts summed across sellers and channels — the dashboard payout card (FEATURE_2610_29 D26 ·
+     * D30). No input: the server picks this month in KST, and a payout belongs to the month of its confirmed payout
+     * date, else its scheduled payout date. 🔴 Not the {@code /payouts} axis above (the scheduled date) — do not add a
+     * date-basis flag to {@code /payouts} instead.
+     */
+    @GetMapping("/month-summary")
+    public ResponseEntity<ResponseDTO<SettlementMonthSummaryResponse>> monthSummary() {
+        return ResponseEntity.ok(ResponseDTO.success(settlementMonthSummaryService.thisMonth()));
     }
 
     /**

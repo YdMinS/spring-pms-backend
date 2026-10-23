@@ -232,3 +232,5 @@ databaseChangeLog:
       file: db/changelog/changes/115-esm-shipping-config.yaml
   - include:
       file: db/changelog/changes/116-auction-market-price.yaml
+  - include:
+      file: db/changelog/changes/117-member-dashboard.yaml
