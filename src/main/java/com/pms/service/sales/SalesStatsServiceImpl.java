@@ -9,6 +9,8 @@ import com.pms.domain.ProductListingOption;
 import com.pms.domain.SaleType;
 import com.pms.domain.SettlementPayoutStatus;
 import com.pms.dto.response.ChannelSalesResponse;
+import com.pms.dto.response.DailySalesResponse;
+import com.pms.dto.response.DailySalesRow;
 import com.pms.dto.response.MonthlyChannelSales;
 import com.pms.dto.response.PayoutAggregate;
 import com.pms.dto.response.ProductProfitResponse;
@@ -233,6 +235,26 @@ public class SalesStatsServiceImpl implements SalesStatsService {
         }
         Period period = Period.of(from, to);
         return orderLineRepository.findSalesLines(period.fromTime(), period.toExclusive(), accountId);
+    }
+
+    // ── ⑤ per date (FEATURE_2610_29 D22) ────────────────────────────────
+
+    @Override
+    public List<DailySalesResponse> daily(LocalDate from, LocalDate to) {
+        Period period = Period.of(from, to);
+        Map<LocalDate, DailySalesRow> byDate = new HashMap<>();
+        for (DailySalesRow row : orderLineRepository.aggregateDailySales(period.fromTime(), period.toExclusive())) {
+            byDate.put(LocalDate.of(row.year(), row.month(), row.day()), row);
+        }
+        List<DailySalesResponse> rows = new ArrayList<>();
+        for (LocalDate date = period.from(); !date.isAfter(period.to()); date = date.plusDays(1)) {
+            DailySalesRow row = byDate.get(date);
+            rows.add(row == null
+                    ? new DailySalesResponse(date, scale(BigDecimal.ZERO), 0L)
+                    : new DailySalesResponse(date, scale(row.grossSales()),
+                            row.orderCount() == null ? 0L : row.orderCount()));
+        }
+        return rows;
     }
 
     // ── 공통 집계 ─────────────────────────────────────────────────────────
