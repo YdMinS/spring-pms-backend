@@ -5,6 +5,7 @@ import com.pms.domain.SettlementPayout;
 import com.pms.domain.SettlementPayoutStatus;
 import com.pms.domain.SettlementType;
 import com.pms.dto.response.PayoutAggregate;
+import com.pms.dto.response.PayoutMonthTotals;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -151,4 +152,26 @@ public interface SettlementPayoutRepository extends JpaRepository<SettlementPayo
                                              @Param("to") LocalDate to,
                                              @Param("scheduled") SettlementPayoutStatus scheduled,
                                              @Param("paid") SettlementPayoutStatus paid);
+
+    /**
+     * Payout sums of a date range across accounts (FEATURE_2610_29 D26 · D30) — the dashboard payout card.
+     *
+     * <p>🔴 A payout's date = its confirmed payout date when present, else {@code settlementDate} — the same basis as
+     * {@link #aggregateByAccount} {@code paidAmount}. {@link #search} (the {@code /payouts} list) cuts by
+     * {@code settlementDate} alone, so the two disagree on a payout scheduled in one month and confirmed in another.
+     *
+     * <p>⚠️ {@code case ... then p.finalAmount end} without else, for the reason on {@link #aggregateByAccount}. With
+     * no rows, {@code coalesce} turns both sums into 0.
+     */
+    @Query("""
+            select new com.pms.dto.response.PayoutMonthTotals(
+                coalesce(sum(p.finalAmount), 0),
+                coalesce(sum(case when p.status = :paid then p.finalAmount end), 0))
+            from SettlementPayout p
+            where coalesce(p.finalSettlementDate, p.settlementDate) >= :from
+              and coalesce(p.finalSettlementDate, p.settlementDate) <= :to
+            """)
+    PayoutMonthTotals sumByPayoutDate(@Param("from") LocalDate from,
+                                      @Param("to") LocalDate to,
+                                      @Param("paid") SettlementPayoutStatus paid);
 }

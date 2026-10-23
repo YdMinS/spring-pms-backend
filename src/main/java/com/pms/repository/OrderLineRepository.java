@@ -3,6 +3,7 @@ package com.pms.repository;
 import com.pms.domain.OrderLine;
 import com.pms.domain.OrderStatus;
 import com.pms.dto.response.CostBasisBreakdown;
+import com.pms.dto.response.DailySalesRow;
 import com.pms.dto.response.MonthlyChannelSales;
 import com.pms.dto.response.NewOrderAlertRow;
 import com.pms.dto.response.SalesLineGroup;
@@ -324,6 +325,34 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
     List<MonthlyChannelSales> aggregateMonthlySales(@Param("from") LocalDateTime from,
                                                     @Param("toExclusive") LocalDateTime toExclusive,
                                                     @Param("sellerId") Long sellerId);
+
+    /**
+     * Sales per <b>sale date</b> (FEATURE_2610_29 D22) — the dashboard sales chart.
+     *
+     * <p>🔴 The amount is the {@link #aggregateSales} {@code grossSales} as is ({@code Σ unitPrice × (orderQty −
+     * cancelQty)}, before discount) over the same joins — the sum of the dates equals the seller summary total. The
+     * order count is <b>per order</b> and counts an order when one of its lines still has a quantity left
+     * ({@code orderQty > cancelQty}) — an order cancelled in full adds nothing to the amount.
+     *
+     * <p>⚠️ The day grouping is {@code year()}/{@code month()}/{@code day()} — the same portable functions as
+     * {@link #aggregateMonthlySales}. A date without sales has no row; the service fills it with zeros.
+     *
+     * @param toExclusive upper bound, <b>exclusive</b> (the day after the last date, 00:00)
+     */
+    @Query("""
+            select new com.pms.dto.response.DailySalesRow(
+                year(o.orderedAt), month(o.orderedAt), day(o.orderedAt),
+                sum(coalesce(l.unitPrice, 0) * (l.orderQty - l.cancelQty)),
+                count(distinct case when l.orderQty > l.cancelQty then o.id end))
+            from OrderLine l
+              join l.order o
+              join o.marketplaceAccount a
+              join a.seller s
+            where o.orderedAt >= :from and o.orderedAt < :toExclusive
+            group by year(o.orderedAt), month(o.orderedAt), day(o.orderedAt)
+            """)
+    List<DailySalesRow> aggregateDailySales(@Param("from") LocalDateTime from,
+                                            @Param("toExclusive") LocalDateTime toExclusive);
     // ── 알림 (FEATURE_2609_51 / PLAN D5·D6·D7·D8·D12) ────────────────────────
 
     /**

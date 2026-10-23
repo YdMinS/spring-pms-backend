@@ -37,6 +37,7 @@ class SalesStatsControllerTest extends BaseIntegrationTest {
     private static final String BY_CHANNEL = "/api/admin/sales/by-channel";
     private static final String BY_PRODUCT = "/api/admin/sales/by-product";
     private static final String LINES = "/api/admin/sales/lines";
+    private static final String DAILY = "/api/admin/sales/daily";
 
     @Autowired private SellerRepository sellerRepository;
     @Autowired private MarketplaceAccountRepository marketplaceAccountRepository;
@@ -153,6 +154,20 @@ class SalesStatsControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isBadRequest());
     }
 
+    /** ⑤ Per sale date (FEATURE_2610_29 D22) — one row per date of the period, zeros when nothing was sold. */
+    @Test
+    void daily_adminToken_returnsOneRowPerDate() throws Exception {
+        mockMvc.perform(get(DAILY)
+                        .param("from", "2026-09-01").param("to", "2026-09-07")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(7))
+                .andExpect(jsonPath("$.data[0].date").value("2026-09-01"))
+                .andExpect(jsonPath("$.data[6].date").value("2026-09-07"))
+                .andExpect(jsonPath("$.data[0].grossSales").value(0))
+                .andExpect(jsonPath("$.data[0].orderCount").value(0));
+    }
+
     // ---- validation ----
 
     @Test
@@ -170,6 +185,6 @@ class SalesStatsControllerTest extends BaseIntegrationTest {
     }
 
     private static List<String> paths() {
-        return List.of(SUMMARY, BY_CHANNEL, BY_PRODUCT, LINES);
+        return List.of(SUMMARY, BY_CHANNEL, BY_PRODUCT, LINES, DAILY);
     }
 }

@@ -1,6 +1,7 @@
 package com.pms.service.sales;
 
 import com.pms.dto.response.ChannelSalesResponse;
+import com.pms.dto.response.DailySalesResponse;
 import com.pms.dto.response.ProductProfitResponse;
 import com.pms.dto.response.SalesLineView;
 import com.pms.dto.response.SellerSalesResponse;
@@ -45,4 +46,10 @@ public interface SalesStatsService {
      * <p>⚠️ {@code accountId} 는 필수다 — 한 채널을 들여다보는 목록이라 전 채널을 한 번에 내려보내지 않는다.
      */
     List<SalesLineView> lines(LocalDate from, LocalDate to, Long accountId);
+
+    /**
+     * ⑤ Sales per sale date — the dashboard sales chart (FEATURE_2610_29 D22). One row per date from {@code from}
+     * to {@code to} (ascending), a date without sales included with zeros. Same period defaults and 400 as above.
+     */
+    List<DailySalesResponse> daily(LocalDate from, LocalDate to);
 }
