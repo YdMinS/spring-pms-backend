@@ -28,7 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Sales per sale date (FEATURE_2610_29 D22) — the rules inside the SQL: the amount is the {@code aggregateSales}
  * gross (cancel subtracted, hold not, discount not), the order count is per order and skips an order cancelled in
- * full, and the upper bound is exclusive.
+ * full, the upper bound is exclusive, and a seller narrows the rows to that seller (FEATURE_2610_30 D34).
  */
 @DataJpaTest
 @ActiveProfiles("test")
@@ -92,8 +92,32 @@ class OrderLineDailySalesAggregationTest {
         assertThat(aggregate()).isEmpty();
     }
 
+    /** FEATURE_2610_30 D34: a seller narrows the rows to that seller's orders; null is no seller filter. */
+    @Test
+    void sellerNarrowsToThatSeller() {
+        Seller other = em.persist(Seller.builder().sellerName("셀러B").businessRegistration("222-22-22222").build());
+        MarketplaceAccount otherAccount = MarketplaceAccountFixture.coupangAccount(em, other);
+        line(order(LocalDateTime.of(2026, 9, 6, 9, 0)), 1, 0, 0, "1000", "0");
+        line(em.persist(Order.builder()
+                .marketplaceAccount(otherAccount).platform(Platform.COUPANG)
+                .externalOrderId("O-" + System.nanoTime()).orderedAt(LocalDateTime.of(2026, 9, 6, 10, 0)).build()),
+                1, 0, 0, "5000", "0");
+        em.flush();
+        em.clear();
+
+        assertThat(orderLineRepository.aggregateDailySales(FROM, TO_EXCLUSIVE, other.getId()))
+                .singleElement().satisfies(row -> {
+                    assertThat(row.grossSales()).isEqualByComparingTo("5000");
+                    assertThat(row.orderCount()).isEqualTo(1L);
+                });
+        assertThat(aggregate()).singleElement().satisfies(row -> {
+            assertThat(row.grossSales()).isEqualByComparingTo("6000");
+            assertThat(row.orderCount()).isEqualTo(2L);
+        });
+    }
+
     private List<DailySalesRow> aggregate() {
-        return orderLineRepository.aggregateDailySales(FROM, TO_EXCLUSIVE).stream()
+        return orderLineRepository.aggregateDailySales(FROM, TO_EXCLUSIVE, null).stream()
                 .sorted(Comparator.comparingInt(DailySalesRow::day))
                 .toList();
     }

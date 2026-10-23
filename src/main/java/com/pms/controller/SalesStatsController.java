@@ -91,12 +91,14 @@ public class SalesStatsController {
 
     /**
      * ⑤ Sales per sale date — the dashboard sales chart (FEATURE_2610_29 D22). One row per date of the period, a
-     * date without sales included with zeros. Same period defaults and 400 as the endpoints above.
+     * date without sales included with zeros. Same period defaults and 400 as the endpoints above. No
+     * {@code sellerId} = no seller filter (FEATURE_2610_30 D34).
      */
     @GetMapping("/daily")
     public ResponseEntity<ResponseDTO<List<DailySalesResponse>>> daily(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
-        return ResponseEntity.ok(ResponseDTO.success(salesStatsService.daily(from, to)));
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) Long sellerId) {
+        return ResponseEntity.ok(ResponseDTO.success(salesStatsService.daily(from, to, sellerId)));
     }
 }

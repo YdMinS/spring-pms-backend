@@ -26,8 +26,8 @@ import static org.mockito.BDDMockito.given;
 
 /**
  * Sales per sale date (FEATURE_2610_29 D22) — the service part: one row per date of the period, zeros for a date
- * without sales, amounts scaled like the other sales endpoints. The SQL rules are covered by
- * {@code OrderLineDailySalesAggregationTest}.
+ * without sales, amounts scaled like the other sales endpoints, the seller handed to the query as is
+ * (FEATURE_2610_30 D34). The SQL rules are covered by {@code OrderLineDailySalesAggregationTest}.
  */
 @ExtendWith(MockitoExtension.class)
 class SalesStatsServiceDailyTest {
@@ -52,10 +52,10 @@ class SalesStatsServiceDailyTest {
     @Test
     void dailyHasOneRowPerDateWithZerosForDatesWithoutSales() {
         given(orderLineRepository.aggregateDailySales(
-                LocalDateTime.of(2026, 9, 1, 0, 0), LocalDateTime.of(2026, 9, 4, 0, 0)))
+                LocalDateTime.of(2026, 9, 1, 0, 0), LocalDateTime.of(2026, 9, 4, 0, 0), 5L))
                 .willReturn(List.of(new DailySalesRow(2026, 9, 2, new BigDecimal("12000"), 2L)));
 
-        List<DailySalesResponse> rows = service.daily(LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 3));
+        List<DailySalesResponse> rows = service.daily(LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 3), 5L);
 
         assertThat(rows).extracting(DailySalesResponse::date).containsExactly(
                 LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 2), LocalDate.of(2026, 9, 3));
@@ -66,7 +66,7 @@ class SalesStatsServiceDailyTest {
 
     @Test
     void dailyInvertedRangeIsRejected() {
-        assertThatThrownBy(() -> service.daily(LocalDate.of(2026, 9, 3), LocalDate.of(2026, 9, 1)))
+        assertThatThrownBy(() -> service.daily(LocalDate.of(2026, 9, 3), LocalDate.of(2026, 9, 1), null))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

@@ -27,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /**
@@ -129,6 +130,23 @@ class DashboardLayoutServiceImplTest {
                 new DashboardMobileLayoutRequest.Card(DashboardCardType.NEW_ORDERS, null, 1, 1)))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("같은 카드가 두 번 들어 있습니다: NEW_ORDERS");
+    }
+
+    /** FEATURE_2610_30 D32 · D38: the daily sales chart takes 「이번 달」 and 「지난 달」. */
+    @Test
+    void dailySalesChartTakesThisMonthAndLastMonth() {
+        givenStored();
+        givenSaveReturnsArgument();
+
+        for (DashboardPeriod period : List.of(DashboardPeriod.THIS_MONTH, DashboardPeriod.LAST_MONTH)) {
+            service.saveWeb(EMAIL, true, new DashboardWebLayoutRequest(List.of(
+                    new DashboardWebLayoutRequest.Card(DashboardCardType.DAILY_SALES_CHART, period, 0, 0, 4, 2))));
+        }
+
+        ArgumentCaptor<MemberDashboard> captor = ArgumentCaptor.forClass(MemberDashboard.class);
+        verify(memberDashboardRepository, times(2)).save(captor.capture());
+        assertThat(captor.getAllValues()).extracting(row -> row.getCards().get(0).period())
+                .containsExactly(DashboardPeriod.THIS_MONTH, DashboardPeriod.LAST_MONTH);
     }
 
     @Test
