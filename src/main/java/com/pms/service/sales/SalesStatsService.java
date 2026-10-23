@@ -50,6 +50,7 @@ public interface SalesStatsService {
     /**
      * ⑤ Sales per sale date — the dashboard sales chart (FEATURE_2610_29 D22). One row per date from {@code from}
      * to {@code to} (ascending), a date without sales included with zeros. Same period defaults and 400 as above.
+     * {@code sellerId} null = no seller filter (FEATURE_2610_30 D34).
      */
-    List<DailySalesResponse> daily(LocalDate from, LocalDate to);
+    List<DailySalesResponse> daily(LocalDate from, LocalDate to, Long sellerId);
 }

@@ -338,6 +338,7 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
      * {@link #aggregateMonthlySales}. A date without sales has no row; the service fills it with zeros.
      *
      * @param toExclusive upper bound, <b>exclusive</b> (the day after the last date, 00:00)
+     * @param sellerId    narrows to one seller; {@code null} = no seller filter (FEATURE_2610_30 D34)
      */
     @Query("""
             select new com.pms.dto.response.DailySalesRow(
@@ -349,10 +350,12 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
               join o.marketplaceAccount a
               join a.seller s
             where o.orderedAt >= :from and o.orderedAt < :toExclusive
+              and (:sellerId is null or s.id = :sellerId)
             group by year(o.orderedAt), month(o.orderedAt), day(o.orderedAt)
             """)
     List<DailySalesRow> aggregateDailySales(@Param("from") LocalDateTime from,
-                                            @Param("toExclusive") LocalDateTime toExclusive);
+                                            @Param("toExclusive") LocalDateTime toExclusive,
+                                            @Param("sellerId") Long sellerId);
     // ── 알림 (FEATURE_2609_51 / PLAN D5·D6·D7·D8·D12) ────────────────────────
 
     /**
