@@ -8,7 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * {@code GET /api/admin/settlement/month-summary} (FEATURE_2610_29 D30) — ADMIN role, no parameter, three amounts.
+ * {@code GET /api/admin/settlement/month-summary} (FEATURE_2610_29 D30) — ADMIN role, optional {@code sellerId}, three amounts.
  * The date basis is checked in {@code SettlementPayoutMonthSumTest} and the KST month in
  * {@code SettlementMonthSummaryServiceImplTest}.
  */
