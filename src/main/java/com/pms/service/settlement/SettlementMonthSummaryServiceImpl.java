@@ -25,9 +25,9 @@ public class SettlementMonthSummaryServiceImpl implements SettlementMonthSummary
     private final Clock clock;
 
     @Override
-    public SettlementMonthSummaryResponse thisMonth() {
+    public SettlementMonthSummaryResponse thisMonth(Long sellerId) {
         YearMonth month = YearMonth.from(LocalDate.ofInstant(clock.instant(), SyncWindow.KST));
-        PayoutMonthTotals totals = settlementPayoutRepository.sumByPayoutDate(
+        PayoutMonthTotals totals = settlementPayoutRepository.sumByPayoutDate(sellerId,
                 month.atDay(1), month.atEndOfMonth(), SettlementPayoutStatus.PAID);
         BigDecimal total = scale(totals.total());
         BigDecimal paid = scale(totals.paid());

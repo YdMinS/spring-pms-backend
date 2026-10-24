@@ -132,13 +132,14 @@ public class SettlementController {
 
     /**
      * This month's payouts summed across sellers and channels — the dashboard payout card (FEATURE_2610_29 D26 ·
-     * D30). No input: the server picks this month in KST, and a payout belongs to the month of its confirmed payout
-     * date, else its scheduled payout date. 🔴 Not the {@code /payouts} axis above (the scheduled date) — do not add a
+     * D30). The server picks this month in KST, and a payout belongs to the month of its confirmed payout date, else
+     * its scheduled payout date. {@code sellerId} absent = every seller. 🔴 Not the {@code /payouts} axis above (the scheduled date) — do not add a
      * date-basis flag to {@code /payouts} instead.
      */
     @GetMapping("/month-summary")
-    public ResponseEntity<ResponseDTO<SettlementMonthSummaryResponse>> monthSummary() {
-        return ResponseEntity.ok(ResponseDTO.success(settlementMonthSummaryService.thisMonth()));
+    public ResponseEntity<ResponseDTO<SettlementMonthSummaryResponse>> monthSummary(
+            @RequestParam(required = false) Long sellerId) {
+        return ResponseEntity.ok(ResponseDTO.success(settlementMonthSummaryService.thisMonth(sellerId)));
     }
 
     /**

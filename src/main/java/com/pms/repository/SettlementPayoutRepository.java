@@ -155,6 +155,7 @@ public interface SettlementPayoutRepository extends JpaRepository<SettlementPayo
 
     /**
      * Payout sums of a date range across accounts (FEATURE_2610_29 D26 · D30) — the dashboard payout card.
+     * {@code sellerId} = null sums every seller; otherwise only that seller's accounts.
      *
      * <p>🔴 A payout's date = its confirmed payout date when present, else {@code settlementDate} — the same basis as
      * {@link #aggregateByAccount} {@code paidAmount}. {@link #search} (the {@code /payouts} list) cuts by
@@ -167,11 +168,13 @@ public interface SettlementPayoutRepository extends JpaRepository<SettlementPayo
             select new com.pms.dto.response.PayoutMonthTotals(
                 coalesce(sum(p.finalAmount), 0),
                 coalesce(sum(case when p.status = :paid then p.finalAmount end), 0))
-            from SettlementPayout p
-            where coalesce(p.finalSettlementDate, p.settlementDate) >= :from
+            from SettlementPayout p join p.marketplaceAccount a
+            where (:sellerId is null or a.seller.id = :sellerId)
+              and coalesce(p.finalSettlementDate, p.settlementDate) >= :from
               and coalesce(p.finalSettlementDate, p.settlementDate) <= :to
             """)
-    PayoutMonthTotals sumByPayoutDate(@Param("from") LocalDate from,
+    PayoutMonthTotals sumByPayoutDate(@Param("sellerId") Long sellerId,
+                                      @Param("from") LocalDate from,
                                       @Param("to") LocalDate to,
                                       @Param("paid") SettlementPayoutStatus paid);
 }
