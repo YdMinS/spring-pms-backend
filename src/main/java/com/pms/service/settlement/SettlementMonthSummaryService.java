@@ -3,7 +3,7 @@ package com.pms.service.settlement;
 import com.pms.dto.response.SettlementMonthSummaryResponse;
 
 /**
- * This month's payout summary (FEATURE_2610_29 D26 · D30). No input — the server picks this month in KST; the date
+ * This month's payout summary (FEATURE_2610_29 D26 · D30). The server picks this month in KST; the date
  * of a payout = its confirmed payout date, else its scheduled payout date (the same basis as the sales screen
  * {@code paidAmount}).
  *
@@ -11,5 +11,6 @@ import com.pms.dto.response.SettlementMonthSummaryResponse;
  */
 public interface SettlementMonthSummaryService {
 
-    SettlementMonthSummaryResponse thisMonth();
+    /** {@code sellerId} = null sums every seller. */
+    SettlementMonthSummaryResponse thisMonth(Long sellerId);
 }

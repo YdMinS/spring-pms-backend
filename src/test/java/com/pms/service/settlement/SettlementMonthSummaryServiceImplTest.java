@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
 
 /**
- * FEATURE_2610_29 D30 — the server picks this month in KST, and remaining = total − paid.
+ * FEATURE_2610_29 D30 — the server picks this month in KST, passes the seller through, and remaining = total − paid.
  */
 @ExtendWith(MockitoExtension.class)
 class SettlementMonthSummaryServiceImplTest {
@@ -32,12 +32,12 @@ class SettlementMonthSummaryServiceImplTest {
     @Test
     void thisMonthIsTheKstMonthAndRemainingIsTotalMinusPaid() {
         Clock clock = Clock.fixed(Instant.parse("2026-09-30T15:30:00Z"), ZoneOffset.UTC);
-        given(settlementPayoutRepository.sumByPayoutDate(LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31),
+        given(settlementPayoutRepository.sumByPayoutDate(7L, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31),
                 SettlementPayoutStatus.PAID))
                 .willReturn(new PayoutMonthTotals(new BigDecimal("340000"), new BigDecimal("240000")));
 
         SettlementMonthSummaryResponse summary =
-                new SettlementMonthSummaryServiceImpl(settlementPayoutRepository, clock).thisMonth();
+                new SettlementMonthSummaryServiceImpl(settlementPayoutRepository, clock).thisMonth(7L);
 
         assertThat(summary.total()).isEqualByComparingTo("340000");
         assertThat(summary.paid()).isEqualByComparingTo("240000");
