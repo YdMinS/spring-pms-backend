@@ -18,7 +18,6 @@ import com.pms.dto.response.CollageStageResponse;
 import com.pms.dto.response.CollageStageView;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MasterProductRepository;
-import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ThumbnailCollageRepository;
 import com.pms.service.ChannelTemplateResolver;
 import com.pms.service.ListingAssetService;
@@ -32,7 +31,6 @@ import org.springframework.util.StringUtils;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -47,17 +45,13 @@ import java.util.Map;
 public class ThumbnailCollageServiceImpl implements ThumbnailCollageService {
 
     private final MasterProductRepository masterProductRepository;
-    private final ProductListingRepository productListingRepository;
     private final ThumbnailCollageRepository thumbnailCollageRepository;
     private final ThumbnailCollageResolver thumbnailCollageResolver;
     private final MasterProductService masterProductService;
     private final ChannelTemplateResolver channelTemplateResolver;
     private final ListingAssetService listingAssetService;
     private final CollageThumbnailRenderer collageThumbnailRenderer;
-
-    /** A validated stage argument: its key, and the seller / listing it points at. */
-    private record Target(CollageStage stage, String scopeKey, Seller seller, ProductListing listing) {
-    }
+    private final CollageStageTargets collageStageTargets;
 
     @Override
     public CollageOverviewResponse overview(Long masterId) {
@@ -65,13 +59,15 @@ public class ThumbnailCollageServiceImpl implements ThumbnailCollageService {
         List<Product> products = thumbnailCollageResolver.components(master.getId());
         Map<String, ThumbnailCollage> rows = thumbnailCollageResolver.rowsByScopeKey(master.getId());
         List<CollageStageView> stages = new ArrayList<>();
-        stages.add(view(new Target(CollageStage.MASTER, CollageScopes.MASTER, null, null), rows));
-        for (Map.Entry<Seller, List<ProductListing>> entry : listingsBySeller(master.getId()).entrySet()) {
+        stages.add(view(new CollageStageTarget(CollageStage.MASTER, CollageScopes.MASTER, null, null), rows));
+        for (Map.Entry<Seller, List<ProductListing>> entry
+                : collageStageTargets.listingsBySeller(master.getId()).entrySet()) {
             Seller seller = entry.getKey();
-            stages.add(view(new Target(CollageStage.SELLER, CollageScopes.seller(seller.getId()), seller, null), rows));
+            stages.add(view(new CollageStageTarget(CollageStage.SELLER, CollageScopes.seller(seller.getId()), seller,
+                    null), rows));
             for (ProductListing listing : entry.getValue()) {
-                stages.add(view(new Target(CollageStage.LISTING, CollageScopes.listing(listing.getId()), seller,
-                        listing), rows));
+                stages.add(view(new CollageStageTarget(CollageStage.LISTING, CollageScopes.listing(listing.getId()),
+                        seller, listing), rows));
             }
         }
         return new CollageOverviewResponse(masterProductService.isBundle(master.getId()), productViews(products),
@@ -81,7 +77,7 @@ public class ThumbnailCollageServiceImpl implements ThumbnailCollageService {
     @Override
     public CollageStageResponse getStage(Long masterId, CollageStage stage, Long sellerId, Long listingId) {
         MasterProduct master = requireMaster(masterId);
-        return stageResponse(master, target(master.getId(), stage, sellerId, listingId));
+        return stageResponse(master, collageStageTargets.resolve(master.getId(), stage, sellerId, listingId));
     }
 
     @Override
@@ -89,7 +85,7 @@ public class ThumbnailCollageServiceImpl implements ThumbnailCollageService {
     public CollageStageResponse save(Long masterId, CollageStage stage, Long sellerId, Long listingId,
                                      CollageSaveRequest request) {
         MasterProduct master = requireMaster(masterId);
-        Target target = target(master.getId(), stage, sellerId, listingId);
+        CollageStageTarget target = collageStageTargets.resolve(master.getId(), stage, sellerId, listingId);
         if (!masterProductService.isBundle(master.getId())) {
             throw new IllegalArgumentException("구성품이 2개 이상인 마스터만 콜라주를 만들 수 있습니다.");
         }
@@ -123,7 +119,7 @@ public class ThumbnailCollageServiceImpl implements ThumbnailCollageService {
     @Transactional
     public CollageStageResponse delete(Long masterId, CollageStage stage, Long sellerId, Long listingId) {
         MasterProduct master = requireMaster(masterId);
-        Target target = target(master.getId(), stage, sellerId, listingId);
+        CollageStageTarget target = collageStageTargets.resolve(master.getId(), stage, sellerId, listingId);
         thumbnailCollageRepository.findByMasterProduct_IdAndScopeKey(master.getId(), target.scopeKey())
                 .ifPresent(thumbnailCollageRepository::delete);
         thumbnailCollageRepository.flush();
@@ -140,7 +136,7 @@ public class ThumbnailCollageServiceImpl implements ThumbnailCollageService {
         CollageLayout layout = request == null ? null : request.getLayout();
         CollageLayouts.validate(layout, products.stream().map(Product::getId).toList());
         if (request.getListingId() != null) {
-            ProductListing listing = requireListing(master.getId(), request.getListingId());
+            ProductListing listing = collageStageTargets.requireListing(master.getId(), request.getListingId());
             return listingAssetService.previewCollage(listing, layout, products);
         }
         ThumbnailTemplate template = channelTemplateResolver.defaultThumbnail();
@@ -154,59 +150,7 @@ public class ThumbnailCollageServiceImpl implements ThumbnailCollageService {
                 .orElseThrow(() -> new ResourceNotFoundException("MasterProduct", masterId));
     }
 
-    private ProductListing requireListing(Long masterId, Long listingId) {
-        return productListingRepository.findScopedById(listingId)
-                .filter(l -> l.getMasterProduct() != null && masterId.equals(l.getMasterProduct().getId()))
-                .orElseThrow(() -> new ResourceNotFoundException("ProductListing", listingId));
-    }
-
-    private Target target(Long masterId, CollageStage stage, Long sellerId, Long listingId) {
-        if (stage == null) {
-            throw new IllegalArgumentException("단계를 골라 주세요.");
-        }
-        return switch (stage) {
-            case MASTER -> new Target(CollageStage.MASTER, CollageScopes.MASTER, null, null);
-            case SELLER -> {
-                if (sellerId == null) {
-                    throw new IllegalArgumentException("판매자를 골라 주세요.");
-                }
-                Seller seller = listingsBySeller(masterId).keySet().stream()
-                        .filter(s -> sellerId.equals(s.getId()))
-                        .findFirst()
-                        .orElseThrow(() -> new IllegalArgumentException("이 마스터의 판매상품이 없는 판매자입니다."));
-                yield new Target(CollageStage.SELLER, CollageScopes.seller(sellerId), seller, null);
-            }
-            case LISTING -> {
-                if (listingId == null) {
-                    throw new IllegalArgumentException("판매상품을 골라 주세요.");
-                }
-                ProductListing listing = requireListing(masterId, listingId);
-                yield new Target(CollageStage.LISTING, CollageScopes.listing(listingId), listing.getSeller(),
-                        listing);
-            }
-        };
-    }
-
-    /** The master's listings grouped by seller — sellers and listings ascending id. */
-    private Map<Seller, List<ProductListing>> listingsBySeller(Long masterId) {
-        List<ProductListing> listings = new ArrayList<>(productListingRepository.findByMasterProductId(masterId));
-        listings.sort(Comparator.comparing(ProductListing::getId));
-        Map<Long, Seller> sellers = new HashMap<>();
-        Map<Long, List<ProductListing>> byId = new HashMap<>();
-        for (ProductListing listing : listings) {
-            Seller seller = listing.getSeller();
-            if (seller == null) {
-                continue;
-            }
-            sellers.putIfAbsent(seller.getId(), seller);
-            byId.computeIfAbsent(seller.getId(), k -> new ArrayList<>()).add(listing);
-        }
-        Map<Seller, List<ProductListing>> out = new LinkedHashMap<>();
-        byId.keySet().stream().sorted().forEach(id -> out.put(sellers.get(id), byId.get(id)));
-        return out;
-    }
-
-    private CollageStageResponse stageResponse(MasterProduct master, Target target) {
+    private CollageStageResponse stageResponse(MasterProduct master, CollageStageTarget target) {
         Long masterId = master.getId();
         List<Product> products = thumbnailCollageResolver.components(masterId);
         List<Long> ids = products.stream().map(Product::getId).toList();
@@ -227,7 +171,7 @@ public class ThumbnailCollageServiceImpl implements ThumbnailCollageService {
     }
 
     /** The nearest stored stage above {@code target}: listing → seller ?? master · seller → master · master → none. */
-    private static ThumbnailCollage upperRow(Map<String, ThumbnailCollage> rows, Target target) {
+    private static ThumbnailCollage upperRow(Map<String, ThumbnailCollage> rows, CollageStageTarget target) {
         return switch (target.stage()) {
             case MASTER -> null;
             case SELLER -> rows.get(CollageScopes.MASTER);
@@ -239,7 +183,7 @@ public class ThumbnailCollageServiceImpl implements ThumbnailCollageService {
         };
     }
 
-    private static CollageStageView view(Target target, Map<String, ThumbnailCollage> rows) {
+    private static CollageStageView view(CollageStageTarget target, Map<String, ThumbnailCollage> rows) {
         ThumbnailCollage own = rows.get(target.scopeKey());
         CollageSource source;
         ThumbnailCollage used;
@@ -270,13 +214,13 @@ public class ThumbnailCollageServiceImpl implements ThumbnailCollageService {
      * D46: listing stage = that listing; seller stage = the seller's listings without their own row; master stage =
      * listings with neither their own nor their seller's row — ascending id. None → the tenant default template.
      */
-    private List<CollagePreviewTarget> previewTargets(Long masterId, Target target,
+    private List<CollagePreviewTarget> previewTargets(Long masterId, CollageStageTarget target,
                                                       Map<String, ThumbnailCollage> rows) {
         List<ProductListing> users = new ArrayList<>();
         if (target.stage() == CollageStage.LISTING) {
             users.add(target.listing());
         } else {
-            for (List<ProductListing> listings : listingsBySeller(masterId).values()) {
+            for (List<ProductListing> listings : collageStageTargets.listingsBySeller(masterId).values()) {
                 for (ProductListing listing : listings) {
                     boolean ownRow = rows.containsKey(CollageScopes.listing(listing.getId()));
                     boolean sellerRow = rows.containsKey(CollageScopes.seller(listing.getSeller().getId()));
