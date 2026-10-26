@@ -34,7 +34,7 @@ class CollageRendererTest {
 
     private static CollageLayout row(Boolean useTemplate) {
         return new CollageLayout(CollageShape.ROW, null, List.of(List.of(0.5, 0.5)), 0.05, "#00FF00",
-                useTemplate, List.of(new CollageCell(1L, 1.0, 0.5, 0.5), new CollageCell(2L, 1.0, 0.5, 0.5)));
+                useTemplate, List.of(new CollageCell(1L, 1.0, 0.5, 0.5, null), new CollageCell(2L, 1.0, 0.5, 0.5, null)));
     }
 
     private static BufferedImage decode(byte[] png) throws Exception {

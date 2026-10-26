@@ -28,7 +28,7 @@ import java.util.Map;
  *   <li>The photo is scaled to {@code cover × zoom} (zoom clamped to [{@link CollageLayouts#minZoom}, 4]), its
  *       point ({@code cx}, {@code cy}) (clamped to 0..1) is placed at the cell centre, and it is clipped to the cell
  *       (D26 · D29). No rotation or flip (D33).</li>
- *   <li>A product without a cover photo leaves its cell as it started (D18).</li>
+ *   <li>A cell without a photo (no chosen photo and no cover photo) stays as it started (D18).</li>
  * </ul>
  *
  * <p>Usage: {@code byte[] png = collageRenderer.drawPng(layout, photosByProductId, 600, 600);}</p>
@@ -41,7 +41,8 @@ public class CollageRenderer {
 
     /**
      * @param layout   a validated / adjusted collage
-     * @param photos   decoded cover photos by product id (a product without a photo is absent)
+     * @param photos   decoded cell photos by product id — the chosen photo or the cover (a product without either is
+     *                 absent)
      * @param width    collage width in pixels
      * @param height   collage height in pixels
      * @return PNG bytes (with alpha)

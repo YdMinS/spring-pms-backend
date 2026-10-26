@@ -64,9 +64,9 @@ public final class CollageLayouts {
                 productIds.stream().map(CollageLayouts::initialCell).toList());
     }
 
-    /** A cell at its initial zoom and position (D33): zoom 1, centre 0.5 · 0.5. */
+    /** A cell at its initial zoom and position (D33): zoom 1, centre 0.5 · 0.5, the cover photo (FEATURE_2610_32 D16). */
     public static CollageCell initialCell(Long productId) {
-        return new CollageCell(productId, 1.0, 0.5, 0.5);
+        return new CollageCell(productId, 1.0, 0.5, 0.5, null);
     }
 
     /** Initial big-cell ratio (D47): 0.5, or null for ROW / COLUMN. */

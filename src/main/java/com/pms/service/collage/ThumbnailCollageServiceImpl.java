@@ -1,8 +1,10 @@
 package com.pms.service.collage;
 
+import com.pms.domain.CollageCell;
 import com.pms.domain.CollageLayout;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.Product;
+import com.pms.domain.ProductImage;
 import com.pms.domain.ProductListing;
 import com.pms.domain.Seller;
 import com.pms.domain.TemplateElement;
@@ -12,12 +14,14 @@ import com.pms.domain.ThumbnailTemplate;
 import com.pms.dto.request.CollagePreviewRequest;
 import com.pms.dto.request.CollageSaveRequest;
 import com.pms.dto.response.CollageOverviewResponse;
+import com.pms.dto.response.CollageProductImageView;
 import com.pms.dto.response.CollagePreviewTarget;
 import com.pms.dto.response.CollageProductView;
 import com.pms.dto.response.CollageStageResponse;
 import com.pms.dto.response.CollageStageView;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MasterProductRepository;
+import com.pms.repository.ProductImageRepository;
 import com.pms.repository.ThumbnailCollageRepository;
 import com.pms.service.ChannelTemplateResolver;
 import com.pms.service.ListingAssetService;
@@ -37,7 +41,8 @@ import java.util.Map;
 /**
  * {@link ThumbnailCollageService} (FEATURE_2610_21). Stage resolution is {@link ThumbnailCollageResolver#pick}
  * (listing ?? seller ?? master, D37); layouts are adjusted on read (D43); validation is
- * {@link CollageLayouts#validate}; preview rendering is {@link CollageThumbnailRenderer} (D35).
+ * {@link CollageLayouts#validate} plus, on save, the cell-photo check (FEATURE_2610_32 D17); preview rendering is
+ * {@link CollageThumbnailRenderer} (D35).
  */
 @Service
 @RequiredArgsConstructor
@@ -52,6 +57,7 @@ public class ThumbnailCollageServiceImpl implements ThumbnailCollageService {
     private final ListingAssetService listingAssetService;
     private final CollageThumbnailRenderer collageThumbnailRenderer;
     private final CollageStageTargets collageStageTargets;
+    private final ProductImageRepository productImageRepository;
 
     @Override
     public CollageOverviewResponse overview(Long masterId) {
@@ -97,6 +103,7 @@ public class ThumbnailCollageServiceImpl implements ThumbnailCollageService {
         if (enabled) {
             List<Long> ids = componentIds(master.getId());
             CollageLayouts.validate(request.getLayout(), ids);
+            validateCellPhotos(request.getLayout());
             layout = request.getLayout();
         }
         ThumbnailCollage existing = thumbnailCollageRepository
@@ -262,10 +269,27 @@ public class ThumbnailCollageServiceImpl implements ThumbnailCollageService {
         return thumbnailCollageResolver.components(masterId).stream().map(Product::getId).toList();
     }
 
-    private static List<CollageProductView> productViews(List<Product> products) {
+    /** FEATURE_2610_32 D17: a chosen cell photo must be a photo of that cell's product — checked on save only. */
+    private void validateCellPhotos(CollageLayout layout) {
+        for (CollageCell cell : layout.cells()) {
+            if (cell.productImageId() == null) {
+                continue;
+            }
+            ProductImage image = productImageRepository.findById(cell.productImageId()).orElse(null);
+            if (image == null || image.getProduct() == null || !cell.productId().equals(image.getProduct().getId())) {
+                throw new IllegalArgumentException("칸의 사진이 그 칸 물품의 사진이 아닙니다.");
+            }
+        }
+    }
+
+    /** Components with their cover and gallery (gallery order, FEATURE_2610_32 D20). */
+    private List<CollageProductView> productViews(List<Product> products) {
         return products.stream()
                 .map(p -> new CollageProductView(p.getId(), p.getProductName(),
-                        StringUtils.hasText(p.getImageUrl()) ? p.getImageUrl() : null))
+                        StringUtils.hasText(p.getImageUrl()) ? p.getImageUrl() : null,
+                        productImageRepository.findByProductIdOrderBySortOrderAsc(p.getId()).stream()
+                                .map(i -> new CollageProductImageView(i.getId(), i.getImageUrl()))
+                                .toList()))
                 .toList();
     }
 
