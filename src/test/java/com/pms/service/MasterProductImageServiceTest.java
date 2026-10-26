@@ -45,6 +45,8 @@ class MasterProductImageServiceTest {
     @Mock private ProductImageUrlResolver productImageUrlResolver;
     @Mock private ImageStorageService imageStorageService;
     @Mock private ImageValidator imageValidator;
+    // FEATURE_2610_32 D11: default mock → no stage thumbnail photo, usedForThumbnail false.
+    @Mock private com.pms.repository.ThumbnailPhotoRepository thumbnailPhotoRepository;
 
     @InjectMocks private MasterProductImageServiceImpl service;
 

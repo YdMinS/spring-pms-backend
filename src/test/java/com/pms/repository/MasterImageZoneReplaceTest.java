@@ -40,6 +40,7 @@ class MasterImageZoneReplaceTest {
     @Autowired private MasterProductRepository masterProductRepository;
     @Autowired private ProductImageRepository productImageRepository;
     @Autowired private ProductRepository productRepository;
+    @Autowired private ThumbnailPhotoRepository thumbnailPhotoRepository;
     @Autowired private TestEntityManager em;
 
     private MasterProductImageServiceImpl service() {
@@ -48,7 +49,8 @@ class MasterImageZoneReplaceTest {
         return new MasterProductImageServiceImpl(
                 imageRepository, assignmentRepository, masterProductRepository, productImageRepository,
                 productRepository, resolver,
-                Mockito.mock(ImageStorageService.class), Mockito.mock(ImageValidator.class));
+                Mockito.mock(ImageStorageService.class), Mockito.mock(ImageValidator.class),
+                thumbnailPhotoRepository);
     }
 
     private MasterProduct persistMaster() {

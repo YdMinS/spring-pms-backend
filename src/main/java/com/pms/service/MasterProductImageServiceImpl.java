@@ -4,6 +4,7 @@ import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductImage;
 import com.pms.domain.ProductImage;
+import com.pms.domain.ThumbnailPhoto;
 import com.pms.dto.response.MasterProductImageResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
@@ -11,6 +12,7 @@ import com.pms.repository.MasterProductImageRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductImageRepository;
 import com.pms.repository.ProductRepository;
+import com.pms.repository.ThumbnailPhotoRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -19,7 +21,9 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +52,8 @@ public class MasterProductImageServiceImpl implements MasterProductImageService 
     private final ProductImageUrlResolver productImageUrlResolver;
     private final ImageStorageService imageStorageService;
     private final ImageValidator imageValidator;
+    /** Stage thumbnail photos — {@code usedForThumbnail} of the pool response (FEATURE_2610_32 D11). */
+    private final ThumbnailPhotoRepository thumbnailPhotoRepository;
 
     @Override
     @Transactional
@@ -77,7 +83,7 @@ public class MasterProductImageServiceImpl implements MasterProductImageService 
                 .sortOrder(nextOrder)
                 .imageUrl(url)
                 .build()); // zoneId + productImage left null — edited pool asset, mapping is separate
-        return mapToResponse(saved, List.of());
+        return mapToResponse(saved, List.of(), Collections.emptySet());
     }
 
     @Override
@@ -114,8 +120,9 @@ public class MasterProductImageServiceImpl implements MasterProductImageService 
     public List<MasterProductImageResponse> listPool(Long masterId) {
         requireScopedMaster(masterId);
         Map<Long, List<MasterImageZoneAssignment>> byImageId = assignmentsByImageId(masterId);
+        Set<Long> thumbnailImageIds = thumbnailImageIds(masterId);
         return imageRepository.findByMasterProductIdOrderBySortOrderAsc(masterId).stream()
-                .map(img -> mapToResponse(img, byImageId.getOrDefault(img.getId(), List.of())))
+                .map(img -> mapToResponse(img, byImageId.getOrDefault(img.getId(), List.of()), thumbnailImageIds))
                 .toList();
     }
 
@@ -176,7 +183,8 @@ public class MasterProductImageServiceImpl implements MasterProductImageService 
                 .zoneId(MasterImageZoneAssignment.SOURCE_ZONE)
                 .sortOrder(0)
                 .build()));
-        return mapToResponse(image, assignmentsByImageId(masterId).getOrDefault(imageId, List.of()));
+        return mapToResponse(image, assignmentsByImageId(masterId).getOrDefault(imageId, List.of()),
+                thumbnailImageIds(masterId));
     }
 
     @Override
@@ -215,18 +223,28 @@ public class MasterProductImageServiceImpl implements MasterProductImageService 
         return byImageId;
     }
 
+    /** Pool image ids chosen by any thumbnail photo stage of one master (single query, FEATURE_2610_32 D11). */
+    private Set<Long> thumbnailImageIds(Long masterId) {
+        Set<Long> ids = new HashSet<>();
+        for (ThumbnailPhoto row : thumbnailPhotoRepository.findByMasterProduct_Id(masterId)) {
+            ids.add(row.getImage().getId());
+        }
+        return ids;
+    }
+
     /** The images mapped to one zone, in render order, each with its full mapping state. */
     private List<MasterProductImageResponse> mapZone(Long masterId, String zoneId) {
         Map<Long, List<MasterImageZoneAssignment>> byImageId = assignmentsByImageId(masterId);
+        Set<Long> thumbnailImageIds = thumbnailImageIds(masterId);
         return assignmentRepository
                 .findByImage_MasterProductIdAndZoneIdOrderBySortOrderAsc(masterId, zoneId).stream()
                 .map(a -> mapToResponse(a.getImage(),
-                        byImageId.getOrDefault(a.getImage().getId(), List.of())))
+                        byImageId.getOrDefault(a.getImage().getId(), List.of()), thumbnailImageIds))
                 .toList();
     }
 
-    private MasterProductImageResponse mapToResponse(
-            MasterProductImage image, List<MasterImageZoneAssignment> assignments) {
+    private MasterProductImageResponse mapToResponse(MasterProductImage image,
+            List<MasterImageZoneAssignment> assignments, Set<Long> thumbnailImageIds) {
         List<String> assignedZones = assignments.stream()
                 .map(MasterImageZoneAssignment::getZoneId)
                 .filter(z -> !MasterImageZoneAssignment.SOURCE_ZONE.equals(z))
@@ -242,6 +260,7 @@ public class MasterProductImageServiceImpl implements MasterProductImageService 
                 .productImageId(image.getProductImage() != null ? image.getProductImage().getId() : null)
                 .assignedZones(assignedZones)
                 .isSource(isSource)
+                .usedForThumbnail(thumbnailImageIds.contains(image.getId()))
                 .build();
     }
 }

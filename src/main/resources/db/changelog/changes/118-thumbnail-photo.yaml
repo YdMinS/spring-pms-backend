@@ -1,0 +1,65 @@
+# Thumbnail photo per stage (FEATURE_2610_32 / D5 · D10).
+#   118-1 thumbnail_photo = the pool photo a stage's single-photo thumbnail uses: MASTER (seller_id,
+#         product_listing_id NULL) · SELLER:{sellerId} (seller_id set) · LISTING:{listingId} (product_listing_id
+#         set) — the same scope_key as thumbnail_collage (112). Deleting the master, seller, listing or the chosen
+#         pool image deletes the row (ON DELETE CASCADE, D10). No boolean column -> no MySQL BIT changeset.
+# ⚠️ H2 constraint names are schema-global unique -> table-prefixed names.
+databaseChangeLog:
+
+  - changeSet:
+      id: 118-1-thumbnail-photo
+      author: oclyx
+      comment: "FEATURE_2610_32 D5: thumbnail_photo (thumbnail photo per master / seller / listing stage)."
+      changes:
+        - createTable:
+            tableName: thumbnail_photo
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: master_product_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: seller_id, type: BIGINT }
+              - column: { name: product_listing_id, type: BIGINT }
+              - column: { name: scope_key, type: VARCHAR(40), constraints: { nullable: false } }
+              - column: { name: master_product_image_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_thumbnailphoto_tenant
+            baseTableName: thumbnail_photo
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_thumbnailphoto_master
+            baseTableName: thumbnail_photo
+            baseColumnNames: master_product_id
+            referencedTableName: master_product
+            referencedColumnNames: id
+            onDelete: CASCADE
+        - addForeignKeyConstraint:
+            constraintName: fk_thumbnailphoto_seller
+            baseTableName: thumbnail_photo
+            baseColumnNames: seller_id
+            referencedTableName: seller
+            referencedColumnNames: id
+            onDelete: CASCADE
+        - addForeignKeyConstraint:
+            constraintName: fk_thumbnailphoto_listing
+            baseTableName: thumbnail_photo
+            baseColumnNames: product_listing_id
+            referencedTableName: product_listing
+            referencedColumnNames: id
+            onDelete: CASCADE
+        - addForeignKeyConstraint:
+            constraintName: fk_thumbnailphoto_image
+            baseTableName: thumbnail_photo
+            baseColumnNames: master_product_image_id
+            referencedTableName: master_product_image
+            referencedColumnNames: id
+            onDelete: CASCADE
+        - addUniqueConstraint:
+            constraintName: uq_thumbnail_photo_scope
+            tableName: thumbnail_photo
+            columnNames: master_product_id, scope_key
+      rollback:
+        - dropTable: { tableName: thumbnail_photo }
