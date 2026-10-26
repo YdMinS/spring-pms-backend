@@ -6,6 +6,7 @@ import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ImageOp;
 import com.pms.domain.MasterProduct;
+import com.pms.domain.MasterProductImage;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.Platform;
 import com.pms.domain.PriceChangeReason;
@@ -61,7 +62,8 @@ import java.util.Optional;
  * Auto-generates a channel cell's assets (FEATURE_2608_06 / 3b-2). See {@link ListingAssetService}.
  *
  * <p>Thumbnail input rules (mirroring FEATURE_2608_05 generation): a collage resolved for the cell
- * ({@link ThumbnailCollageResolver}, FEATURE_2610_21) replaces the photo; otherwise the base photo is
+ * ({@link ThumbnailCollageResolver}, FEATURE_2610_21) replaces the photo; otherwise the base photo is the stage
+ * thumbnail photo ({@link ThumbnailPhotoResolver}, FEATURE_2610_32) ?? the master cover photo ??
  * {@code master.sourceImageUrl} override ?? the cell's first BOM product image; each text field is
  * {@code master.fieldValues[key] (non-blank) ?? registered-product info ?? template default}. The
  * template is the tenant default. Prices come from {@link PriceCalculator} (per option). The detail HTML
@@ -109,6 +111,8 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     /** Collage replacing the single photo when one resolves for the cell (FEATURE_2610_21 D8 · D37). */
     private final ThumbnailCollageResolver thumbnailCollageResolver;
     private final CollageThumbnailRenderer collageThumbnailRenderer;
+    /** Stage thumbnail photo, first in the single-photo base chain (FEATURE_2610_32 D4). */
+    private final ThumbnailPhotoResolver thumbnailPhotoResolver;
 
     /**
      * 77: resolves the channel adapter that owns the {@code shippingReady} judgement.
@@ -387,9 +391,10 @@ public class ListingAssetServiceImpl implements ListingAssetService {
             thumbSource = GeneratedContentSource.MANUAL_OVERRIDE;
         } else {
             // FEATURE_2610_21 D8 · D37: a collage resolved for this cell (listing ?? seller ?? master stage)
-            // replaces the single photo, the master cover-photo mapping included.
+            // replaces the single photo — the stage thumbnail photos and the master cover-photo mapping included
+            // (FEATURE_2610_32 D6).
             Optional<ThumbnailCollageResolver.ResolvedCollage> collage = thumbnailCollageResolver.resolve(cell);
-            byte[] baseImage = collage.isPresent() ? null : resolveBaseImage(cell.getMasterProduct(), firstProduct);
+            byte[] baseImage = collage.isPresent() ? null : resolveBaseImage(cell, firstProduct);
             // Channel template override (21): account's assigned thumbnail template ?? tenant default.
             ThumbnailTemplate template = channelTemplateResolver.resolveThumbnail(cell);
             Map<String, String> textBindings = buildTextBindings(template, cell);
@@ -574,12 +579,18 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     }
 
     /**
-     * Base thumbnail photo bytes — single source-resolution point (37). Priority:
-     * {@code __source__} mapped pool image ?? {@code master.sourceImageUrl} (legacy override) ?? first BOM
-     * product image (400 if none). The cover-photo mapping wins so a pool image can serve as the cover.
+     * Base thumbnail photo bytes — single source-resolution point (37 · FEATURE_2610_32 D4). Priority:
+     * stage thumbnail photo (listing ?? seller ?? master, {@link ThumbnailPhotoResolver}) ?? {@code __source__}
+     * mapped pool image ?? {@code master.sourceImageUrl} (legacy override) ?? first BOM product image (400 if none).
      */
-    private byte[] resolveBaseImage(MasterProduct master, Product firstProduct) {
+    private byte[] resolveBaseImage(ProductListing cell, Product firstProduct) {
+        MasterProduct master = cell.getMasterProduct();
         if (master != null) {
+            Optional<MasterProductImage> stagePhoto = thumbnailPhotoResolver.resolve(cell);
+            if (stagePhoto.isPresent()) {
+                // Effective URL: a reference pool entry resolves to the live product image URL (40).
+                return productImageLoader.loadUrl(productImageUrlResolver.resolve(stagePhoto.get()));
+            }
             List<MasterImageZoneAssignment> cover = masterImageZoneAssignmentRepository
                     .findByImage_MasterProductIdAndZoneIdOrderBySortOrderAsc(
                             master.getId(), MasterImageZoneAssignment.SOURCE_ZONE);

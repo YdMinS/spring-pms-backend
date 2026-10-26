@@ -37,4 +37,8 @@ public class MasterProductImageResponse {
     @JsonProperty("isSource") // primitive boolean getter isSource() would otherwise serialize as "source"
     @Schema(description = "True if this image is the master's cover photo", example = "false")
     private boolean isSource;
+
+    @Schema(description = "True if any thumbnail photo stage (master · seller · listing) chose this image "
+            + "(FEATURE_2610_32 D11)", example = "false")
+    private boolean usedForThumbnail;
 }
