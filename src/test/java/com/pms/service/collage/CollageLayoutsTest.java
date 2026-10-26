@@ -33,14 +33,14 @@ class CollageLayoutsTest {
     @Test
     void adjust_sameCount_fillsVacatedCellAndKeepsRatios() {
         CollageLayout saved = leftBig(List.of(
-                new CollageCell(1L, 2.0, 0.2, 0.3), new CollageCell(2L, 1.5, 0.4, 0.4),
-                new CollageCell(3L, 1.2, 0.6, 0.6)));
+                new CollageCell(1L, 2.0, 0.2, 0.3, null), new CollageCell(2L, 1.5, 0.4, 0.4, null),
+                new CollageCell(3L, 1.2, 0.6, 0.6, null)));
 
         CollageLayout adjusted = CollageLayouts.adjust(saved, List.of(1L, 3L, 4L));
 
         assertThat(adjusted.cells()).containsExactly(
-                new CollageCell(1L, 2.0, 0.2, 0.3), new CollageCell(4L, 1.0, 0.5, 0.5),
-                new CollageCell(3L, 1.2, 0.6, 0.6));
+                new CollageCell(1L, 2.0, 0.2, 0.3, null), new CollageCell(4L, 1.0, 0.5, 0.5, null),
+                new CollageCell(3L, 1.2, 0.6, 0.6, null));
         assertThat(adjusted.shape()).isEqualTo(CollageShape.LEFT_BIG);
         assertThat(adjusted.main()).isEqualTo(0.6);
         assertThat(adjusted.lines()).isEqualTo(List.of(List.of(0.3, 0.7)));
@@ -51,8 +51,8 @@ class CollageLayoutsTest {
     @Test
     void adjust_countChanged_appendsNewResetsRatiosAndFallsBackToRow() {
         CollageLayout saved = leftBig(List.of(
-                new CollageCell(1L, 2.0, 0.2, 0.3), new CollageCell(2L, 1.5, 0.4, 0.4),
-                new CollageCell(3L, 1.2, 0.6, 0.6)));
+                new CollageCell(1L, 2.0, 0.2, 0.3, null), new CollageCell(2L, 1.5, 0.4, 0.4, null),
+                new CollageCell(3L, 1.2, 0.6, 0.6, null)));
 
         CollageLayout adjusted = CollageLayouts.adjust(saved, List.of(3L, 5L));
 
@@ -60,9 +60,22 @@ class CollageLayoutsTest {
         assertThat(adjusted.main()).isNull();
         assertThat(adjusted.lines()).isEqualTo(List.of(List.of(0.5, 0.5)));
         assertThat(adjusted.cells()).containsExactly(
-                new CollageCell(3L, 1.2, 0.6, 0.6), new CollageCell(5L, 1.0, 0.5, 0.5));
+                new CollageCell(3L, 1.2, 0.6, 0.6, null), new CollageCell(5L, 1.0, 0.5, 0.5, null));
         assertThat(adjusted.gap()).isEqualTo(0.02);
         assertThat(adjusted.useTemplate()).isFalse();
+    }
+
+    /** FEATURE_2610_32 D19: a remaining cell keeps its chosen photo; a new cell starts on the cover (null). */
+    @Test
+    void adjust_countChanged_keepsChosenPhotoOfRemainingCells() {
+        CollageLayout saved = new CollageLayout(CollageShape.ROW, null, List.of(List.of(0.5, 0.5)), 0.0, "#FFFFFF",
+                Boolean.TRUE, List.of(new CollageCell(1L, 2.0, 0.2, 0.3, 77L), new CollageCell(2L, 1.0, 0.5, 0.5, null)));
+
+        CollageLayout adjusted = CollageLayouts.adjust(saved, List.of(1L, 2L, 3L));
+
+        assertThat(adjusted.cells()).containsExactly(
+                new CollageCell(1L, 2.0, 0.2, 0.3, 77L), new CollageCell(2L, 1.0, 0.5, 0.5, null),
+                new CollageCell(3L, 1.0, 0.5, 0.5, null));
     }
 
     @Test

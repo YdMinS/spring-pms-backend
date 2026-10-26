@@ -1,11 +1,14 @@
 package com.pms.service.collage;
 
 import com.pms.domain.BackgroundMode;
+import com.pms.domain.CollageCell;
 import com.pms.domain.CollageLayout;
 import com.pms.domain.ImageOp;
 import com.pms.domain.Product;
+import com.pms.domain.ProductImage;
 import com.pms.domain.TemplateElement;
 import com.pms.domain.ThumbnailTemplate;
+import com.pms.repository.ProductImageRepository;
 import com.pms.service.ImageDecodeSupport;
 import com.pms.service.ImageProcessor;
 import com.pms.service.ProductImageLoader;
@@ -19,14 +22,17 @@ import java.awt.image.BufferedImage;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Collage thumbnail JPEG (FEATURE_2610_21 D5 · D10 · D18 · D39 · D48 · D49 · D50) — shared by generation
  * ({@code ListingAssetServiceImpl.regenerateAssets}) and the editor preview, so both take the same path (D35).
  *
  * <ol>
- *   <li>Cover photos = each component's {@code Product.imageUrl} (D1 · D15). A product without one is left out
- *       (its cell stays empty, D18); none at all → 400 「셀에 등록상품이 없습니다」.</li>
+ *   <li>Cell photos = the chosen {@code productImageId} when it is still a photo of that cell's product, otherwise the
+ *       product's cover {@code Product.imageUrl} (FEATURE_2610_32 D15 · D17 — a deleted or foreign choice falls back
+ *       silently). A cell with neither is left out (its cell stays empty, D18); none at all → 400 「셀에 등록상품이
+ *       없습니다」.</li>
  *   <li>Size (D39): {@code useTemplate} → the template's first product-photo slot w×h; otherwise — or when the
  *       template has no such slot — the template canvas w×h.</li>
  *   <li>The template's product-photo preset runs once on the finished collage (D5 · D49), flattened onto white
@@ -53,6 +59,7 @@ public class CollageThumbnailRenderer {
     private final ThumbnailPresetResolver thumbnailPresetResolver;
     private final ImageProcessor imageProcessor;
     private final ThumbnailRenderer thumbnailRenderer;
+    private final ProductImageRepository productImageRepository;
 
     /**
      * @param template     the listing's thumbnail template (or the tenant default for a preview without a listing)
@@ -64,8 +71,17 @@ public class CollageThumbnailRenderer {
     public byte[] render(ThumbnailTemplate template, Map<String, String> textBindings,
                          CollageLayout layout, List<Product> products) {
         Map<Long, BufferedImage> photos = new HashMap<>();
+        Map<Long, ProductImage> chosen = chosenPhotos(layout);
         for (Product product : products) {
-            if (StringUtils.hasText(product.getImageUrl())) {
+            CollageCell cell = layout.cells().stream()
+                    .filter(c -> product.getId().equals(c.productId()))
+                    .findFirst()
+                    .orElse(null);
+            ProductImage pick = cell == null || cell.productImageId() == null ? null : chosen.get(cell.productImageId());
+            if (pick != null && pick.getProduct() != null && product.getId().equals(pick.getProduct().getId())) {
+                photos.put(product.getId(),
+                        imageDecodeSupport.decode(productImageLoader.loadUrl(pick.getImageUrl()), "collage photo"));
+            } else if (StringUtils.hasText(product.getImageUrl())) {
                 photos.put(product.getId(),
                         imageDecodeSupport.decode(productImageLoader.load(product), "collage photo"));
             }
@@ -88,6 +104,21 @@ public class CollageThumbnailRenderer {
         }
         return thumbnailRenderer.render(wholeCanvas(template, canvasW, canvasH), Map.of(),
                 Map.of(PRODUCT_IMAGE_BIND, productImage));
+    }
+
+    /** The chosen gallery photos of the layout's cells by id (one query; deleted ids are simply absent). */
+    private Map<Long, ProductImage> chosenPhotos(CollageLayout layout) {
+        List<Long> ids = layout.cells().stream()
+                .map(CollageCell::productImageId)
+                .filter(Objects::nonNull)
+                .toList();
+        Map<Long, ProductImage> byId = new HashMap<>();
+        if (!ids.isEmpty()) {
+            for (ProductImage image : productImageRepository.findAllById(ids)) {
+                byId.put(image.getId(), image);
+            }
+        }
+        return byId;
     }
 
     /** Region of the template's first product-photo slot, or null when there is none / it is incomplete. */

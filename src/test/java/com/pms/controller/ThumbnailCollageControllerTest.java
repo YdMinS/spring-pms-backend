@@ -8,10 +8,12 @@ import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductComponent;
 import com.pms.domain.Platform;
 import com.pms.domain.Product;
+import com.pms.domain.ProductImage;
 import com.pms.domain.ProductListing;
 import com.pms.domain.Seller;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductRepository;
+import com.pms.repository.ProductImageRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
@@ -33,6 +35,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -53,6 +56,7 @@ class ThumbnailCollageControllerTest extends BaseIntegrationTest {
     @Autowired private MasterProductRepository masterProductRepository;
     @Autowired private MasterProductComponentRepository componentRepository;
     @Autowired private ProductListingRepository productListingRepository;
+    @Autowired private ProductImageRepository productImageRepository;
 
     @MockBean private ProductImageLoader productImageLoader;
 
@@ -61,6 +65,8 @@ class ThumbnailCollageControllerTest extends BaseIntegrationTest {
     private Long listingId;
     private Long productA;
     private Long productB;
+    private Long photoA2;
+    private Long photoB1;
 
     private String base() {
         return "/api/admin/master-products/" + masterId + "/collage";
@@ -97,7 +103,15 @@ class ThumbnailCollageControllerTest extends BaseIntegrationTest {
                 .build());
         listingId = listing.getId();
 
+        // FEATURE_2610_32: galleries — A has its cover (sort 0) and a second photo, B has one photo but no cover.
+        productImageRepository.save(ProductImage.builder().product(a).sortOrder(0).imageUrl("products/a.png").build());
+        photoA2 = productImageRepository.save(ProductImage.builder().product(a).sortOrder(1)
+                .imageUrl("products/a2.png").build()).getId();
+        photoB1 = productImageRepository.save(ProductImage.builder().product(b).sortOrder(0)
+                .imageUrl("products/b1.png").build()).getId();
+
         given(productImageLoader.load(any())).willReturn(png());
+        given(productImageLoader.loadUrl(any())).willReturn(png());
 
         // Tenant default template in this session (the startup-seeded one lives under tenant 1).
         String templateJson = objectMapper.writeValueAsString(Map.of(
@@ -140,6 +154,9 @@ class ThumbnailCollageControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.bundle").value(true))
                 .andExpect(jsonPath("$.data.products.length()").value(2))
                 .andExpect(jsonPath("$.data.products[1].imageUrl").doesNotExist())
+                .andExpect(jsonPath("$.data.products[0].images.length()").value(2))
+                .andExpect(jsonPath("$.data.products[0].images[1].productImageId").value(photoA2))
+                .andExpect(jsonPath("$.data.products[0].images[1].imageUrl").value("products/a2.png"))
                 .andExpect(jsonPath("$.data.stages.length()").value(3))
                 .andExpect(jsonPath("$.data.stages[0].stage").value("MASTER"))
                 .andExpect(jsonPath("$.data.stages[1].stage").value("SELLER"))
@@ -195,8 +212,8 @@ class ThumbnailCollageControllerTest extends BaseIntegrationTest {
     @Test
     void save_cellsNotMatchingComponents_returns400() throws Exception {
         CollageLayout wrong = new CollageLayout(CollageShape.ROW, null, List.of(List.of(0.5, 0.5)), 0.0, "#FFFFFF",
-                Boolean.TRUE, List.of(new CollageCell(productA, 1.0, 0.5, 0.5),
-                new CollageCell(productA, 1.0, 0.5, 0.5)));
+                Boolean.TRUE, List.of(new CollageCell(productA, 1.0, 0.5, 0.5, null),
+                new CollageCell(productA, 1.0, 0.5, 0.5, null)));
         mockMvc.perform(put(base() + "/stage").param("stage", "MASTER")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType("application/json").content(saveBody(true, wrong)))
@@ -228,5 +245,50 @@ class ThumbnailCollageControllerTest extends BaseIntegrationTest {
         BufferedImage image = ImageIO.read(new java.io.ByteArrayInputStream(jpeg));
         assertThat(image.getWidth()).isEqualTo(300);
         assertThat(image.getHeight()).isEqualTo(200);
+    }
+
+    /** FEATURE_2610_32 D16: the chosen cell photo is stored and returned. */
+    @Test
+    void save_cellPhoto_isStored() throws Exception {
+        CollageLayout layout = new CollageLayout(CollageShape.ROW, null, List.of(List.of(0.5, 0.5)), 0.0, "#FFFFFF",
+                Boolean.TRUE, List.of(new CollageCell(productA, 1.0, 0.5, 0.5, photoA2),
+                new CollageCell(productB, 1.0, 0.5, 0.5, null)));
+        mockMvc.perform(put(base() + "/stage").param("stage", "MASTER")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content(saveBody(true, layout)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.ownLayout.cells[0].productImageId").value(photoA2))
+                .andExpect(jsonPath("$.data.ownLayout.cells[1].productImageId").doesNotExist());
+    }
+
+    /** FEATURE_2610_32 D17: a photo of another product is refused on save. */
+    @Test
+    void save_cellPhotoOfAnotherProduct_returns400() throws Exception {
+        CollageLayout layout = new CollageLayout(CollageShape.ROW, null, List.of(List.of(0.5, 0.5)), 0.0, "#FFFFFF",
+                Boolean.TRUE, List.of(new CollageCell(productA, 1.0, 0.5, 0.5, photoB1),
+                new CollageCell(productB, 1.0, 0.5, 0.5, null)));
+        mockMvc.perform(put(base() + "/stage").param("stage", "MASTER")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content(saveBody(true, layout)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("칸의 사진이 그 칸 물품의 사진이 아닙니다."));
+    }
+
+    /** FEATURE_2610_32 D15 · D17: the chosen photo is drawn; a cover-less product with a chosen photo is drawn too. */
+    @Test
+    void preview_chosenPhotos_areLoaded() throws Exception {
+        java.util.Map<String, Object> body = new java.util.HashMap<>();
+        body.put("listingId", listingId);
+        body.put("layout", new CollageLayout(CollageShape.ROW, null, List.of(List.of(0.5, 0.5)), 0.0, "#FFFFFF",
+                Boolean.TRUE, List.of(new CollageCell(productA, 1.0, 0.5, 0.5, photoA2),
+                new CollageCell(productB, 1.0, 0.5, 0.5, photoB1))));
+        mockMvc.perform(post(base() + "/preview")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("image/jpeg"));
+
+        verify(productImageLoader).loadUrl("products/a2.png");
+        verify(productImageLoader).loadUrl("products/b1.png");
     }
 }
