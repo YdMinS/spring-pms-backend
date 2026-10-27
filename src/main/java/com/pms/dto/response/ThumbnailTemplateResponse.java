@@ -50,4 +50,8 @@ public class ThumbnailTemplateResponse {
 
     @Schema(description = "Whether this is the tenant default template", example = "true")
     private Boolean isDefault;
+
+    @Schema(description = "Master image zone id of this template's image group (FEATURE_2610_33 D9)",
+            example = "__thumbnail_template_1__")
+    private String imageGroupKey;
 }

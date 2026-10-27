@@ -4,12 +4,14 @@ import jakarta.persistence.*;
 import lombok.*;
 
 /**
- * Field-to-image mapping (M:N) between a {@link MasterProductImage} pool asset and a detail zone or the
- * cover photo (FEATURE_2608_06 / 37).
+ * Field-to-image mapping (M:N) between a {@link MasterProductImage} pool asset and a detail zone, the
+ * cover photo or a thumbnail template image group (FEATURE_2608_06 / 37 · FEATURE_2610_33 D9).
  *
  * <p>One pool image can be mapped to several zones and to the cover photo — this table is the reuse point.
  * A detail zone (e.g. {@code product_photos}) may hold many images (ordered by {@code sortOrder}); the
- * cover photo uses the reserved {@link #SOURCE_ZONE} key and is kept to a single mapping by service logic.</p>
+ * cover photo uses the reserved {@link #SOURCE_ZONE} key and is kept to a single mapping by service logic.
+ * A thumbnail template image group uses the reserved key {@link ThumbnailTemplate#imageGroupKey} and holds at
+ * most one image ({@code MasterProductImageServiceImpl#setZoneImages}).</p>
  *
  * <p>⚠️ The {@code UNIQUE(master_product_image_id, zone_id)} only blocks mapping the <b>same</b> image to
  * the same zone twice. It cannot enforce "a single {@code __source__} image" (two different images each
@@ -41,7 +43,10 @@ public class MasterImageZoneAssignment extends BaseEntity {
     @JoinColumn(name = "master_product_image_id", nullable = false)
     private MasterProductImage image;
 
-    /** Detail zone id, or {@link #SOURCE_ZONE} for the cover photo. */
+    /**
+     * Detail zone id, {@link #SOURCE_ZONE} for the cover photo, or {@link ThumbnailTemplate#imageGroupKey} for a
+     * thumbnail template image group.
+     */
     @Column(name = "zone_id", nullable = false, length = 100)
     private String zoneId;
 
