@@ -84,8 +84,6 @@ class ListingAssetServiceTest {
     // FEATURE_2610_21: default mock → Optional.empty() = no collage, the single-photo path below.
     @Mock private ThumbnailCollageResolver thumbnailCollageResolver;
     @Mock private CollageThumbnailRenderer collageThumbnailRenderer;
-    // FEATURE_2610_32: default mock → Optional.empty() = no stage thumbnail photo, the cover / BOM chain below.
-    @Mock private ThumbnailPhotoResolver thumbnailPhotoResolver;
     // 2609_28/D23: the recorder is wired for real (below) so the skip rules run end-to-end from the seam.
     @Mock private com.pms.repository.PriceChangeLogRepository priceChangeLogRepository;
     @InjectMocks private ListingAssetServiceImpl service;
@@ -188,6 +186,10 @@ class ListingAssetServiceTest {
                 .id(20L).masterProduct(master)
                 .productImage(ProductImage.builder().id(9L).imageUrl("products/live.jpg").build())
                 .build(); // imageUrl null — reference entry
+        // FEATURE_2610_33 D3: the template's image group (template id 3) is empty → the cover comes next.
+        given(masterImageZoneAssignmentRepository
+                .findByImage_MasterProductIdAndZoneIdOrderBySortOrderAsc(1L, ThumbnailTemplate.imageGroupKey(3L)))
+                .willReturn(List.of());
         given(masterImageZoneAssignmentRepository
                 .findByImage_MasterProductIdAndZoneIdOrderBySortOrderAsc(1L, MasterImageZoneAssignment.SOURCE_ZONE))
                 .willReturn(List.of(MasterImageZoneAssignment.builder()
@@ -208,32 +210,35 @@ class ListingAssetServiceTest {
         verify(productImageLoader, never()).load(any());
     }
 
-    /** FEATURE_2610_32 D4: a stage thumbnail photo wins over the cover photo and the legacy upload. */
     @Test
-    void regenerateAssets_stageThumbnailPhoto_winsOverCoverAndLegacyUpload() {
+    void regenerateAssets_templateImageGroupPhoto_winsOverCoverAndLegacyOverride() {
+        // FEATURE_2610_33 D3: the photo in the image group of the template this cell uses (id 3) comes first.
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터")
                 .sourceImageUrl("https://cdn/override.jpg").build();
         ProductListing cell = ProductListing.builder().id(CELL_ID).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
-        MasterProductImage picked = MasterProductImage.builder()
-                .id(21L).masterProduct(master).imageUrl("https://cdn/picked.jpg").build();
-        given(thumbnailPhotoResolver.resolve(cell)).willReturn(Optional.of(picked));
-        given(productImageUrlResolver.resolve(picked)).willReturn("https://cdn/picked.jpg");
+        MasterProductImage groupPhoto = MasterProductImage.builder()
+                .id(21L).masterProduct(master).imageUrl("master-pool/group.jpg").build();
+        given(masterImageZoneAssignmentRepository
+                .findByImage_MasterProductIdAndZoneIdOrderBySortOrderAsc(1L, ThumbnailTemplate.imageGroupKey(3L)))
+                .willReturn(List.of(MasterImageZoneAssignment.builder()
+                        .image(groupPhoto).zoneId(ThumbnailTemplate.imageGroupKey(3L)).sortOrder(0).build()));
+        given(productImageUrlResolver.resolve(groupPhoto)).willReturn("master-pool/group.jpg");
 
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
         given(cellBomResolver.forOption(any())).willReturn(CellBomResolver.Bom.of(
                 List.of(new CellBomResolver.Line(1L, product(), 1))));
-        given(productImageLoader.loadUrl("https://cdn/picked.jpg")).willReturn(new byte[]{7});
+        given(productImageLoader.loadUrl("master-pool/group.jpg")).willReturn(new byte[]{9});
         given(generatedProductDataRepository.findByProductListingId(CELL_ID)).willReturn(Optional.empty());
         commonRenderStubs();
 
         service.regenerateAssets(cell);
 
-        verify(productImageLoader).loadUrl("https://cdn/picked.jpg");
+        verify(productImageLoader).loadUrl("master-pool/group.jpg");
+        verify(masterImageZoneAssignmentRepository, never())
+                .findByImage_MasterProductIdAndZoneIdOrderBySortOrderAsc(1L, MasterImageZoneAssignment.SOURCE_ZONE);
         verify(productImageLoader, never()).loadUrl("https://cdn/override.jpg");
         verify(productImageLoader, never()).load(any());
-        verify(masterImageZoneAssignmentRepository, never())
-                .findByImage_MasterProductIdAndZoneIdOrderBySortOrderAsc(any(), any());
     }
 
     @Test

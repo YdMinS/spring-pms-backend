@@ -4,6 +4,7 @@ import com.pms.domain.DetailBlock;
 import com.pms.domain.DetailImageGroup;
 import com.pms.domain.DetailTemplate;
 import com.pms.domain.MasterImageZoneAssignment;
+import com.pms.domain.ThumbnailTemplate;
 import com.pms.repository.DetailImageGroupRepository;
 import com.pms.repository.DetailTemplateRepository;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
@@ -25,8 +26,9 @@ import java.util.TreeSet;
  * reject templates that were saving fine yesterday.
  *
  * <p>Sources = every template's {@code imageZone} binds ∪ every master photo mapping's {@code zoneId},
- * minus the reserved cover-photo key {@link MasterImageZoneAssignment#SOURCE_ZONE} (not a zone). Names
- * start out equal to the code; giving them human-readable names is a rename from the UI.</p>
+ * minus the reserved cover-photo key {@link MasterImageZoneAssignment#SOURCE_ZONE} and every
+ * thumbnail-template group key ({@link ThumbnailTemplate#IMAGE_GROUP_KEY_PREFIX}…) — neither is a detail
+ * zone. Names start out equal to the code; giving them human-readable names is a rename from the UI.</p>
  *
  * <p>Runs {@code @Order(53)} — after {@link DefaultDetailTemplateSeeder} ({@code @Order(52)}) so the
  * default template's own zones are backfilled too. Idempotent: does nothing once the catalog is non-empty.
@@ -72,6 +74,7 @@ public class DetailImageGroupSeeder implements ApplicationRunner {
                 codes.add((String) row[0]);
             }
             codes.remove(MasterImageZoneAssignment.SOURCE_ZONE);
+            codes.removeIf(code -> code.startsWith(ThumbnailTemplate.IMAGE_GROUP_KEY_PREFIX));
             if (codes.isEmpty()) {
                 return;
             }

@@ -1,0 +1,15 @@
+# Drop thumbnail_photo (FEATURE_2610_33 / D16 · D17).
+#   The per-stage thumbnail photos of FEATURE_2610_32 are replaced by one image group per thumbnail template,
+#   stored in master_image_zone_assignment under the reserved zone id __thumbnail_template_{id}__ (D9).
+#   Every row is discarded on purpose (D17) — the pool photos themselves stay in master_product_image.
+# 🔴 Irreversible: no rollback block (D17). 118-thumbnail-photo.yaml stays as the applied record (D16).
+# dropTable removes the table's foreign keys with it — no FK is dropped by name.
+databaseChangeLog:
+
+  - changeSet:
+      id: 119-1-drop-thumbnail-photo
+      author: oclyx
+      comment: "FEATURE_2610_33 D17: drop thumbnail_photo (per-stage thumbnail photos discarded)."
+      changes:
+        - dropTable:
+            tableName: thumbnail_photo

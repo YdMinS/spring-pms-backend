@@ -9,8 +9,9 @@ import java.util.List;
  * Manages a {@link com.pms.domain.MasterProduct}'s image pool and its field mappings (FEATURE_2608_06 / 37).
  *
  * <p>Every image is uploaded into the pool first ({@link #uploadToPool}); it is then mapped — by drag/select
- * — onto detail zones ({@link #setZoneImages}) and/or the cover photo ({@link #setSourceImage}). One pool
- * image can be reused across several fields (M:N via {@code MasterImageZoneAssignment}).</p>
+ * — onto detail zones and thumbnail template image groups ({@link #setZoneImages}) and/or the cover photo
+ * ({@link #setSourceImage}). One pool image can be reused across several fields (M:N via
+ * {@code MasterImageZoneAssignment}).</p>
  *
  * <p>All operations resolve the master tenant-scoped first ({@code MasterProductRepository.findScopedById},
  * cross-tenant/absent → 404). Images live in S3 (DB stores only the URL).</p>
@@ -29,7 +30,11 @@ public interface MasterProductImageService {
     /** All pool images with their mapping state (assignedZones + isSource). */
     List<MasterProductImageResponse> listPool(Long masterId);
 
-    /** Replace a detail zone's mapped images with exactly {@code imageIds} (ordered; empty clears the zone). */
+    /**
+     * Replace a zone's mapped images with exactly {@code imageIds} (ordered; empty clears the zone). A thumbnail
+     * template image group zone ({@code ThumbnailTemplate#imageGroupKey}) needs that template in the current
+     * tenant (else 400) and takes at most one image (else 400) — FEATURE_2610_33 D13 · D24.
+     */
     List<MasterProductImageResponse> setZoneImages(Long masterId, String zoneId, List<Long> imageIds);
 
     /** Set the cover photo to {@code imageId} (single mapping), or clear it when {@code imageId} is null. */

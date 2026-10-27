@@ -5,6 +5,7 @@ import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductImage;
 import com.pms.domain.Product;
 import com.pms.domain.ProductImage;
+import com.pms.domain.ThumbnailTemplate;
 import com.pms.dto.response.MasterProductImageResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
@@ -12,6 +13,7 @@ import com.pms.repository.MasterProductImageRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductImageRepository;
 import com.pms.repository.ProductRepository;
+import com.pms.repository.ThumbnailTemplateRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,6 +34,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
@@ -45,8 +48,7 @@ class MasterProductImageServiceTest {
     @Mock private ProductImageUrlResolver productImageUrlResolver;
     @Mock private ImageStorageService imageStorageService;
     @Mock private ImageValidator imageValidator;
-    // FEATURE_2610_32 D11: default mock → no stage thumbnail photo, usedForThumbnail false.
-    @Mock private com.pms.repository.ThumbnailPhotoRepository thumbnailPhotoRepository;
+    @Mock private ThumbnailTemplateRepository thumbnailTemplateRepository;
 
     @InjectMocks private MasterProductImageServiceImpl service;
 
@@ -240,6 +242,31 @@ class MasterProductImageServiceTest {
 
         assertThatThrownBy(() -> service.setZoneImages(MASTER_ID, SOURCE, List.of(1L)))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void setZoneImages_thumbnailTemplateGroupOfMissingTemplate_400() {
+        given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master()));
+        given(thumbnailTemplateRepository.existsScopedById(7L)).willReturn(false);
+
+        // FEATURE_2610_33 D13: absent in this tenant → 400 before the pool is read or any mapping is touched.
+        assertThatThrownBy(() -> service.setZoneImages(MASTER_ID, ThumbnailTemplate.imageGroupKey(7L), List.of(1L)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("썸네일 템플릿 없음");
+        verify(assignmentRepository, never()).deleteByImage_MasterProductIdAndZoneId(any(), anyString());
+    }
+
+    @Test
+    void setZoneImages_thumbnailTemplateGroupWithTwoPhotos_400() {
+        given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master()));
+        given(thumbnailTemplateRepository.existsScopedById(7L)).willReturn(true);
+
+        // FEATURE_2610_33 D24: template exists → then the photo count (one at most) → then the pool check.
+        assertThatThrownBy(() -> service.setZoneImages(
+                MASTER_ID, ThumbnailTemplate.imageGroupKey(7L), List.of(1L, 2L)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("썸네일 템플릿 그룹에는 사진을 한 장만 넣을 수 있습니다");
+        verify(assignmentRepository, never()).deleteByImage_MasterProductIdAndZoneId(any(), anyString());
     }
 
     @Test

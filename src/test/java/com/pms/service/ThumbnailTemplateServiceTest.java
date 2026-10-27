@@ -8,10 +8,12 @@ import com.pms.domain.ThumbnailTemplate;
 import com.pms.dto.request.ThumbnailPreviewRequest;
 import com.pms.dto.request.ThumbnailTemplateRequest;
 import com.pms.dto.response.ThumbnailTemplateResponse;
+import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.ThumbnailTemplateRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -25,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -41,8 +44,26 @@ class ThumbnailTemplateServiceTest {
     @Mock private ThumbnailPresetResolver thumbnailPresetResolver;
     @Mock private ImageProcessor imageProcessor;
     @Mock private ImageDecodeSupport imageDecodeSupport;
+    @Mock private MasterImageZoneAssignmentRepository assignmentRepository;
 
     @InjectMocks private ThumbnailTemplateServiceImpl service;
+
+    @Test
+    void delete_clearsImageGroupMappingsThenDeletesTemplate_responseCarriesGroupKey() {
+        ThumbnailTemplate template = ThumbnailTemplate.builder()
+                .id(5L).name("A").canvasWidth(1000).canvasHeight(1000).active(true).isDefault(false).build();
+        given(templateRepository.findById(5L)).willReturn(Optional.of(template));
+
+        // FEATURE_2610_33 D9: the response carries the group key built in one place.
+        assertThat(service.get(5L).getImageGroupKey()).isEqualTo("__thumbnail_template_5__");
+
+        service.delete(5L);
+
+        // FEATURE_2610_33 D12: every master's mapping of that group goes in the same call, then the template.
+        InOrder order = inOrder(assignmentRepository, templateRepository);
+        order.verify(assignmentRepository).deleteByZoneIdScoped("__thumbnail_template_5__");
+        order.verify(templateRepository).delete(template);
+    }
 
     @Test
     void create_isDefaultTrue_demotesExistingDefault() {
