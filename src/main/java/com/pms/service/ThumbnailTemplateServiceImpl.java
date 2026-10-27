@@ -9,6 +9,7 @@ import com.pms.dto.request.ThumbnailPreviewRequest;
 import com.pms.dto.request.ThumbnailTemplateRequest;
 import com.pms.dto.response.ThumbnailTemplateResponse;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.ThumbnailTemplateRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -49,6 +50,8 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
     private final ThumbnailPresetResolver thumbnailPresetResolver;
     private final ImageProcessor imageProcessor;
     private final ImageDecodeSupport imageDecodeSupport;
+    /** Master photo mappings of a deleted template's image group (FEATURE_2610_33 D12). */
+    private final MasterImageZoneAssignmentRepository assignmentRepository;
 
     @Override
     @Transactional
@@ -167,7 +170,11 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
     @Override
     @Transactional
     public void delete(Long id) {
-        templateRepository.delete(findOrThrow(id));
+        ThumbnailTemplate template = findOrThrow(id);
+        // FEATURE_2610_33 D12: the template's image group goes with it — only the mapping rows of every master
+        // in this tenant; the pool images stay in each master's pool (DetailImageGroupServiceImpl#delete).
+        assignmentRepository.deleteByZoneIdScoped(ThumbnailTemplate.imageGroupKey(template.getId()));
+        templateRepository.delete(template);
     }
 
     @Override
@@ -282,6 +289,7 @@ public class ThumbnailTemplateServiceImpl implements ThumbnailTemplateService {
                 .fields(fields)
                 .active(t.getActive())
                 .isDefault(t.getIsDefault())
+                .imageGroupKey(ThumbnailTemplate.imageGroupKey(t.getId()))
                 .build();
     }
 }

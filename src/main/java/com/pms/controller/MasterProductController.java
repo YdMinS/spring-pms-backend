@@ -393,7 +393,7 @@ public class MasterProductController {
     }
 
     @PutMapping("/{id}/zones/{zoneId}/images")
-    @Operation(summary = "Set a detail zone's mapped images (ordered; empty clears)")
+    @Operation(summary = "Set a zone's mapped images: detail zone or thumbnail template group (ordered; empty clears)")
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<List<MasterProductImageResponse>>> setZoneImages(
             @PathVariable Long id, @PathVariable String zoneId,

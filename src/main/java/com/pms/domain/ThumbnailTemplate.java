@@ -27,6 +27,21 @@ import java.util.List;
 @Builder(toBuilder = true)
 public class ThumbnailTemplate extends BaseEntity {
 
+    /**
+     * Prefix of the reserved master image zone id that holds this template's image group (FEATURE_2610_33 D9).
+     * Build the full key only with {@link #imageGroupKey(Long)}; never hardcode the string elsewhere.
+     */
+    public static final String IMAGE_GROUP_KEY_PREFIX = "__thumbnail_template_";
+
+    /**
+     * Reserved {@code master_image_zone_assignment.zone_id} of this template's image group:
+     * {@code __thumbnail_template_{id}__}. Detail image group codes cannot start with {@code _}, so the two
+     * never collide (FEATURE_2610_33 D9).
+     */
+    public static String imageGroupKey(Long templateId) {
+        return IMAGE_GROUP_KEY_PREFIX + templateId + "__";
+    }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

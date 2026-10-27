@@ -70,7 +70,8 @@ public interface MasterImageZoneAssignmentRepository extends JpaRepository<Maste
     List<Object[]> countByZoneIdGrouped();
 
     /**
-     * Drop every mapping onto one zone for the current tenant (catalog group delete cleanup). Deletes only
+     * Drop every mapping onto one zone for the current tenant (catalog group delete · thumbnail template delete
+     * cleanup, FEATURE_2610_33 D12). Deletes only
      * the mapping rows — the pool images themselves ({@code master_product_image} / {@code product_image} /
      * S3 objects) are never touched; they stay in the master's pool as unused entries.
      *

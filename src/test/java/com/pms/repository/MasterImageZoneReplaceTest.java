@@ -1,9 +1,11 @@
 package com.pms.repository;
 
 import com.pms.common.TestJpaConfig;
+import com.pms.domain.BackgroundMode;
 import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductImage;
+import com.pms.domain.ThumbnailTemplate;
 import com.pms.service.ImageStorageService;
 import com.pms.service.ImageValidator;
 import com.pms.service.MasterProductImageServiceImpl;
@@ -40,7 +42,7 @@ class MasterImageZoneReplaceTest {
     @Autowired private MasterProductRepository masterProductRepository;
     @Autowired private ProductImageRepository productImageRepository;
     @Autowired private ProductRepository productRepository;
-    @Autowired private ThumbnailPhotoRepository thumbnailPhotoRepository;
+    @Autowired private ThumbnailTemplateRepository thumbnailTemplateRepository;
     @Autowired private TestEntityManager em;
 
     private MasterProductImageServiceImpl service() {
@@ -50,7 +52,7 @@ class MasterImageZoneReplaceTest {
                 imageRepository, assignmentRepository, masterProductRepository, productImageRepository,
                 productRepository, resolver,
                 Mockito.mock(ImageStorageService.class), Mockito.mock(ImageValidator.class),
-                thumbnailPhotoRepository);
+                thumbnailTemplateRepository);
     }
 
     private MasterProduct persistMaster() {
@@ -132,5 +134,27 @@ class MasterImageZoneReplaceTest {
         assertThat(zoneRows(master.getId(), MasterImageZoneAssignment.SOURCE_ZONE))
                 .extracting(a -> a.getImage().getId())
                 .containsExactly(cover);
+    }
+
+    /** FEATURE_2610_33 D13: the template existence check is a real tenant-filtered query, not a mock. */
+    @Test
+    void setZoneImages_thumbnailTemplateGroupOfAnExistingTemplateKeepsThePhoto() {
+        MasterProduct master = persistMaster();
+        Long photo = persistPoolImage(master, 0);
+        ThumbnailTemplate template = em.persist(ThumbnailTemplate.builder()
+                .name("기본").canvasWidth(1000).canvasHeight(1000)
+                .backgroundMode(BackgroundMode.WHITE).active(true).isDefault(true).build());
+        em.flush();
+        String groupKey = ThumbnailTemplate.imageGroupKey(template.getId());
+        MasterProductImageServiceImpl service = service();
+
+        assertThatCode(() -> service.setZoneImages(master.getId(), groupKey, List.of(photo)))
+                .doesNotThrowAnyException();
+        em.flush();
+        em.clear();
+
+        assertThat(zoneRows(master.getId(), groupKey))
+                .extracting(a -> a.getImage().getId())
+                .containsExactly(photo);
     }
 }

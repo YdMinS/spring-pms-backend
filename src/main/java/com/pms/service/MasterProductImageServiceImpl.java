@@ -4,7 +4,7 @@ import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductImage;
 import com.pms.domain.ProductImage;
-import com.pms.domain.ThumbnailPhoto;
+import com.pms.domain.ThumbnailTemplate;
 import com.pms.dto.response.MasterProductImageResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
@@ -12,7 +12,7 @@ import com.pms.repository.MasterProductImageRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductImageRepository;
 import com.pms.repository.ProductRepository;
-import com.pms.repository.ThumbnailPhotoRepository;
+import com.pms.repository.ThumbnailTemplateRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -21,9 +21,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -52,8 +50,8 @@ public class MasterProductImageServiceImpl implements MasterProductImageService 
     private final ProductImageUrlResolver productImageUrlResolver;
     private final ImageStorageService imageStorageService;
     private final ImageValidator imageValidator;
-    /** Stage thumbnail photos — {@code usedForThumbnail} of the pool response (FEATURE_2610_32 D11). */
-    private final ThumbnailPhotoRepository thumbnailPhotoRepository;
+    /** Existence check of a thumbnail template image group zone (FEATURE_2610_33 D13). */
+    private final ThumbnailTemplateRepository thumbnailTemplateRepository;
 
     @Override
     @Transactional
@@ -83,7 +81,7 @@ public class MasterProductImageServiceImpl implements MasterProductImageService 
                 .sortOrder(nextOrder)
                 .imageUrl(url)
                 .build()); // zoneId + productImage left null — edited pool asset, mapping is separate
-        return mapToResponse(saved, List.of(), Collections.emptySet());
+        return mapToResponse(saved, List.of());
     }
 
     @Override
@@ -120,9 +118,8 @@ public class MasterProductImageServiceImpl implements MasterProductImageService 
     public List<MasterProductImageResponse> listPool(Long masterId) {
         requireScopedMaster(masterId);
         Map<Long, List<MasterImageZoneAssignment>> byImageId = assignmentsByImageId(masterId);
-        Set<Long> thumbnailImageIds = thumbnailImageIds(masterId);
         return imageRepository.findByMasterProductIdOrderBySortOrderAsc(masterId).stream()
-                .map(img -> mapToResponse(img, byImageId.getOrDefault(img.getId(), List.of()), thumbnailImageIds))
+                .map(img -> mapToResponse(img, byImageId.getOrDefault(img.getId(), List.of())))
                 .toList();
     }
 
@@ -132,6 +129,14 @@ public class MasterProductImageServiceImpl implements MasterProductImageService 
         requireScopedMaster(masterId);
         if (MasterImageZoneAssignment.SOURCE_ZONE.equals(zoneId)) {
             throw new IllegalArgumentException("대표사진은 source-image 로 설정하세요");
+        }
+        if (zoneId.startsWith(ThumbnailTemplate.IMAGE_GROUP_KEY_PREFIX)) {
+            // FEATURE_2610_33 D13 · D24: a thumbnail template image group — the template must exist in this
+            // tenant, then at most one photo. Every other zone id is accepted unchecked as before.
+            requireThumbnailTemplateGroup(zoneId);
+            if (imageIds.size() > 1) {
+                throw new IllegalArgumentException("썸네일 템플릿 그룹에는 사진을 한 장만 넣을 수 있습니다");
+            }
         }
         // Reject duplicates first (size vs distinct), then require every id to belong to this master's pool.
         Set<Long> distinct = new LinkedHashSet<>(imageIds);
@@ -183,8 +188,7 @@ public class MasterProductImageServiceImpl implements MasterProductImageService 
                 .zoneId(MasterImageZoneAssignment.SOURCE_ZONE)
                 .sortOrder(0)
                 .build()));
-        return mapToResponse(image, assignmentsByImageId(masterId).getOrDefault(imageId, List.of()),
-                thumbnailImageIds(masterId));
+        return mapToResponse(image, assignmentsByImageId(masterId).getOrDefault(imageId, List.of()));
     }
 
     @Override
@@ -223,28 +227,39 @@ public class MasterProductImageServiceImpl implements MasterProductImageService 
         return byImageId;
     }
 
-    /** Pool image ids chosen by any thumbnail photo stage of one master (single query, FEATURE_2610_32 D11). */
-    private Set<Long> thumbnailImageIds(Long masterId) {
-        Set<Long> ids = new HashSet<>();
-        for (ThumbnailPhoto row : thumbnailPhotoRepository.findByMasterProduct_Id(masterId)) {
-            ids.add(row.getImage().getId());
+    /**
+     * 400 「썸네일 템플릿 없음」 unless {@code zoneId} is exactly {@link ThumbnailTemplate#imageGroupKey} of a
+     * template in the current tenant (FEATURE_2610_33 D13). A malformed id after the prefix is the same 400.
+     */
+    private void requireThumbnailTemplateGroup(String zoneId) {
+        String rest = zoneId.substring(ThumbnailTemplate.IMAGE_GROUP_KEY_PREFIX.length());
+        Long templateId = null;
+        if (rest.endsWith("__")) {
+            try {
+                templateId = Long.valueOf(rest.substring(0, rest.length() - 2));
+            } catch (NumberFormatException ignored) {
+                templateId = null;
+            }
         }
-        return ids;
+        if (templateId == null
+                || !ThumbnailTemplate.imageGroupKey(templateId).equals(zoneId)
+                || !thumbnailTemplateRepository.existsScopedById(templateId)) {
+            throw new IllegalArgumentException("썸네일 템플릿 없음");
+        }
     }
 
     /** The images mapped to one zone, in render order, each with its full mapping state. */
     private List<MasterProductImageResponse> mapZone(Long masterId, String zoneId) {
         Map<Long, List<MasterImageZoneAssignment>> byImageId = assignmentsByImageId(masterId);
-        Set<Long> thumbnailImageIds = thumbnailImageIds(masterId);
         return assignmentRepository
                 .findByImage_MasterProductIdAndZoneIdOrderBySortOrderAsc(masterId, zoneId).stream()
                 .map(a -> mapToResponse(a.getImage(),
-                        byImageId.getOrDefault(a.getImage().getId(), List.of()), thumbnailImageIds))
+                        byImageId.getOrDefault(a.getImage().getId(), List.of())))
                 .toList();
     }
 
-    private MasterProductImageResponse mapToResponse(MasterProductImage image,
-            List<MasterImageZoneAssignment> assignments, Set<Long> thumbnailImageIds) {
+    private MasterProductImageResponse mapToResponse(
+            MasterProductImage image, List<MasterImageZoneAssignment> assignments) {
         List<String> assignedZones = assignments.stream()
                 .map(MasterImageZoneAssignment::getZoneId)
                 .filter(z -> !MasterImageZoneAssignment.SOURCE_ZONE.equals(z))
@@ -260,7 +275,6 @@ public class MasterProductImageServiceImpl implements MasterProductImageService 
                 .productImageId(image.getProductImage() != null ? image.getProductImage().getId() : null)
                 .assignedZones(assignedZones)
                 .isSource(isSource)
-                .usedForThumbnail(thumbnailImageIds.contains(image.getId()))
                 .build();
     }
 }
