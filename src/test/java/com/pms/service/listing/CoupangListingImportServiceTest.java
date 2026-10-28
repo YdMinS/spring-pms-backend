@@ -469,6 +469,24 @@ class CoupangListingImportServiceTest {
         assertThat(captor.getValue().getName()).isEqualTo("생수 2L 6병 묶음");
     }
 
+    // FEATURE_2610_36 / D10 ②: the imported cell keeps the bundle type the market reports.
+    @Test
+    void testImportStoresMarketBundleType() {
+        MasterProductOption existing = masterOption(10L, "1세트");
+        ImportedProduct market = new ImportedProduct("노브랜드 생수 2L 6입", null, COUPANG_CATEGORY,
+                ListingStatus.SELLING, List.of(), null, List.of(), List.of(),
+                List.of(marketOption("6입", "8123", "12900")), null, null, "SINGLE");
+        givenImportReady(market, List.of(existing),
+                List.of(MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_A)).quantity(6).build(),
+                        MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_B)).quantity(1).build()));
+
+        service.importListing(MASTER_ID, importRequest(spec("6입", "8123", 6, 1)));
+
+        ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(captor.capture());
+        assertThat(captor.getValue().getMarketBundleType()).isEqualTo("SINGLE");
+    }
+
     @Test
     void testImportFallsBackToRegistrationNameWhenMarketHasNoDisplayName() {
         MasterProductOption existing = masterOption(10L, "1세트");

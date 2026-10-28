@@ -324,6 +324,7 @@ public class MasterProductServiceImpl implements MasterProductService {
                         // ⚠️ never `platformCategoryCode != null` — see the field note (D10-1/D11).
                         .usesOwnCategory(category != null && category.own())
                         .needsMarketSync(pl.isNeedsMarketSync())
+                        .marketBundleType(pl.getMarketBundleType())
                         .build());
             }
             return MatrixRow.builder()

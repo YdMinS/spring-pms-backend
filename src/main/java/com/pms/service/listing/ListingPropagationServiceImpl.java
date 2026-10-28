@@ -110,6 +110,9 @@ public class ListingPropagationServiceImpl implements ListingPropagationService 
                         .needsMarketSync(false)
                         .grandTotalSend(outcome.grandTotalSend() != null
                                 ? outcome.grandTotalSend() : cell.getGrandTotalSend())
+                        // FEATURE_2610_36 / D11: the bundle type sent (read once while the listing did not know it).
+                        .marketBundleType(outcome.marketBundleType() != null
+                                ? outcome.marketBundleType() : cell.getMarketBundleType())
                         .build());
                 pushed++;
             } catch (Exception e) {

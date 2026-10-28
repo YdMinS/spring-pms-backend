@@ -1,0 +1,20 @@
+# Coupang bundle type per listing (FEATURE_2610_36 / D9).
+#   121-1 product_listing.market_bundle_type = the bundleInfo.bundleType this listing actually has on Coupang:
+#         SINGLE · AB · NULL (not known). Existing rows start NULL — the status read and the first successful revision
+#         fill it (D10 ③ · D10 ④ · D11).
+# ⚠️ No boolean column -> the 006 BIT follow-up is not needed.
+databaseChangeLog:
+
+  - changeSet:
+      id: 121-1-product-listing-market-bundle-type
+      author: oclyx
+      comment: "FEATURE_2610_36 D9: product_listing.market_bundle_type (VARCHAR(10) NULL)."
+      changes:
+        - addColumn:
+            tableName: product_listing
+            columns:
+              - column:
+                  name: market_bundle_type
+                  type: VARCHAR(10)
+      rollback:
+        - dropColumn: { tableName: product_listing, columnName: market_bundle_type }

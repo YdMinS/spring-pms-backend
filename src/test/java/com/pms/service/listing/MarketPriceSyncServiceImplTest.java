@@ -10,6 +10,7 @@ import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.ProductListingRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -26,7 +27,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
-/** FEATURE_2610_27 / D13 ② · §2-8 row 8: one batch listing — prices only, the status is not saved. */
+/**
+ * FEATURE_2610_27 / D13 ② · §2-8 row 8: one batch listing — prices, and (FEATURE_2610_36 / D10 ③) the bundle type when
+ * the read returned one; the status is not saved.
+ */
 @ExtendWith(MockitoExtension.class)
 class MarketPriceSyncServiceImplTest {
 
@@ -55,6 +59,27 @@ class MarketPriceSyncServiceImplTest {
 
         assertThat(service.syncOne(100L)).isTrue();
         verify(productListingRepository, never()).save(any());
+    }
+
+    // FEATURE_2610_36 / D10 ③: a read that returned a bundle type stores it — and only it (the status stays).
+    @Test
+    void syncOne_readWithBundleType_storesIt() {
+        MarketplaceAccount account = MarketplaceAccountFixture.coupangStubBuilder("V1", null).isActive(true).build();
+        given(productListingRepository.findScopedById(100L)).willReturn(Optional.of(cell));
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(7L, Platform.COUPANG))
+                .willReturn(Optional.of(account));
+        given(resolver.resolve(Platform.COUPANG)).willReturn(adapter);
+        FetchResult fetched = new FetchResult(ListingStatus.SELLING, List.of(), null, null, "SINGLE");
+        given(adapter.fetchStatus(cell, account)).willReturn(fetched);
+        MarketPrices prices = new MarketPrices(Map.of());
+        given(adapter.readMarketPrices(cell, account, fetched)).willReturn(prices);
+
+        service.syncOne(100L);
+
+        ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(captor.capture());
+        assertThat(captor.getValue().getMarketBundleType()).isEqualTo("SINGLE");
+        assertThat(captor.getValue().getStatus()).isEqualTo(ListingStatus.SUSPENDED);
     }
 
     @Test

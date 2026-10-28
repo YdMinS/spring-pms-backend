@@ -274,4 +274,17 @@ public class ProductListing extends BaseEntity {
     @Builder.Default
     @Schema(description = "Whether a Coupang revision sends 총 수량", example = "SENT")
     private GrandTotalSend grandTotalSend = GrandTotalSend.SENT;
+
+    /**
+     * FEATURE_2610_36 / D9: the {@code bundleInfo.bundleType} this listing actually has on Coupang — {@code SINGLE} ·
+     * {@code AB} · {@code null} (not known). A Coupang revision sends this value — read once from Coupang while it is
+     * {@code null} (D11) — and not the master's composition (D6: Coupang cannot change it after the first
+     * registration). Set by a successful registration, an import, the status read (D10 ① ② ③) and a successful
+     * revision that read it once (D10 ④ · D11 — a failed revision does not store it).
+     * Pre-existing rows are {@code null} (changeset 121).
+     */
+    @Column(name = "market_bundle_type", length = 10)
+    @Schema(description = "Coupang bundle type of this listing on the market (SINGLE/AB, null = unknown)",
+            example = "AB")
+    private String marketBundleType;
 }
