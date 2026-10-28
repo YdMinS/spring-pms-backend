@@ -40,9 +40,10 @@ import java.util.stream.Collectors;
  * Channel registration orchestration (FEATURE_2608_06 / 3c). See {@link ListingRegistrationService}.
  *
  * <p>Each write method is {@code @Transactional} (DB save atomicity); its marketplace HTTP calls run inside the
- * transaction — one call per write (a Coupang register or update may send one more, with or without 총 수량 —
- * FEATURE_2610_34), plus the market price read of a refresh (FEATURE_2610_27 / D13 ①: Coupang none extra · 11st and
- * ESM one extra) — with no approval wait. {@code syncApprovals} reuses the private refresh core (same
+ * transaction — one call per write (a Coupang register or update may send one more, with or without 「총 수량」 —
+ * FEATURE_2610_34; a Coupang update of a listing that does not know its bundle type reads the product once first —
+ * FEATURE_2610_36 / D11), plus the market price read of a refresh (FEATURE_2610_27 / D13 ①: Coupang none extra · 11st
+ * and ESM one extra) — with no approval wait. {@code syncApprovals} reuses the private refresh core (same
  * code path) — the inner call is a self-invocation, so its {@code @Transactional} is intentionally not a new
  * boundary: the sweep is one transaction and a caught per-listing failure (pre-flush: account/HTTP error)
  * does not poison it, so successful promotions persist.</p>
@@ -113,6 +114,9 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
                 .platformProductId(sellerProductId)
                 .status(ListingStatus.SUBMITTED)
                 .grandTotalSend(outcome.grandTotalSend() != null ? outcome.grandTotalSend() : cell.getGrandTotalSend())
+                // FEATURE_2610_36 / D10 ①: the bundle type sent (Coupang only — null keeps the stored one).
+                .marketBundleType(outcome.marketBundleType() != null
+                        ? outcome.marketBundleType() : cell.getMarketBundleType())
                 .build());
 
         return ListingRegisterResponse.builder()
@@ -164,6 +168,9 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
                 .status(ListingStatus.SUBMITTED)
                 .needsMarketSync(false)
                 .grandTotalSend(outcome.grandTotalSend() != null ? outcome.grandTotalSend() : cell.getGrandTotalSend())
+                // FEATURE_2610_36 / D11: the bundle type sent (read once while the listing did not know it).
+                .marketBundleType(outcome.marketBundleType() != null
+                        ? outcome.marketBundleType() : cell.getMarketBundleType())
                 .build());
 
         return ListingRegisterResponse.builder()
@@ -229,7 +236,12 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
             throw marketBusyOrSame(e);
         }
 
-        productListingRepository.save(cell.toBuilder().status(result.status()).build());
+        // FEATURE_2610_36 / D10 ③: the bundle type the same read returned overwrites the stored one; none keeps it.
+        productListingRepository.save(cell.toBuilder()
+                .status(result.status())
+                .marketBundleType(result.marketBundleType() != null
+                        ? result.marketBundleType() : cell.getMarketBundleType())
+                .build());
 
         // On SELLING, sync matched options → market ids + APPROVED. Unmatched options keep NOT_APPROVED
         // (부분승인완료: some options may still be pending — option truth is approvalStatus).

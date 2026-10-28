@@ -352,7 +352,8 @@ class CoupangListingAdapterTest {
         assertThat(payload.getValue()).doesNotContain("\"itemName\":\"B\"");
     }
 
-    // 63: SINGLE (1 component) → bundleType=SINGLE, item carries attributes + unitCount=1.
+    // 63 · FEATURE_2610_36 / D2: SINGLE (1 component) → bundleInfo.bundleType=SINGLE, item carries attributes +
+    // unitCount=1.
     @Test
     void register_single_payloadHasSingleWithAttributesAndUnitCount() throws Exception {
         MasterProduct master = MasterProduct.builder().id(1L).name("라벨")
@@ -372,13 +373,15 @@ class CoupangListingAdapterTest {
         adapter.register(cell, gen, acct());
 
         JsonNode json = objectMapper.readTree(payload.getValue());
-        assertThat(json.path("bundleType").asText()).isEqualTo("SINGLE");
+        assertThat(json.path("bundleInfo").path("bundleType").asText()).isEqualTo("SINGLE");
+        assertThat(json.has("bundleType")).isFalse();                       // D2: no top-level key
         JsonNode item = json.path("items").get(0);
         assertThat(item.has("attributes")).isTrue();
         assertThat(item.path("unitCount").asInt()).isEqualTo(1);
     }
 
-    // 63: AB (2+ components) → bundleType=AB, item has NO attributes key, still unitCount=1, notices unchanged.
+    // 63 · FEATURE_2610_36 / D2: AB (2+ components) → bundleInfo.bundleType=AB, item has NO attributes key, still
+    // unitCount=1, notices unchanged.
     @Test
     void register_ab_payloadHasAbNoAttributesButUnitCountAndNotices() throws Exception {
         MasterProduct master = MasterProduct.builder().id(1L).name("라벨")
@@ -403,7 +406,7 @@ class CoupangListingAdapterTest {
         adapter.register(cell, gen, acct());
 
         JsonNode json = objectMapper.readTree(payload.getValue());
-        assertThat(json.path("bundleType").asText()).isEqualTo("AB");
+        assertThat(json.path("bundleInfo").path("bundleType").asText()).isEqualTo("AB");
         JsonNode item = json.path("items").get(0);
         assertThat(item.has("attributes")).isFalse();                       // AB forbids attributes
         assertThat(item.path("unitCount").asInt()).isEqualTo(1);
@@ -425,7 +428,7 @@ class CoupangListingAdapterTest {
         adapter.register(cell(), gen, acct());   // cell() has no master
 
         JsonNode json = objectMapper.readTree(payload.getValue());
-        assertThat(json.path("bundleType").asText()).isEqualTo("SINGLE");
+        assertThat(json.path("bundleInfo").path("bundleType").asText()).isEqualTo("SINGLE");
         assertThat(json.path("items").get(0).path("unitCount").asInt()).isEqualTo(1);
     }
 
@@ -1363,8 +1366,7 @@ class CoupangListingAdapterTest {
                         "포장단위별 내용물의 용량(중량),수량,크기", "320g 1개"))   // not a 가공식품 key
                 .categoryNoticeGroup("가공식품").build();
         ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
-                .platformProductId("123456789").masterProduct(master).build();
-        given(masterProductService.isBundle(1L)).willReturn(false);
+                .platformProductId("123456789").masterProduct(master).marketBundleType("SINGLE").build();
         given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(sharedNoticeKeySchema());
         givenOneActiveOption();
@@ -1410,14 +1412,13 @@ class CoupangListingAdapterTest {
                 ProductListingOption.builder().id(1L).optionName("1세트")
                         .sellingPrice(new BigDecimal("10000")).active(true)
                         .sellerProductItemId("777").platformOptionId("888").build()));
-        given(masterProductService.isBundle(null)).willReturn(false);
         given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         given(client.put(anyString(), payload.capture(), any())).willReturn("{\"code\":\"SUCCESS\"}");
 
-        adapter.update(cell(), gen, acct());
+        adapter.update(cell().toBuilder().marketBundleType("SINGLE").build(), gen, acct());
 
         JsonNode json = objectMapper.readTree(payload.getValue());
         assertThat(json.path("sellerProductId").asText()).isEqualTo("123456789");
@@ -1432,14 +1433,13 @@ class CoupangListingAdapterTest {
         given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
                 ProductListingOption.builder().id(2L).optionName("2세트")
                         .sellingPrice(new BigDecimal("20000")).active(true).build()));   // ids null
-        given(masterProductService.isBundle(null)).willReturn(false);
         given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         given(client.put(anyString(), payload.capture(), any())).willReturn("{\"code\":\"SUCCESS\"}");
 
-        adapter.update(cell(), gen, acct());
+        adapter.update(cell().toBuilder().marketBundleType("SINGLE").build(), gen, acct());
 
         JsonNode item = objectMapper.readTree(payload.getValue()).path("items").get(0);
         assertThat(item.has("sellerProductItemId")).isFalse();
@@ -1650,5 +1650,116 @@ class CoupangListingAdapterTest {
         assertThatThrownBy(() -> adapter.validateRegistrable(cell, null, acct()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("필수 고시 누락");
+    }
+
+    // ---------------------------------------------------------------- FEATURE_2610_36: bundleInfo
+
+    /** A registered Coupang cell on a mixed-composition master, knowing (or not) its bundle type on Coupang. */
+    private ProductListing mixedCell(String marketBundleType) {
+        MasterProduct master = MasterProduct.builder().id(1L).name("라벨")
+                .categoryAttributes(Map.of("원산지", "국내산")).build();
+        return ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
+                .platformProductId("123456789").masterProduct(master).marketBundleType(marketBundleType).build();
+    }
+
+    private static final String PRODUCT_WITHOUT_BUNDLE = "{\"code\":\"SUCCESS\",\"data\":{\"items\":[]}}";
+
+    private static String productWithBundle(String bundleType) {
+        return "{\"code\":\"SUCCESS\",\"data\":{\"statusName\":\"승인완료\",\"bundleInfo\":{\"bundleType\":\""
+                + bundleType + "\"},\"items\":[]}}";
+    }
+
+    // D3: an AB registration with two active options is refused before the POST.
+    @Test
+    void register_abWithTwoActiveOptions_throwsBeforePost() {
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("A").sellingPrice(new BigDecimal("6000"))
+                        .active(true).build(),
+                ProductListingOption.builder().id(2L).optionName("B").sellingPrice(new BigDecimal("9000"))
+                        .active(true).build()));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        given(masterProductService.isBundle(1L)).willReturn(true);
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
+
+        assertThatThrownBy(() -> adapter.registerAndReport(mixedCell(null), gen, acct()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(CoupangListingAdapter.MIXED_BUNDLE_ONE_OPTION);
+        verify(client, never()).post(anyString(), anyString(), any());
+    }
+
+    // D10 ①: a registration reports the bundle type it sent.
+    @Test
+    void registerAndReport_reportsSentBundleType() {
+        givenOneActiveOption();
+        given(masterProductService.isBundle(1L)).willReturn(true);
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
+        given(client.post(anyString(), anyString(), any())).willReturn("{\"data\":1}");
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
+
+        PushOutcome outcome = adapter.registerAndReport(mixedCell(null), gen, acct());
+
+        assertThat(outcome.marketBundleType()).isEqualTo("AB");
+    }
+
+    // D6: a revision sends the stored type, not the master's composition — SINGLE on a mixed master keeps the
+    // attributes; no GET, isBundle not consulted.
+    @Test
+    void update_storedSingleOnMixedMaster_sendsSingleWithAttributes() throws Exception {
+        givenOneActiveOption();
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.put(anyString(), payload.capture(), any())).willReturn("{\"code\":\"SUCCESS\"}");
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
+
+        PushOutcome outcome = adapter.updateAndReport(mixedCell("SINGLE"), gen, acct());
+
+        JsonNode json = objectMapper.readTree(payload.getValue());
+        assertThat(json.path("bundleInfo").path("bundleType").asText()).isEqualTo("SINGLE");
+        assertThat(json.path("items").get(0).has("attributes")).isTrue();
+        assertThat(outcome.marketBundleType()).isEqualTo("SINGLE");
+        verify(client, never()).get(anyString(), anyString(), any());
+        verify(masterProductService, never()).isBundle(any());
+    }
+
+    // D11: a listing that does not know its type reads it once and sends what Coupang reported (AB → no attributes).
+    @Test
+    void update_unknownBundleType_readsOnceAndSendsIt() throws Exception {
+        givenOneActiveOption();
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
+        given(client.get(anyString(), eq(""), any())).willReturn(productWithBundle("AB"));
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.put(anyString(), payload.capture(), any())).willReturn("{\"code\":\"SUCCESS\"}");
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
+
+        PushOutcome outcome = adapter.updateAndReport(mixedCell(null), gen, acct());
+
+        JsonNode json = objectMapper.readTree(payload.getValue());
+        assertThat(json.path("bundleInfo").path("bundleType").asText()).isEqualTo("AB");
+        assertThat(json.path("items").get(0).has("attributes")).isFalse();
+        assertThat(outcome.marketBundleType()).isEqualTo("AB");
+        verify(client).get(anyString(), eq(""), any());                   // D11: one read
+    }
+
+    // D11: the read answers without a bundle type → 400, no PUT.
+    @Test
+    void update_unknownBundleTypeAndNoneReported_throwsBeforePut() {
+        given(client.get(anyString(), eq(""), any())).willReturn(PRODUCT_WITHOUT_BUNDLE);
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
+
+        assertThatThrownBy(() -> adapter.updateAndReport(mixedCell(null), gen, acct()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(CoupangListingAdapter.BUNDLE_TYPE_UNREAD);
+        verify(client, never()).put(anyString(), anyString(), any());
+    }
+
+    // D10 ③: the status read carries data.bundleInfo.bundleType.
+    @Test
+    void fetchStatus_carriesBundleType() {
+        given(client.get(anyString(), eq(""), any())).willReturn(productWithBundle("AB"));
+
+        FetchResult result = adapter.fetchStatus(cell(), acct());
+
+        assertThat(result.marketBundleType()).isEqualTo("AB");
     }
 }

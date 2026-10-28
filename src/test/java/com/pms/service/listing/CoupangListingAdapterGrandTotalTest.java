@@ -100,7 +100,7 @@ class CoupangListingAdapterGrandTotalTest {
 
     private ProductListing cell(GrandTotalSend state) {
         return ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
-                .platformProductId("123456789").grandTotalSend(state).build();
+                .platformProductId("123456789").grandTotalSend(state).marketBundleType("SINGLE").build();
     }
 
     private MarketplaceAccount acct() {

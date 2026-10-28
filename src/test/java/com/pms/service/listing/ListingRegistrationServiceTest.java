@@ -708,4 +708,76 @@ class ListingRegistrationServiceTest {
         assertThat(second.getLinkedOptionName()).isEqualTo("12개");
         verify(productListingOptionRepository, never()).save(any());
     }
+
+    // ---- FEATURE_2610_36: the Coupang bundle type the listing has on the market ----
+
+    // D10 ①: a registration stores the bundle type the adapter reports.
+    @Test
+    void register_storesReportedBundleType() {
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell(ListingStatus.DRAFT, null)));
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID))
+                .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
+        stubAccountAndAdapter();
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+        given(adapter.registerAndReport(any(), any(), any()))
+                .willReturn(new PushOutcome("SP-9", null, null, false, "AB"));
+
+        service.register(CELL_ID);
+
+        ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(captor.capture());
+        assertThat(captor.getValue().getMarketBundleType()).isEqualTo("AB");
+    }
+
+    // D11: a revision stores the bundle type the adapter read for a listing that did not know it.
+    @Test
+    void updateRequest_storesBundleTypeReadByTheAdapter() {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.SELLING, "SP-1")));
+        stubAccountAndAdapter();
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID))
+                .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+        given(adapter.updateAndReport(any(), any(), any()))
+                .willReturn(new PushOutcome(null, null, null, false, "SINGLE"));
+
+        service.updateRequest(CELL_ID);
+
+        ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(captor.capture());
+        assertThat(captor.getValue().getMarketBundleType()).isEqualTo("SINGLE");
+    }
+
+    // D10 ③: the status read overwrites the stored bundle type with the one it returned.
+    @Test
+    void fetchStatus_overwritesBundleTypeFromTheRead() {
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(
+                cell(ListingStatus.SUBMITTED, "SP-1").toBuilder().marketBundleType("SINGLE").build()));
+        stubAccountAndAdapter();
+        given(adapter.fetchStatus(any(), any())).willReturn(
+                new FetchResult(ListingStatus.REJECTED, List.of(), null, null, "AB"));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+
+        service.fetchStatus(CELL_ID);
+
+        ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(captor.capture());
+        assertThat(captor.getValue().getMarketBundleType()).isEqualTo("AB");
+    }
+
+    // D10 ③: a read without a bundle type keeps the stored one.
+    @Test
+    void fetchStatus_readWithoutBundleType_keepsStoredOne() {
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(
+                cell(ListingStatus.SUBMITTED, "SP-1").toBuilder().marketBundleType("AB").build()));
+        stubAccountAndAdapter();
+        given(adapter.fetchStatus(any(), any())).willReturn(new FetchResult(ListingStatus.REJECTED, List.of()));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+
+        service.fetchStatus(CELL_ID);
+
+        ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(captor.capture());
+        assertThat(captor.getValue().getMarketBundleType()).isEqualTo("AB");
+    }
 }

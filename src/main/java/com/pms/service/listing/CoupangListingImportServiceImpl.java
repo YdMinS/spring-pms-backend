@@ -231,6 +231,9 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
                 // D19: the product is already live on the market — take its status, and it is not pending sync.
                 .status(fetched.status())
                 .needsMarketSync(false)
+                // FEATURE_2610_36 / D10 ②: the bundle type the market reports; none keeps a reused row's own value.
+                .marketBundleType(fetched.marketBundleType() != null ? fetched.marketBundleType()
+                        : ctx.existing() != null ? ctx.existing().getMarketBundleType() : null)
                 // D17: null (not an empty list) means "no channel tags" — see the entity note.
                 .tags(channelTags.isEmpty() ? null : channelTags)
                 .build());

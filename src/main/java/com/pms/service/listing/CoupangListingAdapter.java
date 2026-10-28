@@ -127,6 +127,14 @@ public class CoupangListingAdapter implements ListingChannel {
     // FEATURE_2610_34 / D24: the 400 texts of a failed retry; Coupang's second message follows.
     static final String RETRY_WITHOUT_FAILED = "총 수량을 빼고도 다시 시도했지만 쿠팡이 거부했습니다: ";
     static final String RETRY_WITH_FAILED = "총 수량을 다시 넣고도 다시 시도했지만 쿠팡이 거부했습니다: ";
+    // FEATURE_2610_36 / D2 · D9: the two values of the product-level bundleInfo.bundleType.
+    static final String BUNDLE_SINGLE = "SINGLE";
+    static final String BUNDLE_AB = "AB";
+    // FEATURE_2610_36 / D3: the 400 text of a mixed-composition (AB) payload with two or more active options.
+    static final String MIXED_BUNDLE_ONE_OPTION =
+            "쿠팡은 혼합 구성 상품에 옵션 1개만 올릴 수 있습니다. 이 쿠팡 판매채널에서 옵션을 하나만 켜 두고 다시 등록하세요";
+    // FEATURE_2610_36 / D11: the 400 text when the one-time read of a revision finds no bundle type.
+    static final String BUNDLE_TYPE_UNREAD = "쿠팡에서 혼합/단일 구분을 읽지 못했습니다. 잠시 뒤 다시 시도하세요";
 
     private final CoupangApiClient client;
     // 2609_19: only the per-item price path lives in config (unverified against a live account); the other
@@ -178,6 +186,7 @@ public class CoupangListingAdapter implements ListingChannel {
     public PushOutcome registerAndReport(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct) {
         Map<String, Object> withGrandTotal = buildPayload(cell, gen, acct);
         Map<String, Object> withoutGrandTotal = withoutGrandTotal(withGrandTotal);
+        String bundleType = sentBundleType(withGrandTotal);
         boolean carriesGrandTotal = carriesGrandTotal(withGrandTotal);
         PlatformCategory category = masterChannelConfigService.resolveChannelCategory(cell).category();
         boolean omitFirst = carriesGrandTotal && category.isGrandTotalOmitted();
@@ -185,7 +194,7 @@ public class CoupangListingAdapter implements ListingChannel {
         Attempt first = tryRegister(cell, omitFirst ? withoutGrandTotal : withGrandTotal, acct);
         if (first.productId() != null) {
             return new PushOutcome(first.productId(),
-                    omitFirst ? GrandTotalSend.OMITTED : GrandTotalSend.SENT, null, false);
+                    omitFirst ? GrandTotalSend.OMITTED : GrandTotalSend.SENT, null, false, bundleType);
         }
         if (!omitFirst && carriesGrandTotal && first.rejection().contains(INVALID_PURCHASE_OPTION)) {
             log.warn("[COUPANG-ADAPTER] register listing={} rejected with 총 수량, retrying without it: {}",
@@ -194,7 +203,7 @@ public class CoupangListingAdapter implements ListingChannel {
             if (second.productId() == null) {
                 throw new IllegalArgumentException(RETRY_WITHOUT_FAILED + coupangMessage(second.rejection()));
             }
-            return new PushOutcome(second.productId(), GrandTotalSend.OMITTED, category, true);
+            return new PushOutcome(second.productId(), GrandTotalSend.OMITTED, category, true, bundleType);
         }
         if (omitFirst && first.rejection().contains(GRAND_TOTAL_REQUIRED)) {
             log.warn("[COUPANG-ADAPTER] register listing={} rejected without 총 수량, retrying with it: {}",
@@ -203,7 +212,7 @@ public class CoupangListingAdapter implements ListingChannel {
             if (second.productId() == null) {
                 throw new IllegalArgumentException(RETRY_WITH_FAILED + coupangMessage(second.rejection()));
             }
-            return new PushOutcome(second.productId(), GrandTotalSend.SENT, category, false);
+            return new PushOutcome(second.productId(), GrandTotalSend.SENT, category, false, bundleType);
         }
         throw first.failure();
     }
@@ -251,9 +260,9 @@ public class CoupangListingAdapter implements ListingChannel {
 
     @Override
     public FetchResult fetchStatus(ProductListing cell, MarketplaceAccount acct) {
-        // 2609_22: same GET, one parser. fetchStatus keeps its old contract and projects the status, the option ids
-        // and (FEATURE_2610_27) the option prices out of the fuller read — so the two paths can never drift on what a
-        // Coupang key means.
+        // 2609_22: same GET, one parser. fetchStatus keeps its old contract and projects the status, the option ids,
+        // (FEATURE_2610_27) the option prices and (FEATURE_2610_36) the bundle type out of the fuller read — so the two
+        // paths can never drift on what a Coupang key means.
         ImportedProduct product = fetchProduct(cell.getPlatformProductId(), acct);
         List<FetchResult.OptionId> options = new ArrayList<>();
         // FEATURE_2610_27 / D13: the same GET already carries each item's salePrice — kept for readMarketPrices.
@@ -266,7 +275,7 @@ public class CoupangListingAdapter implements ListingChannel {
             }
         }
         return new FetchResult(product.status(), options, product.statusName(),
-                new FetchResult.Prices(null, null, priceByVendorItemId));
+                new FetchResult.Prices(null, null, priceByVendorItemId), product.marketBundleType());
     }
 
     /**
@@ -323,7 +332,7 @@ public class CoupangListingAdapter implements ListingChannel {
     }
 
     /**
-     * 2609_22/D8: read the product as it currently exists on Coupang (import preview + commit).
+     * 2609_22/D8: read the product as it currently exists on Coupang (first written for the import preview + commit).
      *
      * <p>⚠️ Only {@code statusName}/{@code items[]}/{@code itemName}/{@code vendorItemId}/
      * {@code sellerProductItemId} are confirmed against a live account (fetchStatus already read them). The
@@ -335,6 +344,10 @@ public class CoupangListingAdapter implements ListingChannel {
      * <p>2609_45/D4: the response also carries the category attributes/notices that were already stored on the
      * market, per item. They are flattened into the same map shape we store, and numeric attribute values are
      * stripped back to "number only" (see {@link #stripUnit}).</p>
+     *
+     * <p>FEATURE_2610_36 / D10: {@code data.bundleInfo.bundleType} comes from the documented response
+     * (querying-product) and is not yet confirmed against a live account — absent or any other value parses to
+     * {@code null}.</p>
      */
     @Override
     public ImportedProduct fetchProduct(String platformProductId, MarketplaceAccount acct) {
@@ -392,7 +405,14 @@ public class CoupangListingAdapter implements ListingChannel {
                 detailImages(data),
                 options,
                 asTextOrNull(data, "statusName"),
-                asTextOrNull(data, "displayProductName"));
+                asTextOrNull(data, "displayProductName"),
+                marketBundleType(data));
+    }
+
+    /** FEATURE_2610_36 / D9: {@code data.bundleInfo.bundleType} when it is {@code SINGLE} or {@code AB}, else null. */
+    private static String marketBundleType(JsonNode data) {
+        String value = asTextOrNull(data.path("bundleInfo"), "bundleType");
+        return BUNDLE_SINGLE.equals(value) || BUNDLE_AB.equals(value) ? value : null;
     }
 
     /**
@@ -659,10 +679,14 @@ public class CoupangListingAdapter implements ListingChannel {
     public PushOutcome updateAndReport(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct) {
         // 108/D3: re-submit the whole rebuilt object via PUT, carrying the update-only identifiers
         // (top-level sellerProductId + per-item sellerProductItemId/vendorItemId) read from our own DB —
-        // without them Coupang would create a new product instead of revising this one. No preceding GET: we
+        // without them Coupang would create a new product instead of revising this one. No GET to merge: we
         // rebuild the whole document rather than merging the fetched one, so it was a wasted call (rate limit).
         // Selling-price-only partial updates are a follow-up path (out of scope).
-        Map<String, Object> withGrandTotal = buildPayload(cell, gen, acct, true);
+        // FEATURE_2610_36 / D6 · D11: the bundle type sent is the one the listing has on Coupang; a listing that does
+        // not know it yet reads it once with the product GET, and the outcome reports it for storing.
+        String bundleType = cell.getMarketBundleType() != null
+                ? cell.getMarketBundleType() : readBundleType(cell, acct);
+        Map<String, Object> withGrandTotal = buildPayload(cell, gen, acct, true, bundleType);
         GrandTotalSend state = cell.getGrandTotalSend();
         boolean omit = carriesGrandTotal(withGrandTotal)
                 && (state == GrandTotalSend.OMITTED
@@ -671,14 +695,14 @@ public class CoupangListingAdapter implements ListingChannel {
                                         .isGrandTotalOmitted()));
         if (!omit) {
             client.put(SELLER_PRODUCTS, writeJson(withGrandTotal), acct);
-            return PushOutcome.unchanged(null);
+            return new PushOutcome(null, null, null, false, bundleType);
         }
 
         String rejection;
         try {
             String raw = client.put(SELLER_PRODUCTS, writeJson(withoutGrandTotal(withGrandTotal)), acct);
             if (raw == null || !raw.contains(GRAND_TOTAL_REQUIRED)) {
-                return new PushOutcome(null, GrandTotalSend.OMITTED, null, false);
+                return new PushOutcome(null, GrandTotalSend.OMITTED, null, false, bundleType);
             }
             rejection = raw;
         } catch (RestClientResponseException e) {
@@ -698,7 +722,27 @@ public class CoupangListingAdapter implements ListingChannel {
         if (raw != null && raw.contains(GRAND_TOTAL_REQUIRED)) {
             throw new IllegalArgumentException(RETRY_WITH_FAILED + coupangMessage(raw));
         }
-        return new PushOutcome(null, GrandTotalSend.SENT_CONFIRMED, null, false);
+        return new PushOutcome(null, GrandTotalSend.SENT_CONFIRMED, null, false, bundleType);
+    }
+
+    /**
+     * FEATURE_2610_36 / D11: the Coupang bundle type of a listing that does not know it yet, read once with the
+     * {@link #fetchProduct} GET. A failed read is a 400 with its own message; a response without the value is a 400
+     * with {@link #BUNDLE_TYPE_UNREAD}. Either way the revision is not sent.
+     */
+    private String readBundleType(ProductListing cell, MarketplaceAccount acct) {
+        ImportedProduct product;
+        try {
+            product = fetchProduct(cell.getPlatformProductId(), acct);
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException(e.getMessage(), e);
+        }
+        if (product.marketBundleType() == null) {
+            throw new IllegalArgumentException(BUNDLE_TYPE_UNREAD);
+        }
+        return product.marketBundleType();
     }
 
     @Override
@@ -844,10 +888,10 @@ public class CoupangListingAdapter implements ListingChannel {
 
     // --- payload (§4-4, summary — not over-detailed) ---
 
-    /** Register payload (no update-only identifiers) — see the 4-arg overload. */
+    /** Register payload (no update-only identifiers) — see the 5-arg overload. */
     private Map<String, Object> buildPayload(ProductListing cell, GeneratedProductData gen,
                                              MarketplaceAccount acct) {
-        return buildPayload(cell, gen, acct, false);
+        return buildPayload(cell, gen, acct, false, null);
     }
 
     /**
@@ -859,9 +903,12 @@ public class CoupangListingAdapter implements ListingChannel {
      * <p>🔴 The per-item ids only exist after approval ({@code fetchStatus} fills them on SELLING), so a
      * not-yet-approved cell updates with identifier-less items = Coupang's replace-all semantics. The
      * top-level {@code sellerProductId} still prevents a duplicate product.</p>
+     *
+     * <p>FEATURE_2610_36 / D6: {@code revisionBundleType} is the bundle type a revision sends (the listing's own on
+     * Coupang); a registration passes {@code null} and decides it by the master's composition (D1).</p>
      */
     private Map<String, Object> buildPayload(ProductListing cell, GeneratedProductData gen,
-                                             MarketplaceAccount acct, boolean forUpdate) {
+                                             MarketplaceAccount acct, boolean forUpdate, String revisionBundleType) {
         Map<String, Object> payload = new LinkedHashMap<>();
         if (forUpdate) {
             payload.put("sellerProductId", cell.getPlatformProductId());
@@ -916,7 +963,8 @@ public class CoupangListingAdapter implements ListingChannel {
         List<ProductListingOption> listingOptions =
                 productListingOptionRepository.findByProductListingId(cell.getId());
         // 2609_22/D7: the generator resolves the single-option case through each option's master FK (falling
-        // back to the cell's own BOM for a channel-only option) → it takes the rows, not their names.
+        // back to the cell's own BOM for a channel-only option) → it takes the rows, not their names. FEATURE_2610_36 /
+        // D3 also counts them (one option only on a mixed composition).
         List<ProductListingOption> activeOptions = listingOptions.stream()
                 .filter(o -> Boolean.TRUE.equals(o.getActive()))
                 .toList();
@@ -975,10 +1023,18 @@ public class CoupangListingAdapter implements ListingChannel {
                 .filter(a -> a.usableUnits() != null && !a.usableUnits().isEmpty())
                 .collect(Collectors.toMap(CategoryAttribute::name, CategoryAttribute::usableUnits, (a, b) -> a));
 
-        // 63: bundleType = product-level SINGLE (single composition) / AB (mixed composition). Determined once
-        // (loop-invariant local boolean, no N+1) by the master's component count. AB forbids attributes entirely.
-        boolean bundle = masterProductService.isBundle(master == null ? null : master.getId());
-        payload.put("bundleType", bundle ? "AB" : "SINGLE");
+        // 63 · FEATURE_2610_36 / D2: bundleInfo.bundleType = product-level SINGLE (single composition) / AB (mixed
+        // composition). Determined once (loop-invariant local boolean, no N+1): a registration by the master's
+        // component count (D1), a revision by the type the listing has on Coupang (D6 — Coupang cannot change it after
+        // the first registration). AB forbids attributes entirely.
+        boolean bundle = forUpdate
+                ? BUNDLE_AB.equals(revisionBundleType)
+                : masterProductService.isBundle(master == null ? null : master.getId());
+        payload.put("bundleInfo", Map.of("bundleType", bundle ? BUNDLE_AB : BUNDLE_SINGLE));
+        // FEATURE_2610_36 / D3: Coupang takes one option only on a mixed-composition product — stop before the push.
+        if (bundle && activeOptions.size() >= 2) {
+            throw new IllegalArgumentException(MIXED_BUNDLE_ONE_OPTION);
+        }
 
         // items[] (max 200): one per ACTIVE listing option (42 — per-channel subset; inactive options are
         // excluded from the payload but keep their row). New options carry no vendorItemId yet. attributes/
@@ -1223,6 +1279,11 @@ public class CoupangListingAdapter implements ListingChannel {
             parts.add(item.get("itemName") + ": " + (pairs.isEmpty() ? "(속성 없음)" : String.join(", ", pairs)));
         }
         return String.join(" / ", parts);
+    }
+
+    /** FEATURE_2610_36 / D10 ①: the {@code bundleInfo.bundleType} a built payload sends. */
+    static String sentBundleType(Map<String, Object> payload) {
+        return payload.get("bundleInfo") instanceof Map<?, ?> info ? (String) info.get("bundleType") : null;
     }
 
     /** FEATURE_2610_34: whether any item of the payload sends a 총 수량 attribute. */
