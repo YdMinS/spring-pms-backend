@@ -24,7 +24,7 @@ public interface ListingChannel {
     /**
      * Validate that the cell may be registered under this channel's own registration policy (FEATURE_2608_06 /
      * 63). A violation throws (e.g. {@code IllegalArgumentException} → 400). The orchestration delegates here
-     * before {@link #register} — the channel owns the policy (Coupang: skip for AB / required-attribute check
+     * before {@link #registerAndReport} — the channel owns the policy (Coupang: skip for AB / required-attribute check
      * for SINGLE; NAVER implements its own). The {@code gen} parameter is kept for contract symmetry with
      * {@link #register}/{@link #update} even when an implementation does not use it.
      *
@@ -90,6 +90,28 @@ public interface ListingChannel {
      * @param acct the marketplace account (credentials)
      */
     void update(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct);
+
+    /**
+     * {@link #register} plus what happened to 총 수량 (FEATURE_2610_34). The orchestration calls this one; it stores
+     * the reported state — the adapter still changes nothing. Default = {@link #register}, nothing to store (only the
+     * Coupang adapter overrides it).
+     *
+     * @return the market product id + the 총 수량 state to store
+     */
+    default PushOutcome registerAndReport(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct) {
+        return PushOutcome.unchanged(register(cell, gen, acct));
+    }
+
+    /**
+     * {@link #update} plus what happened to 총 수량 (FEATURE_2610_34). Default = {@link #update}, nothing to store
+     * (only the Coupang adapter overrides it).
+     *
+     * @return the 총 수량 state to store ({@code platformProductId} is {@code null})
+     */
+    default PushOutcome updateAndReport(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct) {
+        update(cell, gen, acct);
+        return PushOutcome.unchanged(null);
+    }
 
     /**
      * Stop selling the listing (approved options cannot be physically deleted → stop-selling).

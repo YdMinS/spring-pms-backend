@@ -1,13 +1,16 @@
 package com.pms.service.listing;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.domain.GeneratedProductData;
+import com.pms.domain.GrandTotalSend;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.Platform;
+import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.repository.MasterProductOptionRepository;
@@ -32,6 +35,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -115,6 +119,14 @@ public class CoupangListingAdapter implements ListingChannel {
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
     // 96 ④: Coupang's documented cap for attributeValueName (warn only — see withUnit).
     private static final int MAX_ATTRIBUTE_VALUE_LENGTH = 30;
+    // FEATURE_2610_34 / D4 · D21: a new registration rejected with this text is sent once more without 총 수량.
+    // "… 구매 옵션 값 혹은 단위가 존재합니다" does not contain it, so a unit rejection never retries.
+    static final String INVALID_PURCHASE_OPTION = "유효하지 않은 구매 옵션이 존재합니다";
+    // FEATURE_2610_34 / D8 · D23: a push without 총 수량 rejected with this text is sent once more with it.
+    static final String GRAND_TOTAL_REQUIRED = "필수 옵션이(총 수량)";
+    // FEATURE_2610_34 / D24: the 400 texts of a failed retry; Coupang's second message follows.
+    static final String RETRY_WITHOUT_FAILED = "총 수량을 빼고도 다시 시도했지만 쿠팡이 거부했습니다: ";
+    static final String RETRY_WITH_FAILED = "총 수량을 다시 넣고도 다시 시도했지만 쿠팡이 거부했습니다: ";
 
     private final CoupangApiClient client;
     // 2609_19: only the per-item price path lives in config (unverified against a live account); the other
@@ -143,9 +155,70 @@ public class CoupangListingAdapter implements ListingChannel {
 
     @Override
     public String register(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct) {
-        Map<String, Object> body = buildPayload(cell, gen, acct);
-        String payload = writeJson(body);
-        String raw = client.post(SELLER_PRODUCTS, payload, acct);
+        return registerAndReport(cell, gen, acct).platformProductId();
+    }
+
+    /**
+     * FEATURE_2610_34: a new registration that learns, per Coupang category, whether 총 수량 must be left out.
+     *
+     * <p>The payload is built once; the other payload is the same one without the 총 수량 attribute. A payload that
+     * carries no 총 수량 is sent once, exactly as before.</p>
+     * <ol>
+     *   <li>First try = without 총 수량 when the category remembers it (D3 · D10), else with it.</li>
+     *   <li>Sent with it and rejected with {@link #INVALID_PURCHASE_OPTION} → one more try without it; a pass is
+     *       remembered on the category (D1 · D2 · D4 · D21).</li>
+     *   <li>Sent without it and rejected with {@link #GRAND_TOTAL_REQUIRED} → one more try with it; a pass clears the
+     *       memory (D8 · D22).</li>
+     *   <li>A failed second try → 400 with Coupang's second message (D5 · D24). Every other rejection is thrown as
+     *       before (data-less 2xx → {@code IllegalStateException} · non-2xx → the client's exception).</li>
+     * </ol>
+     * Nothing is stored here — {@link PushOutcome} carries it to the orchestration.
+     */
+    @Override
+    public PushOutcome registerAndReport(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct) {
+        Map<String, Object> withGrandTotal = buildPayload(cell, gen, acct);
+        Map<String, Object> withoutGrandTotal = withoutGrandTotal(withGrandTotal);
+        boolean carriesGrandTotal = carriesGrandTotal(withGrandTotal);
+        PlatformCategory category = masterChannelConfigService.resolveChannelCategory(cell).category();
+        boolean omitFirst = carriesGrandTotal && category.isGrandTotalOmitted();
+
+        Attempt first = tryRegister(cell, omitFirst ? withoutGrandTotal : withGrandTotal, acct);
+        if (first.productId() != null) {
+            return new PushOutcome(first.productId(),
+                    omitFirst ? GrandTotalSend.OMITTED : GrandTotalSend.SENT, null, false);
+        }
+        if (!omitFirst && carriesGrandTotal && first.rejection().contains(INVALID_PURCHASE_OPTION)) {
+            log.warn("[COUPANG-ADAPTER] register listing={} rejected with 총 수량, retrying without it: {}",
+                    cell.getId(), first.rejection());
+            Attempt second = tryRegister(cell, withoutGrandTotal, acct);
+            if (second.productId() == null) {
+                throw new IllegalArgumentException(RETRY_WITHOUT_FAILED + coupangMessage(second.rejection()));
+            }
+            return new PushOutcome(second.productId(), GrandTotalSend.OMITTED, category, true);
+        }
+        if (omitFirst && first.rejection().contains(GRAND_TOTAL_REQUIRED)) {
+            log.warn("[COUPANG-ADAPTER] register listing={} rejected without 총 수량, retrying with it: {}",
+                    cell.getId(), first.rejection());
+            Attempt second = tryRegister(cell, withGrandTotal, acct);
+            if (second.productId() == null) {
+                throw new IllegalArgumentException(RETRY_WITH_FAILED + coupangMessage(second.rejection()));
+            }
+            return new PushOutcome(second.productId(), GrandTotalSend.SENT, category, false);
+        }
+        throw first.failure();
+    }
+
+    /**
+     * One register POST (FEATURE_2610_34). A data-less 2xx and a non-2xx are both returned as a rejection — its body
+     * is what D4 · D8 · D21 test — together with the exception thrown when that rejection is not retried.
+     */
+    private Attempt tryRegister(ProductListing cell, Map<String, Object> body, MarketplaceAccount acct) {
+        String raw;
+        try {
+            raw = client.post(SELLER_PRODUCTS, writeJson(body), acct);
+        } catch (RestClientResponseException e) {
+            return new Attempt(null, e.getResponseBodyAsString(), e);
+        }
         // Response data = sellerProductId (number or string) → return as String.
         JsonNode data = readJson(raw).path("data");
         if (data.isMissingNode() || data.isNull()) {
@@ -153,10 +226,27 @@ public class CoupangListingAdapter implements ListingChannel {
             // without them "유효하지 않은 구매 옵션 값 혹은 단위" cannot be traced to a value.
             String sent = describeItemAttributes(body);
             log.warn("[COUPANG-ADAPTER] register rejected listing={} sent attributes: {}", cell.getId(), sent);
-            throw new IllegalStateException("쿠팡 상품등록 응답에 data(sellerProductId) 없음: " + raw
-                    + " | 보낸 옵션 속성: " + sent);
+            return new Attempt(null, raw, new IllegalStateException("쿠팡 상품등록 응답에 data(sellerProductId) 없음: "
+                    + raw + " | 보낸 옵션 속성: " + sent));
         }
-        return data.asText();
+        return new Attempt(data.asText(), null, null);
+    }
+
+    /**
+     * Result of one register POST: {@code productId} on a pass; otherwise the rejection body and the exception to
+     * throw when it is not retried.
+     */
+    private record Attempt(String productId, String rejection, RuntimeException failure) {
+    }
+
+    /** FEATURE_2610_34 / D24: Coupang's {@code message} of a rejection body; the whole body when it has none. */
+    private String coupangMessage(String body) {
+        try {
+            JsonNode message = objectMapper.readTree(body).path("message");
+            return message.isTextual() ? message.asText() : body;
+        } catch (JsonProcessingException e) {
+            return body;
+        }
     }
 
     @Override
@@ -548,13 +638,67 @@ public class CoupangListingAdapter implements ListingChannel {
 
     @Override
     public void update(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct) {
+        updateAndReport(cell, gen, acct);
+    }
+
+    /**
+     * FEATURE_2610_34: a revision follows the listing's own 총 수량 state, not the category memory (D6) — except a
+     * {@code SENT} listing whose category remembers it, which tries once without it (D11). The memory itself is never
+     * changed by a revision (D17).
+     *
+     * <ul>
+     *   <li>Sent with it ({@code SENT} without memory · {@code SENT_CONFIRMED} · no 총 수량 in the payload) → one PUT,
+     *       response not read — as before.</li>
+     *   <li>Sent without it ({@code OMITTED} · {@code SENT} with memory): no exception and no
+     *       {@link #GRAND_TOTAL_REQUIRED} in the 2xx body = pass → {@code OMITTED} (D11 · D23). A rejection containing
+     *       {@link #GRAND_TOTAL_REQUIRED} → one more PUT with it; a pass → {@code SENT_CONFIRMED} (D11 · D16), a
+     *       non-2xx or that text again → 400 (D24). Any other rejection is thrown as before.</li>
+     * </ul>
+     */
+    @Override
+    public PushOutcome updateAndReport(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct) {
         // 108/D3: re-submit the whole rebuilt object via PUT, carrying the update-only identifiers
         // (top-level sellerProductId + per-item sellerProductItemId/vendorItemId) read from our own DB —
         // without them Coupang would create a new product instead of revising this one. No preceding GET: we
         // rebuild the whole document rather than merging the fetched one, so it was a wasted call (rate limit).
         // Selling-price-only partial updates are a follow-up path (out of scope).
-        String payload = writeJson(buildPayload(cell, gen, acct, true));
-        client.put(SELLER_PRODUCTS, payload, acct);
+        Map<String, Object> withGrandTotal = buildPayload(cell, gen, acct, true);
+        GrandTotalSend state = cell.getGrandTotalSend();
+        boolean omit = carriesGrandTotal(withGrandTotal)
+                && (state == GrandTotalSend.OMITTED
+                        || (state == GrandTotalSend.SENT
+                                && masterChannelConfigService.resolveChannelCategory(cell).category()
+                                        .isGrandTotalOmitted()));
+        if (!omit) {
+            client.put(SELLER_PRODUCTS, writeJson(withGrandTotal), acct);
+            return PushOutcome.unchanged(null);
+        }
+
+        String rejection;
+        try {
+            String raw = client.put(SELLER_PRODUCTS, writeJson(withoutGrandTotal(withGrandTotal)), acct);
+            if (raw == null || !raw.contains(GRAND_TOTAL_REQUIRED)) {
+                return new PushOutcome(null, GrandTotalSend.OMITTED, null, false);
+            }
+            rejection = raw;
+        } catch (RestClientResponseException e) {
+            if (!e.getResponseBodyAsString().contains(GRAND_TOTAL_REQUIRED)) {
+                throw e;
+            }
+            rejection = e.getResponseBodyAsString();
+        }
+        log.warn("[COUPANG-ADAPTER] update listing={} rejected without 총 수량, retrying with it: {}",
+                cell.getId(), rejection);
+        String raw;
+        try {
+            raw = client.put(SELLER_PRODUCTS, writeJson(withGrandTotal), acct);
+        } catch (RestClientResponseException e) {
+            throw new IllegalArgumentException(RETRY_WITH_FAILED + coupangMessage(e.getResponseBodyAsString()));
+        }
+        if (raw != null && raw.contains(GRAND_TOTAL_REQUIRED)) {
+            throw new IllegalArgumentException(RETRY_WITH_FAILED + coupangMessage(raw));
+        }
+        return new PushOutcome(null, GrandTotalSend.SENT_CONFIRMED, null, false);
     }
 
     @Override
@@ -898,8 +1042,10 @@ public class CoupangListingAdapter implements ListingChannel {
             if (!bundle) {
                 Map<String, String> attrs = withConsistentGrandTotal(
                         mergedAttributes(masterAttributes, mo, option));
-                // A stored 총 수량 is always sent: the meta can mark it OPTIONAL while Coupang still rejects an
-                // update without it ("필수 옵션이(총 수량) 입력되지 않았습니다", 2026-10-16) — same as 수량 (2026-10-09).
+                // A stored 총 수량 is always put in the built payload: the meta can mark it OPTIONAL while Coupang
+                // still rejects an update without it ("필수 옵션이(총 수량) 입력되지 않았습니다", 2026-10-16) — same as
+                // 수량 (2026-10-09). Whether it is sent is decided by registerAndReport / updateAndReport
+                // (FEATURE_2610_34), never by the meta.
                 if (!attrs.isEmpty()) {
                     item.put("attributes", toAttributes(attrs, unitByAttr, usableByAttr));
                 }
@@ -1077,6 +1223,56 @@ public class CoupangListingAdapter implements ListingChannel {
             parts.add(item.get("itemName") + ": " + (pairs.isEmpty() ? "(속성 없음)" : String.join(", ", pairs)));
         }
         return String.join(" / ", parts);
+    }
+
+    /** FEATURE_2610_34: whether any item of the payload sends a 총 수량 attribute. */
+    static boolean carriesGrandTotal(Map<String, Object> payload) {
+        if (!(payload.get("items") instanceof List<?> items)) {
+            return false;
+        }
+        for (Object o : items) {
+            if (o instanceof Map<?, ?> item && item.get("attributes") instanceof List<?> attrs) {
+                for (Object a : attrs) {
+                    if (a instanceof Map<?, ?> attr && GRAND_TOTAL_QUANTITY.equals(attr.get("attributeTypeName"))) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * FEATURE_2610_34: a copy of the payload without the 총 수량 attribute; an item left with no attribute loses the
+     * {@code attributes} key (as when none is stored). The given payload is not changed.
+     */
+    static Map<String, Object> withoutGrandTotal(Map<String, Object> payload) {
+        Map<String, Object> copy = new LinkedHashMap<>(payload);
+        if (!(payload.get("items") instanceof List<?> items)) {
+            return copy;
+        }
+        List<Object> copiedItems = new ArrayList<>();
+        for (Object o : items) {
+            if (!(o instanceof Map<?, ?> item) || !(item.get("attributes") instanceof List<?> attrs)) {
+                copiedItems.add(o);
+                continue;
+            }
+            List<Object> kept = new ArrayList<>();
+            for (Object a : attrs) {
+                if (!(a instanceof Map<?, ?> attr && GRAND_TOTAL_QUANTITY.equals(attr.get("attributeTypeName")))) {
+                    kept.add(a);
+                }
+            }
+            Map<Object, Object> copiedItem = new LinkedHashMap<>(item);
+            if (kept.isEmpty()) {
+                copiedItem.remove("attributes");
+            } else {
+                copiedItem.put("attributes", kept);
+            }
+            copiedItems.add(copiedItem);
+        }
+        copy.put("items", copiedItems);
+        return copy;
     }
 
     static final String FETCH_IN_PROGRESS_MESSAGE = "상품 수정 진행중입니다. 잠시 후 다시 시도해주십시오.";

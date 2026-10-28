@@ -86,6 +86,7 @@ public class MasterPlatformCategoryServiceImpl implements MasterPlatformCategory
                 .platform(row.getPlatform().name())
                 .platformCategoryId(row.getPlatformCategory().getCode())
                 .platformCategoryName(row.getPlatformCategoryName())
+                .grandTotalOmitted(row.getPlatformCategory().isGrandTotalOmitted())
                 .build();
     }
 }

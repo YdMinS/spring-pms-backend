@@ -8,8 +8,8 @@ import java.util.List;
 /**
  * Layer B of the two-layer propagation (FEATURE_2608_06 / 3d, Design 2): the gated market push. Cells marked
  * pending by layer A ({@link MasterPropagationService}) are pushed to the market on an explicit, multi-select
- * batch — never automatically. Uses the 3c {@code ListingChannel.update} seam (whole-object re-submit → PUT →
- * re-approval). No approval await (3c async principle).
+ * batch — never automatically. Uses the 3c {@code ListingChannel.updateAndReport} seam (whole-object re-submit →
+ * PUT → re-approval). No approval await (3c async principle).
  */
 public interface ListingPropagationService {
 
@@ -24,7 +24,7 @@ public interface ListingPropagationService {
     /**
      * Push a multi-select batch of cells to the market. Each cell: skipped if not registered
      * ({@code platformProductId == null}) / not pending ({@code needsMarketSync == false}) / has no account /
-     * has no generated assets; otherwise {@code adapter.update} re-submits the whole object → cell becomes
+     * has no generated assets; otherwise {@code adapter.updateAndReport} re-submits the whole object → cell becomes
      * {@code SUBMITTED} (re-approval, no transition guard) and its dirty marker is cleared. A per-cell failure
      * is isolated (skipped + counted), not fatal (mirrors 3c syncApprovals).
      *

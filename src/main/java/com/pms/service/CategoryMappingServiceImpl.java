@@ -21,7 +21,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 
 /**
- * Default {@link CategoryMappingService}. Standard-category × platform → marketplace code CRUD (44).
+ * Default {@link CategoryMappingService}. Standard-category × platform → marketplace code CRUD (44), plus clearing a
+ * Coupang category's 총 수량 memory (FEATURE_2610_34 / D7).
  */
 @Slf4j
 @Service
@@ -103,6 +104,15 @@ public class CategoryMappingServiceImpl implements CategoryMappingService {
         categoryMappingRepository.delete(existing);
     }
 
+    @Override
+    @Transactional
+    public void clearGrandTotalOmitted(String code) {
+        PlatformCategory category = platformCategoryRepository.findByPlatformAndCode(Platform.COUPANG, code)
+                .orElseThrow(() -> new BusinessException(
+                        "PlatformCategory not found for COUPANG code: " + code, HttpStatus.NOT_FOUND));
+        platformCategoryRepository.save(category.toBuilder().grandTotalOmitted(false).build());
+    }
+
     /**
      * FEATURE_2610_10 / D21 ④ · FEATURE_2610_26 / D40: the 400 text for a code missing from the platform's list,
      * naming the marketplace. Also used by {@code MasterPlatformCategoryServiceImpl} (same rule, same texts).
@@ -122,6 +132,9 @@ public class CategoryMappingServiceImpl implements CategoryMappingService {
                 .platform(mapping.getPlatform().name())
                 .platformCategoryId(mapping.getPlatformCategoryId())
                 .platformCategoryName(mapping.getPlatformCategoryName())
+                // FEATURE_2610_34 / D7 · D20: an FK-less (not yet linked) mapping cannot register, so it shows none.
+                .grandTotalOmitted(mapping.getPlatformCategory() != null
+                        && mapping.getPlatformCategory().isGrandTotalOmitted())
                 .build();
     }
 }

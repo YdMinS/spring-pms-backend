@@ -1,10 +1,12 @@
 package com.pms.service.listing;
 
 import com.pms.domain.GeneratedProductData;
+import com.pms.domain.GrandTotalSend;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OptionApprovalStatus;
 import com.pms.domain.Platform;
+import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
@@ -17,6 +19,7 @@ import com.pms.exception.ResourceNotFoundException;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import org.junit.jupiter.api.Test;
@@ -51,7 +54,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 
 /**
  * Orchestration (FEATURE_2608_06 / 3c): register state promotion (no approval wait), fetch-status option sync
- * on SELLING, and the sync-approvals sweep isolating a per-listing failure.
+ * on SELLING, and the sync-approvals sweep isolating a per-listing failure. FEATURE_2610_34: register and
+ * updateRequest store the 총 수량 state and category memory the adapter reports, and register returns the notice line.
  */
 @ExtendWith(MockitoExtension.class)
 class ListingRegistrationServiceTest {
@@ -64,6 +68,7 @@ class ListingRegistrationServiceTest {
     @Mock private ListingChannel adapter;
     @Mock private TagMergeService tagMergeService;
     @Mock private MarketPriceApplier marketPriceApplier;
+    @Mock private PlatformCategoryRepository platformCategoryRepository;
     @InjectMocks private ListingRegistrationServiceImpl service;
 
     private static final Long CELL_ID = 100L;
@@ -88,6 +93,8 @@ class ListingRegistrationServiceTest {
         given(marketplaceAccountRepository.findBySeller_IdAndPlatform(eq(SELLER_ID), eq(Platform.COUPANG)))
                 .willReturn(Optional.of(account()));
         given(resolver.resolve(Platform.COUPANG)).willReturn(adapter);
+        // FEATURE_2610_34: a revision that reports nothing about 총 수량 (lenient — register tests never revise).
+        lenient().when(adapter.updateAndReport(any(), any(), any())).thenReturn(PushOutcome.unchanged(null));
     }
 
     // (a) register happy: DRAFT + gen → SUBMITTED + platformProductId; options untouched.
@@ -99,7 +106,7 @@ class ListingRegistrationServiceTest {
         stubAccountAndAdapter();
         // 42 register guard reads the options to confirm at least one is active (option() defaults active=true).
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
-        given(adapter.register(any(), any(), any())).willReturn("SP-999");
+        given(adapter.registerAndReport(any(), any(), any())).willReturn(PushOutcome.unchanged("SP-999"));
 
         ListingRegisterResponse response = service.register(CELL_ID);
 
@@ -120,7 +127,7 @@ class ListingRegistrationServiceTest {
                 .willReturn(Optional.of(cell(ListingStatus.SELLING, "SP-1")));
 
         assertThatThrownBy(() -> service.register(CELL_ID)).isInstanceOf(IllegalArgumentException.class);
-        verify(adapter, never()).register(any(), any(), any());
+        verify(adapter, never()).registerAndReport(any(), any(), any());
     }
 
     @Test
@@ -142,7 +149,7 @@ class ListingRegistrationServiceTest {
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(inactive));
 
         assertThatThrownBy(() -> service.register(CELL_ID)).isInstanceOf(IllegalArgumentException.class);
-        verify(adapter, never()).register(any(), any(), any());
+        verify(adapter, never()).registerAndReport(any(), any(), any());
     }
 
     // account resolution: none → 404 (ResourceNotFoundException).
@@ -158,7 +165,7 @@ class ListingRegistrationServiceTest {
     }
 
     // 63: the orchestration delegates the registration policy to the adapter — validateRegistrable runs before
-    // register (channel-vocabulary-free). The Coupang required-attribute / AB-skip details live in the adapter.
+    // registerAndReport (channel-vocabulary-free). The Coupang required-attribute / AB-skip details live in the adapter.
     @Test
     void register_delegatesValidateRegistrableBeforeRegister() {
         given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell(ListingStatus.DRAFT, null)));
@@ -166,16 +173,16 @@ class ListingRegistrationServiceTest {
                 .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
         stubAccountAndAdapter();
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
-        given(adapter.register(any(), any(), any())).willReturn("SP-1");
+        given(adapter.registerAndReport(any(), any(), any())).willReturn(PushOutcome.unchanged("SP-1"));
 
         service.register(CELL_ID);
 
         InOrder inOrder = inOrder(adapter);
         inOrder.verify(adapter).validateRegistrable(any(), any(), any());
-        inOrder.verify(adapter).register(any(), any(), any());
+        inOrder.verify(adapter).registerAndReport(any(), any(), any());
     }
 
-    // 63: validateRegistrable throwing (e.g. missing required attribute) blocks register (never reached).
+    // 63: validateRegistrable throwing (e.g. missing required attribute) blocks registerAndReport (never reached).
     @Test
     void register_validateRegistrableThrows_registerNotCalled() {
         given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell(ListingStatus.DRAFT, null)));
@@ -187,7 +194,54 @@ class ListingRegistrationServiceTest {
                 .given(adapter).validateRegistrable(any(), any(), any());
 
         assertThatThrownBy(() -> service.register(CELL_ID)).isInstanceOf(IllegalArgumentException.class);
-        verify(adapter, never()).register(any(), any(), any());
+        verify(adapter, never()).registerAndReport(any(), any(), any());
+    }
+
+    // FEATURE_2610_34 / D2 · D9 · D18: a registration that passed without 총 수량 stores the category memory and the
+    // listing state, and returns the notice line.
+    @Test
+    void register_passedWithoutGrandTotal_storesMemoryAndReturnsNotice() {
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell(ListingStatus.DRAFT, null)));
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID))
+                .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
+        stubAccountAndAdapter();
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+        PlatformCategory category = PlatformCategory.builder().id(9L).platform(Platform.COUPANG).code("72931")
+                .name("기타유가공품").build();
+        given(adapter.registerAndReport(any(), any(), any()))
+                .willReturn(new PushOutcome("SP-7", GrandTotalSend.OMITTED, category, true));
+
+        ListingRegisterResponse response = service.register(CELL_ID);
+
+        assertThat(response.getGrandTotalNotice()).isEqualTo("이 카테고리는 총 수량 없이 등록했습니다");
+        ArgumentCaptor<PlatformCategory> categoryCaptor = ArgumentCaptor.forClass(PlatformCategory.class);
+        verify(platformCategoryRepository).save(categoryCaptor.capture());
+        assertThat(categoryCaptor.getValue().getId()).isEqualTo(9L);
+        assertThat(categoryCaptor.getValue().isGrandTotalOmitted()).isTrue();
+        ArgumentCaptor<ProductListing> cellCaptor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(cellCaptor.capture());
+        assertThat(cellCaptor.getValue().getGrandTotalSend()).isEqualTo(GrandTotalSend.OMITTED);
+    }
+
+    // FEATURE_2610_34 / D22 · D18: put back and passed → listing SENT, memory cleared, no notice line.
+    @Test
+    void register_passedAfterReAdding_clearsMemoryWithoutNotice() {
+        given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell(ListingStatus.DRAFT, null)));
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID))
+                .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
+        stubAccountAndAdapter();
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+        PlatformCategory category = PlatformCategory.builder().id(9L).platform(Platform.COUPANG).code("72931")
+                .name("기타유가공품").grandTotalOmitted(true).build();
+        given(adapter.registerAndReport(any(), any(), any()))
+                .willReturn(new PushOutcome("SP-8", GrandTotalSend.SENT, category, false));
+
+        ListingRegisterResponse response = service.register(CELL_ID);
+
+        assertThat(response.getGrandTotalNotice()).isNull();
+        ArgumentCaptor<PlatformCategory> categoryCaptor = ArgumentCaptor.forClass(PlatformCategory.class);
+        verify(platformCategoryRepository).save(categoryCaptor.capture());
+        assertThat(categoryCaptor.getValue().isGrandTotalOmitted()).isFalse();
     }
 
     // ---- 108/D4: updateRequest — single-cell forced re-review ----
@@ -206,12 +260,34 @@ class ListingRegistrationServiceTest {
 
         assertThat(response.getStatus()).isEqualTo("SUBMITTED");
         assertThat(response.getPlatformProductId()).isEqualTo("SP-1");
-        verify(adapter).update(any(), any(), any());
+        verify(adapter).updateAndReport(any(), any(), any());
 
         ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
         verify(productListingRepository).save(captor.capture());
         assertThat(captor.getValue().getStatus()).isEqualTo(ListingStatus.SUBMITTED);
         assertThat(captor.getValue().isNeedsMarketSync()).isFalse();
+    }
+
+    // FEATURE_2610_34 / D16 · D17: a revision stores the reported state on the listing and never touches the memory.
+    @Test
+    void updateRequest_storesReportedGrandTotalState() {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.SELLING, "SP-1").toBuilder()
+                        .grandTotalSend(GrandTotalSend.OMITTED).build()));
+        stubAccountAndAdapter();
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID))
+                .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
+        given(adapter.updateAndReport(any(), any(), any()))
+                .willReturn(new PushOutcome(null, GrandTotalSend.SENT_CONFIRMED, null, false));
+
+        ListingRegisterResponse response = service.updateRequest(CELL_ID);
+
+        assertThat(response.getGrandTotalNotice()).isNull();
+        ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(captor.capture());
+        assertThat(captor.getValue().getGrandTotalSend()).isEqualTo(GrandTotalSend.SENT_CONFIRMED);
+        verifyNoInteractions(platformCategoryRepository);
     }
 
     // 2: a DRAFT cell was never pushed → 400 and the adapter is never called.
@@ -223,7 +299,7 @@ class ListingRegistrationServiceTest {
         assertThatThrownBy(() -> service.updateRequest(CELL_ID))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("미등록");
-        verify(adapter, never()).update(any(), any(), any());
+        verify(adapter, never()).updateAndReport(any(), any(), any());
     }
 
     // 3: deactivated options that were APPROVED are reverted (they are dropped from the payload); active
