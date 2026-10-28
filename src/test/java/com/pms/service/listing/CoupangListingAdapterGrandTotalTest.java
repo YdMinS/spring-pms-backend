@@ -176,7 +176,7 @@ class CoupangListingAdapterGrandTotalTest {
         verify(client, times(1)).post(anyString(), anyString(), any());
     }
 
-    // D4: a unit rejection ("… 값 혹은 단위 …") is not retried — thrown as before.
+    // D4: a unit rejection ("… 값 혹은 단위 …") is not retried — FEATURE_2610_37 / D21: a 400 with Coupang's message.
     @Test
     void register_unitRejection_notRetried() {
         category(false);
@@ -184,7 +184,8 @@ class CoupangListingAdapterGrandTotalTest {
                 "{\"code\":\"ERROR\",\"message\":\"유효하지 않은 구매 옵션 값 혹은 단위가 존재합니다.\",\"data\":null}");
 
         assertThatThrownBy(() -> adapter.registerAndReport(cell(GrandTotalSend.SENT), gen, acct()))
-                .isInstanceOf(IllegalStateException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("쿠팡이 상품 등록을 거부했습니다: 유효하지 않은 구매 옵션 값 혹은 단위가 존재합니다.");
         verify(client, times(1)).post(anyString(), anyString(), any());
     }
 

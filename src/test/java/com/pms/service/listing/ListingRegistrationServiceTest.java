@@ -165,7 +165,7 @@ class ListingRegistrationServiceTest {
     }
 
     // 63: the orchestration delegates the registration policy to the adapter — validateRegistrable runs before
-    // registerAndReport (channel-vocabulary-free). The Coupang required-attribute / AB-skip details live in the adapter.
+    // registerAndReport (channel-vocabulary-free). The Coupang required-attribute / notice details live in the adapter.
     @Test
     void register_delegatesValidateRegistrableBeforeRegister() {
         given(productListingRepository.findScopedById(CELL_ID)).willReturn(Optional.of(cell(ListingStatus.DRAFT, null)));
