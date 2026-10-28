@@ -26,7 +26,7 @@ import java.util.Optional;
  * Layer B: gated market push of pending cells (FEATURE_2608_06 / 3d). See {@link ListingPropagationService}.
  *
  * <p>{@link #pushSync} is a single {@code @Transactional} synchronous sequential batch (manual multi-select,
- * small volume). {@code adapter.update} returns immediately (no approval await), and a per-cell failure is a
+ * small volume). {@code adapter.updateAndReport} returns immediately (no approval await), and a per-cell failure is a
  * pre-flush HTTP/account error caught before any save — so it isolates cleanly without poisoning the
  * transaction (the same reasoning as 3c {@code syncApprovals}). {@code @Async}/queue bulk = follow-up.</p>
  */
@@ -85,7 +85,8 @@ public class ListingPropagationServiceImpl implements ListingPropagationService 
 
             try {
                 ListingChannel adapter = resolver.resolve(cell.getPlatform());
-                adapter.update(cell, gen.get(), account.get());   // whole-object re-submit → PUT (active options only)
+                // whole-object re-submit → PUT (active options only)
+                PushOutcome outcome = adapter.updateAndReport(cell, gen.get(), account.get());
                 // 42: options deactivated on this channel are dropped from the re-submitted payload → they are no
                 // longer live on the market. Revert any previously-APPROVED deactivated option to NOT_APPROVED
                 // (active options keep their approval). ⚠️ Orchestration owns this state change (@Transactional
@@ -103,9 +104,12 @@ public class ListingPropagationServiceImpl implements ListingPropagationService 
                 tagMergeService.recordRevisionIfChanged(cell, merged);
                 // Success: whole re-submit = re-review → SUBMITTED (no transition guard) + clear dirty marker.
                 // Option approvalStatus is left untouched here — fetchStatus/syncApprovals (3c) re-detect it.
+                // FEATURE_2610_34 / D11 · D16: the revision's 총 수량 state goes on the listing only (D17).
                 productListingRepository.save(cell.toBuilder()
                         .status(ListingStatus.SUBMITTED)
                         .needsMarketSync(false)
+                        .grandTotalSend(outcome.grandTotalSend() != null
+                                ? outcome.grandTotalSend() : cell.getGrandTotalSend())
                         .build());
                 pushed++;
             } catch (Exception e) {

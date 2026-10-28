@@ -24,7 +24,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Category mapping endpoints (FEATURE_2608_06 / 44): authority (401/403) + upsert/list roundtrip (200),
  * delete (204) / missing (404), and category-not-found (404) on the ADMIN-only
- * {@code /api/admin/category-mappings} routes (global {@code /api/admin/**} rule).
+ * {@code /api/admin/category-mappings} routes (global {@code /api/admin/**} rule). FEATURE_2610_34: the mapping
+ * response carries the Coupang 총 수량 memory and [기억 지우기] clears it (401/403/204/404).
  */
 class CategoryMappingControllerTest extends BaseIntegrationTest {
 
@@ -172,5 +173,41 @@ class CategoryMappingControllerTest extends BaseIntegrationTest {
                                 + "\"platformCategoryName\":\"경로\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("11번가 카테고리 목록에 없는 코드입니다."));
+    }
+
+    // ---- FEATURE_2610_34 / D7 · D19: the memory rides on the mapping; [기억 지우기] clears it ----
+
+    private String clearPath(String code) {
+        return "/api/admin/category-mappings/coupang-categories/" + code + "/grand-total-omitted";
+    }
+
+    @Test
+    void clearGrandTotalOmitted_noToken_returns401_userToken_returns403() throws Exception {
+        mockMvc.perform(delete(clearPath("101"))).andExpect(status().isUnauthorized());
+        mockMvc.perform(delete(clearPath("101")).header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void clearGrandTotalOmitted_remembered_returns204AndMappingShowsFalse() throws Exception {
+        PlatformCategory row = platformCategoryRepository.findByPlatformAndCode(Platform.COUPANG, "101").orElseThrow();
+        platformCategoryRepository.save(row.toBuilder().grandTotalOmitted(true).build());
+        mockMvc.perform(put(path()).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(body()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.grandTotalOmitted").value(true));
+
+        mockMvc.perform(delete(clearPath("101")).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get(path()).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].grandTotalOmitted").value(false));
+    }
+
+    @Test
+    void clearGrandTotalOmitted_unknownCode_returns404() throws Exception {
+        mockMvc.perform(delete(clearPath("999")).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound());
     }
 }

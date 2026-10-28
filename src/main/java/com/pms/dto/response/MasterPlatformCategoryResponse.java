@@ -25,4 +25,8 @@ public class MasterPlatformCategoryResponse {
 
     @Schema(description = "Display path (nullable)", example = "가구>소파>사이드테이블")
     private String platformCategoryName;
+
+    @Schema(description = "FEATURE_2610_34 / D20: new Coupang registrations of this category leave 총 수량 out",
+            example = "false")
+    private boolean grandTotalOmitted;
 }

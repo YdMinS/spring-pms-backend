@@ -25,4 +25,8 @@ public class CategoryMappingResponse {
 
     @Schema(description = "Display path (nullable)", example = "패션의류>여성신발>운동화")
     private String platformCategoryName;
+
+    @Schema(description = "FEATURE_2610_34 / D7: new Coupang registrations of this category leave 총 수량 out",
+            example = "false")
+    private boolean grandTotalOmitted;
 }

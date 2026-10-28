@@ -87,4 +87,14 @@ public class PlatformCategory extends BaseEntity {
      */
     @Column(name = "auction_commission_rate", precision = 5, scale = 4)
     private BigDecimal auctionCommissionRate;
+
+    /**
+     * FEATURE_2610_34 / D2 · D10 · D15: a new Coupang registration in this category leaves 총 수량 out of the payload.
+     * Set when a registration passed only after dropping it (D2) or by changeset 120 (D10); cleared when a registration
+     * without it was rejected for a missing 총 수량 and passed with it (D8), or by [기억 지우기] (D7). Where the value
+     * came from is not stored (D15). Always {@code false} on a non-Coupang row.
+     */
+    @Column(name = "grand_total_omitted", nullable = false)
+    @Builder.Default
+    private boolean grandTotalOmitted = false;
 }

@@ -262,4 +262,16 @@ public class ProductListing extends BaseEntity {
     @Column(name = "shipping_override", columnDefinition = "TEXT")
     @Schema(description = "Per-channel shipping overrides")
     private Map<String, String> shippingOverride;
+
+    /**
+     * FEATURE_2610_34 / D6 · D11 · D16 · D22: whether a revision (PUT) of this Coupang listing sends 총 수량. Written by
+     * the registration and by revisions; a revision consults the category memory
+     * ({@link PlatformCategory#isGrandTotalOmitted()}) only while this is {@link GrandTotalSend#SENT}. Pre-existing rows
+     * are {@code SENT} (changeset 120, D11 ①).
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "grand_total_send", length = 20, nullable = false)
+    @Builder.Default
+    @Schema(description = "Whether a Coupang revision sends 총 수량", example = "SENT")
+    private GrandTotalSend grandTotalSend = GrandTotalSend.SENT;
 }
