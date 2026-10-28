@@ -21,4 +21,8 @@ public class ListingRegisterResponse {
 
     @Schema(description = "Market product id returned by the platform", example = "123456789")
     private String platformProductId;
+
+    @Schema(description = "FEATURE_2610_34 / D9 · D18: one line for the success notice when a new Coupang registration"
+            + " passed without 총 수량; null otherwise", example = "이 카테고리는 총 수량 없이 등록했습니다")
+    private String grandTotalNotice;
 }

@@ -1,6 +1,7 @@
 package com.pms.service.listing;
 
 import com.pms.domain.GeneratedProductData;
+import com.pms.domain.GrandTotalSend;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OptionApprovalStatus;
@@ -34,7 +35,8 @@ import static org.mockito.Mockito.verify;
 
 /**
  * Layer B (FEATURE_2608_06 / 3d): pushSync pushes pending on-market cells (→ SUBMITTED + dirty clear), skips
- * not-registered / not-pending cells, and isolates a per-cell adapter failure.
+ * not-registered / not-pending cells, and isolates a per-cell adapter failure. FEATURE_2610_34: the 총 수량 state the
+ * adapter reports is saved on the pushed cell.
  */
 @ExtendWith(MockitoExtension.class)
 class ListingPropagationServiceTest {
@@ -67,9 +69,11 @@ class ListingPropagationServiceTest {
         given(generatedProductDataRepository.findByProductListingId(cellId))
                 .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
         given(resolver.resolve(Platform.COUPANG)).willReturn(adapter);
+        // FEATURE_2610_34: reports nothing about 총 수량 (lenient — a test may stub its own outcome).
+        lenient().when(adapter.updateAndReport(any(), any(), any())).thenReturn(PushOutcome.unchanged(null));
     }
 
-    // (a) happy: pending on-market cell with account + gen → adapter.update + SUBMITTED + dirty cleared.
+    // (a) happy: pending on-market cell with account + gen → adapter.updateAndReport + SUBMITTED + dirty cleared.
     @Test
     void pushSync_pendingCell_pushesAndClearsDirty() {
         ProductListing pending = cell(1L, "SP-1", true);
@@ -80,7 +84,7 @@ class ListingPropagationServiceTest {
 
         assertThat(response.getRequested()).isEqualTo(1);
         assertThat(response.getPushed()).isEqualTo(1);
-        verify(adapter).update(eq(pending), any(), any());
+        verify(adapter).updateAndReport(eq(pending), any(), any());
 
         ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
         verify(productListingRepository).save(captor.capture());
@@ -100,11 +104,11 @@ class ListingPropagationServiceTest {
 
         assertThat(response.getSkipped()).isEqualTo(2);
         assertThat(response.getPushed()).isZero();
-        verify(adapter, never()).update(any(), any(), any());
+        verify(adapter, never()).updateAndReport(any(), any(), any());
         verify(productListingRepository, never()).save(any());
     }
 
-    // (c) isolation: 2 pending; cell2 adapter.update throws → cell1 pushed, failed=1.
+    // (c) isolation: 2 pending; cell2 adapter.updateAndReport throws → cell1 pushed, failed=1.
     @Test
     void pushSync_isolatesPerCellFailure() {
         ProductListing ok = cell(1L, "SP-1", true);
@@ -116,15 +120,31 @@ class ListingPropagationServiceTest {
         lenient().when(generatedProductDataRepository.findByProductListingId(any()))
                 .thenReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
         given(resolver.resolve(Platform.COUPANG)).willReturn(adapter);
-        // ok cell: update() is void → default no-op. Lenient so the ok cell's non-matching call to the same
+        // ok cell: reports nothing about 총 수량. Lenient so the ok cell's non-matching call to the same
         // mocked method does not trip strict-stubbing (which the service's try/catch would count as a failure).
-        lenient().doThrow(new RuntimeException("coupang 500"))
-                .when(adapter).update(eq(boom), any(), any());
+        lenient().when(adapter.updateAndReport(eq(ok), any(), any())).thenReturn(PushOutcome.unchanged(null));
+        lenient().when(adapter.updateAndReport(eq(boom), any(), any())).thenThrow(new RuntimeException("coupang 500"));
 
         PushSyncResponse response = service.pushSync(List.of(1L, 2L));
 
         assertThat(response.getPushed()).isEqualTo(1);
         assertThat(response.getFailed()).isEqualTo(1);
+    }
+
+    // FEATURE_2610_34 / D11 · D17: the reported 총 수량 state is saved on the pushed listing.
+    @Test
+    void pushSync_storesReportedGrandTotalState() {
+        ProductListing pending = cell(1L, "SP-1", true);
+        given(productListingRepository.findScopedById(1L)).willReturn(Optional.of(pending));
+        stubAccountAndGenAndAdapter(1L);
+        given(adapter.updateAndReport(eq(pending), any(), any()))
+                .willReturn(new PushOutcome(null, GrandTotalSend.OMITTED, null, false));
+
+        service.pushSync(List.of(1L));
+
+        ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(captor.capture());
+        assertThat(captor.getValue().getGrandTotalSend()).isEqualTo(GrandTotalSend.OMITTED);
     }
 
     // (d) 42: after update, a deactivated APPROVED option is reverted to NOT_APPROVED; the active one is untouched.

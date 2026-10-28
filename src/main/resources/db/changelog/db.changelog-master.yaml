@@ -238,3 +238,5 @@ databaseChangeLog:
       file: db/changelog/changes/118-thumbnail-photo.yaml
   - include:
       file: db/changelog/changes/119-drop-thumbnail-photo.yaml
+  - include:
+      file: db/changelog/changes/120-coupang-grand-total.yaml

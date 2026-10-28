@@ -28,7 +28,7 @@ public interface ListingRegistrationService {
      * absent/cross-tenant cell → 404, not-yet-registered cell / missing account or generated assets / no
      * active option → 400.
      *
-     * <p>On success (adapter update returned) the cell goes to SUBMITTED from <em>any</em> status (no
+     * <p>On success ({@code adapter.updateAndReport} returned) the cell goes to SUBMITTED from <em>any</em> status (no
      * transition guard — REJECTED/SELLING/SUSPENDED all re-enter review), the dirty marker is cleared, a tag
      * revision is recorded, and deactivated-but-APPROVED options are reverted to NOT_APPROVED (same rule as
      * {@code pushSync}: they are dropped from the re-submitted payload).</p>

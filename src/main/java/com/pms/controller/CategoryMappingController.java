@@ -16,7 +16,8 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 /**
- * Category mapping (standard × platform → marketplace code) CRUD (FEATURE_2608_06 / 44).
+ * Category mapping (standard × platform → marketplace code) CRUD (FEATURE_2608_06 / 44), plus [기억 지우기] of a
+ * Coupang category's 총 수량 memory (FEATURE_2610_34 / D7).
  *
  * <p>All endpoints are ADMIN-only via the global {@code /api/admin/**} rule (SecurityConfig) — no per-method
  * {@code @PreAuthorize}.</p>
@@ -49,6 +50,14 @@ public class CategoryMappingController {
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<Void> deleteMapping(@PathVariable Long categoryId, @PathVariable String platform) {
         categoryMappingService.deleteMapping(categoryId, Platform.from(platform));
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/coupang-categories/{code}/grand-total-omitted")
+    @Operation(summary = "Forget that new registrations of a Coupang category leave 총 수량 out (FEATURE_2610_34 / D7)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<Void> clearGrandTotalOmitted(@PathVariable String code) {
+        categoryMappingService.clearGrandTotalOmitted(code);
         return ResponseEntity.noContent().build();
     }
 }

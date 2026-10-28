@@ -1,6 +1,7 @@
 package com.pms.service.listing;
 
 import com.pms.domain.GeneratedProductData;
+import com.pms.domain.GrandTotalSend;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OptionApprovalStatus;
@@ -15,6 +16,7 @@ import com.pms.exception.BusinessException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.PlatformCategoryRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.service.coupang.SyncWindow;
@@ -38,8 +40,9 @@ import java.util.stream.Collectors;
  * Channel registration orchestration (FEATURE_2608_06 / 3c). See {@link ListingRegistrationService}.
  *
  * <p>Each write method is {@code @Transactional} (DB save atomicity); its marketplace HTTP calls run inside the
- * transaction — one call per write, plus the market price read of a refresh (FEATURE_2610_27 / D13 ①: Coupang none
- * extra · 11st and ESM one extra) — with no approval wait. {@code syncApprovals} reuses the private refresh core (same
+ * transaction — one call per write (a Coupang register or update may send one more, with or without 총 수량 —
+ * FEATURE_2610_34), plus the market price read of a refresh (FEATURE_2610_27 / D13 ①: Coupang none extra · 11st and
+ * ESM one extra) — with no approval wait. {@code syncApprovals} reuses the private refresh core (same
  * code path) — the inner call is a self-invocation, so its {@code @Transactional} is intentionally not a new
  * boundary: the sweep is one transaction and a caught per-listing failure (pre-flush: account/HTTP error)
  * does not poison it, so successful promotions persist.</p>
@@ -54,6 +57,8 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
     /** Coupang answers 400 with this text while it is still processing a registration or an edit. */
     private static final String COUPANG_PROCESSING_MARKER = "등록 또는 수정되고 있습니다";
     private static final Pattern COUPANG_MESSAGE = Pattern.compile("\"message\"\\s*:\\s*\"([^\"]*)\"");
+    /** FEATURE_2610_34 / D9 · D18: appended to the success notice of a new registration that passed without 총 수량. */
+    static final String GRAND_TOTAL_NOTICE = "이 카테고리는 총 수량 없이 등록했습니다";
 
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
@@ -62,6 +67,7 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
     private final ListingChannelResolver resolver;
     private final TagMergeService tagMergeService;
     private final MarketPriceApplier marketPriceApplier;
+    private final PlatformCategoryRepository platformCategoryRepository;
 
     @Override
     @Transactional
@@ -89,7 +95,14 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
         // The orchestration stays channel-vocabulary-free — it just delegates.
         adapter.validateRegistrable(cell, gen, acct);
 
-        String sellerProductId = adapter.register(cell, gen, acct);
+        PushOutcome outcome = adapter.registerAndReport(cell, gen, acct);
+        String sellerProductId = outcome.platformProductId();
+        // FEATURE_2610_34 / D2 · D8: the adapter reports, the orchestration stores the category memory.
+        if (outcome.learnedCategory() != null) {
+            platformCategoryRepository.save(outcome.learnedCategory().toBuilder()
+                    .grandTotalOmitted(outcome.learnedGrandTotalOmitted())
+                    .build());
+        }
 
         // Push succeeded → append the merged tag snapshot (33) if it changed. Failed cells never reach here.
         List<String> merged = tagMergeService.resolveTags(cell);
@@ -99,12 +112,14 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
         productListingRepository.save(cell.toBuilder()
                 .platformProductId(sellerProductId)
                 .status(ListingStatus.SUBMITTED)
+                .grandTotalSend(outcome.grandTotalSend() != null ? outcome.grandTotalSend() : cell.getGrandTotalSend())
                 .build());
 
         return ListingRegisterResponse.builder()
                 .productListingId(cell.getId())
                 .status(ListingStatus.SUBMITTED.name())
                 .platformProductId(sellerProductId)
+                .grandTotalNotice(outcome.grandTotalSend() == GrandTotalSend.OMITTED ? GRAND_TOTAL_NOTICE : null)
                 .build();
     }
 
@@ -129,7 +144,7 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
         // 108/D4: no validateRegistrable — this mirrors pushSync (which does not call it) and the cell already
         // passed it at register time. Unlike pushSync the needsMarketSync dirty marker is ignored on purpose.
         ListingChannel adapter = resolver.resolve(cell.getPlatform());
-        adapter.update(cell, gen, acct);
+        PushOutcome outcome = adapter.updateAndReport(cell, gen, acct);
 
         // 42 (same rule as pushSync): options deactivated on this channel are dropped from the re-submitted
         // payload → they are no longer live on the market, so revert a previously-APPROVED one to NOT_APPROVED.
@@ -144,9 +159,11 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
         List<String> merged = tagMergeService.resolveTags(cell);
         tagMergeService.recordRevisionIfChanged(cell, merged);
         // Whole re-submit = re-review → SUBMITTED from any status (no transition guard) + clear dirty marker.
+        // FEATURE_2610_34 / D11 · D16: a revision stores its 총 수량 state on the listing only (D17).
         productListingRepository.save(cell.toBuilder()
                 .status(ListingStatus.SUBMITTED)
                 .needsMarketSync(false)
+                .grandTotalSend(outcome.grandTotalSend() != null ? outcome.grandTotalSend() : cell.getGrandTotalSend())
                 .build());
 
         return ListingRegisterResponse.builder()
