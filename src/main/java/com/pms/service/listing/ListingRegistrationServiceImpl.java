@@ -92,8 +92,8 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
             throw new IllegalArgumentException("활성 옵션 없음");
         }
 
-        // 63: channel-owned registration policy (Coupang: required-attribute check for SINGLE / skip for AB).
-        // The orchestration stays channel-vocabulary-free — it just delegates.
+        // 63: channel-owned registration policy (Coupang: required-attribute and notice checks, SINGLE and AB alike —
+        // FEATURE_2610_37 / D16). The orchestration stays channel-vocabulary-free — it just delegates.
         adapter.validateRegistrable(cell, gen, acct);
 
         PushOutcome outcome = adapter.registerAndReport(cell, gen, acct);

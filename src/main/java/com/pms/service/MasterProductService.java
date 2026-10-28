@@ -63,8 +63,8 @@ public interface MasterProductService {
      * Whether the master is a mixed-composition (AB) product (FEATURE_2608_06 / 63). Determined by the master's
      * component count: {@code >= 2} components → AB (bundle), {@code 1} → SINGLE, {@code masterId == null} →
      * SINGLE (backfill transition window). Platform-neutral domain fact (component count) — channel adapters
-     * reuse it (Coupang skips attributes for AB; NAVER may reuse the judgment too), and the thumbnail collage
-     * allows a collage only for AB (FEATURE_2610_21 D3).
+     * reuse it (Coupang: the bundle type of a registration and its one-option limit; NAVER may reuse the judgment
+     * too), and the thumbnail collage allows a collage only for AB (FEATURE_2610_21 D3).
      *
      * @param masterId the master product id (nullable → false)
      * @return true if AB (2+ components), false otherwise
