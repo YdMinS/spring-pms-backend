@@ -140,5 +140,13 @@ public class ListingMatrixResponse {
         /** {@code ProductListing.needsMarketSync} — 로컬에서 바뀐 값이 아직 마켓에 가지 않았다([수정 요청] 필요). */
         @Schema(description = "True when a local change has not been pushed to the market yet", example = "false")
         private boolean needsMarketSync;
+
+        /**
+         * FEATURE_2610_36 / D14: {@code ProductListing.marketBundleType} — the Coupang bundle type this listing has on
+         * the market ({@code SINGLE} · {@code AB}), {@code null} when not known. The option picker limits a Coupang
+         * listing to one option by it.
+         */
+        @Schema(description = "Coupang bundle type on the market (SINGLE/AB, null = unknown)", example = "AB")
+        private String marketBundleType;
     }
 }

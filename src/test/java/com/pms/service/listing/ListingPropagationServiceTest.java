@@ -147,6 +147,22 @@ class ListingPropagationServiceTest {
         assertThat(captor.getValue().getGrandTotalSend()).isEqualTo(GrandTotalSend.OMITTED);
     }
 
+    // FEATURE_2610_36 / D11: the bundle type the adapter read for a listing that did not know it is saved.
+    @Test
+    void pushSync_storesReportedBundleType() {
+        ProductListing pending = cell(1L, "SP-1", true);
+        given(productListingRepository.findScopedById(1L)).willReturn(Optional.of(pending));
+        stubAccountAndGenAndAdapter(1L);
+        given(adapter.updateAndReport(eq(pending), any(), any()))
+                .willReturn(new PushOutcome(null, null, null, false, "AB"));
+
+        service.pushSync(List.of(1L));
+
+        ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(captor.capture());
+        assertThat(captor.getValue().getMarketBundleType()).isEqualTo("AB");
+    }
+
     // (d) 42: after update, a deactivated APPROVED option is reverted to NOT_APPROVED; the active one is untouched.
     @Test
     void pushSync_deactivatedApprovedOption_revertedToNotApproved() {

@@ -12,7 +12,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * {@link MarketPriceSyncService} — status call + price read + {@link MarketPriceApplier} (FEATURE_2610_27 / D13 ②).
- * The status call is only the source of the prices here: the listing status is NOT saved (§2-8 row 8).
+ * The status call is the source of the prices here: the listing status is NOT saved (§2-8 row 8). The one other value
+ * kept from it is the Coupang bundle type, when the read returned one (FEATURE_2610_36 / D10 ③).
  */
 @Service
 @RequiredArgsConstructor
@@ -36,6 +37,9 @@ public class MarketPriceSyncServiceImpl implements MarketPriceSyncService {
         }
         ListingChannel adapter = resolver.resolve(cell.getPlatform());
         FetchResult fetched = adapter.fetchStatus(cell, acct);
+        if (fetched.marketBundleType() != null && !fetched.marketBundleType().equals(cell.getMarketBundleType())) {
+            productListingRepository.save(cell.toBuilder().marketBundleType(fetched.marketBundleType()).build());
+        }
         return marketPriceApplier.apply(cell, adapter.readMarketPrices(cell, acct, fetched));
     }
 }

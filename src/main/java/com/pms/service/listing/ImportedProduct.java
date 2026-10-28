@@ -12,34 +12,47 @@ import java.util.Map;
  *
  * <p>⚠️ Every field is nullable on purpose: only {@code statusName}/{@code items[]}/{@code itemName}/
  * {@code vendorItemId}/{@code sellerProductItemId} are confirmed against a live Coupang response (the keys
- * {@code fetchStatus} already reads). The rest are inferred from the register payload schema, so a missing
- * key must parse to {@code null} rather than throw — the service decides what is fatal (a missing sale price
- * is, a missing tag list is not).</p>
+ * {@code fetchStatus} already reads). The rest are inferred from the register payload schema ({@code bundleInfo}:
+ * from the product query docs), so a missing key must parse to {@code null} rather than throw — the service decides
+ * what is fatal (a missing sale price is, a missing tag list is not).</p>
  *
  * @param productName  marketplace product name (Coupang {@code sellerProductName})
- * @param brand        2609_67: marketplace brand (Coupang {@code brand}, 단건 응답 · 문서 확인
- *                     2026-09-21) — 없으면 null. 물품 등록 화면의 [채우기] 가 이 값을 쓴다
+ * @param brand        2609_67: marketplace brand (Coupang {@code brand}, in the single-product response · checked in
+ *                     the docs 2026-09-21) — null when absent. The [채우기] of the product registration screen uses it
  * @param categoryCode marketplace leaf category code (Coupang {@code displayCategoryCode}) — D16, display only
  * @param status       marketplace status mapped to our lifecycle status
  * @param tags         marketplace search tags (item level on Coupang); never null, empty when absent
- * @param noticeGroup  2609_45/D4-2: 고시 품목군({@code notices[0].noticeCategoryName}, 예 "가공식품").
- *                     품목군은 <b>상품 단위</b>라 옵션마다 갈리지 않는다 — 옵션으로 내리지 말 것.
- * @param thumbnailImages 대표/썸네일 이미지 URL({@code items[].images[].cdnPath}), 마켓 순서 그대로.
- *                     🔴 <b>마켓 가공본이다</b> — 문구·테두리가 얹힌 이미지라 제품 사진으로 그대로 쓸 수 없다.
- *                     {@code detailImages} 와 <b>절대 합치지 말 것</b>(소비자가 가공본을 구분할 수 없게 된다).
- *                     never null, empty when absent
- * @param detailImages 상세 콘텐츠 이미지 URL({@code items[].contents[].contentDetails[]} — {@code IMAGE}
- *                     타입이면 {@code content} 자체가 URL, 아니면 HTML 안의 {@code img src}), 설명 흐름 순서
- *                     그대로. 원본에 가까운 제품 사진은 여기 있다. never null, empty when absent
+ * @param noticeGroup  2609_45/D4-2: the notice item group ({@code notices[0].noticeCategoryName}, e.g. '가공식품').
+ *                     The item group is <b>per product</b> and never differs per option — do not move it to options.
+ * @param thumbnailImages representative/thumbnail image URLs ({@code items[].images[].cdnPath}), in market order.
+ *                     🔴 <b>They are market-edited</b> — images with text and borders on top, not usable as product
+ *                     photos as they are. <b>Never merge them</b> with {@code detailImages} (a consumer could no longer
+ *                     tell the edited ones apart). never null, empty when absent
+ * @param detailImages detail content image URLs ({@code items[].contents[].contentDetails[]} — for the {@code IMAGE}
+ *                     type {@code content} itself is the URL, otherwise the {@code img src} inside the HTML), in the
+ *                     order of the description. The photos closest to the originals are here. never null, empty when
+ *                     absent
  * @param options      marketplace options; never null, empty when absent
- * @param statusName marketplace status as the market wrote it (Coupang {@code statusName}, 예 "부분승인완료"); null when absent
- * @param displayProductName marketplace 노출상품명 (Coupang {@code displayProductName}); null when absent.
- *                     🔴 {@code productName} is the 등록상품명 — use {@link #displayName()} for our 노출상품명.
+ * @param statusName marketplace status as the market wrote it (Coupang {@code statusName}, e.g. '부분승인완료'); null
+ *                     when absent
+ * @param displayProductName marketplace 「노출상품명」 (Coupang {@code displayProductName}); null when absent.
+ *                     🔴 {@code productName} is the 「등록상품명」 — use {@link #displayName()} for our 「노출상품명」.
+ * @param marketBundleType FEATURE_2610_36 / D9 · D10: Coupang {@code bundleInfo.bundleType} ({@code SINGLE} ·
+ *                     {@code AB}); null when absent or any other value
  */
 public record ImportedProduct(String productName, String brand, String categoryCode, ListingStatus status,
                               List<String> tags, String noticeGroup, List<String> thumbnailImages,
                               List<String> detailImages, List<Option> options, String statusName,
-                              String displayProductName) {
+                              String displayProductName, String marketBundleType) {
+
+    /** The 11-argument form used before FEATURE_2610_36 — {@code marketBundleType = null}. */
+    public ImportedProduct(String productName, String brand, String categoryCode, ListingStatus status,
+                           List<String> tags, String noticeGroup, List<String> thumbnailImages,
+                           List<String> detailImages, List<Option> options, String statusName,
+                           String displayProductName) {
+        this(productName, brand, categoryCode, status, tags, noticeGroup, thumbnailImages, detailImages,
+                options, statusName, displayProductName, null);
+    }
 
     /** 2026-10-09 이전의 10인자 형태 — {@code displayProductName = null}. */
     public ImportedProduct(String productName, String brand, String categoryCode, ListingStatus status,
