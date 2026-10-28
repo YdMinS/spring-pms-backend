@@ -24,9 +24,9 @@ public interface ListingChannel {
     /**
      * Validate that the cell may be registered under this channel's own registration policy (FEATURE_2608_06 /
      * 63). A violation throws (e.g. {@code IllegalArgumentException} → 400). The orchestration delegates here
-     * before {@link #registerAndReport} — the channel owns the policy (Coupang: skip for AB / required-attribute check
-     * for SINGLE; NAVER implements its own). The {@code gen} parameter is kept for contract symmetry with
-     * {@link #register}/{@link #update} even when an implementation does not use it.
+     * before {@link #registerAndReport} — the channel owns the policy (Coupang: required-attribute and notice checks,
+     * SINGLE and AB alike — FEATURE_2610_37 / D16; NAVER implements its own). The {@code gen} parameter is kept for
+     * contract symmetry with {@link #register}/{@link #update} even when an implementation does not use it.
      *
      * @param cell the DRAFT channel cell
      * @param gen  generated assets (payload source; may be unused by an implementation)

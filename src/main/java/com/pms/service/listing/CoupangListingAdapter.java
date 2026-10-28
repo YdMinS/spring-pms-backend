@@ -135,6 +135,8 @@ public class CoupangListingAdapter implements ListingChannel {
             "쿠팡은 혼합 구성 상품에 옵션 1개만 올릴 수 있습니다. 이 쿠팡 판매채널에서 옵션을 하나만 켜 두고 다시 등록하세요";
     // FEATURE_2610_36 / D11: the 400 text when the one-time read of a revision finds no bundle type.
     static final String BUNDLE_TYPE_UNREAD = "쿠팡에서 혼합/단일 구분을 읽지 못했습니다. 잠시 뒤 다시 시도하세요";
+    // FEATURE_2610_37 / D21: the 400 text of a registration Coupang refuses with no retry; Coupang's message follows.
+    static final String REGISTER_REJECTED = "쿠팡이 상품 등록을 거부했습니다: ";
 
     private final CoupangApiClient client;
     // 2609_19: only the per-item price path lives in config (unverified against a live account); the other
@@ -177,8 +179,9 @@ public class CoupangListingAdapter implements ListingChannel {
      *       remembered on the category (D1 · D2 · D4 · D21).</li>
      *   <li>Sent without it and rejected with {@link #GRAND_TOTAL_REQUIRED} → one more try with it; a pass clears the
      *       memory (D8 · D22).</li>
-     *   <li>A failed second try → 400 with Coupang's second message (D5 · D24). Every other rejection is thrown as
-     *       before (data-less 2xx → {@code IllegalStateException} · non-2xx → the client's exception).</li>
+     *   <li>A failed second try → 400 with Coupang's second message (D5 · D24). Every other rejection — a data-less
+     *       2xx or a 4xx — is a 400 with Coupang's message (FEATURE_2610_37 / D21); a 5xx stays the client's
+     *       exception, and a 429 never gets here (the client throws its rate-limit error first).</li>
      * </ol>
      * Nothing is stored here — {@link PushOutcome} carries it to the orchestration.
      */
@@ -226,7 +229,10 @@ public class CoupangListingAdapter implements ListingChannel {
         try {
             raw = client.post(SELLER_PRODUCTS, writeJson(body), acct);
         } catch (RestClientResponseException e) {
-            return new Attempt(null, e.getResponseBodyAsString(), e);
+            String rejection = e.getResponseBodyAsString();
+            // FEATURE_2610_37 / D21: a 4xx is Coupang refusing the product → 400 with its message; a 5xx stays as is.
+            return new Attempt(null, rejection, e.getStatusCode().is4xxClientError()
+                    ? new IllegalArgumentException(REGISTER_REJECTED + coupangMessage(rejection), e) : e);
         }
         // Response data = sellerProductId (number or string) → return as String.
         JsonNode data = readJson(raw).path("data");
@@ -235,8 +241,8 @@ public class CoupangListingAdapter implements ListingChannel {
             // without them "유효하지 않은 구매 옵션 값 혹은 단위" cannot be traced to a value.
             String sent = describeItemAttributes(body);
             log.warn("[COUPANG-ADAPTER] register rejected listing={} sent attributes: {}", cell.getId(), sent);
-            return new Attempt(null, raw, new IllegalStateException("쿠팡 상품등록 응답에 data(sellerProductId) 없음: "
-                    + raw + " | 보낸 옵션 속성: " + sent));
+            // FEATURE_2610_37 / D21: a data-less 2xx is Coupang refusing the product too → 400 with its message.
+            return new Attempt(null, raw, new IllegalArgumentException(REGISTER_REJECTED + coupangMessage(raw)));
         }
         return new Attempt(data.asText(), null, null);
     }
@@ -775,12 +781,8 @@ public class CoupangListingAdapter implements ListingChannel {
     public void validateRegistrable(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct) {
         // gen is unused here (kept for the ListingChannel contract symmetry — see interface Javadoc).
         MasterProduct master = cell.getMasterProduct();
-        // 63: AB (mixed-composition) forbids attributes entirely → a required-attribute check would make it
-        // un-registrable (contradiction). Same isBundle call as buildPayload (§attributes skip) → the payload
-        // and the validation can't structurally diverge.
-        // ⚠️ 96 ⑨: AB only skips the ATTRIBUTE half. AB still sends notices, so returning here (as this method
-        // used to) meant a missing required 고시 reached Coupang untouched.
-        boolean bundle = masterProductService.isBundle(master == null ? null : master.getId());
+        // FEATURE_2610_37 / D16: a mixed-composition (AB) master is checked exactly like a single one — the payload
+        // carries its attributes (D15), and Coupang refused an AB payload without them (2026-10-28, category 72931).
         // 47/59: register targets a single (master × channel) cell → one category → one getMeta call (reusing
         // the Coupang concrete metaAdapter, 61). Empty schema (NAVER) leaves both loops with nothing to check.
         // 2609_45/D10: ONE resolver call gives both the code and whether it is the channel's own category —
@@ -822,7 +824,7 @@ public class CoupangListingAdapter implements ListingChannel {
             // (master shared default ++ per-option override). Categories whose schema defines no attribute have
             // nothing to send → skipped here rather than at the top of the method, so the notice check below
             // still runs for a notices-only category (96 ⑨).
-            if (!bundle && !schema.attributes().isEmpty()) {
+            if (!schema.attributes().isEmpty()) {
                 Map<String, String> values = mergedAttributes(masterAttributes, mo, option);
                 // 93: Coupang requires at least one attribute per item. This only fires when values COULD have
                 // been filled (a schema with attributes).
@@ -1026,7 +1028,7 @@ public class CoupangListingAdapter implements ListingChannel {
         // 63 · FEATURE_2610_36 / D2: bundleInfo.bundleType = product-level SINGLE (single composition) / AB (mixed
         // composition). Determined once (loop-invariant local boolean, no N+1): a registration by the master's
         // component count (D1), a revision by the type the listing has on Coupang (D6 — Coupang cannot change it after
-        // the first registration). AB forbids attributes entirely.
+        // the first registration). FEATURE_2610_37 / D15: AB carries the attributes like SINGLE.
         boolean bundle = forUpdate
                 ? BUNDLE_AB.equals(revisionBundleType)
                 : masterProductService.isBundle(master == null ? null : master.getId());
@@ -1093,18 +1095,16 @@ public class CoupangListingAdapter implements ListingChannel {
             item.put("contents", itemContents);
 
             MasterProductOption mo = linkedMaster(option, byMasterOptionId);
-            // 63: AB forbids attributes ("혼합 구성 상품 등록할 때, 속성 입력할 수 없습니다") → skip the whole block for AB.
-            // SINGLE keeps per-item merged category attributes (47/59). notices are NOT forbidden → unchanged below.
-            if (!bundle) {
-                Map<String, String> attrs = withConsistentGrandTotal(
-                        mergedAttributes(masterAttributes, mo, option));
-                // A stored 총 수량 is always put in the built payload: the meta can mark it OPTIONAL while Coupang
-                // still rejects an update without it ("필수 옵션이(총 수량) 입력되지 않았습니다", 2026-10-16) — same as
-                // 수량 (2026-10-09). Whether it is sent is decided by registerAndReport / updateAndReport
-                // (FEATURE_2610_34), never by the meta.
-                if (!attrs.isEmpty()) {
-                    item.put("attributes", toAttributes(attrs, unitByAttr, usableByAttr));
-                }
+            // 47/59 · FEATURE_2610_37 / D15: per-item merged category attributes for SINGLE and AB alike — Coupang
+            // refused an AB payload without them ("아이템의 속성값을 입력하지 않았습니다", 2026-10-28).
+            Map<String, String> attrs = withConsistentGrandTotal(
+                    mergedAttributes(masterAttributes, mo, option));
+            // A stored 총 수량 is always put in the built payload: the meta can mark it OPTIONAL while Coupang
+            // still rejects an update without it ("필수 옵션이(총 수량) 입력되지 않았습니다", 2026-10-16) — same as
+            // 수량 (2026-10-09). Whether it is sent is decided by registerAndReport / updateAndReport
+            // (FEATURE_2610_34), never by the meta.
+            if (!attrs.isEmpty()) {
+                item.put("attributes", toAttributes(attrs, unitByAttr, usableByAttr));
             }
             Map<String, String> notices = mergedNotices(masterNotices, mo, option);
             if (!requiredNotices.isEmpty()) {

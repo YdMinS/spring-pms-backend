@@ -29,10 +29,15 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -276,9 +281,9 @@ class CoupangListingAdapterTest {
         assertThat(new CategoryAttribute("동물종류", false, "TEXT", List.of(), null).sendUnit()).isNull();
     }
 
-    // A rejected register (no data) must echo the per-item attributes we sent — Coupang names no field.
+    // FEATURE_2610_37 / D21: a rejected register (no data) is a 400 with Coupang's message — no longer a 500.
     @Test
-    void register_rejected_messageListsSentAttributes() {
+    void register_rejectedWithoutData_throws400WithCoupangMessage() {
         MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨").build();
         ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
@@ -296,9 +301,42 @@ class CoupangListingAdapterTest {
                 "{\"code\":\"ERROR\",\"message\":\"유효하지 않은 구매 옵션 값 혹은 단위가 존재합니다.\",\"data\":null}");
 
         assertThatThrownBy(() -> adapter.register(cell, gen, acct()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("보낸 옵션 속성:")
-                .hasMessageContaining("최소 중량=11.33g");
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("쿠팡이 상품 등록을 거부했습니다: 유효하지 않은 구매 옵션 값 혹은 단위가 존재합니다.");
+    }
+
+    // FEATURE_2610_37 / D21: a 4xx rejection that is not retried is a 400 with Coupang's message too.
+    @Test
+    void register_rejected4xx_throws400WithCoupangMessage() {
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("A")
+                        .sellingPrice(new BigDecimal("6000")).active(true).build()));
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
+        given(client.post(anyString(), anyString(), any())).willThrow(HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST, "Bad Request", HttpHeaders.EMPTY,
+                "{\"code\":\"ERROR\",\"message\":\"아이템의 속성값을 입력하지 않았습니다.\"}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
+
+        assertThatThrownBy(() -> adapter.register(cell(), gen, acct()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("쿠팡이 상품 등록을 거부했습니다: 아이템의 속성값을 입력하지 않았습니다.");
+    }
+
+    // FEATURE_2610_37 / D21: a 5xx stays the client's exception.
+    @Test
+    void register_server5xx_isRethrown() {
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("A")
+                        .sellingPrice(new BigDecimal("6000")).active(true).build()));
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
+        given(client.post(anyString(), anyString(), any())).willThrow(HttpServerErrorException.create(
+                HttpStatus.INTERNAL_SERVER_ERROR, "Internal Server Error", HttpHeaders.EMPTY,
+                "{}".getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8));
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
+
+        assertThatThrownBy(() -> adapter.register(cell(), gen, acct()))
+                .isInstanceOf(HttpServerErrorException.class);
     }
 
     // 61: a notice detail with no group mapping (unknown/legacy key) is skipped — the item carries no notices.
@@ -380,10 +418,10 @@ class CoupangListingAdapterTest {
         assertThat(item.path("unitCount").asInt()).isEqualTo(1);
     }
 
-    // 63 · FEATURE_2610_36 / D2: AB (2+ components) → bundleInfo.bundleType=AB, item has NO attributes key, still
-    // unitCount=1, notices unchanged.
+    // 63 · FEATURE_2610_36 / D2 · FEATURE_2610_37 / D15: AB (2+ components) → bundleInfo.bundleType=AB, the item
+    // carries the attributes like SINGLE, unitCount=1, notices unchanged.
     @Test
-    void register_ab_payloadHasAbNoAttributesButUnitCountAndNotices() throws Exception {
+    void register_ab_payloadHasAbWithAttributesUnitCountAndNotices() throws Exception {
         MasterProduct master = MasterProduct.builder().id(1L).name("라벨")
                 .categoryAttributes(Map.of("원산지", "국내산"))
                 .categoryNotices(Map.of("제품소재", "면 100%")).build();
@@ -396,7 +434,7 @@ class CoupangListingAdapterTest {
         given(masterProductService.isBundle(1L)).willReturn(true);   // 2+ components → AB
         given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         // 61: notices need a noticeCategoryName group mapping to survive the payload — stub it so the AB notice
-        // is emitted (attributes are forbidden for AB, but notices are not).
+        // is emitted.
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(), List.of(new CategoryNotice("제품소재", "제품소재", false, "의류"))));
         GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
@@ -408,7 +446,7 @@ class CoupangListingAdapterTest {
         JsonNode json = objectMapper.readTree(payload.getValue());
         assertThat(json.path("bundleInfo").path("bundleType").asText()).isEqualTo("AB");
         JsonNode item = json.path("items").get(0);
-        assertThat(item.has("attributes")).isFalse();                       // AB forbids attributes
+        assertThat(item.path("attributes").get(0).path("attributeValueName").asText()).isEqualTo("국내산");
         assertThat(item.path("unitCount").asInt()).isEqualTo(1);
         assertThat(item.path("notices").get(0).path("content").asText()).isEqualTo("면 100%");
     }
@@ -432,21 +470,23 @@ class CoupangListingAdapterTest {
         assertThat(json.path("items").get(0).path("unitCount").asInt()).isEqualTo(1);
     }
 
-    // 63: validateRegistrable — AB skips the required-attribute check entirely (can't send attributes anyway).
+    // FEATURE_2610_37 / D16: validateRegistrable checks an AB master like SINGLE — no attribute value at all → 400,
+    // and the check no longer asks whether the master is AB.
     @Test
-    void validateRegistrable_ab_skipsRequiredAttributeCheck() {
+    void validateRegistrable_ab_enforcesAttributesLikeSingle() {
         MasterProduct master = MasterProduct.builder().id(1L).build();   // no attribute values at all
         ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
-        given(masterProductService.isBundle(1L)).willReturn(true);
-        // 96 ⑨: AB no longer returns before the meta lookup (it still has to validate notices) → the category
-        // code and the schema must be reachable.
+        lenient().when(masterProductService.isBundle(1L)).thenReturn(true);   // 2+ components → AB
         given(masterChannelConfigService.resolveChannelCategory(cell)).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(new CategoryAttribute("원산지", true, "TEXT", List.of(), null)), List.of()));
+        givenOneActiveOption();
 
-        assertThatCode(() -> adapter.validateRegistrable(cell, null, acct()))
-                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> adapter.validateRegistrable(cell, null, acct()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("카테고리 속성 미입력: A — 속성을 1개 이상 입력하세요");
+        verify(masterProductService, never()).isBundle(any());
     }
 
     // 63: validateRegistrable — SINGLE with a required attribute left blank → 400 (schema enforced).
@@ -458,7 +498,6 @@ class CoupangListingAdapterTest {
                 .categoryAttributes(Map.of("색상", "흰색")).build();   // no value for the required attr
         ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
-        given(masterProductService.isBundle(1L)).willReturn(false);
         given(masterChannelConfigService.resolveChannelCategory(cell)).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(new CategoryAttribute("원산지", true, "TEXT", List.of(), null)), List.of()));
@@ -481,7 +520,6 @@ class CoupangListingAdapterTest {
                 .categoryAttributes(Map.of("최소 중량", "100g")).build();   // 용량은 비어 있음
         ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
-        given(masterProductService.isBundle(1L)).willReturn(false);
         given(masterChannelConfigService.resolveChannelCategory(cell)).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(new CategoryAttribute("최소 중량", true, "NUMBER", List.of(), "g", "1"),
@@ -503,7 +541,6 @@ class CoupangListingAdapterTest {
                 .categoryAttributes(Map.of("색상", "흰색")).build();   // 그룹 두 칸 모두 비어 있음
         ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
-        given(masterProductService.isBundle(1L)).willReturn(false);
         given(masterChannelConfigService.resolveChannelCategory(cell)).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(new CategoryAttribute("최소 중량", true, "NUMBER", List.of(), "g", "1"),
@@ -1098,7 +1135,6 @@ class CoupangListingAdapterTest {
         MasterProduct master = MasterProduct.builder().id(1L).build();   // no attribute values at all
         ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
-        given(masterProductService.isBundle(1L)).willReturn(false);
         given(masterChannelConfigService.resolveChannelCategory(cell)).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(new CategoryAttribute("사이즈", false, "TEXT", List.of(), null)), List.of()));
@@ -1297,7 +1333,6 @@ class CoupangListingAdapterTest {
     @Test
     void validateRegistrable_requiredNoticeBlank_throws() {
         ProductListing cell = cellMissingRequiredNotice();
-        given(masterProductService.isBundle(1L)).willReturn(false);
         given(masterChannelConfigService.resolveChannelCategory(cell)).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(new CategoryAttribute("원산지", true, "TEXT", List.of(), null)),
@@ -1314,7 +1349,6 @@ class CoupangListingAdapterTest {
     @Test
     void validateRegistrable_emptyNoticeSchema_skips() {
         ProductListing cell = cellMissingRequiredNotice();
-        given(masterProductService.isBundle(1L)).willReturn(false);
         given(masterChannelConfigService.resolveChannelCategory(cell)).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(new CategoryAttribute("원산지", true, "TEXT", List.of(), null)), List.of()));
@@ -1328,7 +1362,7 @@ class CoupangListingAdapterTest {
     @Test
     void validateRegistrable_abMaster_stillValidatesNotices() {
         ProductListing cell = cellMissingRequiredNotice();
-        given(masterProductService.isBundle(1L)).willReturn(true);   // AB → attributes skipped, notices are not
+        lenient().when(masterProductService.isBundle(1L)).thenReturn(true);   // AB — checked like SINGLE (D16)
         given(masterChannelConfigService.resolveChannelCategory(cell)).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(new CategoryAttribute("원산지", true, "TEXT", List.of(), null)),
@@ -1343,7 +1377,6 @@ class CoupangListingAdapterTest {
     @Test
     void validateRegistrable_emptyAttributeSchema_stillValidatesNotices() {
         ProductListing cell = cellMissingRequiredNotice();
-        given(masterProductService.isBundle(1L)).willReturn(false);
         given(masterChannelConfigService.resolveChannelCategory(cell)).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
                 List.of(), sharedNoticeKeySchema().notices()));   // notices-only category
@@ -1637,7 +1670,6 @@ class CoupangListingAdapterTest {
         MasterProduct master = MasterProduct.builder().id(1L).name("마스터").build();   // 마스터 그룹 없음
         ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).platformCategoryCode("73170").categoryNoticeGroup("가공식품").build();
-        given(masterProductService.isBundle(1L)).willReturn(false);
         given(masterChannelConfigService.resolveChannelCategory(cell))
                 .willReturn(channelCategory("73170", true));
         given(metaAdapter.getMeta(any(), eq("73170"))).willReturn(new CategoryMetaSchema(
@@ -1722,7 +1754,8 @@ class CoupangListingAdapterTest {
         verify(masterProductService, never()).isBundle(any());
     }
 
-    // D11: a listing that does not know its type reads it once and sends what Coupang reported (AB → no attributes).
+    // D11: a listing that does not know its type reads it once and sends what Coupang reported (AB carries the
+    // attributes too — FEATURE_2610_37 / D15).
     @Test
     void update_unknownBundleType_readsOnceAndSendsIt() throws Exception {
         givenOneActiveOption();
@@ -1736,7 +1769,7 @@ class CoupangListingAdapterTest {
 
         JsonNode json = objectMapper.readTree(payload.getValue());
         assertThat(json.path("bundleInfo").path("bundleType").asText()).isEqualTo("AB");
-        assertThat(json.path("items").get(0).has("attributes")).isFalse();
+        assertThat(json.path("items").get(0).has("attributes")).isTrue();
         assertThat(outcome.marketBundleType()).isEqualTo("AB");
         verify(client).get(anyString(), eq(""), any());                   // D11: one read
     }
