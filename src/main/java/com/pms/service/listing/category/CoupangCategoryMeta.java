@@ -103,7 +103,8 @@ public class CoupangCategoryMeta implements CategoryMetaAdapter {
                     options,
                     basicUnit(attr.path("basicUnit").asText(null)),
                     groupNumber(attr.path("groupNumber").asText(null)),
-                    usableUnits(attr.path("usableUnits"))));
+                    usableUnits(attr.path("usableUnits")),
+                    "EXPOSED".equals(attr.path("exposed").asText(""))));
         }
         return attributes;
     }

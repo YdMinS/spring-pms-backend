@@ -15,9 +15,19 @@ import java.util.List;
  *                    <b>그룹 중 하나만 채우면 충족</b>이다 — 실측(72882)에서 {@code 최소 중량}·{@code 최소 용량}
  *                    이 둘 다 MANDATORY + {@code groupNumber:"1"} 이고, 고체/액체 상품은 둘 중 하나만 기재한다.
  *                    그룹 없음은 쿠팡이 리터럴 {@code "NONE"} 으로 주며 여기서는 null 로 정규화한다.
+ * @param purchaseOption true when Coupang marks it {@code exposed:"EXPOSED"} (구매 옵션); false for
+ *                       {@code "NONE"} (검색 옵션). FEATURE_2610_38: a mixed-composition (AB) product may carry
+ *                       search options only — Coupang refuses a purchase option on it.
  */
 public record CategoryAttribute(String name, boolean required, String inputType, List<String> options,
-                                String basicUnit, String groupNumber, List<String> usableUnits) {
+                                String basicUnit, String groupNumber, List<String> usableUnits,
+                                boolean purchaseOption) {
+
+    /** Callers without the exposed flag (tests · legacy) — {@code purchaseOption = false}. */
+    public CategoryAttribute(String name, boolean required, String inputType, List<String> options,
+                             String basicUnit, String groupNumber, List<String> usableUnits) {
+        this(name, required, inputType, options, basicUnit, groupNumber, usableUnits, false);
+    }
 
     /** Callers without the unit list (tests · legacy) — {@code usableUnits = []} (= basicUnit is accepted). */
     public CategoryAttribute(String name, boolean required, String inputType, List<String> options,
