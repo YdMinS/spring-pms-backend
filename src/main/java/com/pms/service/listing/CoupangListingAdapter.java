@@ -134,6 +134,9 @@ public class CoupangListingAdapter implements ListingChannel {
     static final String MIXED_BUNDLE_ONE_OPTION =
             "쿠팡은 혼합 구성 상품에 옵션 1개만 올릴 수 있습니다. 이 쿠팡 판매채널에서 옵션을 하나만 켜 두고 다시 등록하세요";
     // FEATURE_2610_36 / D11: the 400 text when the one-time read of a revision finds no bundle type.
+    // FEATURE_2610_38 / D24: the 400 text when a mixed-composition (AB) option has no search-option attribute value.
+    static final String AB_SEARCH_ATTRIBUTE_REQUIRED =
+            "쿠팡 혼합 구성 상품은 구매 옵션 속성(수량·중량 등)을 보낼 수 없어 검색 옵션 속성이 1개 이상 필요합니다: ";
     static final String BUNDLE_TYPE_UNREAD = "쿠팡에서 혼합/단일 구분을 읽지 못했습니다. 잠시 뒤 다시 시도하세요";
     // FEATURE_2610_37 / D21: the 400 text of a registration Coupang refuses with no retry; Coupang's message follows.
     static final String REGISTER_REJECTED = "쿠팡이 상품 등록을 거부했습니다: ";
@@ -781,8 +784,8 @@ public class CoupangListingAdapter implements ListingChannel {
     public void validateRegistrable(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct) {
         // gen is unused here (kept for the ListingChannel contract symmetry — see interface Javadoc).
         MasterProduct master = cell.getMasterProduct();
-        // FEATURE_2610_37 / D16: a mixed-composition (AB) master is checked exactly like a single one — the payload
-        // carries its attributes (D15), and Coupang refused an AB payload without them (2026-10-28, category 72931).
+        // FEATURE_2610_37 / D16 · FEATURE_2610_38 / D24: a mixed-composition (AB) master is checked on the attributes
+        // the payload carries for it — search options only (purchase options are refused on AB, 2026-10-29).
         // 47/59: register targets a single (master × channel) cell → one category → one getMeta call (reusing
         // the Coupang concrete metaAdapter, 61). Empty schema (NAVER) leaves both loops with nothing to check.
         // 2609_45/D10: ONE resolver call gives both the code and whether it is the channel's own category —
@@ -815,6 +818,11 @@ public class CoupangListingAdapter implements ListingChannel {
                         .filter(CategoryNotice::required).toList()
                 : List.of();
 
+        // FEATURE_2610_38 / D24: same master-based decision as the register payload (buildPayload, forUpdate=false).
+        boolean bundle = !schema.attributes().isEmpty()
+                && masterProductService.isBundle(master == null ? null : master.getId());
+        Set<String> searchOptionNames = searchOptionNames(schema);
+
         for (ProductListingOption option : productListingOptionRepository.findByProductListingId(cell.getId())) {
             if (!Boolean.TRUE.equals(option.getActive())) {
                 continue;   // only active options are pushed → only they need required values
@@ -826,6 +834,12 @@ public class CoupangListingAdapter implements ListingChannel {
             // still runs for a notices-only category (96 ⑨).
             if (!schema.attributes().isEmpty()) {
                 Map<String, String> values = mergedAttributes(masterAttributes, mo, option);
+                if (bundle) {
+                    values = searchOptionsOnly(values, searchOptionNames);
+                    if (values.isEmpty()) {
+                        throw new IllegalArgumentException(abSearchAttributeRequired(option.getOptionName(), schema));
+                    }
+                }
                 // 93: Coupang requires at least one attribute per item. This only fires when values COULD have
                 // been filled (a schema with attributes).
                 if (values.isEmpty()) {
@@ -839,7 +853,8 @@ public class CoupangListingAdapter implements ListingChannel {
                 Set<String> satisfiedGroups = new HashSet<>();
                 Map<String, List<String>> requiredGroups = new LinkedHashMap<>();
                 for (CategoryAttribute attribute : schema.attributes()) {
-                    if (!attribute.required()) {
+                    // FEATURE_2610_38 / D24: an AB item sends no purchase option → a required one is not asked for.
+                    if (!attribute.required() || (bundle && attribute.purchaseOption())) {
                         continue;
                     }
                     String value = values.get(attribute.name());
@@ -1037,6 +1052,7 @@ public class CoupangListingAdapter implements ListingChannel {
         if (bundle && activeOptions.size() >= 2) {
             throw new IllegalArgumentException(MIXED_BUNDLE_ONE_OPTION);
         }
+        Set<String> searchOptionNames = searchOptionNames(schema);
 
         // items[] (max 200): one per ACTIVE listing option (42 — per-channel subset; inactive options are
         // excluded from the payload but keep their row). New options carry no vendorItemId yet. attributes/
@@ -1099,12 +1115,22 @@ public class CoupangListingAdapter implements ListingChannel {
             // refused an AB payload without them ("아이템의 속성값을 입력하지 않았습니다", 2026-10-28).
             Map<String, String> attrs = withConsistentGrandTotal(
                     mergedAttributes(masterAttributes, mo, option));
+            // FEATURE_2610_38 / D24: …and refused one carrying purchase options ("혼합 구성 상품 등록할 때, 속성
+            // (attributeTypeName) 입력할 수 없습니다", 2026-10-29). An approved AB product (16314893607) holds no
+            // purchase-option value → an AB item sends search options only, each marked exposed=NONE. Also the
+            // only gate on the update path (validateRegistrable is register-only).
+            if (bundle) {
+                attrs = searchOptionsOnly(attrs, searchOptionNames);
+                if (attrs.isEmpty()) {
+                    throw new IllegalArgumentException(abSearchAttributeRequired(option.getOptionName(), schema));
+                }
+            }
             // A stored 총 수량 is always put in the built payload: the meta can mark it OPTIONAL while Coupang
             // still rejects an update without it ("필수 옵션이(총 수량) 입력되지 않았습니다", 2026-10-16) — same as
             // 수량 (2026-10-09). Whether it is sent is decided by registerAndReport / updateAndReport
             // (FEATURE_2610_34), never by the meta.
             if (!attrs.isEmpty()) {
-                item.put("attributes", toAttributes(attrs, unitByAttr, usableByAttr));
+                item.put("attributes", toAttributes(attrs, unitByAttr, usableByAttr, bundle));
             }
             Map<String, String> notices = mergedNotices(masterNotices, mo, option);
             if (!requiredNotices.isEmpty()) {
@@ -1374,16 +1400,55 @@ public class CoupangListingAdapter implements ListingChannel {
 
     private static List<Map<String, Object>> toAttributes(Map<String, String> values,
                                                           Map<String, String> unitByAttr,
-                                                          Map<String, List<String>> usableByAttr) {
+                                                          Map<String, List<String>> usableByAttr,
+                                                          boolean searchOnly) {
         List<Map<String, Object>> attributes = new ArrayList<>();
         for (Map.Entry<String, String> entry : values.entrySet()) {
             Map<String, Object> attribute = new LinkedHashMap<>();
             attribute.put("attributeTypeName", entry.getKey());
             attribute.put("attributeValueName", withUsableUnitCase(
                     withUnit(entry.getKey(), entry.getValue(), unitByAttr), usableByAttr.get(entry.getKey())));
+            // FEATURE_2610_38 / D24: Coupang registers an attribute without "exposed" as a purchase option.
+            if (searchOnly) {
+                attribute.put("exposed", "NONE");
+            }
             attributes.add(attribute);
         }
         return attributes;
+    }
+
+    /** FEATURE_2610_38 / D24: names of the category's search-option (exposed=NONE) attributes. */
+    private static Set<String> searchOptionNames(CategoryMetaSchema schema) {
+        return schema.attributes().stream()
+                .filter(a -> !a.purchaseOption())
+                .map(CategoryAttribute::name)
+                .collect(Collectors.toSet());
+    }
+
+    /**
+     * FEATURE_2610_38 / D24: the values an AB item may send — search options of the category only. A purchase option
+     * and a name the category does not list are dropped (the stored value is never mutated).
+     */
+    static Map<String, String> searchOptionsOnly(Map<String, String> values, Set<String> searchOptionNames) {
+        Map<String, String> kept = new LinkedHashMap<>();
+        values.forEach((name, value) -> {
+            if (searchOptionNames.contains(name)) {
+                kept.put(name, value);
+            }
+        });
+        return kept;
+    }
+
+    /** FEATURE_2610_38 / D24: the 400 text naming the option and up to five search options to fill in. */
+    static String abSearchAttributeRequired(String optionName, CategoryMetaSchema schema) {
+        List<String> candidates = schema.attributes().stream()
+                .filter(a -> !a.purchaseOption())
+                .map(CategoryAttribute::name)
+                .limit(5)
+                .toList();
+        return AB_SEARCH_ATTRIBUTE_REQUIRED + optionName + (candidates.isEmpty()
+                ? " — 이 카테고리에는 검색 옵션 속성이 없습니다"
+                : " — 마스터 상세의 쿠팡 카테고리 속성에서 하나를 입력하세요: " + String.join(", ", candidates));
     }
 
     /**
