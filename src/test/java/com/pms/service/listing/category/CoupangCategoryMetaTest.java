@@ -107,6 +107,23 @@ class CoupangCategoryMetaTest {
                 .containsExactly("TEXT", List.of());
     }
 
+    // FEATURE_2610_38: exposed EXPOSED → purchase option, NONE → search option (AB sends search options only).
+    @Test
+    void getMeta_exposed_mapsToPurchaseOption() {
+        String json = "{\"code\":200,\"data\":{\"attributes\":["
+                + "{\"attributeTypeName\":\"수량\",\"dataType\":\"NUMBER\",\"inputType\":\"INPUT\","
+                + "\"inputValues\":[],\"basicUnit\":\"개\",\"usableUnits\":[\"개\"],"
+                + "\"required\":\"MANDATORY\",\"groupNumber\":\"NONE\",\"exposed\":\"EXPOSED\"},"
+                + "{\"attributeTypeName\":\"치약 향\",\"dataType\":\"STRING\",\"inputType\":\"SELECT\","
+                + "\"inputValues\":[\"민트\"],\"basicUnit\":\"없음\",\"usableUnits\":[],"
+                + "\"required\":\"OPTIONAL\",\"groupNumber\":\"NONE\",\"exposed\":\"NONE\"}]}}";
+        given(client.get(contains("category-related-metas"), eq(""), any())).willReturn(json);
+
+        CategoryMetaSchema schema = meta.getMeta(acct(), "1001");
+
+        assertThat(schema.attributes()).extracting(CategoryAttribute::purchaseOption).containsExactly(true, false);
+    }
+
     @Test
     void getMeta_emptyResponse_returnsEmptySchema() {
         given(client.get(contains("category-related-metas"), eq(""), any()))

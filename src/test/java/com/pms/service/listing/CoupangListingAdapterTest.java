@@ -415,15 +415,17 @@ class CoupangListingAdapterTest {
         assertThat(json.has("bundleType")).isFalse();                       // D2: no top-level key
         JsonNode item = json.path("items").get(0);
         assertThat(item.has("attributes")).isTrue();
+        assertThat(item.path("attributes").get(0).has("exposed")).isFalse();   // 2610_38: SINGLE unchanged
         assertThat(item.path("unitCount").asInt()).isEqualTo(1);
     }
 
-    // 63 · FEATURE_2610_36 / D2 · FEATURE_2610_37 / D15: AB (2+ components) → bundleInfo.bundleType=AB, the item
-    // carries the attributes like SINGLE, unitCount=1, notices unchanged.
+    // 63 · FEATURE_2610_36 / D2 · FEATURE_2610_38 / D24: AB (2+ components) → bundleInfo.bundleType=AB, the item
+    // carries search options only (exposed=NONE) — the stored purchase option 수량 is dropped; unitCount=1, notices
+    // unchanged.
     @Test
-    void register_ab_payloadHasAbWithAttributesUnitCountAndNotices() throws Exception {
+    void register_ab_payloadHasAbWithSearchOptionsOnlyUnitCountAndNotices() throws Exception {
         MasterProduct master = MasterProduct.builder().id(1L).name("라벨")
-                .categoryAttributes(Map.of("원산지", "국내산"))
+                .categoryAttributes(Map.of("원산지", "국내산", "수량", "4"))
                 .categoryNotices(Map.of("제품소재", "면 100%")).build();
         ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .platformProductId("123").masterProduct(master).build();
@@ -436,7 +438,7 @@ class CoupangListingAdapterTest {
         // 61: notices need a noticeCategoryName group mapping to survive the payload — stub it so the AB notice
         // is emitted.
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
-                List.of(), List.of(new CategoryNotice("제품소재", "제품소재", false, "의류"))));
+                abAttributes(), List.of(new CategoryNotice("제품소재", "제품소재", false, "의류"))));
         GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
@@ -446,7 +448,10 @@ class CoupangListingAdapterTest {
         JsonNode json = objectMapper.readTree(payload.getValue());
         assertThat(json.path("bundleInfo").path("bundleType").asText()).isEqualTo("AB");
         JsonNode item = json.path("items").get(0);
+        assertThat(item.path("attributes")).hasSize(1);
+        assertThat(item.path("attributes").get(0).path("attributeTypeName").asText()).isEqualTo("원산지");
         assertThat(item.path("attributes").get(0).path("attributeValueName").asText()).isEqualTo("국내산");
+        assertThat(item.path("attributes").get(0).path("exposed").asText()).isEqualTo("NONE");
         assertThat(item.path("unitCount").asInt()).isEqualTo(1);
         assertThat(item.path("notices").get(0).path("content").asText()).isEqualTo("면 100%");
     }
@@ -470,23 +475,37 @@ class CoupangListingAdapterTest {
         assertThat(json.path("items").get(0).path("unitCount").asInt()).isEqualTo(1);
     }
 
-    // FEATURE_2610_37 / D16: validateRegistrable checks an AB master like SINGLE — no attribute value at all → 400,
-    // and the check no longer asks whether the master is AB.
+    // FEATURE_2610_38 / D24: an AB master holding purchase-option values only → 400 naming the search options to fill.
     @Test
-    void validateRegistrable_ab_enforcesAttributesLikeSingle() {
-        MasterProduct master = MasterProduct.builder().id(1L).build();   // no attribute values at all
+    void validateRegistrable_ab_withoutSearchOptionValue_throws() {
+        MasterProduct master = MasterProduct.builder().id(1L)
+                .categoryAttributes(Map.of("수량", "4")).build();   // purchase option only
         ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .masterProduct(master).build();
-        lenient().when(masterProductService.isBundle(1L)).thenReturn(true);   // 2+ components → AB
+        given(masterProductService.isBundle(1L)).willReturn(true);   // 2+ components → AB
         given(masterChannelConfigService.resolveChannelCategory(cell)).willReturn(channelCategory("cat-1", false));
-        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(
-                List.of(new CategoryAttribute("원산지", true, "TEXT", List.of(), null)), List.of()));
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(abAttributes(), List.of()));
         givenOneActiveOption();
 
         assertThatThrownBy(() -> adapter.validateRegistrable(cell, null, acct()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("카테고리 속성 미입력: A — 속성을 1개 이상 입력하세요");
-        verify(masterProductService, never()).isBundle(any());
+                .hasMessage(CoupangListingAdapter.AB_SEARCH_ATTRIBUTE_REQUIRED
+                        + "A — 마스터 상세의 쿠팡 카테고리 속성에서 하나를 입력하세요: 원산지");
+    }
+
+    // FEATURE_2610_38 / D24: AB does not ask for a required purchase option (수량 empty) once a search option is set.
+    @Test
+    void validateRegistrable_ab_skipsRequiredPurchaseOption() {
+        MasterProduct master = MasterProduct.builder().id(1L)
+                .categoryAttributes(Map.of("원산지", "국내산")).build();
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
+                .masterProduct(master).build();
+        given(masterProductService.isBundle(1L)).willReturn(true);
+        given(masterChannelConfigService.resolveChannelCategory(cell)).willReturn(channelCategory("cat-1", false));
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(abAttributes(), List.of()));
+        givenOneActiveOption();
+
+        assertThatCode(() -> adapter.validateRegistrable(cell, null, acct())).doesNotThrowAnyException();
     }
 
     // 63: validateRegistrable — SINGLE with a required attribute left blank → 400 (schema enforced).
@@ -1687,6 +1706,17 @@ class CoupangListingAdapterTest {
     // ---------------------------------------------------------------- FEATURE_2610_36: bundleInfo
 
     /** A registered Coupang cell on a mixed-composition master, knowing (or not) its bundle type on Coupang. */
+    /** FEATURE_2610_38: 원산지 = search option (exposed NONE), 수량 = required purchase option (exposed EXPOSED). */
+    private static List<CategoryAttribute> abAttributes() {
+        return List.of(
+                new CategoryAttribute("원산지", false, "TEXT", List.of(), null, null, List.of(), false),
+                new CategoryAttribute("수량", true, "NUMBER", List.of(), "개", null, List.of("개"), true));
+    }
+
+    private void givenAbSchema() {
+        given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(new CategoryMetaSchema(abAttributes(), List.of()));
+    }
+
     private ProductListing mixedCell(String marketBundleType) {
         MasterProduct master = MasterProduct.builder().id(1L).name("라벨")
                 .categoryAttributes(Map.of("원산지", "국내산")).build();
@@ -1724,6 +1754,7 @@ class CoupangListingAdapterTest {
     @Test
     void registerAndReport_reportsSentBundleType() {
         givenOneActiveOption();
+        givenAbSchema();
         given(masterProductService.isBundle(1L)).willReturn(true);
         given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         given(client.post(anyString(), anyString(), any())).willReturn("{\"data\":1}");
@@ -1754,11 +1785,12 @@ class CoupangListingAdapterTest {
         verify(masterProductService, never()).isBundle(any());
     }
 
-    // D11: a listing that does not know its type reads it once and sends what Coupang reported (AB carries the
-    // attributes too — FEATURE_2610_37 / D15).
+    // D11: a listing that does not know its type reads it once and sends what Coupang reported (AB carries its
+    // search options — FEATURE_2610_38 / D24).
     @Test
     void update_unknownBundleType_readsOnceAndSendsIt() throws Exception {
         givenOneActiveOption();
+        givenAbSchema();
         given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         given(client.get(anyString(), eq(""), any())).willReturn(productWithBundle("AB"));
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
@@ -1769,7 +1801,7 @@ class CoupangListingAdapterTest {
 
         JsonNode json = objectMapper.readTree(payload.getValue());
         assertThat(json.path("bundleInfo").path("bundleType").asText()).isEqualTo("AB");
-        assertThat(json.path("items").get(0).has("attributes")).isTrue();
+        assertThat(json.path("items").get(0).path("attributes").get(0).path("exposed").asText()).isEqualTo("NONE");
         assertThat(outcome.marketBundleType()).isEqualTo("AB");
         verify(client).get(anyString(), eq(""), any());                   // D11: one read
     }
