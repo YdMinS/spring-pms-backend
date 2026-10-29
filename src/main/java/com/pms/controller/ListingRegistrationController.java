@@ -2,11 +2,14 @@ package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.MarketLinkRequest;
+import com.pms.dto.request.MasterApprovalRefreshRequest;
 import com.pms.dto.response.ListingRegisterResponse;
 import com.pms.dto.response.ListingStatusResponse;
 import com.pms.dto.response.ListingSyncResponse;
 import com.pms.dto.response.MarketOptionResponse;
+import com.pms.dto.response.MasterApprovalRefreshResponse;
 import com.pms.service.listing.ListingRegistrationService;
+import com.pms.service.listing.MasterApprovalRefreshService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -20,10 +23,11 @@ import java.util.List;
 /**
  * Channel registration endpoints (FEATURE_2608_06 / 3c). ADMIN-only via the global {@code POST /api/admin/**}
  * rule (SecurityConfig) — no per-method {@code @PreAuthorize}. The cell is tenant-scoped in the service
- * (cross-tenant/absent id → 404).
+ * (cross-tenant/absent id → 404); the master-wide refresh scopes the master the same way and answers 400 when a
+ * picked listing is not one of that master's.
  *
  * <p>Register returns SUBMITTED immediately (no approval wait); approval is detected by a manual fetch-status
- * refresh or the sync-approvals sweep.</p>
+ * refresh (one listing, or the picked listings of one master — FEATURE_2610_38) or the sync-approvals sweep.</p>
  */
 @RestController
 @RequestMapping("/api/admin")
@@ -32,6 +36,7 @@ import java.util.List;
 public class ListingRegistrationController {
 
     private final ListingRegistrationService listingRegistrationService;
+    private final MasterApprovalRefreshService masterApprovalRefreshService;
 
     @PostMapping("/product-listings/{id}/register")
     @Operation(summary = "Push a DRAFT cell to the market → SUBMITTED (no approval wait)")
@@ -52,6 +57,15 @@ public class ListingRegistrationController {
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<ListingStatusResponse>> fetchStatus(@PathVariable Long id) {
         return ResponseEntity.ok(ResponseDTO.success(listingRegistrationService.fetchStatus(id)));
+    }
+
+    @PostMapping("/master-products/{id}/fetch-status")
+    @Operation(summary = "FEATURE_2610_38: manual refresh of the picked listings of one master, one by one")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<MasterApprovalRefreshResponse>> fetchMasterStatus(
+            @PathVariable Long id, @Valid @RequestBody MasterApprovalRefreshRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                masterApprovalRefreshService.refresh(id, request.getProductListingIds())));
     }
 
     @GetMapping("/product-listings/{id}/market-options")
