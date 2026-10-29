@@ -193,7 +193,9 @@ public class CoupangListingAdapter implements ListingChannel {
         Map<String, Object> withGrandTotal = buildPayload(cell, gen, acct);
         Map<String, Object> withoutGrandTotal = withoutGrandTotal(withGrandTotal);
         String bundleType = sentBundleType(withGrandTotal);
-        boolean carriesGrandTotal = carriesGrandTotal(withGrandTotal);
+        // FEATURE_2610_38: 총 수량 can be left out only when no item is left without attributes — an AB item whose only
+        // search option is 총 수량 went out empty and was refused ("아이템의 속성값을 입력하지 않았습니다", 2026-10-29).
+        boolean carriesGrandTotal = carriesGrandTotal(withGrandTotal) && omittable(withGrandTotal);
         PlatformCategory category = masterChannelConfigService.resolveChannelCategory(cell).category();
         boolean omitFirst = carriesGrandTotal && category.isGrandTotalOmitted();
 
@@ -697,7 +699,8 @@ public class CoupangListingAdapter implements ListingChannel {
                 ? cell.getMarketBundleType() : readBundleType(cell, acct);
         Map<String, Object> withGrandTotal = buildPayload(cell, gen, acct, true, bundleType);
         GrandTotalSend state = cell.getGrandTotalSend();
-        boolean omit = carriesGrandTotal(withGrandTotal)
+        // FEATURE_2610_38: never leave an item without attributes (see registerAndReport).
+        boolean omit = carriesGrandTotal(withGrandTotal) && omittable(withGrandTotal)
                 && (state == GrandTotalSend.OMITTED
                         || (state == GrandTotalSend.SENT
                                 && masterChannelConfigService.resolveChannelCategory(cell).category()
@@ -1327,6 +1330,24 @@ public class CoupangListingAdapter implements ListingChannel {
             }
         }
         return false;
+    }
+
+    /**
+     * FEATURE_2610_38: whether 총 수량 can be left out — false when some item carries 총 수량 as its only attribute
+     * (Coupang refuses an item without attributes).
+     */
+    static boolean omittable(Map<String, Object> payload) {
+        if (!(payload.get("items") instanceof List<?> items)) {
+            return true;
+        }
+        for (Object o : items) {
+            if (o instanceof Map<?, ?> item && item.get("attributes") instanceof List<?> attrs && !attrs.isEmpty()
+                    && attrs.stream().allMatch(a -> a instanceof Map<?, ?> attr
+                            && GRAND_TOTAL_QUANTITY.equals(attr.get("attributeTypeName")))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
