@@ -75,6 +75,7 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
     @MockBean private CoupangApiClient coupangApiClient;
 
     private Long draftCellId;
+    private Long masterId;
 
     @BeforeEach
     void seed() {
@@ -91,6 +92,7 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
         // displayCategoryCode from the mapping.
         MasterProduct master = masterProductRepository.save(MasterProduct.builder()
                 .name("운동화 마스터").active(true).category(category).build());
+        masterId = master.getId();
         // 52: the mapping's linked PlatformCategory owns the mall code — the adapter payload resolves
         // displayCategoryCode from it.
         PlatformCategory platformCategory = platformCategoryRepository.save(PlatformCategory.builder()
@@ -273,5 +275,55 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
         mockMvc.perform(put(marketLinkPath()).header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON).content("{\"vendorItemId\":\"\"}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    // ---- FEATURE_2610_38: master-wide approval refresh ----
+
+    private String masterRefreshPath(Long id) {
+        return "/api/admin/master-products/" + id + "/fetch-status";
+    }
+
+    private String masterRefreshBody() {
+        return "{\"productListingIds\":[" + draftCellId + "]}";
+    }
+
+    @Test
+    void masterRefresh_noToken_returns401() throws Exception {
+        mockMvc.perform(post(masterRefreshPath(masterId)).contentType(MediaType.APPLICATION_JSON)
+                        .content(masterRefreshBody()))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void masterRefresh_userToken_returns403() throws Exception {
+        mockMvc.perform(post(masterRefreshPath(masterId)).header("Authorization", "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(masterRefreshBody()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void masterRefresh_emptyList_returns400() throws Exception {
+        mockMvc.perform(post(masterRefreshPath(masterId)).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"productListingIds\":[]}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void masterRefresh_unknownMaster_returns404() throws Exception {
+        mockMvc.perform(post(masterRefreshPath(999999L)).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(masterRefreshBody()))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void masterRefresh_draftCell_returns200Skipped() throws Exception {
+        mockMvc.perform(post(masterRefreshPath(masterId)).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(masterRefreshBody()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.requested").value(1))
+                .andExpect(jsonPath("$.data.skipped").value(1))
+                .andExpect(jsonPath("$.data.results[0].productListingId").value(draftCellId))
+                .andExpect(jsonPath("$.data.results[0].outcome").value("SKIPPED"))
+                .andExpect(jsonPath("$.data.results[0].message").value("새로고침 대상 상태가 아님"));
     }
 }
