@@ -189,6 +189,25 @@ class CoupangListingAdapterGrandTotalTest {
         verify(client, times(1)).post(anyString(), anyString(), any());
     }
 
+    // FEATURE_2610_38: an item whose only attribute is 총 수량 keeps it even in a remembered category — leaving it out
+    // would send the item without attributes (prod 2026-10-29, AB listing 2309).
+    @Test
+    void register_rememberedCategory_grandTotalOnlyAttribute_keepsIt() {
+        category(true);
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("2개").sellingPrice(new BigDecimal("6000"))
+                        .active(true).categoryAttributes(new java.util.LinkedHashMap<>(Map.of("총 수량", "2")))
+                        .build()));
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":558}");
+
+        PushOutcome outcome = adapter.registerAndReport(cell(GrandTotalSend.SENT), gen, acct());
+
+        assertThat(payload.getValue()).contains("총 수량");
+        assertThat(outcome.grandTotalSend()).isEqualTo(GrandTotalSend.SENT);
+        verify(client, times(1)).post(anyString(), anyString(), any());
+    }
+
     // D11 · D23: a SENT listing in a remembered category revises without 총 수량; a plain 2xx → OMITTED.
     @Test
     void update_sentListingRememberedCategory_omitsAndReportsOmitted() {
