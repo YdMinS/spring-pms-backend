@@ -2,6 +2,7 @@ package com.pms.service.coupang;
 
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.security.TenantContext;
+import com.pms.service.PurchaseListService;
 import com.pms.service.coupang.OrderSyncFacade.OrderSyncResult;
 import com.pms.service.reservation.ReservedShipmentExecutor;
 import lombok.RequiredArgsConstructor;
@@ -42,9 +43,10 @@ public class OrderSyncScheduler {
     private final OrderSyncFacade orderSyncFacade;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final ReservedShipmentExecutor reservedShipmentExecutor;
+    private final PurchaseListService purchaseListService;
     private final Environment environment;
 
-    /** 15분 티어 = 활성 주문 + 취소 보정 + 반품/교환 + 문의(D2). 계정당 6~7왕복. */
+    /** 15분 티어 = 활성 주문 + 취소 보정 + 반품/교환 + 문의(D2). 계정당 6~7왕복. 끝나면 구매목록도 다시 뽑는다. */
     @Scheduled(cron = "${oclyx.order-sync.quick-cron:0 0/15 * * * *}", zone = "Asia/Seoul")
     public void syncQuick() {
         runForEachTenant(OrderSyncPreset.QUICK);
@@ -91,6 +93,14 @@ public class OrderSyncScheduler {
             } catch (Exception e) {
                 // 한 테넌트의 실패가 나머지를 멈추면 안 된다. 계정 단위 격리는 파사드가 이미 한다.
                 log.warn("Scheduled order sync failed: preset={} tenant={}", preset, tenantId, e);
+            }
+            try {
+                // 구매목록은 주문에서 뽑은 결과다 — 주문만 새로 받고 다시 뽑지 않으면 화면의 [업데이트] 를 누르기
+                // 전까지 새 주문이 빠지고 발송·취소분이 남는다. 동기화가 일부 실패해도 DB 에 들어온 만큼은 반영한다.
+                // extract 는 멱등이고 수동 줄·처리 기록을 보존한다(수동 [업데이트] 와 같은 진입점).
+                purchaseListService.extract();
+            } catch (Exception e) {
+                log.warn("Scheduled purchase list extract failed: preset={} tenant={}", preset, tenantId, e);
             } finally {
                 TenantContext.clear();
             }

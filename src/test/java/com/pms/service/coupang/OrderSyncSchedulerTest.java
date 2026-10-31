@@ -2,6 +2,7 @@ package com.pms.service.coupang;
 
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.security.TenantContext;
+import com.pms.service.PurchaseListService;
 import com.pms.service.coupang.OrderSyncFacade.OrderSyncResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -29,6 +30,7 @@ class OrderSyncSchedulerTest {
 
     @Mock private OrderSyncFacade orderSyncFacade;
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
+    @Mock private PurchaseListService purchaseListService;
 
     @InjectMocks private OrderSyncScheduler scheduler;
 
@@ -89,5 +91,61 @@ class OrderSyncSchedulerTest {
         scheduler.syncReconcile();
 
         verify(orderSyncFacade).syncAll(OrderSyncPreset.RECONCILE);
+    }
+
+    @Test
+    void syncQuick_extractsPurchaseListPerTenant_withThatTenantInContext() {
+        given(marketplaceAccountRepository.findDistinctTenantIds()).willReturn(List.of(1L, 2L));
+        given(orderSyncFacade.syncAll(OrderSyncPreset.QUICK)).willReturn(OrderSyncResult.empty());
+        List<Long> seen = new ArrayList<>();
+        willAnswer(inv -> {
+            seen.add(TenantContext.get());
+            return null;
+        }).given(purchaseListService).extract();
+
+        scheduler.syncQuick();
+
+        assertThat(seen).containsExactly(1L, 2L);
+    }
+
+    @Test
+    void syncReconcile_alsoExtractsPurchaseList() {
+        given(marketplaceAccountRepository.findDistinctTenantIds()).willReturn(List.of(1L));
+        given(orderSyncFacade.syncAll(OrderSyncPreset.RECONCILE)).willReturn(OrderSyncResult.empty());
+
+        scheduler.syncReconcile();
+
+        verify(purchaseListService).extract();
+    }
+
+    @Test
+    void syncQuick_syncFails_stillExtractsWhatReachedTheDb() {
+        given(marketplaceAccountRepository.findDistinctTenantIds()).willReturn(List.of(1L));
+        given(orderSyncFacade.syncAll(OrderSyncPreset.QUICK)).willThrow(new RuntimeException("coupang down"));
+
+        scheduler.syncQuick();
+
+        verify(purchaseListService).extract();
+        assertThat(TenantContext.get()).isNull();
+    }
+
+    @Test
+    void syncQuick_extractFails_otherTenantsStillRun_andContextCleared() {
+        given(marketplaceAccountRepository.findDistinctTenantIds()).willReturn(List.of(1L, 2L));
+        given(orderSyncFacade.syncAll(OrderSyncPreset.QUICK)).willReturn(OrderSyncResult.empty());
+        List<Long> seen = new ArrayList<>();
+        willAnswer(inv -> {
+            Long tenant = TenantContext.get();
+            seen.add(tenant);
+            if (tenant == 1L) {
+                throw new RuntimeException("extract failed");
+            }
+            return null;
+        }).given(purchaseListService).extract();
+
+        scheduler.syncQuick();
+
+        assertThat(seen).containsExactly(1L, 2L);
+        assertThat(TenantContext.get()).isNull();
     }
 }
