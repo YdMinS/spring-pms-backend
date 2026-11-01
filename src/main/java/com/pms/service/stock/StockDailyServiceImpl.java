@@ -72,12 +72,18 @@ public class StockDailyServiceImpl implements StockDailyService {
             boolean undecided = LotLedgerServiceImpl.isLot(m) && LotLedgerServiceImpl.isUndecided(m);
             List<String> owners = List.of();
             Integer undecidedLeft = null;
+            List<StockDailyRowView.NoReceiptShare> noReceiptShares = List.of();
             if (undecided) {
                 List<PurchaseRecord> shares = sharesByLot.getOrDefault(m.getId(), List.of());
                 Map<String, Integer> byOwner = new LinkedHashMap<>();
                 shares.forEach(s -> byOwner.merge(s.getSeller().getSellerName(), s.getQuantity(), Integer::sum));
                 owners = byOwner.entrySet().stream().map(e -> e.getKey() + " " + e.getValue()).toList();
                 undecidedLeft = m.getQuantity() - shares.stream().mapToInt(PurchaseRecord::getQuantity).sum();
+                // FEATURE_2611_01 D15: each 「영수증 없음」 share is its own 「판매자 바꾸기」 target.
+                noReceiptShares = shares.stream().filter(PurchaseRecord::isNoReceiptShare)
+                        .map(s -> new StockDailyRowView.NoReceiptShare(s.getId(), s.getSeller().getSellerName(),
+                                s.getQuantity()))
+                        .toList();
             }
             String orderNumber = null;
             List<String> tags = List.of();
@@ -90,7 +96,8 @@ public class StockDailyServiceImpl implements StockDailyService {
             }
             views.add(new StockDailyRowView(m.getId(), m.getMovementType(), m.getReason(),
                     m.getProduct().getId(), m.getProduct().getProductName(), m.getQuantity(), sellerName, owners,
-                    undecidedLeft, orderNumber, tags, amount(m, outAmounts)));
+                    undecidedLeft, orderNumber, tags, amount(m, outAmounts), m.isSellerChangeableWithoutReceipt(),
+                    noReceiptShares));
         }
 
         // D147: products with an undecided quantity left among that day's purchases.

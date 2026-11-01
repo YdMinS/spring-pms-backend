@@ -563,6 +563,17 @@ class LiquibaseChangelogApplyTest {
                         + "('SELLER_DEBT', 'SELLER_SETTLEMENT', 'LOT_SHARE_USAGE')", Integer.class)).isEqualTo(3);
     }
 
+    /** changeset 123: a receipt may wait for its photo, a purchase record may carry the found-stock mark (FEATURE_2611_01). */
+    @Test
+    void receiptLaterFoundStockApplied() {
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'PURCHASE_RECEIPT' "
+                        + "AND COLUMN_NAME = 'PHOTO_URL'", String.class)).isEqualTo("YES");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'PURCHASE_RECORD' "
+                        + "AND COLUMN_NAME = 'FOUND_STOCK_AT'", Integer.class)).isEqualTo(1);
+    }
+
     /** changeset 079: the order line carries its own option link, and both backfill dialects applied. */
     @Test
     void orderLineListingOptionApplied() {

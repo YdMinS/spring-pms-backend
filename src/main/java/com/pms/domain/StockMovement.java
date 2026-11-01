@@ -158,4 +158,15 @@ public class StockMovement extends BaseEntity {
     /** Who confirmed it (authentication principal = email). Filled by the server, never by the request (D9). */
     @Column(name = "created_by", length = 100)
     private String createdBy;
+
+    /**
+     * An incoming row 「판매자 바꾸기」 may move (FEATURE_2611_01 D7 · D15): a lot with a decided seller — a stock-in
+     * (purchase, opening, free, etc.) or an adjust + — that no receipt is tied to. A return, an undecided row, a
+     * receipt line and an outgoing row are not.
+     */
+    public boolean isSellerChangeableWithoutReceipt() {
+        boolean incoming = movementType == StockMovementType.STOCK_IN || movementType == StockMovementType.ADJUST;
+        return incoming && quantity != null && quantity > 0 && sourceMovement == null && seller != null
+                && (purchaseRecord == null || purchaseRecord.getReceipt() == null);
+    }
 }
