@@ -13,6 +13,9 @@ import java.util.List;
  * <p>The numbers are display only; which list a row sits in comes from the shares' states (D57 · D78).</p>
  *
  * <p>brand = the product's brand (null when none) — shown so a same-named product of another brand is not picked up.</p>
+ *
+ * <p>unregisteredQty = 「영수증 미등록 N개」 (FEATURE_2610_19 D115 · D129): the product's undecided purchases (intake
+ * work) minus what receipts already took — every day, both tabs, whatever seller is chosen. 0 = not shown.</p>
  */
 public record PurchaseProductGroup(
         Long productId,
@@ -22,5 +25,6 @@ public record PurchaseProductGroup(
         int purchasedQty,
         int remainingQty,
         List<PurchaseShare> shares,
-        List<PurchaseLine> lines
+        List<PurchaseLine> lines,
+        int unregisteredQty
 ) {}

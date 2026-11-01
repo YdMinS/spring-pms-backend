@@ -4,6 +4,7 @@ import com.pms.domain.Product;
 import com.pms.domain.ProductImage;
 import com.pms.domain.ProductPurchasePlace;
 import com.pms.domain.ShoppingListItem;
+import com.pms.domain.StockMovementType;
 import com.pms.dto.request.MergeProductsRequest;
 import com.pms.dto.response.MergeProductsResponse;
 import com.pms.dto.response.ProductUsageResponse;
@@ -16,9 +17,11 @@ import com.pms.repository.ProductImageRepository;
 import com.pms.repository.ProductPurchasePlaceRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
+import com.pms.repository.SellerDebtRepository;
 import com.pms.repository.ShipmentParcelItemRepository;
 import com.pms.repository.ShoppingListItemRepository;
 import com.pms.repository.StockMovementRepository;
+import com.pms.service.stock.LotLedgerService;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -71,6 +74,8 @@ public class ProductMergeService {
     private final ShoppingListItemRepository shoppingListItemRepository;
     private final BoxRecipeRepository boxRecipeRepository;
     private final ProductPurchasePlaceRepository productPurchasePlaceRepository;
+    private final LotLedgerService lotLedgerService;
+    private final SellerDebtRepository sellerDebtRepository;
 
     /**
      * Run one merge.
@@ -98,6 +103,7 @@ public class ProductMergeService {
         assertSourceUnlinked(sourceId);
         ProductImage representative = resolveRepresentative(fields.representativeImageId(),
                 targetId, sourceId, transfer.images());
+        assertLotRecordsMoveTogether(sourceId, transfer);
 
         // Snapshot BEFORE anything moves (PLAN D7). A write failure throws and rolls the merge back.
         String snapshotFileName = snapshotWriter.write(target, source);
@@ -127,6 +133,9 @@ public class ProductMergeService {
         }
         if (transfer.stockMovements()) {
             moved.put("stockMovements", stockMovementRepository.reassignProduct(target, sourceId));
+            // FEATURE_2610_19 D132: the lots changed product — rewrite the debts of both products.
+            lotLedgerService.rebuildDebts(sourceId);
+            lotLedgerService.rebuildDebts(target.getId());
         }
         if (transfer.shipmentItems()) {
             moved.put("shipmentItems", shipmentParcelItemRepository.reassignProduct(target, sourceId));
@@ -214,6 +223,28 @@ public class ProductMergeService {
         ProductUsageResponse usage = productUsageService.getUsage(sourceId);
         if (!usage.deletable()) {
             throw new ProductInUseException(usage.blockers());
+        }
+    }
+
+    /**
+     * FEATURE_2610_19 D150: when the source product has a lot record — a receipt assignment, an undecided intake row,
+     * an undecided purchase or a borrowed-goods debt — its purchase records and its stock rows must move together.
+     * Moving only one of them splits an assignment from the intake row it points at (D130), and the per-seller stock
+     * and debts go wrong. Only the source is checked: the target's rows do not move.
+     */
+    private void assertLotRecordsMoveTogether(Long sourceId, MergeProductsRequest.TransferOptions transfer) {
+        if (transfer.purchaseRecords() && transfer.stockMovements()) {
+            return;
+        }
+        boolean hasLotRecord = purchaseRecordRepository.existsByProduct_IdAndSourceMovementIsNotNull(sourceId)
+                || purchaseRecordRepository.existsByProduct_IdAndSellerIsNull(sourceId)
+                || stockMovementRepository.existsByProductIdAndSellerIsNullAndMovementType(
+                        sourceId, StockMovementType.STOCK_IN)
+                || sellerDebtRepository.existsByProductId(sourceId);
+        if (hasLotRecord) {
+            throw new BusinessException(
+                    "영수증 배정 · 영수증 미등록 · 판매자 간 빚 기록이 있는 물품은 「매입 이력」과 「재고 이동」을 함께 옮겨야 합니다.",
+                    HttpStatus.BAD_REQUEST);
         }
     }
 

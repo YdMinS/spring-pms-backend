@@ -540,12 +540,27 @@ class LiquibaseChangelogApplyTest {
                 "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'PURCHASE_RECORD' "
                         + "AND COLUMN_NAME = 'SHOPPING_LIST_ITEM_ID'", Integer.class)).isZero();
 
-        // 078: stock_movement gained seller_id, and it is mandatory (stock is not shared, D4).
+        // 078: stock_movement gained seller_id (stock is not shared, D4). 122 relaxed it to NULLABLE — an undecided
+        // intake row has no seller yet (FEATURE_2610_19 D105); see sellerStockLotDebtApplied.
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM stock_movement WHERE seller_id IS NULL", Integer.class)).isZero();
+    }
+
+    /** changeset 122: undecided sellers, lot sources, the debt / settlement / share split tables (FEATURE_2610_19). */
+    @Test
+    void sellerStockLotDebtApplied() {
+        for (String table : new String[] {"STOCK_MOVEMENT", "PURCHASE_RECORD"}) {
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '" + table + "' "
+                            + "AND COLUMN_NAME = 'SELLER_ID'", String.class)).isEqualTo("YES");
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '" + table + "' "
+                            + "AND COLUMN_NAME IN ('SOURCE_MOVEMENT_ID', 'PRICE_FILLED_AT')", Integer.class))
+                    .isEqualTo(2);
+        }
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'STOCK_MOVEMENT' "
-                        + "AND COLUMN_NAME = 'SELLER_ID'", String.class)).isEqualTo("NO");
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME IN "
+                        + "('SELLER_DEBT', 'SELLER_SETTLEMENT', 'LOT_SHARE_USAGE')", Integer.class)).isEqualTo(3);
     }
 
     /** changeset 079: the order line carries its own option link, and both backfill dialects applied. */

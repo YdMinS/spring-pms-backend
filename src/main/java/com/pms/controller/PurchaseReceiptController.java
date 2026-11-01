@@ -44,6 +44,18 @@ public class PurchaseReceiptController {
         return ResponseEntity.ok(ResponseDTO.success(purchaseReceiptService.create(request, photo)));
     }
 
+    /**
+     * Receipt assignment from the daily in/out view (FEATURE_2610_19 D118 · D121): {@code photo} part +
+     * {@code request} part, {@code movedOn} = the day on the screen.
+     */
+    @PostMapping(value = "/assign", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ResponseDTO<ReceiptCreateResult>> assign(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate movedOn,
+            @RequestPart(value = "photo", required = false) MultipartFile photo,
+            @Valid @RequestPart(value = "request", required = false) ReceiptCreateRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(purchaseReceiptService.assign(movedOn, request, photo)));
+    }
+
     /** Receipt list, newest day first. from/to inclusive and required; sellerId = payer seller (omitted = all). */
     @GetMapping
     public ResponseEntity<ResponseDTO<List<ReceiptSummaryView>>> search(

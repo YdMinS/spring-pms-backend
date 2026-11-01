@@ -66,6 +66,7 @@ public class StockOutServiceImpl implements StockOutService {
     private final ProductRepository productRepository;
     private final OrderLineExpander orderLineExpander;
     private final CostBasisResolver costBasisResolver;
+    private final LotLedgerService lotLedgerService;
 
     @Override
     public OutboundResponse outbound(Long sellerId, OrderStatus status) {
@@ -173,7 +174,8 @@ public class StockOutServiceImpl implements StockOutService {
                 confirmedByLine(List.of(line.getId())).getOrDefault(line.getId(), Map.of());
         Seller seller = sellerOf(line);
 
-        List<StockMovementView> saved = new ArrayList<>();
+        // FEATURE_2610_19 D42 · D48 ④: one row per lot the lot service picks; rows are written per product.
+        Map<Long, List<StockMovement>> savedByProduct = new LinkedHashMap<>();
         for (OutboundConfirmRequest.ConfirmLine confirmLine : request.lines()) {
             int quantity = confirmLine.quantity();
             if (quantity <= 0) {
@@ -191,32 +193,55 @@ public class StockOutServiceImpl implements StockOutService {
 
             Product product = productRepository.findById(confirmLine.productId())
                     .orElseThrow(() -> new ResourceNotFoundException("Product", confirmLine.productId()));
-            StockMovement movement = stockMovementRepository.save(StockMovement.builder()
-                    .product(product)
-                    .seller(seller)
-                    .movementType(StockMovementType.STOCK_OUT)
-                    // 부호는 서버가 정한다 — 요청은 "3개 내보냄"이고 원장은 -3 이다.
-                    .quantity(-quantity)
-                    .location(StockLocationPolicy.resolve(product))
-                    // reason 없음(D7): STOCK_OUT 은 주문이라는 컨텍스트가 곧 사유다.
-                    // unitPrice 없음: 출고 원가는 cost_basis 가 결정한다.
-                    .orderLine(line)
-                    .movedOn(request.movedOn())
-                    .createdBy(currentUsername())
-                    .build());
-            saved.add(toView(movement, seller));
+            for (LotSlice slice : lotLedgerService.allocateOutbound(product, seller, quantity, request.movedOn())) {
+                StockMovement movement = stockMovementRepository.save(StockMovement.builder()
+                        .product(product)
+                        // FEATURE_2610_19 D124: the owner of the lot used (null = undecided lot), else the order seller.
+                        .seller(slice.seller())
+                        .movementType(StockMovementType.STOCK_OUT)
+                        // The server decides the sign — the request says "3 shipped", the ledger stores -3.
+                        .quantity(-slice.quantity())
+                        .location(StockLocationPolicy.resolve(product))
+                        // No reason (D7): for STOCK_OUT the order itself is the reason.
+                        // No unitPrice: the outbound cost is decided by cost_basis.
+                        .sourceMovement(slice.source())
+                        .orderLine(line)
+                        .movedOn(request.movedOn())
+                        .createdBy(currentUsername())
+                        .build());
+                savedByProduct.computeIfAbsent(product.getId(), k -> new ArrayList<>()).add(movement);
+            }
         }
 
-        // 물건이 실제로 나간 이 순간의 원가를 라인에 굽는다(D20). 첫 출고에서만 굽고, 부분 출고의
-        // 나머지에서는 resolver 가 스스로 빠진다 — 출고 횟수만큼 원가가 흔들리면 안 된다.
+        // Bake the cost of the moment the goods left into the line (D20). Only the first outbound bakes it; the
+        // resolver steps aside on the later partial outbounds — the cost must not shake with every outbound.
+        // FEATURE_2610_19 D138: the pieces taken from an undecided lot are costed at the registered price.
         try {
-            costBasisResolver.snapshot(line, expansion.products());
+            costBasisResolver.snapshot(line, expansion.products(), undecidedQty(savedByProduct));
         } catch (RuntimeException e) {
             // 🔴 스냅샷 실패가 출고 확인을 막지 않는다. 실물은 이미 나갔고 원가는 나중에 채울 수 있지만
             // 재고는 되돌릴 수 없다. 조용히 삼키지 않도록 경고는 남긴다.
             log.warn("cost snapshot failed for order line {} — stock out is kept", line.getId(), e);
         }
+
+        // FEATURE_2610_19 D131 · D132 · D49: split undecided lots, rewrite the debts, notice the borrowed goods.
+        List<StockMovementView> saved = new ArrayList<>();
+        for (Map.Entry<Long, List<StockMovement>> entry : savedByProduct.entrySet()) {
+            Map<Long, List<String>> notices = lotLedgerService.afterOutbound(entry.getKey(), entry.getValue());
+            for (StockMovement movement : entry.getValue()) {
+                saved.add(toView(movement, notices.getOrDefault(movement.getId(), List.of())));
+            }
+        }
         return saved;
+    }
+
+    /** Pieces per product taken from an undecided lot (seller null) by the rows just written (D138 ①). */
+    private Map<Long, Integer> undecidedQty(Map<Long, List<StockMovement>> savedByProduct) {
+        Map<Long, Integer> qty = new LinkedHashMap<>();
+        savedByProduct.forEach((productId, rows) -> rows.stream()
+                .filter(m -> m.getSourceMovement() != null && m.getSeller() == null)
+                .forEach(m -> qty.merge(productId, -m.getQuantity(), Integer::sum)));
+        return qty;
     }
 
     /** {@code status} 가 오면 그것 하나만, 없으면 둘 다. 종결 상태는 거부한다(작업 대상이 아니다). */
@@ -247,20 +272,23 @@ public class StockOutServiceImpl implements StockOutService {
     }
 
     /**
-     * 출고 행의 판매자 (PLAN 2609_29 D4). 출고는 주문에서 출발하므로(D11)
-     * {@code orderLine → order → marketplaceAccount → seller} 로 유도한다 — 화면이 묻지 않는다.
+     * The order's seller (PLAN 2609_29 D4). Outbound starts from an order (D11), so it is derived as
+     * {@code orderLine → order → marketplaceAccount → seller} — the screen does not ask. FEATURE_2610_19: lots are
+     * picked for this seller (D33); a written row carries the owner of the lot it used (null = an undecided lot,
+     * no lot = this seller, D124).
      */
     private Seller sellerOf(OrderLine line) {
         return line.getOrder().getMarketplaceAccount().getSeller();
     }
 
-    private StockMovementView toView(StockMovement m, Seller seller) {
+    private StockMovementView toView(StockMovement m, List<String> notices) {
+        Seller seller = m.getSeller();
         return new StockMovementView(
                 m.getId(),
                 m.getProduct().getId(),
                 m.getProduct().getProductName(),
-                seller.getId(),
-                seller.getSellerName(),
+                seller == null ? null : seller.getId(),
+                seller == null ? null : seller.getSellerName(),
                 m.getMovementType(),
                 m.getQuantity(),
                 m.getReason(),
@@ -270,7 +298,8 @@ public class StockOutServiceImpl implements StockOutService {
                 null,
                 null,
                 m.getMovedOn(),
-                m.getCreatedBy());
+                m.getCreatedBy(),
+                notices);
     }
 
     /** Same source as StockLedgerServiceImpl / OrderCancelAdapter.currentUsername() (PLAN 2609_28 D9). */

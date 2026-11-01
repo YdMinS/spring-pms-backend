@@ -242,3 +242,5 @@ databaseChangeLog:
       file: db/changelog/changes/120-coupang-grand-total.yaml
   - include:
       file: db/changelog/changes/121-coupang-market-bundle-type.yaml
+  - include:
+      file: db/changelog/changes/122-seller-stock-lot-debt.yaml

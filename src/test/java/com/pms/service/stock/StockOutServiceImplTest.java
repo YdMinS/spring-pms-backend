@@ -15,6 +15,7 @@ import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.StockMovementRepository;
 import com.pms.service.cost.CostBasisResolver;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -32,9 +33,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -60,8 +63,20 @@ class StockOutServiceImplTest {
     @Mock private ProductRepository productRepository;
     @Mock private OrderLineExpander orderLineExpander;
     @Mock private CostBasisResolver costBasisResolver;
+    @Mock private LotLedgerService lotLedgerService;
 
     @InjectMocks private StockOutServiceImpl service;
+
+    /**
+     * FEATURE_2610_19: the lot service is mocked as "stock link off" — one slice without a lot, owned by the order
+     * seller, and no notices. The lot rules themselves are covered by {@code LotLedgerServiceImplTest}.
+     */
+    @BeforeEach
+    void givenNoLots() {
+        lenient().when(lotLedgerService.allocateOutbound(any(), any(), anyInt(), any()))
+                .thenAnswer(inv -> List.of(new LotSlice(null, inv.getArgument(1), inv.getArgument(2), null)));
+        lenient().when(lotLedgerService.afterOutbound(any(), anyList())).thenReturn(new java.util.HashMap<>());
+    }
 
     // --- fixtures ---
 
@@ -173,7 +188,7 @@ class StockOutServiceImplTest {
 
         service.confirm(confirmRequest(PRODUCT_ID, 3));
 
-        verify(costBasisResolver).snapshot(eq(line), anyList());
+        verify(costBasisResolver).snapshot(eq(line), anyList(), eq(Map.of()));
     }
 
     /**
@@ -189,7 +204,7 @@ class StockOutServiceImplTest {
         given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(product(PRODUCT_ID, "양말A")));
         givenSaveEchoes();
         org.mockito.BDDMockito.willThrow(new IllegalStateException("boom"))
-                .given(costBasisResolver).snapshot(any(), anyList());
+                .given(costBasisResolver).snapshot(any(), anyList(), any());
 
         assertThat(service.confirm(confirmRequest(PRODUCT_ID, 3))).hasSize(1);
         verify(stockMovementRepository).save(any(StockMovement.class));

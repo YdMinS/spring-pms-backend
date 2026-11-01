@@ -282,6 +282,7 @@ public class PackingServiceImpl implements PackingService {
         List<RecipeItem> recipeItems = new ArrayList<>();
         Map<Long, Integer> recipeQtyByProduct = new LinkedHashMap<>();
         Map<Long, Integer> packedQtyByLine = new LinkedHashMap<>();
+        List<String> notices = new ArrayList<>();
 
         for (Map.Entry<Long, Map<Long, Integer>> lineEntry : packed.entrySet()) {
             OrderLine line = linesById.get(lineEntry.getKey());
@@ -303,9 +304,11 @@ public class PackingServiceImpl implements PackingService {
                 recipeQtyByProduct.merge(productEntry.getKey(), productEntry.getValue(), Integer::sum);
                 packedQtyByLine.merge(lineEntry.getKey(), productEntry.getValue(), Integer::sum);
             }
-            // ② 출고는 주문 라인마다 한 번 — 기존 확인 경로를 그대로 쓴다(D29).
-            //    던지면 한 트랜잭션이 통째로 롤백된다: 박스 내용만 남고 재고가 안 빠지는 상태는 없다.
-            stockOutService.confirm(new OutboundConfirmRequest(lineEntry.getKey(), confirmLines, movedOn));
+            // ② One outbound per order line — the existing confirm path as it is (D29).
+            //    A throw rolls the whole transaction back: there is no state with the box filled and the stock not
+            //    taken out. FEATURE_2610_19 D49: the borrowed-goods lines of this confirm go back to the packing screen.
+            stockOutService.confirm(new OutboundConfirmRequest(lineEntry.getKey(), confirmLines, movedOn))
+                    .forEach(view -> notices.addAll(view.notices()));
         }
         recipeQtyByProduct.forEach((productId, qty) -> recipeItems.add(new RecipeItem(productId, qty)));
 
@@ -330,7 +333,7 @@ public class PackingServiceImpl implements PackingService {
                 .expectedDeliveryCost(savings.expectedDeliveryCost())
                 .build());
 
-        return new ParcelCompleteResponse(saved.getId(), saved.getStatus(), packedQty,
+        return new ParcelCompleteResponse(saved.getId(), saved.getStatus(), packedQty, notices,
                 saved.getExpectedBoxCost(), saved.getActualBoxCost(), saved.getExpectedDeliveryCost());
     }
 
@@ -472,7 +475,7 @@ public class PackingServiceImpl implements PackingService {
         int packedQty = parcelItemRepository.findByShipmentParcel_Id(parcel.getId()).stream()
                 .mapToInt(ShipmentParcelItem::getQuantity)
                 .sum();
-        return new ParcelCompleteResponse(parcel.getId(), parcel.getStatus(), packedQty,
+        return new ParcelCompleteResponse(parcel.getId(), parcel.getStatus(), packedQty, List.of(),
                 parcel.getExpectedBoxCost(), parcel.getActualBoxCost(), parcel.getExpectedDeliveryCost());
     }
 
