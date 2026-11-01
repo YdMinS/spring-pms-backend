@@ -1,5 +1,6 @@
 package com.pms.service.stock;
 
+import com.pms.domain.LotShareUsage;
 import com.pms.domain.OrderClaim;
 import com.pms.domain.Product;
 import com.pms.domain.PurchaseRecord;
@@ -13,6 +14,7 @@ import com.pms.dto.response.ReturnCandidateView;
 import com.pms.dto.response.StockBalanceView;
 import com.pms.dto.response.StockMovementView;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.LotShareUsageRepository;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
@@ -27,7 +29,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * {@link StockLedgerService} implementation.
@@ -35,8 +43,12 @@ import java.util.List;
  * <p>All per-type rules live in {@link #validate} — one place, so a second screen (mobile, bulk
  * import) cannot invent its own variant of "is a reason required here".
  *
- * <p>Class default is readOnly; only {@link #record} overrides with a write transaction.
+ * <p>Class default is readOnly; {@link #record} and {@link #recordUndecidedIntake} override with a
+ * write transaction.
  * Entities have no setters — nothing is mutated, rows are only appended.
+ *
+ * <p>FEATURE_2610_19: a disposal, an adjust − and a matched return may be written as several rows, one per lot
+ * ({@link LotLedgerService}, D50 · D139 ⑤); {@link #record} returns the first of them.
  */
 @Service
 @Transactional(readOnly = true)
@@ -52,6 +64,8 @@ public class StockLedgerServiceImpl implements StockLedgerService {
     private final OrderClaimRepository orderClaimRepository;
     private final SellerRepository sellerRepository;
     private final PurchaseSettingService purchaseSettingService;
+    private final LotLedgerService lotLedgerService;
+    private final LotShareUsageRepository lotShareUsageRepository;
 
     @Override
     @Transactional
@@ -64,19 +78,61 @@ public class StockLedgerServiceImpl implements StockLedgerService {
         PurchaseRecord purchaseRecord = resolvePurchaseRecord(request, type);
         OrderClaim orderClaim = resolveOrderClaim(request, type);
         Seller seller = resolveSeller(request, type, orderClaim, purchaseRecord);
+        int signed = signedQuantity(type, request.quantity());
 
+        List<LotSlice> slices;
+        if (type == StockMovementType.DISPOSAL || (type == StockMovementType.ADJUST && signed < 0)) {
+            // FEATURE_2610_19 D50: the row seller's own lots, oldest first.
+            slices = lotLedgerService.allocateOwn(product, seller, Math.abs(signed));
+        } else if (type == StockMovementType.RETURN_IN && orderClaim.getOrderLine() != null) {
+            // FEATURE_2610_19 D139 · D142: back into the order line's own lots, the rest becomes new lots.
+            slices = lotLedgerService.allocateReturn(orderClaim.getOrderLine(), product, seller, signed);
+        } else {
+            slices = List.of(new LotSlice(null, seller, Math.abs(signed),
+                    resolveUnitPrice(request, type, product, purchaseRecord, signed)));
+        }
+
+        StockMovement first = null;
+        for (LotSlice slice : slices) {
+            StockMovement saved = stockMovementRepository.save(StockMovement.builder()
+                    .product(product)
+                    .seller(slice.seller())
+                    .movementType(type)
+                    .quantity(signed < 0 ? -slice.quantity() : slice.quantity())
+                    .location(StockLocationPolicy.resolve(product))
+                    .reason(request.reason())
+                    .reasonNote(request.reasonNote())
+                    .unitPrice(slice.unitPrice())
+                    .sourceMovement(slice.source())
+                    .orderClaim(orderClaim)
+                    .purchaseRecord(purchaseRecord)
+                    .movedOn(request.movedOn())
+                    .createdBy(currentUsername())
+                    .build());
+            if (first == null) {
+                first = saved;
+            }
+        }
+        return toView(first);
+    }
+
+    /**
+     * An undecided intake row (FEATURE_2610_19 D105 · D117 ⑥): the stock row of an intake-work purchase whose seller
+     * is not decided yet. Same row as a purchase check-in, without a seller; the unit price comes from the record.
+     */
+    @Override
+    @Transactional
+    public StockMovementView recordUndecidedIntake(PurchaseRecord record) {
         StockMovement saved = stockMovementRepository.save(StockMovement.builder()
-                .product(product)
-                .seller(seller)
-                .movementType(type)
-                .quantity(signedQuantity(type, request.quantity()))
-                .location(StockLocationPolicy.resolve(product))
-                .reason(request.reason())
-                .reasonNote(request.reasonNote())
-                .unitPrice(resolveUnitPrice(request, type, product, purchaseRecord))
-                .orderClaim(orderClaim)
-                .purchaseRecord(purchaseRecord)
-                .movedOn(request.movedOn())
+                .product(record.getProduct())
+                .seller(null)
+                .movementType(StockMovementType.STOCK_IN)
+                .quantity(record.getQuantity())
+                .location(StockLocationPolicy.resolve(record.getProduct()))
+                .reason(StockReason.PURCHASE)
+                .unitPrice(record.getUnitPrice())
+                .purchaseRecord(record)
+                .movedOn(record.getPurchasedOn())
                 .createdBy(currentUsername())
                 .build());
         return toView(saved);
@@ -86,8 +142,41 @@ public class StockLedgerServiceImpl implements StockLedgerService {
     public List<StockBalanceView> balances(Long productId, Long sellerId, String keyword) {
         // Blank -> null: "%%" would look like a broken filter and is indistinguishable from
         // "user typed only spaces", which then gets reported as a bug.
-        // The (product × seller) grouping itself lives in the JPQL (2609_29 D5) — this is a delegation.
-        return stockMovementRepository.findBalances(productId, sellerId, blankToNull(keyword));
+        // The (product × seller) grouping itself lives in the JPQL (2609_29 D5).
+        // FEATURE_2610_19 D131: an assigned share of an undecided row belongs to its owner — move what is left of each
+        // share from the 「판매자 미정」 row (seller null) to the owner's row, then apply the seller filter.
+        List<StockBalanceView> rows = stockMovementRepository.findBalances(productId, null, blankToNull(keyword));
+        Map<String, StockBalanceView> byKey = new LinkedHashMap<>();
+        rows.forEach(r -> byKey.put(r.productId() + ":" + r.sellerId(), r));
+        Set<Long> shownProducts = rows.stream().map(StockBalanceView::productId).collect(Collectors.toSet());
+        Map<Long, Integer> usedByShare = new HashMap<>();
+        List<PurchaseRecord> shares = purchaseRecordRepository.findAllShares().stream()
+                .filter(s -> shownProducts.contains(s.getProduct().getId())).toList();
+        if (!shares.isEmpty()) {
+            for (LotShareUsage usage : lotShareUsageRepository.findByInMovementIdIn(
+                    shares.stream().map(s -> s.getSourceMovement().getId()).distinct().toList())) {
+                if (usage.getShareRecord() != null) {
+                    usedByShare.merge(usage.getShareRecord().getId(), usage.getQuantity(), Integer::sum);
+                }
+            }
+        }
+        for (PurchaseRecord share : shares) {
+            long left = share.getQuantity() - usedByShare.getOrDefault(share.getId(), 0);
+            Long product = share.getProduct().getId();
+            StockBalanceView undecided = byKey.get(product + ":null");
+            String productName = undecided != null ? undecided.productName() : share.getProduct().getProductName();
+            byKey.put(product + ":null", new StockBalanceView(product, productName, null, null,
+                    (undecided == null ? 0 : undecided.onHand()) - left));
+            StockBalanceView owner = byKey.get(product + ":" + share.getSeller().getId());
+            byKey.put(product + ":" + share.getSeller().getId(), new StockBalanceView(product, productName,
+                    share.getSeller().getId(), share.getSeller().getSellerName(),
+                    (owner == null ? 0 : owner.onHand()) + left));
+        }
+        return byKey.values().stream()
+                .filter(r -> sellerId == null || sellerId.equals(r.sellerId()))
+                .sorted(Comparator.comparing(StockBalanceView::productName)
+                        .thenComparing(StockBalanceView::sellerName, Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
     }
 
     @Override
@@ -202,7 +291,15 @@ public class StockLedgerServiceImpl implements StockLedgerService {
      * ("amount unknown"), never 0.
      */
     private BigDecimal resolveUnitPrice(StockMovementRequest request, StockMovementType type,
-                                        Product product, PurchaseRecord purchaseRecord) {
+                                        Product product, PurchaseRecord purchaseRecord, int signed) {
+        if (type == StockMovementType.ADJUST && signed > 0 && purchaseSettingService.isStockLinked()) {
+            // FEATURE_2610_19 D50: an adjust + is a new lot at the registered price.
+            return product.getPrice();
+        }
+        if (type == StockMovementType.RETURN_IN) {
+            // FEATURE_2610_19 D140: an order-unmatched return is a new lot at the registered price (stock link on).
+            return purchaseSettingService.isStockLinked() ? product.getPrice() : null;
+        }
         if (type != StockMovementType.STOCK_IN) {
             return null;
         }
@@ -221,12 +318,12 @@ public class StockLedgerServiceImpl implements StockLedgerService {
      *
      * <table>
      *   <tr><th>type</th><th>seller</th></tr>
-     *   <tr><td>RETURN_IN</td><td>derived from the claim's order — the screen never asks</td></tr>
+     *   <tr><td>RETURN_IN</td><td>derived from the claim — the screen never asks</td></tr>
      *   <tr><td>everything else</td><td>the request's {@code sellerId}, mandatory</td></tr>
      * </table>
      *
-     * <p>🔴 A RETURN_IN claim can be order-unmatched ({@code orderLine == null}), and then there is
-     * nothing to derive from — the request must carry the seller instead.
+     * <p>🔴 A RETURN_IN claim can be order-unmatched ({@code orderLine == null}); then the seller is the claim's sales
+     * channel's seller (FEATURE_2610_19 D140) — the request's seller is never used for a return.
      *
      * <p>🔴 For a PURCHASE check-in with a purchase record the request seller must equal the record's. If
      * the two ledgers are allowed to disagree, nobody can decide afterwards which one was right.
@@ -236,26 +333,27 @@ public class StockLedgerServiceImpl implements StockLedgerService {
     private Seller resolveSeller(StockMovementRequest request, StockMovementType type,
                                  OrderClaim orderClaim, PurchaseRecord purchaseRecord) {
         if (type == StockMovementType.RETURN_IN) {
-            Seller derived = sellerOfClaim(orderClaim);
-            if (derived != null) {
-                return derived;
-            }
+            return sellerOfClaim(orderClaim);
         }
         if (request.sellerId() == null) {
             throw new IllegalArgumentException("판매자를 선택하세요");
         }
         Seller seller = sellerRepository.findById(request.sellerId())
                 .orElseThrow(() -> new ResourceNotFoundException("Seller", request.sellerId()));
-        if (purchaseRecord != null && !purchaseRecord.getSeller().getId().equals(seller.getId())) {
+        if (purchaseRecord != null && (purchaseRecord.getSeller() == null
+                || !purchaseRecord.getSeller().getId().equals(seller.getId()))) {
             throw new IllegalArgumentException("구매기록의 판매자와 입고 판매자가 다릅니다");
         }
         return seller;
     }
 
-    /** claim -> orderLine -> order -> marketplaceAccount -> seller. null when the claim is unmatched. */
+    /**
+     * claim -> orderLine -> order -> marketplaceAccount -> seller; an order-unmatched claim ->
+     * its own marketplaceAccount -> seller (FEATURE_2610_19 D140 — the account and its seller are NOT NULL).
+     */
     private Seller sellerOfClaim(OrderClaim orderClaim) {
-        if (orderClaim == null || orderClaim.getOrderLine() == null) {
-            return null;
+        if (orderClaim.getOrderLine() == null) {
+            return orderClaim.getMarketplaceAccount().getSeller();
         }
         return orderClaim.getOrderLine().getOrder().getMarketplaceAccount().getSeller();
     }
@@ -282,8 +380,8 @@ public class StockLedgerServiceImpl implements StockLedgerService {
                 m.getId(),
                 m.getProduct().getId(),
                 m.getProduct().getProductName(),
-                m.getSeller().getId(),
-                m.getSeller().getSellerName(),
+                m.getSeller() == null ? null : m.getSeller().getId(),
+                m.getSeller() == null ? null : m.getSeller().getSellerName(),
                 m.getMovementType(),
                 m.getQuantity(),
                 m.getReason(),
@@ -293,7 +391,8 @@ public class StockLedgerServiceImpl implements StockLedgerService {
                 m.getOrderClaim() == null ? null : m.getOrderClaim().getId(),
                 m.getPurchaseRecord() == null ? null : m.getPurchaseRecord().getId(),
                 m.getMovedOn(),
-                m.getCreatedBy());
+                m.getCreatedBy(),
+                List.of());
     }
 
     private static String blankToNull(String value) {

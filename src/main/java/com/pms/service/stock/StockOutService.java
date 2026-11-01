@@ -30,7 +30,10 @@ public interface StockOutService {
      */
     OutboundResponse outbound(Long sellerId, OrderStatus status);
 
-    /** 확인한 만큼 {@code STOCK_OUT} 을 남긴다. 라인마다 1행(D12). 반환 = 생성된 원장 행. */
+    /**
+     * Writes {@code STOCK_OUT} rows for what was confirmed — one row per lot used (FEATURE_2610_19 D48 ④; one row when
+     * the stock link is off). Returns the rows written, each with its borrowed-goods notices (D49).
+     */
     List<StockMovementView> confirm(OutboundConfirmRequest request);
 
     /**

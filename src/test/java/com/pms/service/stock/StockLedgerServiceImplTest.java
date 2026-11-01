@@ -12,6 +12,7 @@ import com.pms.domain.StockMovement;
 import com.pms.domain.StockMovementType;
 import com.pms.domain.StockReason;
 import com.pms.dto.request.StockMovementRequest;
+import com.pms.repository.LotShareUsageRepository;
 import com.pms.repository.OrderClaimRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
@@ -19,6 +20,7 @@ import com.pms.repository.SellerRepository;
 import com.pms.repository.StockMovementRepository;
 import com.pms.service.PurchaseSettingService;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -36,7 +38,9 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
@@ -64,8 +68,22 @@ class StockLedgerServiceImplTest {
     @Mock private OrderClaimRepository orderClaimRepository;
     @Mock private SellerRepository sellerRepository;
     @Mock private PurchaseSettingService purchaseSettingService;
+    @Mock private LotLedgerService lotLedgerService;
+    @Mock private LotShareUsageRepository lotShareUsageRepository;
 
     @InjectMocks private StockLedgerServiceImpl service;
+
+    /**
+     * FEATURE_2610_19: the lot service is mocked as "stock link off" — one slice without a lot, owned by the row
+     * seller. The lot rules themselves are covered by {@code LotLedgerServiceImplTest}.
+     */
+    @BeforeEach
+    void givenNoLots() {
+        lenient().when(lotLedgerService.allocateOwn(any(), any(), anyInt()))
+                .thenAnswer(inv -> List.of(new LotSlice(null, inv.getArgument(1), inv.getArgument(2), null)));
+        lenient().when(lotLedgerService.allocateReturn(any(), any(), any(), anyInt()))
+                .thenAnswer(inv -> List.of(new LotSlice(null, inv.getArgument(2), inv.getArgument(3), null)));
+    }
 
     @AfterEach
     void clearSecurityContext() {
@@ -252,9 +270,10 @@ class StockLedgerServiceImplTest {
 
     @Test
     void testReturnInStoresClaimAndPositiveQuantity() {
-        stubSave();
+        stubSaveWithoutSeller();
+        MarketplaceAccount account = MarketplaceAccount.builder().id(1L).seller(SELLER).build();
         given(orderClaimRepository.findById(21L))
-                .willReturn(Optional.of(OrderClaim.builder().id(21L).quantity(2).build()));
+                .willReturn(Optional.of(OrderClaim.builder().id(21L).quantity(2).marketplaceAccount(account).build()));
 
         service.record(new StockMovementRequest(PRODUCT_ID, SELLER_ID, StockMovementType.RETURN_IN, 2,
                 null, null, null, 21L, null, MOVED_ON));
@@ -361,16 +380,24 @@ class StockLedgerServiceImplTest {
         assertThat(captureSaved().getSeller().getId()).isEqualTo(42L);
     }
 
-    /** An order-unmatched claim has nothing to derive from — then the request must carry the seller. */
+    /**
+     * FEATURE_2610_19 D140: an order-unmatched claim belongs to its sales channel's seller — the request's seller is
+     * not used — and becomes a new lot at the registered price while the stock link is on.
+     */
     @Test
-    void testReturnInWithoutOrderLineRequiresSeller() {
-        given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(PRODUCT));
-        given(orderClaimRepository.findById(21L))
-                .willReturn(Optional.of(OrderClaim.builder().id(21L).quantity(2).orderLine(null).build()));
+    void testReturnInWithoutOrderLineUsesChannelSeller() {
+        stubSaveWithoutSeller();
+        given(purchaseSettingService.isStockLinked()).willReturn(true);
+        Seller channelSeller = Seller.builder().id(43L).sellerName("셀러D").build();
+        MarketplaceAccount account = MarketplaceAccount.builder().id(2L).seller(channelSeller).build();
+        given(orderClaimRepository.findById(21L)).willReturn(Optional.of(
+                OrderClaim.builder().id(21L).quantity(2).orderLine(null).marketplaceAccount(account).build()));
 
-        assertThatThrownBy(() -> service.record(new StockMovementRequest(PRODUCT_ID, null,
-                StockMovementType.RETURN_IN, 2, null, null, null, 21L, null, MOVED_ON)))
-                .isInstanceOf(IllegalArgumentException.class);
-        verify(stockMovementRepository, never()).save(any());
+        service.record(new StockMovementRequest(PRODUCT_ID, SELLER_ID,
+                StockMovementType.RETURN_IN, 2, null, null, null, 21L, null, MOVED_ON));
+
+        StockMovement saved = captureSaved();
+        assertThat(saved.getSeller().getId()).isEqualTo(43L);
+        assertThat(saved.getUnitPrice()).isEqualByComparingTo("3000");
     }
 }

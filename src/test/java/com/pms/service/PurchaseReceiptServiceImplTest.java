@@ -16,6 +16,9 @@ import com.pms.repository.PurchaseReceiptRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.StockMovementRepository;
+import com.pms.repository.ProductRepository;
+import com.pms.service.cost.CostPropagationService;
+import com.pms.service.stock.LotLedgerService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -56,6 +59,9 @@ class PurchaseReceiptServiceImplTest {
     @Mock private PurchaseListService purchaseListService;
     @Mock private ImageStorageService imageStorageService;
     @Mock private ImageValidator imageValidator;
+    @Mock private ProductRepository productRepository;
+    @Mock private CostPropagationService costPropagationService;
+    @Mock private LotLedgerService lotLedgerService;
 
     @InjectMocks private PurchaseReceiptServiceImpl service;
 
@@ -190,14 +196,11 @@ class PurchaseReceiptServiceImplTest {
             assertThat(r.getPurchasedOn()).isEqualTo(NEW_DAY);
             assertThat(r.getQuantity()).isEqualTo(2);
         });
+        // FEATURE_2610_19 D149: the lot service moves the stock rows (and the rows that used them) to the new payer.
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<StockMovement>> movements = ArgumentCaptor.forClass(List.class);
-        verify(stockMovementRepository).saveAll(movements.capture());
-        assertThat(movements.getValue()).singleElement().satisfies(m -> {
-            assertThat(m.getSeller()).isSameAs(SELLER_B);
-            assertThat(m.getMovedOn()).isEqualTo(DAY);
-            assertThat(m.getQuantity()).isEqualTo(2);
-        });
+        verify(lotLedgerService).moveOwner(movements.capture(), eq(List.of()), eq(SELLER_B));
+        assertThat(movements.getValue()).singleElement().satisfies(m -> assertThat(m.getId()).isEqualTo(30L));
     }
 
     /** D100 ⑥ · D101: the receipt's own hidden card may stay; a day-only edit leaves stock alone. */
