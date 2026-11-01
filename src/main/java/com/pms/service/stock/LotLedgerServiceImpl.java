@@ -9,6 +9,7 @@ import com.pms.domain.SellerDebt;
 import com.pms.domain.StockMovement;
 import com.pms.domain.StockMovementType;
 import com.pms.dto.response.SellerSalesResponse;
+import com.pms.dto.response.StockBalanceView;
 import com.pms.repository.LotShareUsageRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.SellerDebtRepository;
@@ -349,7 +350,44 @@ public class LotLedgerServiceImpl implements LotLedgerService {
         return amounts;
     }
 
+    @Override
+    public Map<StockBalanceView, BigDecimal> stockAmounts(Collection<StockBalanceView> lines) {
+        Map<Long, List<StockBalanceView>> byProduct = new LinkedHashMap<>();
+        for (StockBalanceView line : lines) {
+            byProduct.computeIfAbsent(line.productId(), k -> new ArrayList<>()).add(line);
+        }
+        Map<StockBalanceView, BigDecimal> amounts = new HashMap<>();
+        byProduct.forEach((productId, productLines) -> {
+            Ledger ledger = load(productId);
+            List<Piece> pieces = ledger.pieces(null);
+            for (StockBalanceView line : productLines) {
+                amounts.put(line, stockAmount(ledger, pieces, line.sellerId(), line.onHand()));
+            }
+        });
+        return amounts;
+    }
+
     // ------------------------------------------------------------------ helpers
+
+    /** FEATURE_2611_02 D30 · D31 · D32 · D25: one 「재고 조회」 line's purchase-price amount; null = 「미기입」. */
+    private BigDecimal stockAmount(Ledger ledger, List<Piece> pieces, Long sellerId, long onHand) {
+        if (onHand < 0) return null;                                                       // D25
+        if (onHand == 0) return BigDecimal.ZERO.setScale(2);                               // D31
+        BigDecimal total = BigDecimal.ZERO;
+        long left = 0;
+        for (Piece piece : pieces) {
+            Long owner = piece.owner == null ? null : piece.owner.getId();
+            if (piece.available <= 0 || !Objects.equals(owner, sellerId)) continue;        // D30 ①
+            BigDecimal unit = effectivePrice(ledger, piece, null);                         // D30 ② · D32
+            if (unit == null) return null;
+            total = total.add(unit.multiply(BigDecimal.valueOf(piece.available)));         // D30 ③
+            left += piece.available;
+        }
+        if (left == 0) return null;                                                        // D30 ⑥
+        if (left == onHand) return total.setScale(2, RoundingMode.HALF_UP);                // D30 ④ ⑤
+        return total.multiply(BigDecimal.valueOf(onHand))
+                .divide(BigDecimal.valueOf(left), 2, RoundingMode.HALF_UP);                // D30 ④ ⑤
+    }
 
     private List<LotSlice> take(List<Piece> order, int quantity, Seller fallbackSeller) {
         Map<Long, Integer> byLot = new LinkedHashMap<>();

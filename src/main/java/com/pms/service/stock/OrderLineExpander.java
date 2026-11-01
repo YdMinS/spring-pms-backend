@@ -64,8 +64,11 @@ public class OrderLineExpander {
         EMPTY_BOM
     }
 
-    /** 전개된 물품 1건. {@code quantity} 는 이미 {@code unitCount} 가 곱해진 값이다. */
-    public record ExpandedProduct(Long productId, String productName, int quantity) {}
+    /**
+     * One expanded product. {@code quantity} is already multiplied by {@code unitCount}. {@code imageUrl} = the product's
+     * representative photo as stored, null = none (FEATURE_2611_02 D9 — the outbound confirm line shows it).
+     */
+    public record ExpandedProduct(Long productId, String productName, int quantity, String imageUrl) {}
 
     /** 라인 1건의 전개 결과. {@code failure != null} 이면 {@code products} 는 비어 있다. */
     public record LineExpansion(Long orderLineId, List<ExpandedProduct> products, Failure failure) {
@@ -118,7 +121,8 @@ public class OrderLineExpander {
                     .map(item -> new ExpandedProduct(
                             item.getProduct().getId(),
                             item.getProduct().getProductName(),
-                            item.getQuantity() * units))
+                            item.getQuantity() * units,
+                            item.getProduct().getImageUrl()))
                     .toList();
             result.put(line.getId(), new LineExpansion(line.getId(), products, null));
         }

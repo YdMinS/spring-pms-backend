@@ -147,7 +147,7 @@ public class StockOutServiceImpl implements StockOutService {
             Map<Long, Long> confirmedForLine = confirmed.getOrDefault(line.getId(), Map.of());
             result.add(new RemainingLine(line.getId(), expansion.products().stream()
                     .map(p -> new OutboundProductLine(p.productId(), p.productName(), p.quantity(),
-                            confirmedQty(confirmedForLine, p.productId())))
+                            confirmedQty(confirmedForLine, p.productId()), p.imageUrl()))
                     .toList(), null));
         }
         return result;
@@ -287,6 +287,7 @@ public class StockOutServiceImpl implements StockOutService {
                 m.getId(),
                 m.getProduct().getId(),
                 m.getProduct().getProductName(),
+                m.getProduct().getImageUrl(),
                 seller == null ? null : seller.getId(),
                 seller == null ? null : seller.getSellerName(),
                 m.getMovementType(),

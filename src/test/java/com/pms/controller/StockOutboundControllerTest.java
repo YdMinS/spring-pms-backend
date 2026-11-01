@@ -83,7 +83,8 @@ class StockOutboundControllerTest extends BaseIntegrationTest {
         MarketplaceAccount account = marketplaceAccountRepository.save(
                 MarketplaceAccountFixture.coupangCoreBuilder().seller(seller).build());
 
-        Product product = productRepository.save(Product.builder().productName("양말A").build());
+        Product product = productRepository.save(Product.builder().productName("양말A")
+                .imageUrl("https://bucket/products/socks.png").build());
         productId = product.getId();
 
         MasterProduct master = masterProductRepository.save(
@@ -156,6 +157,8 @@ class StockOutboundControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.orders[0].sellerName").value("행복상회"))
                 .andExpect(jsonPath("$.data.orders[0].products[0].requiredQty").value(6))   // BOM 2 × 주문 3
                 .andExpect(jsonPath("$.data.orders[0].products[0].confirmedQty").value(0))
+                .andExpect(jsonPath("$.data.orders[0].products[0].imageUrl")
+                        .value("https://bucket/products/socks.png"))                    // FEATURE_2611_02 D9
                 .andExpect(jsonPath("$.data.unexpanded").isEmpty());
     }
 

@@ -5,6 +5,7 @@ import com.pms.domain.Product;
 import com.pms.domain.PurchaseRecord;
 import com.pms.domain.Seller;
 import com.pms.domain.StockMovement;
+import com.pms.dto.response.StockBalanceView;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -65,6 +66,16 @@ public interface LotLedgerService {
      * undecided piece had none, or the row used no lot (D48 ③).
      */
     Map<Long, BigDecimal> outgoingAmounts(Long productId, Collection<Long> outRowIds);
+
+    /**
+     * Purchase-price value of 「재고 조회」 lines (FEATURE_2611_02 D23 · D30 ~ D32 · D25), per given line: the pieces of
+     * that product still left whose owner is the line's seller (null = the undecided part) × their unit price — a
+     * decided owner's piece without a price takes that owner's dearest priced piece left now, an undecided piece takes
+     * none. Σ is scaled to the line's {@code onHand} when the two counts differ, then rounded once to 2 decimals
+     * (HALF_UP). onHand 0 = 0 · onHand < 0, a piece without a price or no piece left = null (「미기입」). One ledger load
+     * per product (D33).
+     */
+    Map<StockBalanceView, BigDecimal> stockAmounts(Collection<StockBalanceView> lines);
 
     /**
      * A receipt's payer changed (D101 · D149) or 「판매자 바꾸기」 moved rows and 「영수증 없음」 shares (FEATURE_2611_01
