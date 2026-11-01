@@ -29,7 +29,7 @@ import java.util.Map;
  * while the stock link setting is on (FEATURE_2610_09 D65) — {@link #stockLinked} records which mode applied.
  *
  * <p>⚠️ ddl-auto=validate (prod) → the @Column definitions below must match the purchase_record DDL
- * (changesets 077 · 109-4 · 110-3 · 122-2).
+ * (changesets 077 · 109-4 · 110-3 · 122-2 · 123-2).
  *
  * @see com.pms.domain.StockMovement physical stock ledger
  */
@@ -98,16 +98,18 @@ public class PurchaseRecord extends BaseEntity {
     private Boolean stockLinked = Boolean.TRUE;
 
     /**
-     * The receipt this purchase came in with (FEATURE_2610_18 D28 · D93 ①). Null = saved without a receipt photo —
-     * the per-product check-in (D75).
+     * The receipt this purchase came in with (FEATURE_2610_18 D28 · D93 ①). Null = no receipt — the per-product
+     * check-in (D75) or a 「영수증 없음」 assignment (FEATURE_2611_01 D4). A 「영수증 나중에」 assignment points at a
+     * receipt that has no photo yet.
      */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "receipt_id")
     private PurchaseReceipt receipt;
 
     /**
-     * The undecided intake row this purchase was assigned from (FEATURE_2610_19 D130 ①). Set = a receipt assignment:
-     * the goods are already in stock, so it never waits for check-in and has no stock row of its own.
+     * The undecided intake row this purchase was assigned from (FEATURE_2610_19 D130 ①). Set = an assignment — with a
+     * receipt, 「영수증 나중에」 or 「영수증 없음」 (FEATURE_2611_01 D2): the goods are already in stock, so it never waits
+     * for check-in and has no stock row of its own.
      */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "source_movement_id")
@@ -116,6 +118,14 @@ public class PurchaseRecord extends BaseEntity {
     /** Set when the empty unit price was typed later on the debt screen (FEATURE_2610_19 D141 · D143 ①). */
     @Column(name = "price_filled_at")
     private LocalDateTime priceFilledAt;
+
+    /**
+     * Set = a 「영수증 없음(발견 재고)」 assignment (FEATURE_2611_01 D12): it counts as purchased quantity (D9) and its
+     * amount feeds cost and debts (D5), but a purchase amount total must leave it out. It stays when the seller is
+     * changed later (D7).
+     */
+    @Column(name = "found_stock_at")
+    private LocalDateTime foundStockAt;
 
     /**
      * 이 매입이 {@code Product.price}(기준 원가)를 움직이는가 — <b>이 판정의 유일한 자리</b>
@@ -283,6 +293,19 @@ public class PurchaseRecord extends BaseEntity {
                 .reflectToBasePrice(reflect)
                 .priceFilledAt(filledAt)
                 .build();
+    }
+
+    /** This assignment as found stock, marked at {@code at} (FEATURE_2611_01 D12). */
+    public PurchaseRecord asFoundStock(LocalDateTime at) {
+        return toBuilder().foundStockAt(at).build();
+    }
+
+    /**
+     * A 「영수증 없음」 share whose seller 「판매자 바꾸기」 may change (FEATURE_2611_01 D15): an assignment taken from an
+     * undecided intake row without a receipt. A 「영수증 나중에」 share has its receipt and changes by the receipt edit.
+     */
+    public boolean isNoReceiptShare() {
+        return sourceMovement != null && receipt == null && seller != null && quantity != null && quantity > 0;
     }
 
     /** A typed unit price at the stored scale (4, HALF_UP) — the lot rows without a purchase record use it too (D141 ①). */

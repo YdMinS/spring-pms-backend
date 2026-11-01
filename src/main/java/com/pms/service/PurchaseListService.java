@@ -66,9 +66,11 @@ public interface PurchaseListService {
     PurchaseRecordResult addPurchase(PurchaseRecordRequest request, PurchaseReceipt receipt);
 
     /**
-     * 「입고 작업」 [입고 저장] (FEATURE_2610_19 D117 ⑥): one purchase record + one stock row per line, seller undecided
-     * (D105) — or, with one seller, that seller's check-in through {@link #addPurchase(PurchaseRecordRequest)}
-     * (D116 ④). 400 while the stock link is off.
+     * 「입고 작업」 [입고 저장] (FEATURE_2610_19 D117 ⑥ · FEATURE_2611_01 D1): per line by its seller and reason —
+     * 「미정」 + 「매입」 = one undecided purchase record + one stock row (D105) · a seller + 「매입」 = that seller's
+     * check-in through {@link #addPurchase(PurchaseRecordRequest)} · a seller + 「기초재고」 = that seller's opening
+     * stock row (no purchase record). One seller = every line is that seller's (D116 ④ · D20). 400 while the stock
+     * link is off · a 「기초재고」 line without a seller → 400 naming the products, nothing saved (D19).
      */
     void addIntake(StockIntakeRequest request);
 

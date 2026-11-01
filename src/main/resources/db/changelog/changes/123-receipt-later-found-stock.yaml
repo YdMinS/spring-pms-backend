@@ -1,0 +1,27 @@
+# Seller without a receipt (FEATURE_2611_01 / D4 · D12).
+#   123-1 purchase_receipt.photo_url nullable = a 「영수증 나중에」 receipt waits for its photo (D4).
+#   123-2 purchase_record.found_stock_at set = a 「영수증 없음(발견 재고)」 assignment, kept out of future purchase
+#         amount totals (D12). NULL = every other purchase record.
+# ⚠️ No BOOLEAN column here -> no MySQL BIT follow-up changeSet (the flag is a TIMESTAMP).
+databaseChangeLog:
+
+  - changeSet:
+      id: 123-1-receipt-photo-nullable
+      author: oclyx
+      comment: "FEATURE_2611_01 D4: purchase_receipt.photo_url nullable (receipt photo added later)."
+      changes:
+        - dropNotNullConstraint: { tableName: purchase_receipt, columnName: photo_url, columnDataType: "VARCHAR(1000)" }
+      rollback:
+        - addNotNullConstraint: { tableName: purchase_receipt, columnName: photo_url, columnDataType: "VARCHAR(1000)" }
+
+  - changeSet:
+      id: 123-2-purchase-record-found-stock
+      author: oclyx
+      comment: "FEATURE_2611_01 D12: purchase_record.found_stock_at (found stock assigned without a receipt)."
+      changes:
+        - addColumn:
+            tableName: purchase_record
+            columns:
+              - column: { name: found_stock_at, type: TIMESTAMP }
+      rollback:
+        - dropColumn: { tableName: purchase_record, columnName: found_stock_at }

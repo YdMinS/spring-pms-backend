@@ -3,6 +3,7 @@ package com.pms.controller;
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.ReceiptCreateRequest;
 import com.pms.dto.request.ReceiptUpdateRequest;
+import com.pms.dto.request.ReceiptlessAssignRequest;
 import com.pms.dto.response.ReceiptCreateResult;
 import com.pms.dto.response.ReceiptDetailView;
 import com.pms.dto.response.ReceiptSummaryView;
@@ -21,7 +22,7 @@ import java.util.List;
 
 /**
  * Receipt check-in, header edit and receipt list API — ADMIN only (FEATURE_2610_18 D28 · D45 · D76 · D87 · D93 · D94 ·
- * D100).
+ * D100), plus the daily view's assignment without a receipt and the later receipt photo (FEATURE_2611_01 D2 · D4).
  *
  * <p>⚠️ Both multipart parts are {@code required = false} on purpose: a missing part would end in the catch-all 500
  * handler, so the service answers 400 with a message instead.</p>
@@ -54,6 +55,25 @@ public class PurchaseReceiptController {
             @RequestPart(value = "photo", required = false) MultipartFile photo,
             @Valid @RequestPart(value = "request", required = false) ReceiptCreateRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(purchaseReceiptService.assign(movedOn, request, photo)));
+    }
+
+    /**
+     * 「영수증 없이 판매자 정하기」 of the daily in/out view (FEATURE_2611_01 D2 · D4): {@code movedOn} = the day on the
+     * screen, also the purchase day (D8). receiptId null = 「영수증 없음」.
+     */
+    @PostMapping("/assign-without-receipt")
+    public ResponseEntity<ResponseDTO<ReceiptCreateResult>> assignWithoutReceipt(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate movedOn,
+            @Valid @RequestBody ReceiptlessAssignRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(purchaseReceiptService.assignWithoutReceipt(movedOn, request)));
+    }
+
+    /** The photo of a 「영수증 나중에」 receipt (FEATURE_2611_01 D4): {@code photo} part. Returns the receipt as saved. */
+    @PostMapping(value = "/{receiptId}/photo", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ResponseDTO<ReceiptDetailView>> attachPhoto(
+            @PathVariable Long receiptId,
+            @RequestPart(value = "photo", required = false) MultipartFile photo) {
+        return ResponseEntity.ok(ResponseDTO.success(purchaseReceiptService.attachPhoto(receiptId, photo)));
     }
 
     /** Receipt list, newest day first. from/to inclusive and required; sellerId = payer seller (omitted = all). */

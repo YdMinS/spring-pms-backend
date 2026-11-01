@@ -386,20 +386,53 @@ public class PurchaseListServiceImpl implements PurchaseListService {
         if (!purchaseSettingService.isStockLinked()) {
             throw new IllegalArgumentException("재고 연동이 꺼져 있습니다.");
         }
-        // D116 ④: an account with one seller has nothing to decide — the lines are that seller's check-ins.
+        // D116 ④ · FEATURE_2611_01 D20: an account with one seller has nothing to decide — every line is that seller's.
         List<Seller> sellers = sellerRepository.findAll();
         Seller only = sellers.size() == 1 ? sellers.get(0) : null;
+        // FEATURE_2611_01 D13 · D19: an opening line needs a seller — check every line before saving any.
+        List<String> openingWithoutSeller = new ArrayList<>();
         for (StockIntakeRequest.Line line : request.lines()) {
+            StockReason reason = line.reason() == null ? StockReason.PURCHASE : line.reason();
+            if (reason != StockReason.PURCHASE && reason != StockReason.OPENING) {
+                throw new IllegalArgumentException("입고 사유는 매입 또는 기초재고만 고를 수 있습니다.");
+            }
+            if (reason == StockReason.OPENING && only == null && line.sellerId() == null) {
+                openingWithoutSeller.add(productRepository.findById(line.productId())
+                        .orElseThrow(() -> new ResourceNotFoundException("Product", line.productId()))
+                        .getProductName());
+            }
+        }
+        if (!openingWithoutSeller.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "기초재고는 판매자를 골라야 합니다: " + String.join(", ", openingWithoutSeller));
+        }
+        for (StockIntakeRequest.Line line : request.lines()) {
+            Long sellerId = only != null ? only.getId() : line.sellerId();
+            if (line.reason() == StockReason.OPENING) {
+                // FEATURE_2611_01 D1: the seller's opening stock — no purchase record, unit price = the registered price.
+                stockLedgerService.record(new StockMovementRequest(
+                        line.productId(),             // productId
+                        sellerId,                     // sellerId
+                        StockMovementType.STOCK_IN,   // movementType
+                        line.quantity(),              // quantity
+                        StockReason.OPENING,          // reason
+                        null,                         // reasonNote
+                        null,                         // unitPrice — the registered price
+                        null,                         // orderClaimId
+                        null,                         // purchaseRecordId
+                        request.movedOn()));          // movedOn
+                continue;
+            }
             PurchaseRecordRequest purchase = new PurchaseRecordRequest(
                     line.productId(),                         // productId
-                    only == null ? null : only.getId(),       // sellerId — null = undecided (D105)
+                    sellerId,                                 // sellerId — null = undecided (D105)
                     request.movedOn(),                        // purchasedOn
                     line.quantity(),                          // quantity
                     null,                                     // totalAmount — D135: the registered price fills it
                     null,                                     // unitPrice
                     null,                                     // reflectToBasePrice
                     Boolean.TRUE);                            // recordStock
-            if (only != null) {
+            if (sellerId != null) {
                 addPurchase(purchase);
                 continue;
             }
@@ -416,7 +449,8 @@ public class PurchaseListServiceImpl implements PurchaseListService {
         return purchaseRecordRepository.findRecentByProduct(productId, sellerId, PageRequest.of(0, limit)).stream()
                 .map(r -> new PurchaseRecordView(r.getId(), r.getPurchasedOn(), r.getQuantity(),
                         r.getTotalAmount(), r.getUnitPrice(), Boolean.TRUE.equals(r.getReflectToBasePrice()),
-                        r.getSeller().getSellerName(), r.getReceipt() == null ? null : r.getReceipt().getId()))
+                        r.getSeller().getSellerName(), r.getReceipt() == null ? null : r.getReceipt().getId(),
+                        r.getFoundStockAt() != null))
                 .toList();
     }
 
