@@ -36,8 +36,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * 「입고 작업」 → 「그날 입출고 내역」 → 영수증 배정 (FEATURE_2610_19 D105 · D117 · D119 · D121 · D123 · D130 · D135 ·
- * D147) on the real schema, plus ADMIN authority (401/403).
+ * 「입고 작업」 → 「그날 입출고 내역」 → receipt assignment (FEATURE_2610_19 D105 · D117 · D119 · D121 · D123 · D130 · D135 ·
+ * D147) on the real schema, plus ADMIN authority (401/403). FEATURE_2611_01: intake seller and reason (D1 · D19),
+ * assignment without a receipt (D2 · D4 · D12), the later receipt photo (D4) and 「판매자 바꾸기」 (D7 · D15).
  */
 class StockDailyControllerTest extends BaseIntegrationTest {
 
@@ -51,13 +52,15 @@ class StockDailyControllerTest extends BaseIntegrationTest {
     @MockBean private ImageStorageService imageStorageService;
 
     private Long sellerAId;
+    private Long sellerBId;
     private Long productId;
 
     @BeforeEach
     void seed() {
         sellerAId = sellerRepository.save(Seller.builder()
                 .sellerName("A상사").businessRegistration("111-11-11111").build()).getId();
-        sellerRepository.save(Seller.builder().sellerName("B상사").businessRegistration("222-22-22222").build());
+        sellerBId = sellerRepository.save(Seller.builder().sellerName("B상사").businessRegistration("222-22-22222")
+                .build()).getId();
         productId = productRepository.save(Product.builder().productName("입고양말").barcodeId("8800000000001")
                 .price(new BigDecimal("1000")).build()).getId();
     }
@@ -157,5 +160,163 @@ class StockDailyControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.rows[0].owners[0]").value("A상사 2"))
                 .andExpect(jsonPath("$.data.rows[0].undecidedLeft").value(1));
         assertThat(stockMovementRepository.findAll()).hasSize(1);          // D125: no stock row added
+    }
+
+    // --- FEATURE_2611_01 ---
+
+    private String intakeLine(int quantity, Long sellerId, String reason) {
+        return "{\"productId\":" + productId + ",\"quantity\":" + quantity
+                + (sellerId == null ? "" : ",\"sellerId\":" + sellerId)
+                + (reason == null ? "" : ",\"reason\":\"" + reason + "\"") + "}";
+    }
+
+    private String receiptlessBody(String mode, Long sellerId, int quantity) {
+        return "{\"mode\":\"" + mode + "\",\"sellerId\":" + sellerId
+                + ",\"lines\":[{\"productId\":" + productId + ",\"quantity\":" + quantity + "}]}";
+    }
+
+    @Test
+    void newPaths_권한_401_403() throws Exception {
+        String body = receiptlessBody("NO_RECEIPT", sellerAId, 1);
+        mockMvc.perform(post("/api/admin/purchase-receipts/assign-without-receipt").param("movedOn", DAY.toString())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/admin/purchase-receipts/assign-without-receipt").param("movedOn", DAY.toString())
+                        .contentType(MediaType.APPLICATION_JSON).content(body)
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(multipart("/api/admin/purchase-receipts/1/photo").file(photo()))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(multipart("/api/admin/purchase-receipts/1/photo").file(photo())
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+        String change = "{\"sellerId\":" + sellerAId + ",\"movementIds\":[1]}";
+        mockMvc.perform(post("/api/admin/stock/daily/change-seller").contentType(MediaType.APPLICATION_JSON)
+                        .content(change))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/admin/stock/daily/change-seller").contentType(MediaType.APPLICATION_JSON)
+                        .content(change).header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    /** D1 · D13 · D19: per-line seller and reason; an opening line without a seller stops the whole save. */
+    @Test
+    void testIntakeSellerAndReason() throws Exception {
+        stockLinkOn();
+        String blocked = "{\"movedOn\":\"" + DAY + "\",\"lines\":[" + intakeLine(1, sellerAId, null) + ","
+                + intakeLine(2, null, "OPENING") + "]}";
+        mockMvc.perform(post("/api/admin/stock/intake").contentType(MediaType.APPLICATION_JSON).content(blocked)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("기초재고는 판매자를 골라야 합니다: 입고양말"));
+        assertThat(stockMovementRepository.findAll()).isEmpty();
+
+        String body = "{\"movedOn\":\"" + DAY + "\",\"lines\":[" + intakeLine(2, sellerAId, "PURCHASE") + ","
+                + intakeLine(1, sellerBId, "OPENING") + "," + intakeLine(3, null, null) + "]}";
+        mockMvc.perform(post("/api/admin/stock/intake").contentType(MediaType.APPLICATION_JSON).content(body)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+        purchaseRecordRepository.flush();
+        assertThat(purchaseRecordRepository.findAll()).extracting(r -> r.getSeller() == null ? null : r.getSeller().getId())
+                .containsExactlyInAnyOrder(sellerAId, null);
+        assertThat(stockMovementRepository.findAll()).extracting(m -> m.getReason().name())
+                .containsExactlyInAnyOrder("PURCHASE", "OPENING", "PURCHASE");
+
+        mockMvc.perform(get("/api/admin/stock/daily").param("date", DAY.toString())
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rows[0].sellerChangeable").value(true))
+                .andExpect(jsonPath("$.data.rows[1].sellerChangeable").value(true))
+                .andExpect(jsonPath("$.data.rows[2].sellerChangeable").value(false));
+    }
+
+    /** D2 · D4 · D12 · D15 · D7: later receipt + found stock, the photo added later, then a share and a row move. */
+    @Test
+    void testAssignWithoutReceiptThenChangeSeller() throws Exception {
+        stockLinkOn();
+        given(imageStorageService.uploadBytes(any(), eq("receipts"), anyString(), eq("image/png")))
+                .willReturn("https://bucket/receipts/r.png");
+        mockMvc.perform(post("/api/admin/stock/intake").contentType(MediaType.APPLICATION_JSON).content(intakeBody(3))
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        String later = mockMvc.perform(post("/api/admin/purchase-receipts/assign-without-receipt")
+                        .param("movedOn", DAY.toString()).contentType(MediaType.APPLICATION_JSON)
+                        .content(receiptlessBody("RECEIPT_LATER", sellerAId, 1))
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        long receiptId = objectMapper.readTree(later).get("data").get("receiptId").asLong();
+        mockMvc.perform(post("/api/admin/purchase-receipts/assign-without-receipt")
+                        .param("movedOn", DAY.toString()).contentType(MediaType.APPLICATION_JSON)
+                        .content(receiptlessBody("NO_RECEIPT", sellerBId, 1))
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.receiptId").doesNotExist());
+
+        String daily = mockMvc.perform(get("/api/admin/stock/daily").param("date", DAY.toString())
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rows[0].undecidedLeft").value(1))
+                .andExpect(jsonPath("$.data.rows[0].noReceiptShares.length()").value(1))
+                .andExpect(jsonPath("$.data.rows[0].noReceiptShares[0].sellerName").value("B상사"))
+                .andReturn().getResponse().getContentAsString();
+        long shareId = objectMapper.readTree(daily).get("data").get("rows").get(0).get("noReceiptShares").get(0)
+                .get("recordId").asLong();
+        mockMvc.perform(get("/api/admin/purchase-receipts").param("from", DAY.toString()).param("to", DAY.toString())
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].hasPhoto").value(false));
+
+        mockMvc.perform(multipart("/api/admin/purchase-receipts/" + receiptId + "/photo").file(photo())
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.photoUrl").value("https://bucket/receipts/r.png"));
+        mockMvc.perform(multipart("/api/admin/purchase-receipts/" + receiptId + "/photo").file(photo())
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("이미 사진이 있는 영수증입니다."));
+
+        mockMvc.perform(post("/api/admin/stock/daily/change-seller").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sellerId\":" + sellerAId + ",\"shareRecordIds\":[" + shareId + "]}")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+        purchaseRecordRepository.flush();
+        assertThat(purchaseRecordRepository.findById(shareId).orElseThrow()).satisfies(r -> {
+            assertThat(r.getSeller().getId()).isEqualTo(sellerAId);
+            assertThat(r.getFoundStockAt()).isNotNull();                     // D12: the mark stays
+        });
+        mockMvc.perform(get("/api/admin/purchase-list/purchases").param("productId", String.valueOf(productId))
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].foundStock").value(true))
+                .andExpect(jsonPath("$.data[1].foundStock").value(false));
+
+        Long undecidedRowId = stockMovementRepository.findAll().get(0).getId();
+        mockMvc.perform(post("/api/admin/stock/daily/change-seller").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sellerId\":" + sellerAId + ",\"movementIds\":[" + undecidedRowId + "]}")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("판매자를 바꿀 수 없는 줄입니다."));
+    }
+
+    /** D7: a decided row without a receipt moves with its purchase record. */
+    @Test
+    void testChangeSellerMovesRowAndRecord() throws Exception {
+        stockLinkOn();
+        String body = "{\"movedOn\":\"" + DAY + "\",\"lines\":[" + intakeLine(2, sellerAId, "PURCHASE") + "]}";
+        mockMvc.perform(post("/api/admin/stock/intake").contentType(MediaType.APPLICATION_JSON).content(body)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+        Long rowId = stockMovementRepository.findAll().get(0).getId();
+
+        mockMvc.perform(post("/api/admin/stock/daily/change-seller").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sellerId\":" + sellerBId + ",\"movementIds\":[" + rowId + "]}")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+        stockMovementRepository.flush();
+        assertThat(stockMovementRepository.findById(rowId).orElseThrow().getSeller().getId()).isEqualTo(sellerBId);
+        assertThat(purchaseRecordRepository.findAll()).singleElement()
+                .satisfies(r -> assertThat(r.getSeller().getId()).isEqualTo(sellerBId));
     }
 }

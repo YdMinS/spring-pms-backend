@@ -2,6 +2,8 @@ package com.pms.service;
 
 import com.pms.dto.request.ReceiptCreateRequest;
 import com.pms.dto.request.ReceiptUpdateRequest;
+import com.pms.dto.request.ReceiptlessAssignRequest;
+import com.pms.dto.request.SellerChangeRequest;
 import com.pms.dto.response.ReceiptCreateResult;
 import com.pms.dto.response.ReceiptDetailView;
 import com.pms.dto.response.ReceiptSummaryView;
@@ -12,7 +14,8 @@ import java.util.List;
 
 /**
  * Receipt check-in, receipt header edit, receipt assignment and receipt reads (FEATURE_2610_18 D28 · D45 · D76 ·
- * D87~D89 · D93 · D94 · D100 · D101 · FEATURE_2610_19 D118 · D121).
+ * D87~D89 · D93 · D94 · D100 · D101 · FEATURE_2610_19 D118 · D121), and the daily view's seller without a receipt
+ * (FEATURE_2611_01 D2 · D4 · D7).
  *
  * <p>🔴 A {@link #create} line is one check-in: {@link PurchaseListService#addPurchase(com.pms.dto.request.PurchaseRecordRequest,
  * com.pms.domain.PurchaseReceipt)} owns the amount, base price and stock rules — {@link #create} never writes
@@ -22,8 +25,8 @@ import java.util.List;
  * they reach (D100 · D101 · FEATURE_2610_19 D149) — never a purchase amount, a quantity or a base price.</p>
  *
  * <p>🔴 A receipt never adds a debt of its own (D88) — borrowed-goods debts come from outbound rows only
- * (FEATURE_2610_19 D33). {@link #assign} and {@link #update} only recompute the split shares and the outbound debts
- * of the products they touched (D131 · D132).</p>
+ * (FEATURE_2610_19 D33). {@link #assign}, {@link #assignWithoutReceipt}, {@link #update} and {@link #changeSeller}
+ * only recompute the split shares and the outbound debts of the products they touched (D131 · D132).</p>
  *
  * @see com.pms.controller.PurchaseReceiptController
  */
@@ -51,6 +54,28 @@ public interface PurchaseReceiptService {
      * @param movedOn the day on the screen — only that day's undecided intake can be assigned (D121 ⑥)
      */
     ReceiptCreateResult assign(LocalDate movedOn, ReceiptCreateRequest request, MultipartFile photo);
+
+    /**
+     * 「영수증 없이 판매자 정하기」 (FEATURE_2611_01 D2 · D4 · D5 · D8 · D12): the {@link #assign} lines without a photo, owned
+     * by the picked seller, purchase day = {@code movedOn}. {@code RECEIPT_LATER} → one receipt without a photo
+     * (receiptId in the result) · {@code NO_RECEIPT} → no receipt, the records are marked as found stock (receiptId
+     * null). No seller → 400 「판매자를 선택하세요.」 · the {@link #assign} quantity checks → 400.
+     */
+    ReceiptCreateResult assignWithoutReceipt(LocalDate movedOn, ReceiptlessAssignRequest request);
+
+    /**
+     * The photo of a 「영수증 나중에」 receipt (FEATURE_2611_01 D4). Missing receipt → 404 · it has a photo → 400
+     * 「이미 사진이 있는 영수증입니다.」 · no photo part → 400 「영수증 사진을 올리세요.」.
+     */
+    ReceiptDetailView attachPhoto(Long receiptId, MultipartFile photo);
+
+    /**
+     * 「판매자 바꾸기」 (FEATURE_2611_01 D7 · D15): decided incoming rows without a receipt and 「영수증 없음」 shares take
+     * the new seller with the rows that used them, and the debts are rewritten. No seller → 400 · nothing picked →
+     * 400 「판매자를 바꿀 줄을 고르세요.」 · a row or share that is not a target → 400 「판매자를 바꿀 수 없는 줄입니다.」 ·
+     * missing → 404.
+     */
+    void changeSeller(SellerChangeRequest request);
 
     /** Receipt list: purchase day in [from, to], payer seller (null = all), product name part (blank = any). */
     List<ReceiptSummaryView> search(LocalDate from, LocalDate to, Long sellerId, String productName);

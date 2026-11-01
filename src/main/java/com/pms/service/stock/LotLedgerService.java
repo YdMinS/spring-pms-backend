@@ -67,8 +67,9 @@ public interface LotLedgerService {
     Map<Long, BigDecimal> outgoingAmounts(Long productId, Collection<Long> outRowIds);
 
     /**
-     * A receipt's payer changed (D101 · D149): the given lots and every row that uses them take the new owner, the
-     * assigned shares re-split their lots, and the debts of every touched product are rewritten (D132).
+     * A receipt's payer changed (D101 · D149) or 「판매자 바꾸기」 moved rows and 「영수증 없음」 shares (FEATURE_2611_01
+     * D7): the given lots and every row that uses them take the new owner, the assigned shares re-split their lots, and
+     * the debts of every touched product are rewritten (D132).
      */
     void moveOwner(Collection<StockMovement> lots, Collection<PurchaseRecord> shares, Seller newOwner);
 }

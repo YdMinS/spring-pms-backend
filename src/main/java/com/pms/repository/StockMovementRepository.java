@@ -179,7 +179,8 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
 
     /**
      * Rows tied to the given purchase records (FEATURE_2610_18 D101) — the stock rows of a receipt's lines, moved to
-     * the new payer seller when the receipt header changes its payer.
+     * the new payer seller when the receipt header changes its payer, and the stock rows of a purchase record moved by
+     * 「판매자 바꾸기」 (FEATURE_2611_01 D7).
      */
     List<StockMovement> findByPurchaseRecordIdIn(Collection<Long> purchaseRecordIds);
 
@@ -195,6 +196,10 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
 
     /** FEATURE_2610_19 D150 (b): the product has an undecided intake row ({@code STOCK_IN}, seller null). */
     boolean existsByProductIdAndSellerIsNullAndMovementType(Long productId, StockMovementType movementType);
+
+    /** The rows 「판매자 바꾸기」 picked, with their purchase record (FEATURE_2611_01 D7 · D15). */
+    @EntityGraph(attributePaths = {"purchaseRecord"})
+    List<StockMovement> findByIdIn(Collection<Long> ids);
 
     /** Rows that used one of these lots (FEATURE_2610_19 D149 ① (b)). */
     List<StockMovement> findBySourceMovementIdIn(Collection<Long> sourceMovementIds);

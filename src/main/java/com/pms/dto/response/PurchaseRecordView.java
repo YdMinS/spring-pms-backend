@@ -21,5 +21,6 @@ public record PurchaseRecordView(
         BigDecimal unitPrice,          // null 가능
         boolean reflectToBasePrice,
         String sellerName,
-        Long receiptId                 // null = per-product check-in; set = [영수증] (FEATURE_2610_18 D93 ①)
+        Long receiptId,                // null = per-product check-in; set = [영수증] (FEATURE_2610_18 D93 ①)
+        boolean foundStock             // true = 「발견 재고」 (FEATURE_2611_01 D12)
 ) {}

@@ -9,7 +9,7 @@ import java.time.LocalDate;
  * <p>{@code cardAlias} null = the card was unknown (the screen shows 「카드 없음」). {@code firstProductName} = the
  * first line's product, {@code productCount} = number of lines (the screen shows 「첫 상품 외 N개」).
  * {@code totalAmount} = sum of the lines with an amount; null when every line was left blank (the screen shows
- * 「미기입」).</p>
+ * 「미기입」). {@code hasPhoto} false = a 「영수증 나중에」 receipt (the screen shows 「사진 없음」, FEATURE_2611_01 D4).</p>
  */
 public record ReceiptSummaryView(
         Long id,
@@ -19,5 +19,6 @@ public record ReceiptSummaryView(
         String cardAlias,
         String firstProductName,
         int productCount,
-        BigDecimal totalAmount
+        BigDecimal totalAmount,
+        boolean hasPhoto
 ) {}

@@ -15,6 +15,8 @@ import java.util.List;
  * @param orderNumber   outbound only
  * @param tags          outbound only: 「{seller} 재고 사용」 · 「영수증 미등록 재고 사용」 (D124 · D128)
  * @param amount        purchase-price amount (D123); null = 「미기입」. Never a selling price (D122)
+ * @param sellerChangeable a decided incoming row without a receipt — 「판매자 바꾸기」 may move it (FEATURE_2611_01 D15)
+ * @param noReceiptShares  undecided intake only: its 「영수증 없음」 shares, each one 「판매자 바꾸기」 target (D15)
  */
 public record StockDailyRowView(
         Long movementId,
@@ -28,5 +30,10 @@ public record StockDailyRowView(
         Integer undecidedLeft,
         String orderNumber,
         List<String> tags,
-        BigDecimal amount
-) {}
+        BigDecimal amount,
+        boolean sellerChangeable,
+        List<NoReceiptShare> noReceiptShares
+) {
+    /** One 「영수증 없음」 share: its purchase record, owner and quantity. */
+    public record NoReceiptShare(Long recordId, String sellerName, int quantity) {}
+}

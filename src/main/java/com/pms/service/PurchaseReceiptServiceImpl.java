@@ -10,6 +10,8 @@ import com.pms.dto.request.PurchaseRecordRequest;
 import com.pms.dto.request.ReceiptCreateRequest;
 import com.pms.dto.request.ReceiptLineRequest;
 import com.pms.dto.request.ReceiptUpdateRequest;
+import com.pms.dto.request.ReceiptlessAssignRequest;
+import com.pms.dto.request.SellerChangeRequest;
 import com.pms.dto.response.ReceiptCreateResult;
 import com.pms.dto.response.ReceiptDetailView;
 import com.pms.dto.response.ReceiptLineView;
@@ -32,6 +34,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -183,24 +186,9 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
         if (photo == null || photo.isEmpty()) {
             throw new IllegalArgumentException("영수증 사진을 올리세요.");
         }
-        Map<Long, Long> perProduct = request.lines().stream()
-                .collect(Collectors.groupingBy(ReceiptLineRequest::productId, Collectors.counting()));
-        if (perProduct.values().stream().anyMatch(count -> count > 1)) {
-            throw new IllegalArgumentException("같은 상품을 두 번 넣었습니다.");
-        }
         SellerCard card = request.cardId() == null ? null : sellerCardService.requireVisible(request.cardId());
         Seller payer = card != null ? card.getSeller() : requirePayer(request.payerSellerId());
-
-        // D121 ①: never more than what is still undecided that day.
-        Map<Long, List<StockMovement>> intakeByProduct = new LinkedHashMap<>();
-        for (ReceiptLineRequest line : request.lines()) {
-            List<StockMovement> intake = stockMovementRepository.findUndecidedIntake(line.productId(), movedOn);
-            int left = intake.stream().mapToInt(this::undecidedLeft).sum();
-            if (line.quantity() > left) {
-                throw new IllegalArgumentException("남은 영수증 미등록 수량(" + left + "개)보다 많습니다.");
-            }
-            intakeByProduct.put(line.productId(), intake);
-        }
+        Map<Long, List<StockMovement>> intakeByProduct = undecidedIntake(movedOn, request.lines());
         imageValidator.validate(photo);
         PurchaseReceipt receipt = purchaseReceiptRepository.save(PurchaseReceipt.builder()
                 .purchasedOn(request.purchasedOn())
@@ -209,9 +197,159 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
                 .photoUrl(storePhoto(photo))
                 .createdBy(currentUsername())
                 .build());
+        writeAssignment(intakeByProduct, request.lines(), payer, request.purchasedOn(), receipt, null);
+        return new ReceiptCreateResult(receipt.getId());
+    }
 
+    /**
+     * 「영수증 없이 판매자 정하기」 (FEATURE_2611_01 D2 · D4 · D5 · D8 · D12): the same assignment as {@link #assign} with
+     * the picked seller and the screen day as the purchase day. 「영수증 나중에」 = a receipt without a photo (payer = that
+     * seller, no card) · 「영수증 없음」 = no receipt, every record marked as found stock.
+     */
+    @Override
+    @Transactional
+    public ReceiptCreateResult assignWithoutReceipt(LocalDate movedOn, ReceiptlessAssignRequest request) {
+        if (request == null || movedOn == null) {
+            throw new IllegalArgumentException("영수증 내용을 보내세요.");
+        }
+        Seller seller = requireSeller(request.sellerId());
+        Map<Long, List<StockMovement>> intakeByProduct = undecidedIntake(movedOn, request.lines());
+        PurchaseReceipt receipt = null;
+        LocalDateTime foundStockAt = null;
+        if (request.mode() == ReceiptlessAssignRequest.Mode.RECEIPT_LATER) {
+            receipt = purchaseReceiptRepository.save(PurchaseReceipt.builder()
+                    .purchasedOn(movedOn)
+                    .payerSeller(seller)
+                    .card(null)
+                    .photoUrl(null)
+                    .createdBy(currentUsername())
+                    .build());
+        } else {
+            foundStockAt = LocalDateTime.now();
+        }
+        writeAssignment(intakeByProduct, request.lines(), seller, movedOn, receipt, foundStockAt);
+        return new ReceiptCreateResult(receipt == null ? null : receipt.getId());
+    }
+
+    /**
+     * Photo of a 「영수증 나중에」 receipt (FEATURE_2611_01 D4): stored once. A receipt that already has its photo → 400
+     * (FEATURE_2610_18 D100 — a photo is not replaced).
+     */
+    @Override
+    @Transactional
+    public ReceiptDetailView attachPhoto(Long receiptId, MultipartFile photo) {
+        PurchaseReceipt receipt = purchaseReceiptRepository.findDetailById(receiptId)
+                .orElseThrow(() -> new ResourceNotFoundException("PurchaseReceipt", receiptId));
+        if (receipt.getPhotoUrl() != null) {
+            throw new IllegalArgumentException("이미 사진이 있는 영수증입니다.");
+        }
+        if (photo == null || photo.isEmpty()) {
+            throw new IllegalArgumentException("영수증 사진을 올리세요.");
+        }
+        imageValidator.validate(photo);
+        purchaseReceiptRepository.save(receipt.toBuilder().photoUrl(storePhoto(photo)).build());
+        return get(receiptId);
+    }
+
+    /**
+     * 「판매자 바꾸기」 (FEATURE_2611_01 D7 · D15): the rows and shares take the new seller — a row's purchase record and
+     * every stock row of that record too — then {@link LotLedgerService#moveOwner} moves the rows that used them,
+     * re-splits the shares' lots and rewrites the debts (D6 · FEATURE_2610_19 D132 · D149).
+     */
+    @Override
+    @Transactional
+    public void changeSeller(SellerChangeRequest request) {
+        Seller seller = requireSeller(request.sellerId());
+        List<Long> movementIds = request.movementIds() == null ? List.of() : request.movementIds();
+        List<Long> shareIds = request.shareRecordIds() == null ? List.of() : request.shareRecordIds();
+        if (movementIds.isEmpty() && shareIds.isEmpty()) {
+            throw new IllegalArgumentException("판매자를 바꿀 줄을 고르세요.");
+        }
+        Map<Long, StockMovement> foundRows = movementIds.isEmpty() ? Map.of()
+                : stockMovementRepository.findByIdIn(movementIds).stream()
+                .collect(Collectors.toMap(StockMovement::getId, m -> m));
+        List<StockMovement> rows = new ArrayList<>();
+        for (Long id : movementIds) {
+            StockMovement row = foundRows.get(id);
+            if (row == null) {
+                throw new ResourceNotFoundException("StockMovement", id);
+            }
+            if (!row.isSellerChangeableWithoutReceipt()) {
+                throw new IllegalArgumentException("판매자를 바꿀 수 없는 줄입니다.");
+            }
+            rows.add(row);
+        }
+        Map<Long, PurchaseRecord> foundShares = shareIds.isEmpty() ? Map.of()
+                : purchaseRecordRepository.findAllById(shareIds).stream()
+                .collect(Collectors.toMap(PurchaseRecord::getId, r -> r));
+        List<PurchaseRecord> shares = new ArrayList<>();
+        for (Long id : shareIds) {
+            PurchaseRecord share = foundShares.get(id);
+            if (share == null) {
+                throw new ResourceNotFoundException("PurchaseRecord", id);
+            }
+            if (!share.isNoReceiptShare()) {
+                throw new IllegalArgumentException("판매자를 바꿀 수 없는 줄입니다.");
+            }
+            shares.add(share);
+        }
+        // D7: the purchase record of a row moves with it, and so does every other stock row of that record (D101).
+        Map<Long, PurchaseRecord> rowRecords = new LinkedHashMap<>();
+        rows.stream().map(StockMovement::getPurchaseRecord).filter(Objects::nonNull)
+                .forEach(r -> rowRecords.put(r.getId(), r));
+        Map<Long, StockMovement> lots = new LinkedHashMap<>();
+        rows.forEach(row -> lots.put(row.getId(), row));
+        if (!rowRecords.isEmpty()) {
+            stockMovementRepository.findByPurchaseRecordIdIn(List.copyOf(rowRecords.keySet()))
+                    .forEach(row -> lots.putIfAbsent(row.getId(), row));
+        }
+        List<PurchaseRecord> movedRecords = new ArrayList<>();
+        rowRecords.values().forEach(r -> movedRecords.add(r.toBuilder().seller(seller).build()));
+        List<PurchaseRecord> movedShares = shares.stream().map(s -> s.toBuilder().seller(seller).build()).toList();
+        movedRecords.addAll(movedShares);
+        purchaseRecordRepository.saveAll(movedRecords);
+        lotLedgerService.moveOwner(lots.values(), movedShares, seller);
+    }
+
+    /** What of one undecided intake row no receipt took yet (D121 ①): its record minus the assigned records. */
+    private int undecidedLeft(StockMovement intake) {
+        int assigned = purchaseRecordRepository.sumAssignedFrom(intake.getId());
+        return intake.getQuantity() - assigned;
+    }
+
+    /**
+     * The undecided intake rows of each line's product on {@code movedOn}, record order (D130) — the same product twice
+     * → 400 · more than what is still undecided that day → 400 (D121 ①).
+     */
+    private Map<Long, List<StockMovement>> undecidedIntake(LocalDate movedOn, List<ReceiptLineRequest> lines) {
+        Map<Long, Long> perProduct = lines.stream()
+                .collect(Collectors.groupingBy(ReceiptLineRequest::productId, Collectors.counting()));
+        if (perProduct.values().stream().anyMatch(count -> count > 1)) {
+            throw new IllegalArgumentException("같은 상품을 두 번 넣었습니다.");
+        }
+        Map<Long, List<StockMovement>> intakeByProduct = new LinkedHashMap<>();
+        for (ReceiptLineRequest line : lines) {
+            List<StockMovement> intake = stockMovementRepository.findUndecidedIntake(line.productId(), movedOn);
+            int left = intake.stream().mapToInt(this::undecidedLeft).sum();
+            if (line.quantity() > left) {
+                throw new IllegalArgumentException("남은 영수증 미등록 수량(" + left + "개)보다 많습니다.");
+            }
+            intakeByProduct.put(line.productId(), intake);
+        }
+        return intakeByProduct;
+    }
+
+    /**
+     * Per line: take the quantity from the day's intake rows, lowest record order first (D130); each part becomes one
+     * purchase record of {@code owner} pointing at its intake row (found stock when {@code foundStockAt} is set), and
+     * the intake row's undecided record gets the same quantity as a minus row. No stock row is written (D125). Then the
+     * touched rows are re-split and the debts rewritten (D131 · D132).
+     */
+    private void writeAssignment(Map<Long, List<StockMovement>> intakeByProduct, List<ReceiptLineRequest> lines,
+                                 Seller owner, LocalDate purchasedOn, PurchaseReceipt receipt,
+                                 LocalDateTime foundStockAt) {
         List<StockMovement> touched = new ArrayList<>();
-        for (ReceiptLineRequest line : request.lines()) {
+        for (ReceiptLineRequest line : lines) {
             Product product = productRepository.findById(line.productId())
                     .orElseThrow(() -> new ResourceNotFoundException("Product", line.productId()));
             // D130: take the quantity from that day's intake rows, lowest record order first.
@@ -225,10 +363,12 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
                 if (left == 0) break;
             }
             // D135 ① round 32: the amounts are computed by PurchaseRecord's factories only.
-            List<PurchaseRecord> assigned = PurchaseRecord.assignedParts(product, payer, request.purchasedOn(),
+            List<PurchaseRecord> assigned = PurchaseRecord.assignedParts(product, owner, purchasedOn,
                     line.totalAmount(), line.unitPrice(), line.reflectToBasePrice(), receipt, parts);
             for (int index = 0; index < parts.size(); index++) {
-                costPropagationService.updateBasePrice(purchaseRecordRepository.save(assigned.get(index)));
+                PurchaseRecord record = foundStockAt == null
+                        ? assigned.get(index) : assigned.get(index).asFoundStock(foundStockAt);
+                costPropagationService.updateBasePrice(purchaseRecordRepository.save(record));
                 StockMovement intake = parts.get(index).getKey();
                 // D130 ② · D135 ③: the undecided record loses the same quantity at its own unit price.
                 purchaseRecordRepository.save(
@@ -242,13 +382,15 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
             lotLedgerService.resplit(intake);
         }
         touched.stream().map(m -> m.getProduct().getId()).distinct().forEach(lotLedgerService::rebuildDebts);
-        return new ReceiptCreateResult(receipt.getId());
     }
 
-    /** What of one undecided intake row no receipt took yet (D121 ①): its record minus the assigned records. */
-    private int undecidedLeft(StockMovement intake) {
-        int assigned = purchaseRecordRepository.sumAssignedFrom(intake.getId());
-        return intake.getQuantity() - assigned;
+    /** 「영수증 없이 판매자 정하기」 · 「판매자 바꾸기」 seller — required, never back to 「미정」 (FEATURE_2610_19 D116 ⑤). */
+    private Seller requireSeller(Long sellerId) {
+        if (sellerId == null) {
+            throw new IllegalArgumentException("판매자를 선택하세요.");
+        }
+        return sellerRepository.findById(sellerId)
+                .orElseThrow(() -> new ResourceNotFoundException("Seller", sellerId));
     }
 
     private Seller requirePayer(Long payerSellerId) {
@@ -296,7 +438,8 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
         BigDecimal total = amounts.isEmpty() ? null : amounts.stream().reduce(BigDecimal.ZERO, BigDecimal::add);
         String firstProductName = lines.isEmpty() ? null : lines.get(0).getProduct().getProductName();
         return new ReceiptSummaryView(receipt.getId(), receipt.getPurchasedOn(), receipt.getPayerSeller().getId(),
-                receipt.getPayerSeller().getSellerName(), cardAlias(receipt), firstProductName, lines.size(), total);
+                receipt.getPayerSeller().getSellerName(), cardAlias(receipt), firstProductName, lines.size(), total,
+                receipt.getPhotoUrl() != null);
     }
 
     private String cardAlias(PurchaseReceipt receipt) {

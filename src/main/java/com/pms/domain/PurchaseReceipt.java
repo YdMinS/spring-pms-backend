@@ -20,7 +20,7 @@ import java.time.LocalDate;
  * <p>The purchase lines are {@link PurchaseRecord} rows whose {@code receipt} points here, all owned by the payer
  * seller (D89). No debt is written for a receipt (D88).</p>
  *
- * <p>⚠️ ddl-auto=validate (prod) → the columns below must match changeset 110-2.</p>
+ * <p>⚠️ ddl-auto=validate (prod) → the columns below must match changesets 110-2 · 123-1.</p>
  */
 @Entity
 @Table(name = "purchase_receipt")
@@ -54,8 +54,12 @@ public class PurchaseReceipt extends BaseEntity {
     @JoinColumn(name = "card_id")
     private SellerCard card;
 
-    /** Stored photo value from {@code ImageStorageService.uploadBytes} — S3 public URL or local disk path. */
-    @Column(name = "photo_url", nullable = false, length = 1000)
+    /**
+     * Stored photo value from {@code ImageStorageService.uploadBytes} — S3 public URL or local disk path. null = a
+     * 「영수증 나중에」 receipt (FEATURE_2611_01 D4): the photo is added once, later, by
+     * {@code PurchaseReceiptService.attachPhoto}.
+     */
+    @Column(name = "photo_url", length = 1000)
     private String photoUrl;
 
     /** Username from the security context. */

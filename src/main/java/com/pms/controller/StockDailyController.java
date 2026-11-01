@@ -1,10 +1,12 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.SellerChangeRequest;
 import com.pms.dto.request.StockIntakeRequest;
 import com.pms.dto.response.IntakeBarcodeView;
 import com.pms.dto.response.StockDailyView;
 import com.pms.service.PurchaseListService;
+import com.pms.service.PurchaseReceiptService;
 import com.pms.service.stock.StockDailyService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -22,7 +24,8 @@ import java.time.LocalDate;
 
 /**
  * 「입고 작업」 and 「그날 입출고 내역」 (FEATURE_2610_19 D117 · D119). ADMIN only, like every {@code /api/admin/**}
- * path. The receipt assignment of the daily view is {@code POST /api/admin/purchase-receipts/assign}.
+ * path. The receipt assignment of the daily view is {@code POST /api/admin/purchase-receipts/assign}, the assignment
+ * without a receipt {@code POST /api/admin/purchase-receipts/assign-without-receipt} (FEATURE_2611_01 D2).
  */
 @RestController
 @RequestMapping("/api/admin/stock")
@@ -32,6 +35,7 @@ public class StockDailyController {
 
     private final StockDailyService stockDailyService;
     private final PurchaseListService purchaseListService;
+    private final PurchaseReceiptService purchaseReceiptService;
 
     /** One day of the ledger (D119 · D123) and the undecided products of that day (D147). */
     @GetMapping("/daily")
@@ -50,6 +54,13 @@ public class StockDailyController {
     @PostMapping("/intake")
     public ResponseEntity<ResponseDTO<Void>> intake(@Valid @RequestBody StockIntakeRequest request) {
         purchaseListService.addIntake(request);
+        return ResponseEntity.ok(ResponseDTO.success(null));
+    }
+
+    /** 「판매자 바꾸기」 of the daily view (FEATURE_2611_01 D7 · D15). */
+    @PostMapping("/daily/change-seller")
+    public ResponseEntity<ResponseDTO<Void>> changeSeller(@RequestBody SellerChangeRequest request) {
+        purchaseReceiptService.changeSeller(request);
         return ResponseEntity.ok(ResponseDTO.success(null));
     }
 }
