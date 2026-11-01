@@ -6,6 +6,7 @@ import com.pms.dto.request.ManualItemRequest;
 import com.pms.dto.request.ManualSellerRequest;
 import com.pms.dto.request.PurchaseCheckRequest;
 import com.pms.dto.request.PurchaseRecordRequest;
+import com.pms.dto.request.StockIntakeRequest;
 import com.pms.dto.response.PurchaseListResponse;
 import com.pms.dto.response.PurchaseProductGroup;
 import com.pms.dto.response.PurchaseRecordResult;
@@ -63,6 +64,13 @@ public interface PurchaseListService {
      * check-in (FEATURE_2610_18 D28 · D93 ①). {@code receipt} null = the per-product check-in.
      */
     PurchaseRecordResult addPurchase(PurchaseRecordRequest request, PurchaseReceipt receipt);
+
+    /**
+     * 「입고 작업」 [입고 저장] (FEATURE_2610_19 D117 ⑥): one purchase record + one stock row per line, seller undecided
+     * (D105) — or, with one seller, that seller's check-in through {@link #addPurchase(PurchaseRecordRequest)}
+     * (D116 ④). 400 while the stock link is off.
+     */
+    void addIntake(StockIntakeRequest request);
 
     /** Recent purchases of a product, newest first, {@code limit} rows; {@code sellerId} null = every seller (D7 · D25). */
     List<PurchaseRecordView> recentPurchases(Long productId, Long sellerId, int limit);

@@ -4,6 +4,7 @@ import com.pms.domain.Product;
 import com.pms.domain.PurchaseRecord;
 
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -111,4 +112,61 @@ public interface PurchaseRecordRepository extends JpaRepository<PurchaseRecord, 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE PurchaseRecord r SET r.product = :target WHERE r.product.id = :source")
     int reassignProduct(@Param("target") Product target, @Param("source") Long source);
+
+    /** Receipt assignments (FEATURE_2610_19 D130) of one product — the owners' shares of its undecided rows. */
+    @EntityGraph(attributePaths = {"seller", "sourceMovement"})
+    @Query("select r from PurchaseRecord r where r.product.id = :productId and r.sourceMovement is not null order by r.id")
+    List<PurchaseRecord> findSharesOfProduct(@Param("productId") Long productId);
+
+    /** FEATURE_2610_19 D150 (a): the product has a receipt assignment. */
+    boolean existsByProduct_IdAndSourceMovementIsNotNull(Long productId);
+
+    /** FEATURE_2610_19 D150 (c): the product has an undecided purchase. */
+    boolean existsByProduct_IdAndSellerIsNull(Long productId);
+
+    /** Quantity already assigned from one undecided intake row (FEATURE_2610_19 D121 ① · D130 ①). */
+    @Query("select coalesce(sum(r.quantity), 0) from PurchaseRecord r where r.sourceMovement.id = :movementId")
+    int sumAssignedFrom(@Param("movementId") Long movementId);
+
+    /** Receipt assignments taken from the given undecided intake rows (FEATURE_2610_19 D130), record order. */
+    @EntityGraph(attributePaths = {"seller", "sourceMovement"})
+    List<PurchaseRecord> findBySourceMovementIdIn(Collection<Long> movementIds);
+
+    /** Every receipt assignment with a positive quantity (FEATURE_2610_19 D131 — the stock balance shares). */
+    @EntityGraph(attributePaths = {"seller", "sourceMovement", "product"})
+    @Query("select r from PurchaseRecord r where r.sourceMovement is not null and r.quantity > 0 order by r.id")
+    List<PurchaseRecord> findAllShares();
+
+    /**
+     * Undecided purchase quantity per product (FEATURE_2610_19 D115 · D129 · D130): undecided records plus their
+     * assignment minus rows. {@code day} null = every day; a value = that purchase day only (D121 ① · D147).
+     */
+    @Query("""
+            select r.product.id, coalesce(sum(r.quantity), 0L) from PurchaseRecord r
+            where r.seller is null and r.product.id in :productIds
+              and (:day is null or r.purchasedOn = :day)
+            group by r.product.id
+            """)
+    List<Object[]> sumUndecidedByProduct(@Param("productIds") Collection<Long> productIds,
+                                         @Param("day") LocalDate day);
+
+    /** Same as {@link #sumUndecidedByProduct} for one purchase day, every product (FEATURE_2610_19 D147). */
+    @Query("""
+            select r.product.id, coalesce(sum(r.quantity), 0L) from PurchaseRecord r
+            where r.seller is null and r.purchasedOn = :day
+            group by r.product.id
+            """)
+    List<Object[]> sumUndecidedOfDay(@Param("day") LocalDate day);
+
+    /**
+     * Purchases of one product that move the registered price (FEATURE_2610_19 D144 ①): {@code movesBasePrice}
+     * written as a query — reflect on, unit price present, quantity &gt; 0. The seller is not a condition.
+     */
+    @Query("""
+            select r from PurchaseRecord r
+            where r.product.id = :productId and r.reflectToBasePrice = true
+              and r.unitPrice is not null and r.quantity > 0
+            order by r.purchasedOn desc, r.id desc
+            """)
+    List<PurchaseRecord> findBasePriceMovers(@Param("productId") Long productId);
 }

@@ -1,5 +1,6 @@
 package com.pms.service.stock;
 
+import com.pms.domain.PurchaseRecord;
 import com.pms.dto.request.StockMovementRequest;
 import com.pms.dto.response.PurchaseCandidateView;
 import com.pms.dto.response.ReturnCandidateView;
@@ -25,8 +26,18 @@ import java.util.List;
  */
 public interface StockLedgerService {
 
-    /** Records one human-confirmed movement. Sign, unit price, location and createdBy are server-owned. */
+    /**
+     * Records one human-confirmed movement. Sign, unit price, location and createdBy are server-owned. A disposal, an
+     * adjust − and a matched return may be written as one row per lot (FEATURE_2610_19 D50 · D139 ⑤); the first row
+     * is returned.
+     */
     StockMovementView record(StockMovementRequest request);
+
+    /**
+     * The stock row of an intake-work purchase whose seller is not decided yet (FEATURE_2610_19 D105 · D117 ⑥):
+     * {@code STOCK_IN} · {@code PURCHASE} · seller null · unit price and day from the record.
+     */
+    StockMovementView recordUndecidedIntake(PurchaseRecord record);
 
     /**
      * On-hand per (product × seller), derived from the ledger sum (D14 revised by 2609_29 D5).

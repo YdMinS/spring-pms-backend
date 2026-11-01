@@ -20,9 +20,11 @@ import com.pms.repository.ProductImageRepository;
 import com.pms.repository.ProductPurchasePlaceRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
+import com.pms.repository.SellerDebtRepository;
 import com.pms.repository.ShipmentParcelItemRepository;
 import com.pms.repository.ShoppingListItemRepository;
 import com.pms.repository.StockMovementRepository;
+import com.pms.service.stock.LotLedgerService;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -78,6 +80,8 @@ class ProductMergeServiceTest {
     @Mock private ShoppingListItemRepository shoppingListItemRepository;
     @Mock private BoxRecipeRepository boxRecipeRepository;
     @Mock private ProductPurchasePlaceRepository productPurchasePlaceRepository;
+    @Mock private LotLedgerService lotLedgerService;
+    @Mock private SellerDebtRepository sellerDebtRepository;
 
     // Not injected on purpose — see the class javadoc.
     @Mock private MasterProductComponentRepository masterProductComponentRepository;
@@ -200,6 +204,28 @@ class ProductMergeServiceTest {
     }
 
     // ---- links are never migrated ---------------------------------------------------------------
+
+    /**
+     * FEATURE_2610_19 D150: a source with a lot record (here an undecided purchase) must move its purchase records
+     * and its stock rows together — moving only the purchase records is a 400 before anything moves.
+     */
+    @Test
+    @DisplayName("A source with lot records must move purchase records and stock rows together")
+    void testMergeRejectsSplitLotRecords() {
+        givenBothProductsExist();
+        givenSourceIsUnlinked();
+        given(purchaseRecordRepository.existsByProduct_IdAndSellerIsNull(SOURCE_ID)).willReturn(true);
+        MergeProductsRequest.TransferOptions onlyPurchases =
+                new MergeProductsRequest.TransferOptions(true, false, true, true, true, true, false);
+
+        assertThatThrownBy(() -> service.merge(request(noFields(), onlyPurchases)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("영수증 배정 · 영수증 미등록 · 판매자 간 빚 기록이 있는 물품은 「매입 이력」과 「재고 이동」을 함께 옮겨야 합니다.");
+
+        verifyNoInteractions(snapshotWriter);
+        verify(purchaseRecordRepository, never()).reassignProduct(any(), any());
+        verify(stockMovementRepository, never()).reassignProduct(any(), any());
+    }
 
     @Test
     @DisplayName("A master link on the source blocks the merge with 409 and moves nothing")

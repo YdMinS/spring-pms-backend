@@ -20,6 +20,7 @@ import com.pms.dto.request.ManualItemRequest;
 import com.pms.dto.request.ManualSellerRequest;
 import com.pms.dto.request.PurchaseCheckRequest;
 import com.pms.dto.request.PurchaseRecordRequest;
+import com.pms.dto.request.StockIntakeRequest;
 import com.pms.dto.request.StockMovementRequest;
 import com.pms.dto.response.PurchaseLine;
 import com.pms.dto.response.PurchaseListResponse;
@@ -200,7 +201,13 @@ public class PurchaseListServiceImpl implements PurchaseListService {
 
         List<Long> productIds = items.stream().map(i -> i.getProduct().getId()).distinct().toList();
         Map<ShareKey, Integer> purchasedByShare = new HashMap<>();
+        Map<Long, Integer> undecidedByProduct = new HashMap<>();
         for (PurchaseRecord record : purchaseRecordRepository.findByProduct_IdIn(productIds)) {
+            if (record.getSeller() == null) {
+                // FEATURE_2610_19 D115 · D129: an undecided purchase counts for no seller — it is shown apart.
+                undecidedByProduct.merge(record.getProduct().getId(), record.getQuantity(), Integer::sum);
+                continue;
+            }
             purchasedByShare.merge(new ShareKey(record.getProduct().getId(), record.getSeller().getId()),
                     record.getQuantity(), Integer::sum);
         }
@@ -273,7 +280,8 @@ public class PurchaseListServiceImpl implements PurchaseListService {
                     purchased,
                     remaining,
                     shares,
-                    lines));
+                    lines,
+                    Math.max(0, undecidedByProduct.getOrDefault(productId, 0))));
         }
         return groups;
     }
@@ -368,6 +376,39 @@ public class PurchaseListServiceImpl implements PurchaseListService {
                     request.purchasedOn()));      // movedOn
         }
         return new PurchaseRecordResult(saved.getId(), stockRecorded);
+    }
+
+    @Override
+    @Transactional
+    public void addIntake(StockIntakeRequest request) {
+        // FEATURE_2610_19 D117 ①: the intake screen is a stock-link screen; with the link off there is no stock row to
+        // assign a receipt to later (D130).
+        if (!purchaseSettingService.isStockLinked()) {
+            throw new IllegalArgumentException("재고 연동이 꺼져 있습니다.");
+        }
+        // D116 ④: an account with one seller has nothing to decide — the lines are that seller's check-ins.
+        List<Seller> sellers = sellerRepository.findAll();
+        Seller only = sellers.size() == 1 ? sellers.get(0) : null;
+        for (StockIntakeRequest.Line line : request.lines()) {
+            PurchaseRecordRequest purchase = new PurchaseRecordRequest(
+                    line.productId(),                         // productId
+                    only == null ? null : only.getId(),       // sellerId — null = undecided (D105)
+                    request.movedOn(),                        // purchasedOn
+                    line.quantity(),                          // quantity
+                    null,                                     // totalAmount — D135: the registered price fills it
+                    null,                                     // unitPrice
+                    null,                                     // reflectToBasePrice
+                    Boolean.TRUE);                            // recordStock
+            if (only != null) {
+                addPurchase(purchase);
+                continue;
+            }
+            Product product = productRepository.findById(line.productId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Product", line.productId()));
+            PurchaseRecord saved = purchaseRecordRepository.save(
+                    PurchaseRecord.of(product, null, purchase).toBuilder().stockLinked(true).build());
+            stockLedgerService.recordUndecidedIntake(saved);
+        }
     }
 
     @Override

@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.Product;
 import com.pms.domain.PurchaseReceipt;
 import com.pms.domain.PurchaseRecord;
 import com.pms.domain.Seller;
@@ -15,9 +16,12 @@ import com.pms.dto.response.ReceiptLineView;
 import com.pms.dto.response.ReceiptSummaryView;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.PurchaseReceiptRepository;
+import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.StockMovementRepository;
+import com.pms.service.cost.CostPropagationService;
+import com.pms.service.stock.LotLedgerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -28,6 +32,8 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -56,6 +62,9 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
     private final PurchaseListService purchaseListService;
     private final ImageStorageService imageStorageService;
     private final ImageValidator imageValidator;
+    private final ProductRepository productRepository;
+    private final CostPropagationService costPropagationService;
+    private final LotLedgerService lotLedgerService;
 
     @Override
     @Transactional
@@ -143,14 +152,111 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
 
         // D101: a new payer seller takes the stock rows of those lines; their day, quantity and price stay.
         // A purchase-day-only edit leaves stock alone.
+        // FEATURE_2610_19 D149 · D132: the rows that used those lots follow too, assigned shares (D130) re-split their
+        // undecided lots, and the debts of the touched products are rewritten.
         if (payerChanged && !lines.isEmpty()) {
             List<StockMovement> movements = stockMovementRepository
                     .findByPurchaseRecordIdIn(lines.stream().map(PurchaseRecord::getId).toList());
-            stockMovementRepository.saveAll(movements.stream()
-                    .map(m -> m.toBuilder().seller(payer).build())
-                    .toList());
+            List<PurchaseRecord> shares = lines.stream().filter(r -> r.getSourceMovement() != null).toList();
+            lotLedgerService.moveOwner(movements, shares, payer);
         }
         return get(receiptId);
+    }
+
+    /**
+     * Receipt assignment from the daily in/out view (FEATURE_2610_19 D118 · D121 · D130 · D135).
+     *
+     * <p>Per product: the quantity is taken from that day's undecided intake rows, lowest record order first (D130);
+     * each taken part becomes one purchase record of the payer seller pointing at its intake row, and the intake row's
+     * undecided record gets the same quantity as a minus row. No stock row is written (D125).
+     *
+     * <p>Amount: a total is spread over the parts with one unit price (total ÷ quantity, 4 decimals) and the last part
+     * takes the rounding remainder, so the parts add up to the total typed. Neither typed → the registered price,
+     * base price not moved (D135); no registered price → empty.
+     */
+    @Override
+    @Transactional
+    public ReceiptCreateResult assign(LocalDate movedOn, ReceiptCreateRequest request, MultipartFile photo) {
+        if (request == null || movedOn == null) {
+            throw new IllegalArgumentException("영수증 내용을 보내세요.");
+        }
+        if (photo == null || photo.isEmpty()) {
+            throw new IllegalArgumentException("영수증 사진을 올리세요.");
+        }
+        Map<Long, Long> perProduct = request.lines().stream()
+                .collect(Collectors.groupingBy(ReceiptLineRequest::productId, Collectors.counting()));
+        if (perProduct.values().stream().anyMatch(count -> count > 1)) {
+            throw new IllegalArgumentException("같은 상품을 두 번 넣었습니다.");
+        }
+        SellerCard card = request.cardId() == null ? null : sellerCardService.requireVisible(request.cardId());
+        Seller payer = card != null ? card.getSeller() : requirePayer(request.payerSellerId());
+
+        // D121 ①: never more than what is still undecided that day.
+        Map<Long, List<StockMovement>> intakeByProduct = new LinkedHashMap<>();
+        for (ReceiptLineRequest line : request.lines()) {
+            List<StockMovement> intake = stockMovementRepository.findUndecidedIntake(line.productId(), movedOn);
+            int left = intake.stream().mapToInt(this::undecidedLeft).sum();
+            if (line.quantity() > left) {
+                throw new IllegalArgumentException("남은 영수증 미등록 수량(" + left + "개)보다 많습니다.");
+            }
+            intakeByProduct.put(line.productId(), intake);
+        }
+        imageValidator.validate(photo);
+        PurchaseReceipt receipt = purchaseReceiptRepository.save(PurchaseReceipt.builder()
+                .purchasedOn(request.purchasedOn())
+                .payerSeller(payer)
+                .card(card)
+                .photoUrl(storePhoto(photo))
+                .createdBy(currentUsername())
+                .build());
+
+        List<StockMovement> touched = new ArrayList<>();
+        for (ReceiptLineRequest line : request.lines()) {
+            Product product = productRepository.findById(line.productId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Product", line.productId()));
+            // D130: take the quantity from that day's intake rows, lowest record order first.
+            List<Map.Entry<StockMovement, Integer>> parts = new ArrayList<>();
+            int left = line.quantity();
+            for (StockMovement intake : intakeByProduct.get(line.productId())) {
+                int part = Math.min(left, undecidedLeft(intake));
+                if (part <= 0) continue;
+                parts.add(Map.entry(intake, part));
+                left -= part;
+                if (left == 0) break;
+            }
+            // D135 ① round 32: the amounts are computed by PurchaseRecord's factories only.
+            List<PurchaseRecord> assigned = PurchaseRecord.assignedParts(product, payer, request.purchasedOn(),
+                    line.totalAmount(), line.unitPrice(), line.reflectToBasePrice(), receipt, parts);
+            for (int index = 0; index < parts.size(); index++) {
+                costPropagationService.updateBasePrice(purchaseRecordRepository.save(assigned.get(index)));
+                StockMovement intake = parts.get(index).getKey();
+                // D130 ② · D135 ③: the undecided record loses the same quantity at its own unit price.
+                purchaseRecordRepository.save(
+                        PurchaseRecord.assignmentMinus(intake.getPurchaseRecord(), parts.get(index).getValue()));
+                touched.add(intake);
+            }
+        }
+        purchaseRecordRepository.flush();
+        // D130 · D131 · D132: the owners of those intake rows changed — re-split them and rewrite the debts.
+        for (StockMovement intake : touched) {
+            lotLedgerService.resplit(intake);
+        }
+        touched.stream().map(m -> m.getProduct().getId()).distinct().forEach(lotLedgerService::rebuildDebts);
+        return new ReceiptCreateResult(receipt.getId());
+    }
+
+    /** What of one undecided intake row no receipt took yet (D121 ①): its record minus the assigned records. */
+    private int undecidedLeft(StockMovement intake) {
+        int assigned = purchaseRecordRepository.sumAssignedFrom(intake.getId());
+        return intake.getQuantity() - assigned;
+    }
+
+    private Seller requirePayer(Long payerSellerId) {
+        if (payerSellerId == null) {
+            throw new IllegalArgumentException("결제 판매자를 선택하세요.");
+        }
+        return sellerRepository.findById(payerSellerId)
+                .orElseThrow(() -> new ResourceNotFoundException("Seller", payerSellerId));
     }
 
     @Override

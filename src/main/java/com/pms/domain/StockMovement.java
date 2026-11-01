@@ -6,6 +6,7 @@ import org.hibernate.annotations.TenantId;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 /**
  * Physical stock ledger — one row per HUMAN-CONFIRMED movement (FEATURE_2609_28 / PLAN D5~D10, D14).
@@ -22,7 +23,8 @@ import java.time.LocalDate;
  * written without a person confirming it. Sync jobs, schedulers and shipment hooks are still
  * forbidden; the [입고] click on the purchase list IS that confirmation, so
  * {@code PurchaseListService -> StockLedgerService} is the one opened path. A receipt header edit
- * (FEATURE_2610_18 D101) writes no row — it only moves the rows of its lines to the new payer seller.
+ * (FEATURE_2610_18 D101) writes no row — it only moves the rows of its lines, and every row that used them
+ * (FEATURE_2610_19 D149), to the new payer seller.
  *
  * <p>⚠️ {@code movedOn} (the day a person confirmed the goods moved) and {@code createdAt} (the audit
  * timestamp of the row) are <b>different</b>. Yesterday's delivery can be entered this morning.
@@ -32,7 +34,7 @@ import java.time.LocalDate;
  * missing", which is a signal, not an error to reject (rejecting it makes people stop using the
  * ledger at all).
  *
- * <p>⚠️ ddl-auto=validate (dev/prod) → the @Column definitions below must match changesets 071 + 078.
+ * <p>⚠️ ddl-auto=validate (dev/prod) → the @Column definitions below must match changesets 071 + 078 + 122-1.
  *
  * @see StockMovementType movement kinds and their sign
  * @see StockReason reason codes and which type each belongs to
@@ -65,11 +67,17 @@ public class StockMovement extends BaseEntity {
      * the purchase cost and the on-hand balance cannot be attributed to anyone, and using A's goods
      * for B's order becomes invisible instead of an internal transfer.
      *
-     * <p>Derived by the server for {@code RETURN_IN} (claim -> order -> account -> seller, D22);
-     * required in the request for every other type.
+     * <p>Derived by the server for {@code STOCK_OUT} (the owner of the lot it used, no lot = the order's seller,
+     * FEATURE_2610_19 D124) and {@code RETURN_IN} (claim -> order -> account -> seller, D22; an order-unmatched
+     * claim -> its sales channel's seller, FEATURE_2610_19 D140); required in the request for every other type
+     * except an intake-work row (null, below).
+     *
+     * <p>null = "seller undecided" (FEATURE_2610_19 D105): an intake-work row whose receipt is not assigned yet, and
+     * an outbound row that used such a row (D124). An undecided row is never edited to get an owner — its owners are
+     * the assigned purchase records pointing at it (D130) and the split of its outgoing rows (D131).
      */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "seller_id", nullable = false)
+    @JoinColumn(name = "seller_id")
     private Seller seller;
 
     @Enumerated(EnumType.STRING)
@@ -99,6 +107,10 @@ public class StockMovement extends BaseEntity {
      * PURCHASE = copied from {@code purchase_record.unitPrice}; a PURCHASE without a purchase record (stock
      * link off, FEATURE_2610_09 D71 round 13) = the typed price, else the {@code Product.price} snapshot.
      *
+     * <p>FEATURE_2610_19 (stock link on): adjust + and an order-unmatched return = the {@code Product.price}
+     * snapshot (R15 · D140); a matched return follows the lot it used (D139); an empty lot price can be typed later
+     * on the debt screen (D141).
+     *
      * <p>null is a legitimate value meaning "amount unknown" — never substituted with 0.
      */
     @Column(name = "unit_price", precision = 15, scale = 4)
@@ -121,6 +133,23 @@ public class StockMovement extends BaseEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "purchase_record_id")
     private PurchaseRecord purchaseRecord;
+
+    /**
+     * The lot (incoming row) this row used (FEATURE_2610_19 D42): an outbound, disposal or adjust− row takes goods
+     * out of it, a matched return row puts goods back into it (D139 ②). null = no lot was used (D48 ③) or the row is
+     * itself a lot. Written once and never re-pointed (D125).
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "source_movement_id")
+    private StockMovement sourceMovement;
+
+    /** Set when the empty unit price of this lot was typed later on the debt screen (FEATURE_2610_19 D141 · D143 ①). */
+    @Column(name = "price_filled_at")
+    private LocalDateTime priceFilledAt;
+
+    /** Set when that typed price also filled the product's empty registered price (FEATURE_2610_19 D145 · D146 ①). */
+    @Column(name = "base_price_filled_at")
+    private LocalDateTime basePriceFilledAt;
 
     /** The day a person confirmed the goods moved. NOT the audit timestamp. */
     @Column(name = "moved_on", nullable = false)

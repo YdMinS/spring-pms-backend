@@ -2,6 +2,7 @@ package com.pms.repository;
 
 import com.pms.domain.Product;
 import com.pms.domain.StockMovement;
+import com.pms.domain.StockMovementType;
 import com.pms.dto.response.PurchaseCandidateView;
 import com.pms.dto.response.ReturnCandidateView;
 import com.pms.dto.response.StockBalanceView;
@@ -38,11 +39,15 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
      * <p>🔴 The seller is part of the GROUP BY, not a decoration: stock is not shared (2609_29 D4),
      * so one product bought by two sellers must produce two rows. Collapsing them would report a
      * balance nobody owns.
+     *
+     * <p>{@code left join m.seller}: rows with no seller (FEATURE_2610_19 D105 · D124) form their own
+     * 「판매자 미정」 row (seller null) instead of silently disappearing (D116 ②). The assigned shares of those
+     * rows are moved to their owners by {@code StockLedgerServiceImpl.balances} (D131).
      */
     @Query("""
             select new com.pms.dto.response.StockBalanceView(
                 p.id, p.productName, s.id, s.sellerName, coalesce(sum(m.quantity), 0L))
-            from StockMovement m join m.product p join m.seller s
+            from StockMovement m join m.product p left join m.seller s
             where (:productId is null or p.id = :productId)
               and (:sellerId is null or s.id = :sellerId)
               and (:keyword is null or lower(p.productName) like lower(concat('%', :keyword, '%')))
@@ -102,6 +107,9 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
      * <p>⚠️ Purchases saved while the stock link setting was off ({@code stockLinked = false}) never wait here,
      * even after the setting is turned on (FEATURE_2610_09 D71 ④ · D84). While the setting is on, every purchase is
      * checked in at once and this query legitimately returns nothing. Empty is not broken.
+     *
+     * <p>⚠️ A receipt assignment ({@code sourceMovement} set, FEATURE_2610_19 D130) is already in stock and never
+     * waits here. An undecided purchase (seller null) is left out by {@code join r.seller}.
      */
     @Query("""
             select new com.pms.dto.response.PurchaseCandidateView(
@@ -115,6 +123,7 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
               join r.seller s
             where r.quantity > 0
               and r.stockLinked = true
+              and r.sourceMovement is null
               and (:productId is null or p.id = :productId)
               and r.quantity > (select coalesce(sum(m2.quantity), 0L) from StockMovement m2
                                   where m2.purchaseRecord.id = r.id
@@ -173,4 +182,36 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
      * the new payer seller when the receipt header changes its payer.
      */
     List<StockMovement> findByPurchaseRecordIdIn(Collection<Long> purchaseRecordIds);
+
+    /**
+     * Every row of one product in record order (FEATURE_2610_19 D107) — the input of every lot calculation
+     * ({@code LotLedgerServiceImpl}). The order seller path is fetched because the borrower of an outbound row is
+     * always the order's seller (D33).
+     */
+    @EntityGraph(attributePaths = {"seller", "sourceMovement", "purchaseRecord", "orderClaim",
+            "orderLine", "orderLine.order", "orderLine.order.marketplaceAccount",
+            "orderLine.order.marketplaceAccount.seller"})
+    List<StockMovement> findByProductIdOrderByIdAsc(Long productId);
+
+    /** FEATURE_2610_19 D150 (b): the product has an undecided intake row ({@code STOCK_IN}, seller null). */
+    boolean existsByProductIdAndSellerIsNullAndMovementType(Long productId, StockMovementType movementType);
+
+    /** Rows that used one of these lots (FEATURE_2610_19 D149 ① (b)). */
+    List<StockMovement> findBySourceMovementIdIn(Collection<Long> sourceMovementIds);
+
+    /** One day of the ledger for the daily in/out view (FEATURE_2610_19 D119 · D123), record order. */
+    @EntityGraph(attributePaths = {"product", "seller", "sourceMovement", "sourceMovement.seller", "purchaseRecord",
+            "orderLine", "orderLine.order", "orderLine.order.marketplaceAccount",
+            "orderLine.order.marketplaceAccount.seller"})
+    List<StockMovement> findByMovedOnOrderByIdAsc(LocalDate movedOn);
+
+    /** Undecided intake rows of one product and day, record order (FEATURE_2610_19 D121 ⑥ · D130). */
+    @EntityGraph(attributePaths = {"purchaseRecord"})
+    @Query("""
+            select m from StockMovement m
+            where m.product.id = :productId and m.movedOn = :movedOn and m.seller is null
+              and m.movementType = com.pms.domain.StockMovementType.STOCK_IN
+            order by m.id asc
+            """)
+    List<StockMovement> findUndecidedIntake(@Param("productId") Long productId, @Param("movedOn") LocalDate movedOn);
 }

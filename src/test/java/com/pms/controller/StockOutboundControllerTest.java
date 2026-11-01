@@ -14,7 +14,11 @@ import com.pms.domain.Product;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
+import com.pms.domain.StockLocation;
+import com.pms.domain.StockMovement;
 import com.pms.domain.StockMovementType;
+import com.pms.domain.StockReason;
+import com.pms.domain.TenantPurchaseSetting;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
@@ -27,6 +31,7 @@ import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.StockMovementRepository;
+import com.pms.repository.TenantPurchaseSettingRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -64,6 +69,7 @@ class StockOutboundControllerTest extends BaseIntegrationTest {
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
     @Autowired private StockMovementRepository stockMovementRepository;
+    @Autowired private TenantPurchaseSettingRepository tenantPurchaseSettingRepository;
 
     private Long orderLineId;
     private Long productId;
@@ -175,6 +181,29 @@ class StockOutboundControllerTest extends BaseIntegrationTest {
         mockMvc.perform(get(PATH).header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.orders[0].products[0].confirmedQty").value(4));
+    }
+
+    /**
+     * FEATURE_2610_19 D33 · D34 · D49 · D124: with the stock link on and no own stock, the confirm uses another
+     * seller's lot, writes the row under that seller and returns the debt notice.
+     */
+    @Test
+    void testConfirmBorrowsOtherSellersLotAndReturnsNotice() throws Exception {
+        tenantPurchaseSettingRepository.save(TenantPurchaseSetting.builder().stockLinked(true).build());
+        Seller lender = sellerRepository.save(Seller.builder()
+                .sellerName("이웃상회").businessRegistration("999-88-77777").build());
+        stockMovementRepository.save(StockMovement.builder()
+                .product(productRepository.findById(productId).orElseThrow()).seller(lender)
+                .movementType(StockMovementType.STOCK_IN).quantity(5).location(StockLocation.OWN)
+                .reason(StockReason.OPENING).unitPrice(new BigDecimal("1500")).movedOn(DAY.minusDays(1))
+                .createdBy(ADMIN_EMAIL).build());
+
+        mockMvc.perform(post(PATH + "/confirm")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(confirmBody(2)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].sellerId").value(lender.getId()))
+                .andExpect(jsonPath("$.data[0].notices[0]").value("이웃상회 재고 2개 사용(채무 ₩3,000)"));
     }
 
     @Test

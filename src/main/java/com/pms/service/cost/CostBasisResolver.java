@@ -66,10 +66,19 @@ public class CostBasisResolver {
      * @param products 그 라인이 소진하는 물품·수량 (BOM 전개 결과)
      */
     public void snapshot(OrderLine line, List<OrderLineExpander.ExpandedProduct> products) {
+        snapshot(line, products, Map.of());
+    }
+
+    /**
+     * Same as {@link #snapshot(OrderLine, List)}, with the pieces per product that the first outbound took from an
+     * undecided lot (FEATURE_2610_19 D138 ①) — those pieces are costed at the registered price.
+     */
+    public void snapshot(OrderLine line, List<OrderLineExpander.ExpandedProduct> products,
+                         Map<Long, Integer> undecidedQty) {
         if (line.getCostBasis() != null) {
             return;
         }
-        LineCost cost = resolve(line, products);
+        LineCost cost = resolve(line, products, undecidedQty);
         orderLineRepository.save(line.toBuilder()
                 .costBasis(cost.basis())
                 .costAmount(cost.amount())
@@ -84,6 +93,15 @@ public class CostBasisResolver {
      * {@code 0} 으로 채우면 "원가 0" 이 되어 손익이 통째로 망가진다. 전부 못 구하면 금액은 {@code null} 이다.
      */
     LineCost resolve(OrderLine line, List<OrderLineExpander.ExpandedProduct> products) {
+        return resolve(line, products, Map.of());
+    }
+
+    /**
+     * FEATURE_2610_19 D138: per product, {@code undecidedQty} pieces are costed at the registered price (grade
+     * {@code LISTED}, no price = left out, never 0) and only the rest follows the purchase rule below.
+     */
+    LineCost resolve(OrderLine line, List<OrderLineExpander.ExpandedProduct> products,
+                     Map<Long, Integer> undecidedQty) {
         LocalDate orderedOn = orderedOn(line);
         Long sellerId = line.getOrder().getMarketplaceAccount().getSeller().getId();
         Map<Long, Product> productsById = loadProducts(products);
@@ -91,6 +109,20 @@ public class CostBasisResolver {
         CostBasis worst = CostBasis.LATEST;
         BigDecimal amount = null;
         for (OrderLineExpander.ExpandedProduct expanded : products) {
+            int undecided = Math.min(expanded.quantity(), undecidedQty.getOrDefault(expanded.productId(), 0));
+            if (undecided > 0) {
+                worst = CostBasis.LISTED;
+                Product product = productsById.get(expanded.productId());
+                BigDecimal listed = (product == null) ? null : product.getPrice();
+                if (listed != null) {
+                    BigDecimal part = listed.multiply(BigDecimal.valueOf(undecided));
+                    amount = (amount == null) ? part : amount.add(part);
+                }
+            }
+            int rest = expanded.quantity() - undecided;
+            if (rest <= 0) {
+                continue;
+            }
             BigDecimal unitPrice = latestPurchasePrice(expanded.productId(), sellerId, orderedOn);
             if (unitPrice == null) {
                 worst = CostBasis.LISTED;
@@ -100,7 +132,7 @@ public class CostBasisResolver {
             if (unitPrice == null) {
                 continue;   // 모르는 것은 모르는 채로 둔다 — 0 으로 치지 않는다
             }
-            BigDecimal line0 = unitPrice.multiply(BigDecimal.valueOf(expanded.quantity()));
+            BigDecimal line0 = unitPrice.multiply(BigDecimal.valueOf(rest));
             amount = (amount == null) ? line0 : amount.add(line0);
         }
         return new LineCost(worst, amount);

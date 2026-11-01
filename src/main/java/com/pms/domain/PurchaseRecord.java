@@ -8,6 +8,10 @@ import org.hibernate.annotations.TenantId;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Purchase history (product × seller) — the money-side ledger.
@@ -25,7 +29,7 @@ import java.time.LocalDate;
  * while the stock link setting is on (FEATURE_2610_09 D65) — {@link #stockLinked} records which mode applied.
  *
  * <p>⚠️ ddl-auto=validate (prod) → the @Column definitions below must match the purchase_record DDL
- * (changesets 077 · 109-4 · 110-3).
+ * (changesets 077 · 109-4 · 110-3 · 122-2).
  *
  * @see com.pms.domain.StockMovement physical stock ledger
  */
@@ -52,9 +56,13 @@ public class PurchaseRecord extends BaseEntity {
     @JoinColumn(name = "product_id", nullable = false)
     private Product product;
 
-    /** 이 매입이 누구 것인가 (PLAN 2609_29 D3). 정산 귀속의 근거이므로 유추가 아니라 컬럼이다. */
+    /**
+     * Whose purchase this is (PLAN 2609_29 D3) — a column, not an inference, because settlement hangs on it.
+     * null = "seller undecided" (FEATURE_2610_19 D105): an intake-work purchase whose receipt is not assigned yet, and
+     * the minus rows that take assigned quantity off it (D130 ②). Undecided purchases count for no seller (D115).
+     */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "seller_id", nullable = false)
+    @JoinColumn(name = "seller_id")
     private Seller seller;
 
     /** 구매 날짜 (통계용). */
@@ -98,6 +106,18 @@ public class PurchaseRecord extends BaseEntity {
     private PurchaseReceipt receipt;
 
     /**
+     * The undecided intake row this purchase was assigned from (FEATURE_2610_19 D130 ①). Set = a receipt assignment:
+     * the goods are already in stock, so it never waits for check-in and has no stock row of its own.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "source_movement_id")
+    private StockMovement sourceMovement;
+
+    /** Set when the empty unit price was typed later on the debt screen (FEATURE_2610_19 D141 · D143 ①). */
+    @Column(name = "price_filled_at")
+    private LocalDateTime priceFilledAt;
+
+    /**
      * 이 매입이 {@code Product.price}(기준 원가)를 움직이는가 — <b>이 판정의 유일한 자리</b>
      * (FEATURE_2609_28 / PLAN D3·D4 ①).
      *
@@ -124,15 +144,20 @@ public class PurchaseRecord extends BaseEntity {
     private static final int UNIT_SCALE = 4;
 
     /**
-     * Single place where the purchase amount rules live (PLAN 2609_28 D1·D2).
-     * Web, mobile and any future bulk input must go through here so nobody rounds differently.
+     * The purchase amount rules live in this class only (PLAN 2609_28 D1·D2): this factory, plus
+     * {@link #assignedParts} and {@link #assignmentMinus} for a receipt assignment (FEATURE_2610_19 D135 ① round 32),
+     * and {@link #withTypedUnitPrice} · {@link #typedUnit} · {@link #registeredPriceOf} for a unit price typed later on
+     * the debt screen (D141 ② · D145 · D146).
+     * Web, mobile and any future bulk input must go through these methods so nobody rounds differently.
      *
      * <p>Amount input is either total OR unit price, never both — otherwise it is ambiguous which one
      * is the truth. The missing side is derived:
      * <ul>
      *   <li>total given -> unitPrice = total / quantity (scale 4, HALF_UP)</li>
      *   <li>unit given  -> totalAmount = unit * quantity (scale 2, HALF_UP)</li>
-     *   <li>neither given -> both stay null ("amount unknown"; never substitute zero)</li>
+     *   <li>neither given, quantity &gt; 0 -> the product's registered price at this moment is the unit price and the
+     *       base price is not moved (FEATURE_2610_19 D135 ① ②); no registered price -> both stay null ("amount
+     *       unknown"; never substitute zero). A minus row is never filled (D135 ③).</li>
      * </ul>
      *
      * <p>⚠️ quantity is signed: a correction row is negative and its amount is negative too, so the
@@ -152,6 +177,11 @@ public class PurchaseRecord extends BaseEntity {
         }
         BigDecimal resolvedUnit = null;
         BigDecimal resolvedTotal = null;
+        boolean reflect = request.reflectToBasePrice() == null || request.reflectToBasePrice();
+        if (total == null && unit == null && quantity > 0 && product.getPrice() != null) {
+            unit = product.getPrice();
+            reflect = false;
+        }
         if (total != null) {
             resolvedTotal = total.setScale(TOTAL_SCALE, RoundingMode.HALF_UP);
             resolvedUnit = total.divide(BigDecimal.valueOf(quantity), UNIT_SCALE, RoundingMode.HALF_UP);
@@ -166,7 +196,102 @@ public class PurchaseRecord extends BaseEntity {
                 .quantity(quantity)   // 음수 허용(정정)
                 .totalAmount(resolvedTotal)
                 .unitPrice(resolvedUnit)
-                .reflectToBasePrice(request.reflectToBasePrice() == null || request.reflectToBasePrice())
+                .reflectToBasePrice(reflect)
                 .build();
+    }
+
+    /**
+     * Receipt assignment (FEATURE_2610_19 D130 ① · D135 ① round 32 · PLAN R4): one record of the payer seller per
+     * undecided intake row a line is taken from, in the order of {@code parts}.
+     *
+     * <ul>
+     *   <li>total given → one unit price for every part = total / line quantity (scale 4, HALF_UP); each part's total =
+     *       unit × part quantity (scale 2, HALF_UP), the last part takes what is left of the total — the parts add up to
+     *       the total typed</li>
+     *   <li>unit given → each part's total = unit × part quantity (scale 2, HALF_UP)</li>
+     *   <li>neither given → the product's registered price at this moment, base price not moved (D135 ① ②); no
+     *       registered price → both stay null and the reflect choice stays as sent (as in {@link #of})</li>
+     * </ul>
+     *
+     * @param parts the intake row and the quantity taken from it, per part; quantities add up to the line quantity
+     */
+    public static List<PurchaseRecord> assignedParts(Product product, Seller payer, LocalDate purchasedOn,
+                                                     BigDecimal totalAmount, BigDecimal unitPrice,
+                                                     Boolean reflectToBasePrice, PurchaseReceipt receipt,
+                                                     List<Map.Entry<StockMovement, Integer>> parts) {
+        if (totalAmount != null && unitPrice != null) {
+            throw new IllegalArgumentException("총액과 단가 중 하나만 입력하세요");
+        }
+        int quantity = parts.stream().mapToInt(Map.Entry::getValue).sum();
+        boolean typed = totalAmount != null || unitPrice != null;
+        BigDecimal unit = totalAmount != null
+                ? totalAmount.divide(BigDecimal.valueOf(quantity), UNIT_SCALE, RoundingMode.HALF_UP)
+                : (unitPrice != null ? unitPrice : product.getPrice());
+        boolean filled = !typed && unit != null;
+        boolean reflect = !filled && (reflectToBasePrice == null || reflectToBasePrice);
+        BigDecimal totalLeft = totalAmount;
+        List<PurchaseRecord> records = new ArrayList<>();
+        for (int index = 0; index < parts.size(); index++) {
+            int part = parts.get(index).getValue();
+            boolean last = index == parts.size() - 1;
+            BigDecimal partTotal;
+            if (unit == null) {
+                partTotal = null;
+            } else if (totalLeft != null && last) {
+                partTotal = totalLeft.setScale(TOTAL_SCALE, RoundingMode.HALF_UP);
+            } else {
+                partTotal = unit.multiply(BigDecimal.valueOf(part)).setScale(TOTAL_SCALE, RoundingMode.HALF_UP);
+            }
+            if (totalLeft != null) {
+                totalLeft = totalLeft.subtract(partTotal);
+            }
+            records.add(PurchaseRecord.builder()
+                    .product(product).seller(payer).purchasedOn(purchasedOn).quantity(part)
+                    .totalAmount(partTotal)
+                    .unitPrice(unit == null ? null : unit.setScale(UNIT_SCALE, RoundingMode.HALF_UP))
+                    .reflectToBasePrice(reflect).stockLinked(true).receipt(receipt)
+                    .sourceMovement(parts.get(index).getKey())
+                    .build());
+        }
+        return records;
+    }
+
+    /**
+     * The minus row an assignment adds to the undecided record (FEATURE_2610_19 D130 ② · D135 ③): the same unit price,
+     * total = unit × −quantity (scale 2, HALF_UP), the undecided record's purchase day, base price not moved.
+     */
+    public static PurchaseRecord assignmentMinus(PurchaseRecord undecided, int quantity) {
+        BigDecimal unit = undecided.getUnitPrice();
+        return PurchaseRecord.builder()
+                .product(undecided.getProduct()).seller(null).purchasedOn(undecided.getPurchasedOn())
+                .quantity(-quantity)
+                .totalAmount(unit == null ? null
+                        : unit.multiply(BigDecimal.valueOf(-quantity)).setScale(TOTAL_SCALE, RoundingMode.HALF_UP))
+                .unitPrice(unit).reflectToBasePrice(false).stockLinked(true)
+                .build();
+    }
+
+    /**
+     * A unit price typed later on the debt screen (FEATURE_2610_19 D141 ② · D143): unit (scale 4, HALF_UP), total =
+     * unit × this record's quantity (scale 2, HALF_UP). Quantity, seller and purchase day stay.
+     */
+    public PurchaseRecord withTypedUnitPrice(BigDecimal typedUnitPrice, boolean reflect, LocalDateTime filledAt) {
+        BigDecimal unit = typedUnit(typedUnitPrice);
+        return toBuilder()
+                .unitPrice(unit)
+                .totalAmount(unit.multiply(BigDecimal.valueOf(quantity)).setScale(TOTAL_SCALE, RoundingMode.HALF_UP))
+                .reflectToBasePrice(reflect)
+                .priceFilledAt(filledAt)
+                .build();
+    }
+
+    /** A typed unit price at the stored scale (4, HALF_UP) — the lot rows without a purchase record use it too (D141 ①). */
+    public static BigDecimal typedUnit(BigDecimal typedUnitPrice) {
+        return typedUnitPrice.setScale(UNIT_SCALE, RoundingMode.HALF_UP);
+    }
+
+    /** A unit price as a registered price (scale 2, HALF_UP — the same scale the base price update uses, D145 · D146). */
+    public static BigDecimal registeredPriceOf(BigDecimal unitPrice) {
+        return unitPrice.setScale(TOTAL_SCALE, RoundingMode.HALF_UP);
     }
 }
