@@ -145,6 +145,8 @@ public class StockLedgerServiceImpl implements StockLedgerService {
         // The (product × seller) grouping itself lives in the JPQL (2609_29 D5).
         // FEATURE_2610_19 D131: an assigned share of an undecided row belongs to its owner — move what is left of each
         // share from the 「판매자 미정」 row (seller null) to the owner's row, then apply the seller filter.
+        // FEATURE_2611_02 D1 · D10: before that filter, drop a 「판매자 미정」 row at 0 whose product has no undecided
+        // purchase left (everything went to sellers). D33: the purchase-price amount comes last, for the rows shown.
         List<StockBalanceView> rows = stockMovementRepository.findBalances(productId, null, blankToNull(keyword));
         Map<String, StockBalanceView> byKey = new LinkedHashMap<>();
         rows.forEach(r -> byKey.put(r.productId() + ":" + r.sellerId(), r));
@@ -165,15 +167,29 @@ public class StockLedgerServiceImpl implements StockLedgerService {
             Long product = share.getProduct().getId();
             StockBalanceView undecided = byKey.get(product + ":null");
             String productName = undecided != null ? undecided.productName() : share.getProduct().getProductName();
-            byKey.put(product + ":null", new StockBalanceView(product, productName, null, null,
+            String imageUrl = undecided != null ? undecided.imageUrl() : share.getProduct().getImageUrl();
+            byKey.put(product + ":null", new StockBalanceView(product, productName, imageUrl, null, null,
                     (undecided == null ? 0 : undecided.onHand()) - left));
             StockBalanceView owner = byKey.get(product + ":" + share.getSeller().getId());
-            byKey.put(product + ":" + share.getSeller().getId(), new StockBalanceView(product, productName,
+            byKey.put(product + ":" + share.getSeller().getId(), new StockBalanceView(product, productName, imageUrl,
                     share.getSeller().getId(), share.getSeller().getSellerName(),
                     (owner == null ? 0 : owner.onHand()) + left));
         }
-        return byKey.values().stream()
+        // D5: the undecided purchase quantity left per product — a product missing from the result has 0.
+        Map<Long, Long> undecidedLeft = new HashMap<>();
+        if (!shownProducts.isEmpty()) {
+            for (Object[] sum : purchaseRecordRepository.sumUndecidedByProduct(shownProducts, null)) {
+                undecidedLeft.put((Long) sum[0], ((Number) sum[1]).longValue());
+            }
+        }
+        List<StockBalanceView> shown = byKey.values().stream()
+                .filter(r -> !(r.sellerId() == null && r.onHand() == 0
+                        && undecidedLeft.getOrDefault(r.productId(), 0L) == 0L))
                 .filter(r -> sellerId == null || sellerId.equals(r.sellerId()))
+                .toList();
+        Map<StockBalanceView, BigDecimal> amounts = lotLedgerService.stockAmounts(shown);
+        return shown.stream()
+                .map(r -> r.withAmount(amounts.get(r)))
                 .sorted(Comparator.comparing(StockBalanceView::productName)
                         .thenComparing(StockBalanceView::sellerName, Comparator.nullsLast(Comparator.naturalOrder())))
                 .toList();
@@ -380,6 +396,7 @@ public class StockLedgerServiceImpl implements StockLedgerService {
                 m.getId(),
                 m.getProduct().getId(),
                 m.getProduct().getProductName(),
+                m.getProduct().getImageUrl(),
                 m.getSeller() == null ? null : m.getSeller().getId(),
                 m.getSeller() == null ? null : m.getSeller().getSellerName(),
                 m.getMovementType(),

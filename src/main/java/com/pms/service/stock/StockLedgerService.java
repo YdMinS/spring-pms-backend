@@ -42,6 +42,8 @@ public interface StockLedgerService {
     /**
      * On-hand per (product × seller), derived from the ledger sum (D14 revised by 2609_29 D5).
      * Blank keyword behaves as "no filter"; {@code sellerId} null = every seller.
+     * A 「판매자 미정」 row at 0 whose product has no undecided purchase left is not returned (FEATURE_2611_02 D1); every
+     * row carries its photo and purchase-price amount (D8 · D28).
      */
     List<StockBalanceView> balances(Long productId, Long sellerId, String keyword);
 

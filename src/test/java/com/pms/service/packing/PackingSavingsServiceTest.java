@@ -538,7 +538,7 @@ class PackingSavingsServiceTest {
     /** 그 라인이 소진하는 물품 수량(= BOM × 주문 수량) — 배분 비율의 분모다. */
     private LineExpansion expansion(OrderLine line, int requiredQty) {
         return new LineExpansion(line.getId(),
-                List.of(new ExpandedProduct(product.getId(), product.getProductName(), requiredQty)), null);
+                List.of(new ExpandedProduct(product.getId(), product.getProductName(), requiredQty, null)), null);
     }
 
     private Package purchasedBox() {

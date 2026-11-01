@@ -335,8 +335,8 @@ class OrderQueryServiceImplTest {
         given(orderRepository.findRecentOrders(any(LocalDateTime.class))).willReturn(List.of(mapped, unmapped));
         given(orderLineExpander.expand(anyList(), any())).willReturn(Map.of(
                 1L, new OrderLineExpander.LineExpansion(1L, List.of(
-                        new OrderLineExpander.ExpandedProduct(30L, "양말", 1),
-                        new OrderLineExpander.ExpandedProduct(31L, "장갑", 1)), null),
+                        new OrderLineExpander.ExpandedProduct(30L, "양말", 1, null),
+                        new OrderLineExpander.ExpandedProduct(31L, "장갑", 1, null)), null),
                 2L, new OrderLineExpander.LineExpansion(2L, List.of(),
                         OrderLineExpander.Failure.UNMAPPED_OPTION)));
         given(productRepository.findAllById(List.of(30L))).willReturn(List.of(

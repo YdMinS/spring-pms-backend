@@ -89,8 +89,8 @@ class PackingScanTest {
         given(orderLineRepository.findByOrderShipment_Id(SHIPMENT_ID))
                 .willReturn(List.of(PackingFixtures.line(LINE_ID, shipment)));
         given(stockOutService.remaining(anyCollection())).willReturn(List.of(new RemainingLine(LINE_ID,
-                List.of(new OutboundProductLine(PRODUCT_ID, "양말A", 2, 0),
-                        new OutboundProductLine(OTHER_PRODUCT_ID, "양말B", 1, 0)), null)));
+                List.of(new OutboundProductLine(PRODUCT_ID, "양말A", 2, 0, null),
+                        new OutboundProductLine(OTHER_PRODUCT_ID, "양말B", 1, 0, null)), null)));
         given(productRepository.findAllById(anyCollection()))
                 .willReturn(List.of(PackingFixtures.product(PRODUCT_ID, "양말A", BARCODE, "https://img/a.jpg"),
                         PackingFixtures.product(OTHER_PRODUCT_ID, "양말B", null, null)));

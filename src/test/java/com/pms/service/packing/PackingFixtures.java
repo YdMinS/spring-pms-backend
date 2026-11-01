@@ -100,7 +100,7 @@ final class PackingFixtures {
 
     static RemainingLine remaining(Long lineId, Long productId, int required, int confirmed) {
         return new RemainingLine(lineId,
-                List.of(new OutboundProductLine(productId, "양말A", required, confirmed)), null);
+                List.of(new OutboundProductLine(productId, "양말A", required, confirmed, null)), null);
     }
 
     static RemainingLine unexpanded(Long lineId) {

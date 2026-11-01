@@ -95,7 +95,8 @@ public class StockDailyServiceImpl implements StockDailyService {
                 tags = tags(m, orderSeller, usagesByOut.getOrDefault(m.getId(), List.of()));
             }
             views.add(new StockDailyRowView(m.getId(), m.getMovementType(), m.getReason(),
-                    m.getProduct().getId(), m.getProduct().getProductName(), m.getQuantity(), sellerName, owners,
+                    m.getProduct().getId(), m.getProduct().getProductName(), m.getProduct().getImageUrl(),
+                    m.getQuantity(), sellerName, owners,
                     undecidedLeft, orderNumber, tags, amount(m, outAmounts), m.isSellerChangeableWithoutReceipt(),
                     noReceiptShares));
         }
@@ -124,7 +125,8 @@ public class StockDailyServiceImpl implements StockDailyService {
         if (product == null) {
             return IntakeBarcodeView.notFound();
         }
-        return new IntakeBarcodeView(true, product.getId(), product.getProductName(), product.getPrice());
+        return new IntakeBarcodeView(true, product.getId(), product.getProductName(), product.getPrice(),
+                product.getImageUrl());
     }
 
     /** D124 · D128: whose goods an outbound row used, when they are not the order seller's. */
