@@ -100,7 +100,7 @@ class StockOutServiceImplTest {
 
     private static OrderLineExpander.LineExpansion expansion(Long lineId, int quantity) {
         return new OrderLineExpander.LineExpansion(lineId,
-                List.of(new OrderLineExpander.ExpandedProduct(PRODUCT_ID, "양말A", quantity)), null);
+                List.of(new OrderLineExpander.ExpandedProduct(PRODUCT_ID, "양말A", quantity, null)), null);
     }
 
     private void givenExpansion(OrderLineExpander.LineExpansion... expansions) {
@@ -156,8 +156,8 @@ class StockOutServiceImplTest {
         given(orderLineRepository.findWithListingOptionById(LINE_ID)).willReturn(Optional.of(line));
         given(orderLineExpander.expand(anyCollection(), any())).willReturn(Map.of(LINE_ID,
                 new OrderLineExpander.LineExpansion(LINE_ID, List.of(
-                        new OrderLineExpander.ExpandedProduct(PRODUCT_ID, "양말A", 2),
-                        new OrderLineExpander.ExpandedProduct(OTHER_PRODUCT_ID, "장갑B", 1)), null)));
+                        new OrderLineExpander.ExpandedProduct(PRODUCT_ID, "양말A", 2, null),
+                        new OrderLineExpander.ExpandedProduct(OTHER_PRODUCT_ID, "장갑B", 1, null)), null)));
         givenStockOutSums();
         given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(product(PRODUCT_ID, "양말A")));
         given(productRepository.findById(OTHER_PRODUCT_ID))

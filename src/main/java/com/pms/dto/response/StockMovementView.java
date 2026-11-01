@@ -15,11 +15,15 @@ import java.util.List;
  *
  * <p>{@code notices} = the outbound confirm's 「○○ 재고 N개 사용(채무 ₩M)」 lines for this row (FEATURE_2610_19
  * D49 · D137); empty everywhere else.
+ *
+ * <p>{@code imageUrl} = the product's representative photo ({@code product.image_url}) as stored; null = none
+ * (FEATURE_2611_02 D8).
  */
 public record StockMovementView(
         Long id,
         Long productId,
         String productName,
+        String imageUrl,
         Long sellerId,
         String sellerName,
         StockMovementType movementType,

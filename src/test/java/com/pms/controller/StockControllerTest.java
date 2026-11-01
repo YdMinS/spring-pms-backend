@@ -7,9 +7,11 @@ import com.pms.domain.StockLocation;
 import com.pms.domain.StockMovement;
 import com.pms.domain.StockMovementType;
 import com.pms.domain.StockReason;
+import com.pms.domain.TenantPurchaseSetting;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.StockMovementRepository;
+import com.pms.repository.TenantPurchaseSettingRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,13 +38,15 @@ class StockControllerTest extends BaseIntegrationTest {
     @Autowired private ProductRepository productRepository;
     @Autowired private StockMovementRepository stockMovementRepository;
     @Autowired private SellerRepository sellerRepository;
+    @Autowired private TenantPurchaseSettingRepository tenantPurchaseSettingRepository;
 
     private Long productId;
     private Long sellerId;
 
     @BeforeEach
     void seedProduct() {
-        productId = productRepository.saveAndFlush(Product.builder().productName("양말A").build()).getId();
+        productId = productRepository.saveAndFlush(Product.builder().productName("양말A")
+                .imageUrl("https://bucket/products/a.png").build()).getId();
         sellerId = sellerRepository.saveAndFlush(Seller.builder()
                 .sellerName("셀러A").businessRegistration("111-11-11111").build()).getId();
     }
@@ -112,7 +116,8 @@ class StockControllerTest extends BaseIntegrationTest {
         // 음수는 "입력이 빠졌다"는 신호다 — 서버가 0 으로 깎지 않는다.
         mockMvc.perform(get(PATH + "/balances").header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].onHand").value(-1));
+                .andExpect(jsonPath("$.data[0].onHand").value(-1))
+                .andExpect(jsonPath("$.data[0].amount").isEmpty());          // FEATURE_2611_02 D25
     }
 
     @Test
@@ -159,6 +164,52 @@ class StockControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(1))
                 .andExpect(jsonPath("$.data[0].quantity").value(4));
+    }
+
+    // --- FEATURE_2611_02 ---
+
+    /** Two sellers — with one seller the intake takes that seller instead of 「미정」 (FEATURE_2611_01 D20). */
+    private void undecidedIntake(int quantity) throws Exception {
+        sellerRepository.saveAndFlush(Seller.builder().sellerName("셀러B").businessRegistration("222-22-22222").build());
+        tenantPurchaseSettingRepository.save(TenantPurchaseSetting.builder().stockLinked(true).build());
+        mockMvc.perform(post(PATH + "/intake").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"movedOn\":\"" + DAY + "\",\"lines\":[{\"productId\":" + productId
+                                + ",\"quantity\":" + quantity + "}]}")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+    }
+
+    /** D1 · D8 · D32: an undecided intake nobody took yet stays as 「판매자 미정」; no registered price = no amount. */
+    @Test
+    void testBalancesKeepUndecidedRowUntilHandedOver() throws Exception {
+        undecidedIntake(3);
+
+        mockMvc.perform(get(PATH + "/balances").header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].sellerId").isEmpty())
+                .andExpect(jsonPath("$.data[0].onHand").value(3))
+                .andExpect(jsonPath("$.data[0].imageUrl").value("https://bucket/products/a.png"))
+                .andExpect(jsonPath("$.data[0].amount").isEmpty());
+    }
+
+    /** D1 · D30: all of it handed to a seller → the 「판매자 미정」 0 row is left out, the seller row has the amount. */
+    @Test
+    void testBalancesHideUndecidedZeroRowOnceHandedOver() throws Exception {
+        undecidedIntake(3);
+        mockMvc.perform(post("/api/admin/purchase-receipts/assign-without-receipt").param("movedOn", DAY.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"mode\":\"NO_RECEIPT\",\"sellerId\":" + sellerId + ",\"lines\":[{\"productId\":"
+                                + productId + ",\"quantity\":3,\"unitPrice\":1200}]}")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get(PATH + "/balances").header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].sellerName").value("셀러A"))
+                .andExpect(jsonPath("$.data[0].onHand").value(3))
+                .andExpect(jsonPath("$.data[0].amount").value(3600));
     }
 
     @Test

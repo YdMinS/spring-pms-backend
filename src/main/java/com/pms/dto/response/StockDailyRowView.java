@@ -9,6 +9,8 @@ import java.util.List;
 /**
  * One ledger row of 「그날 입출고 내역」 (FEATURE_2610_19 D119 · D123 · D124 · D128 · D130).
  *
+ * @param imageUrl      the product's representative photo ({@code product.image_url}) as stored; null = none
+ *                      (FEATURE_2611_02 D8)
  * @param sellerName    outbound = the order seller (D124); undecided intake = null; other rows = the row's seller
  * @param owners        undecided intake only: the assigned owners as 「{seller} {qty}」 (D130)
  * @param undecidedLeft undecided intake only: what no receipt took yet (D121 ⑤); null for other rows
@@ -24,6 +26,7 @@ public record StockDailyRowView(
         StockReason reason,
         Long productId,
         String productName,
+        String imageUrl,
         int quantity,
         String sellerName,
         List<String> owners,

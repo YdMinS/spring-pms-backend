@@ -43,15 +43,18 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
      * <p>{@code left join m.seller}: rows with no seller (FEATURE_2610_19 D105 · D124) form their own
      * 「판매자 미정」 row (seller null) instead of silently disappearing (D116 ②). The assigned shares of those
      * rows are moved to their owners by {@code StockLedgerServiceImpl.balances} (D131).
+     *
+     * <p>{@code p.imageUrl} rides along for the row photo (FEATURE_2611_02 D8) — one value per product, so it does not
+     * split a group.
      */
     @Query("""
             select new com.pms.dto.response.StockBalanceView(
-                p.id, p.productName, s.id, s.sellerName, coalesce(sum(m.quantity), 0L))
+                p.id, p.productName, p.imageUrl, s.id, s.sellerName, coalesce(sum(m.quantity), 0L))
             from StockMovement m join m.product p left join m.seller s
             where (:productId is null or p.id = :productId)
               and (:sellerId is null or s.id = :sellerId)
               and (:keyword is null or lower(p.productName) like lower(concat('%', :keyword, '%')))
-            group by p.id, p.productName, s.id, s.sellerName
+            group by p.id, p.productName, p.imageUrl, s.id, s.sellerName
             order by p.productName asc, s.sellerName asc
             """)
     List<StockBalanceView> findBalances(@Param("productId") Long productId,

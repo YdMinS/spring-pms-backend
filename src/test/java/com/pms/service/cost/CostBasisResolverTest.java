@@ -69,7 +69,7 @@ class CostBasisResolverTest {
     }
 
     private static OrderLineExpander.ExpandedProduct expanded(Long productId, int quantity) {
-        return new OrderLineExpander.ExpandedProduct(productId, "양말A", quantity);
+        return new OrderLineExpander.ExpandedProduct(productId, "양말A", quantity, null);
     }
 
     private static PurchaseRecord purchase(String unitPrice, LocalDate purchasedOn) {
