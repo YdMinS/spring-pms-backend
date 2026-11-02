@@ -3,10 +3,12 @@ package com.pms.dto.response;
 import com.pms.domain.ParcelStatus;
 
 /**
- * 「사용하지 않은 박스」로 닫은 결과 (FEATURE_2609_40 / PLAN D32).
+ * Result of closing a box as 「사용하지 않은 박스」 (FEATURE_2609_40 / PLAN D32) or of restoring it
+ * (FEATURE_2611_03 / PLAN D13).
  *
- * <p>🔴 출고·상자 기억·절약을 <b>하나도</b> 남기지 않는다 — 쓰지 않은 송장일 뿐 포장 사실이 아니다.
- * 되돌리기는 없다: 잘못 닫았으면 남은 물품은 다른 박스로 나간다(잔량은 그대로다).
+ * <p>🔴 Closing as unused leaves <b>no</b> stock out, box recipe or savings — an unused label is not a packing
+ * fact. A box closed by mistake is restored to {@code PENDING} through {@code POST /parcels/{id}/restore}
+ * (PLAN 2611_03 D1); the remaining quantity never changed, so nothing else has to be undone.
  */
 public record ParcelCloseResponse(Long parcelId, ParcelStatus status) {
 }

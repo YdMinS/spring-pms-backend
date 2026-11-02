@@ -1,0 +1,54 @@
+# Parcel (box) status history (FEATURE_2611_03 / PLAN D8 · D15 · D16 · D35 ~ D38).
+# ① One row = one real status move of a shipment_parcel: PENDING -> PACKED (packing done),
+#    PENDING -> UNUSED (label not used), UNUSED -> PENDING (unused restored).
+#    The (from_status, to_status) pair alone names the action, so there is NO action column (D15).
+# ② Only real moves are written. Parcel creation (order sync / manual invoice) and idempotent repeats
+#    (a second complete / unused / restore on the same status) write nothing (D16).
+# ③ 124-2 fills one row per parcel already closed before this table existed (D35 ~ D38): before this
+#    feature a parcel could only be closed from PENDING, so from_status = PENDING and the actor / time are
+#    the parcel's own packed_by / packed_at. A closed parcel without packed_at gets no row (D38).
+# ⚠️ No UNIQUE constraint: the same parcel can move many times (unused -> restored -> unused ...).
+databaseChangeLog:
+
+  - changeSet:
+      id: 124-shipment-parcel-status-log
+      author: oclyx
+      comment: "FEATURE_2611_03: shipment_parcel_status_log (parcel status history)."
+      changes:
+        - createTable:
+            tableName: shipment_parcel_status_log
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: shipment_parcel_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: from_status, type: VARCHAR(20), constraints: { nullable: false } }
+              - column: { name: to_status, type: VARCHAR(20), constraints: { nullable: false } }
+              - column: { name: changed_by, type: VARCHAR(100) }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint: { constraintName: fk_parcelstatuslog_tenant, baseTableName: shipment_parcel_status_log, baseColumnNames: tenant_id,          referencedTableName: tenant,          referencedColumnNames: id }
+        - addForeignKeyConstraint: { constraintName: fk_parcelstatuslog_parcel, baseTableName: shipment_parcel_status_log, baseColumnNames: shipment_parcel_id, referencedTableName: shipment_parcel, referencedColumnNames: id }
+        - createIndex:
+            tableName: shipment_parcel_status_log
+            indexName: idx_parcelstatuslog_parcel_created
+            columns:
+              - column: { name: shipment_parcel_id }
+              - column: { name: created_date }
+      rollback:
+        - dropTable: { tableName: shipment_parcel_status_log }
+
+  - changeSet:
+      id: 124-2-shipment-parcel-status-log-backfill
+      author: oclyx
+      comment: "FEATURE_2611_03 / D35 ~ D38: one PENDING -> current status row per parcel closed before 124."
+      changes:
+        - sql:
+            sql: >-
+              INSERT INTO shipment_parcel_status_log
+                (tenant_id, shipment_parcel_id, from_status, to_status, changed_by, created_date, modified_date)
+              SELECT p.tenant_id, p.id, 'PENDING', p.status, p.packed_by, p.packed_at, p.packed_at
+              FROM shipment_parcel p
+              WHERE p.status IN ('PACKED', 'UNUSED') AND p.packed_at IS NOT NULL
+      rollback:
+        - sql:
+            sql: DELETE FROM shipment_parcel_status_log

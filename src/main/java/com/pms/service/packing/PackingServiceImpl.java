@@ -9,11 +9,13 @@ import com.pms.domain.Product;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.ShipmentParcel;
 import com.pms.domain.ShipmentParcelItem;
+import com.pms.domain.ShipmentParcelStatusLog;
 import com.pms.dto.request.BoxCandidateRequest;
 import com.pms.dto.request.OutboundConfirmRequest;
 import com.pms.dto.request.ParcelCompleteRequest;
 import com.pms.dto.response.BarcodeLookupResponse;
 import com.pms.dto.response.OutboundUnexpandedView;
+import com.pms.dto.response.PackingHistoryView;
 import com.pms.dto.response.PackingRemainingItem;
 import com.pms.dto.response.PackingScanResponse;
 import com.pms.dto.response.ParcelCloseResponse;
@@ -26,8 +28,10 @@ import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.ShipmentParcelItemRepository;
 import com.pms.repository.ShipmentParcelRepository;
+import com.pms.repository.ShipmentParcelStatusLogRepository;
 import com.pms.service.InvoiceNumbers;
 import com.pms.service.MasterChannelConfigService;
+import com.pms.service.coupang.SyncWindow;
 import com.pms.service.stock.RemainingLine;
 import com.pms.service.stock.StockOutService;
 import lombok.RequiredArgsConstructor;
@@ -42,6 +46,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -76,6 +81,8 @@ public class PackingServiceImpl implements PackingService {
     private final StockOutService stockOutService;
     private final BoxRecipeService boxRecipeService;
     private final MasterChannelConfigService masterChannelConfigService;
+    private final ParcelStatusRecorder parcelStatusRecorder;
+    private final ShipmentParcelStatusLogRepository statusLogRepository;
 
     // ── 조회 ──────────────────────────────────────────────────────────────────
 
@@ -332,6 +339,9 @@ public class PackingServiceImpl implements PackingService {
                 .actualBoxCost(box.getCost() == null ? BigDecimal.ZERO : box.getCost())
                 .expectedDeliveryCost(savings.expectedDeliveryCost())
                 .build());
+        // ⑥ History (FEATURE_2611_03 D16) — exceptions are swallowed, but a failed INSERT still rolls back the stock out
+        //   (same transaction); D17 holds only for failures before the save.
+        parcelStatusRecorder.record(saved, ParcelStatus.PENDING, ParcelStatus.PACKED, saved.getPackedBy());
 
         return new ParcelCompleteResponse(saved.getId(), saved.getStatus(), packedQty, notices,
                 saved.getExpectedBoxCost(), saved.getActualBoxCost(), saved.getExpectedDeliveryCost());
@@ -353,7 +363,48 @@ public class PackingServiceImpl implements PackingService {
                 .packedAt(LocalDateTime.now())
                 .packedBy(currentUsername())
                 .build());
+        parcelStatusRecorder.record(saved, ParcelStatus.PENDING, ParcelStatus.UNUSED, saved.getPackedBy());
         return new ParcelCloseResponse(saved.getId(), saved.getStatus());
+    }
+
+    @Override
+    @Transactional
+    public ParcelCloseResponse restore(Long parcelId) {
+        ShipmentParcel parcel = parcel(parcelId);
+        if (parcel.getStatus() == ParcelStatus.PENDING) {
+            // FEATURE_2611_03 D11: a second Enter on the confirm dialog is not an error.
+            return new ParcelCloseResponse(parcel.getId(), parcel.getStatus());
+        }
+        if (parcel.getStatus() == ParcelStatus.PACKED) {
+            throw new IllegalArgumentException("이미 출고된 박스입니다");
+        }
+        // 🔴 D7: the same remaining total the complete path uses — 0 means every item already left in another box
+        //    (or the order was cancelled), so a reopened box would have nothing to pack.
+        if (totalRemainingQty(stockOutService.remaining(packingLines(parcel.getOrderShipment().getId()))) <= 0) {
+            throw new IllegalArgumentException(
+                    "담을 물품이 없어 되돌릴 수 없습니다 — 이 주문은 이미 모두 출고됐거나 취소됐습니다");
+        }
+        // 🔴 D3: only the three columns unused() wrote go back — stock out, recipe and savings were never written.
+        ShipmentParcel saved = parcelRepository.save(parcel.toBuilder()
+                .status(ParcelStatus.PENDING)
+                .packedAt(null)
+                .packedBy(null)
+                .build());
+        parcelStatusRecorder.record(saved, ParcelStatus.UNUSED, ParcelStatus.PENDING, currentUsername());
+        return new ParcelCloseResponse(saved.getId(), saved.getStatus());
+    }
+
+    @Override
+    public List<PackingHistoryView> history(LocalDate from, LocalDate to, String keyword) {
+        String trimmed = (keyword == null || keyword.isBlank()) ? null : keyword.trim();
+        // D39: stored invoice numbers are normalized, so the keyword is normalized for that side only.
+        String invoiceKeyword = trimmed == null ? null : InvoiceNumbers.normalize(trimmed);
+        // D40: from · to are KST days; stored times are UTC wall clock, so the bounds are KST midnights in UTC.
+        return statusLogRepository.search(kstMidnightAsUtc(from), kstMidnightAsUtc(to.plusDays(1)), trimmed,
+                        invoiceKeyword)
+                .stream()
+                .map(this::historyView)
+                .toList();
     }
 
     // ── 내부 ──────────────────────────────────────────────────────────────────
@@ -477,6 +528,23 @@ public class PackingServiceImpl implements PackingService {
                 .sum();
         return new ParcelCompleteResponse(parcel.getId(), parcel.getStatus(), packedQty, List.of(),
                 parcel.getExpectedBoxCost(), parcel.getActualBoxCost(), parcel.getExpectedDeliveryCost());
+    }
+
+    private PackingHistoryView historyView(ShipmentParcelStatusLog row) {
+        ShipmentParcel parcel = row.getShipmentParcel();
+        return new PackingHistoryView(row.getId(), utcToKst(row.getCreatedAt()), parcel.getId(),
+                parcel.getInvoiceNumber(), parcel.getCarrierName(), parcel.getOrderShipment().getOrder().getExternalOrderId(),
+                sellerNameOf(parcel), row.getFromStatus(), row.getToStatus(), row.getChangedBy());
+    }
+
+    /** KST midnight of {@code day} as a UTC wall-clock time — the clock {@code created_date} is stored in (D40). */
+    private static LocalDateTime kstMidnightAsUtc(LocalDate day) {
+        return day.atStartOfDay(SyncWindow.KST).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+    }
+
+    /** A stored UTC wall-clock time as a KST wall-clock time, no zone in the value (D40). */
+    private static LocalDateTime utcToKst(LocalDateTime utc) {
+        return utc == null ? null : utc.atZone(ZoneOffset.UTC).withZoneSameInstant(SyncWindow.KST).toLocalDateTime();
     }
 
     private PackingScanResponse.ParcelView parcelView(ShipmentParcel parcel, int totalParcels) {

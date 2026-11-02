@@ -9,6 +9,7 @@ import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.ShipmentParcelItemRepository;
 import com.pms.repository.ShipmentParcelRepository;
+import com.pms.repository.ShipmentParcelStatusLogRepository;
 import com.pms.service.MasterChannelConfigService;
 import com.pms.service.stock.StockOutService;
 import org.junit.jupiter.api.Test;
@@ -24,6 +25,7 @@ import static com.pms.service.packing.PackingFixtures.PARCEL_ID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -46,6 +48,8 @@ class PackingUnusedTest {
     @Mock private StockOutService stockOutService;
     @Mock private BoxRecipeService boxRecipeService;
     @Mock private MasterChannelConfigService masterChannelConfigService;
+    @Mock private ParcelStatusRecorder parcelStatusRecorder;
+    @Mock private ShipmentParcelStatusLogRepository statusLogRepository;
 
     @InjectMocks private PackingServiceImpl service;
 
@@ -66,10 +70,12 @@ class PackingUnusedTest {
         assertThat(response.status()).isEqualTo(ParcelStatus.UNUSED);
         ArgumentCaptor<ShipmentParcel> captor = ArgumentCaptor.forClass(ShipmentParcel.class);
         verify(parcelRepository).save(captor.capture());
-        // 누가 언제 닫았는지는 남긴다 — 되돌리기가 없으므로 흔적이 유일한 근거다.
+        // Who closed it and when stay on the box (FEATURE_2611_03: and in one history row, D16).
         assertThat(captor.getValue().getPackedAt()).isNotNull();
         assertThat(captor.getValue().getBoxPackage()).isNull();
         verifyNoInteractions(stockOutService, boxRecipeService, parcelItemRepository);
+        verify(parcelStatusRecorder).record(eq(captor.getValue()), eq(ParcelStatus.PENDING),
+                eq(ParcelStatus.UNUSED), any());
     }
 
     @Test
@@ -80,6 +86,7 @@ class PackingUnusedTest {
 
         assertThat(response.status()).isEqualTo(ParcelStatus.UNUSED);
         verify(parcelRepository, never()).save(any());
+        verifyNoInteractions(parcelStatusRecorder);
     }
 
     @Test
