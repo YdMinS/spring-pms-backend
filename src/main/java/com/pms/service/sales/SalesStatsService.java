@@ -24,18 +24,25 @@ import java.util.List;
  */
 public interface SalesStatsService {
 
+    // excludeUnshipped on ①②③④ (FEATURE_2611_04 D1 · D2 · D6 · D8): true = every number built from order lines
+    // (sales, discount, fee, quantity, refund columns, net profit) and the ④ line list leave out the lines whose
+    // status is still PAID or PREPARING; a line with no status stays in. 🔴 The fixed cost is still subtracted in full
+    // and judged on the whole month's sales of every line, and the pending payout does not move. false = the numbers
+    // as before (the dashboard cards and the stock rank pass false).
+
     /** ① 판매자별 한 줄. {@code sellerId} 가 null 이면 전 판매자. */
-    List<SellerSalesResponse> summary(LocalDate from, LocalDate to, Long sellerId);
+    List<SellerSalesResponse> summary(LocalDate from, LocalDate to, Long sellerId, boolean excludeUnshipped);
 
     /** ② 채널(계정)별 한 줄. 현금주의({@code paidAmount})는 여기서만 제공한다(D4-1). */
-    List<ChannelSalesResponse> byChannel(LocalDate from, LocalDate to, Long sellerId);
+    List<ChannelSalesResponse> byChannel(LocalDate from, LocalDate to, Long sellerId, boolean excludeUnshipped);
 
     /**
      * ③ 상품별 수익성.
      *
      * @param crossChannel true = 마스터 상품 단위로 합친다 / false = 마스터 × 채널로 쪼갠다
      */
-    List<ProductProfitResponse> byProduct(LocalDate from, LocalDate to, Long sellerId, boolean crossChannel);
+    List<ProductProfitResponse> byProduct(LocalDate from, LocalDate to, Long sellerId, boolean crossChannel,
+                                          boolean excludeUnshipped);
 
     /**
      * ④ 판매 내역 — 한 채널의 주문 라인 목록 (FEATURE_2609_34).
@@ -45,7 +52,7 @@ public interface SalesStatsService {
      *
      * <p>⚠️ {@code accountId} 는 필수다 — 한 채널을 들여다보는 목록이라 전 채널을 한 번에 내려보내지 않는다.
      */
-    List<SalesLineView> lines(LocalDate from, LocalDate to, Long accountId);
+    List<SalesLineView> lines(LocalDate from, LocalDate to, Long accountId, boolean excludeUnshipped);
 
     /**
      * ⑤ Sales per sale date — the dashboard sales chart (FEATURE_2610_29 D22). One row per date from {@code from}

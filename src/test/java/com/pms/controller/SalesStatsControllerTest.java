@@ -113,6 +113,18 @@ class SalesStatsControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data[0].unreconciledPayouts").doesNotExist());
     }
 
+    /** FEATURE_2611_04 D8: the 「출고 전 주문 제외」 switch leaves the pending payout as it is. */
+    @Test
+    void summary_excludeUnshipped_keepsPendingPayout() throws Exception {
+        mockMvc.perform(get(SUMMARY)
+                        .param("from", "2026-09-01").param("to", "2026-09-30")
+                        .param("excludeUnshipped", "true")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].grossSales").value(0))
+                .andExpect(jsonPath("$.data[0].pendingPayout").value(1804000.00));
+    }
+
     @Test
     void byChannel_adminToken_returns200() throws Exception {
         mockMvc.perform(get(BY_CHANNEL).header("Authorization", "Bearer " + adminToken))

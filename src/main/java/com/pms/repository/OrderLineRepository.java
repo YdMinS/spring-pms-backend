@@ -240,11 +240,17 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
               left join mpo.masterProduct mp
             where o.orderedAt >= :from and o.orderedAt < :toExclusive
               and (:sellerId is null or s.id = :sellerId)
+              and (:excludeUnshipped = false or l.status is null
+                   or l.status not in (com.pms.domain.OrderStatus.PAID, com.pms.domain.OrderStatus.PREPARING))
             group by s.id, s.sellerName, a.id, plo.id, mp.id, mp.name
             """)
     List<SalesLineGroup> aggregateSales(@Param("from") LocalDateTime from,
                                         @Param("toExclusive") LocalDateTime toExclusive,
-                                        @Param("sellerId") Long sellerId);
+                                        @Param("sellerId") Long sellerId,
+                                        // FEATURE_2611_04 D1 · D2: true = leave out the lines still PAID or PREPARING
+                                        // (not shipped yet) — a line with no status (old backfill) stays in.
+                                        // false = every line, as before.
+                                        @Param("excludeUnshipped") boolean excludeUnshipped);
 
     /**
      * 판매 내역 — 집계하지 않은 <b>주문 라인 목록</b> (FEATURE_2609_34).
@@ -280,11 +286,16 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
               left join mpo.masterProduct mp
             where a.id = :accountId
               and o.orderedAt >= :from and o.orderedAt < :toExclusive
+              and (:excludeUnshipped = false or l.status is null
+                   or l.status not in (com.pms.domain.OrderStatus.PAID, com.pms.domain.OrderStatus.PREPARING))
             order by o.orderedAt desc, l.id desc
             """)
     List<SalesLineView> findSalesLines(@Param("from") LocalDateTime from,
                                        @Param("toExclusive") LocalDateTime toExclusive,
-                                       @Param("accountId") Long accountId);
+                                       @Param("accountId") Long accountId,
+                                       // FEATURE_2611_04 D2: 🔴 the same line filter as aggregateSales — if the two
+                                       // filter differently, this list sum stops matching the channel total.
+                                       @Param("excludeUnshipped") boolean excludeUnshipped);
 
     // ── 고정비 부과 판정용 월별 집계 (FEATURE_2609_33 / PLAN 2609_33 D4-1 · D11 · D11-1) ──────
 
