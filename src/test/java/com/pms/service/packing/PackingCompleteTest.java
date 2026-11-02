@@ -19,6 +19,7 @@ import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.ShipmentParcelItemRepository;
 import com.pms.repository.ShipmentParcelRepository;
+import com.pms.repository.ShipmentParcelStatusLogRepository;
 import com.pms.service.MasterChannelConfigService;
 import com.pms.service.stock.RemainingLine;
 import com.pms.service.stock.StockOutService;
@@ -74,6 +75,8 @@ class PackingCompleteTest {
     @Mock private StockOutService stockOutService;
     @Mock private BoxRecipeService boxRecipeService;
     @Mock private MasterChannelConfigService masterChannelConfigService;
+    @Mock private ParcelStatusRecorder parcelStatusRecorder;
+    @Mock private ShipmentParcelStatusLogRepository statusLogRepository;
 
     @InjectMocks private PackingServiceImpl service;
 
@@ -168,6 +171,9 @@ class PackingCompleteTest {
         assertThat(second.packedQty()).isEqualTo(2);
         verify(stockOutService, times(1)).confirm(any());
         verify(parcelItemRepository, times(1)).save(any(ShipmentParcelItem.class));
+        // FEATURE_2611_03 D16: one history row for the real move, none for the idempotent repeat.
+        verify(parcelStatusRecorder, times(1)).record(any(ShipmentParcel.class), eq(ParcelStatus.PENDING),
+                eq(ParcelStatus.PACKED), any());
     }
 
     @Test

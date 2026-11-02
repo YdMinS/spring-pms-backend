@@ -4,6 +4,7 @@ import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.BoxCandidateRequest;
 import com.pms.dto.request.ParcelCompleteRequest;
 import com.pms.dto.response.BarcodeLookupResponse;
+import com.pms.dto.response.PackingHistoryView;
 import com.pms.dto.response.PackingScanResponse;
 import com.pms.dto.response.ParcelCloseResponse;
 import com.pms.dto.response.ParcelCompleteResponse;
@@ -12,6 +13,7 @@ import com.pms.service.packing.BoxCandidate;
 import com.pms.service.packing.PackingService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,6 +24,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -92,5 +95,30 @@ public class PackingController {
     @PostMapping("/parcels/{id}/unused")
     public ResponseEntity<ResponseDTO<ParcelCloseResponse>> unused(@PathVariable Long id) {
         return ResponseEntity.ok(ResponseDTO.success(packingService.unused(id)));
+    }
+
+    /**
+     * Restores an unused box to {@code PENDING} (FEATURE_2611_03 / PLAN D1 · D13). Already {@code PENDING} = 200,
+     * {@code PACKED} or nothing left to pack = 400.
+     */
+    @PostMapping("/parcels/{id}/restore")
+    public ResponseEntity<ResponseDTO<ParcelCloseResponse>> restore(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(packingService.restore(id)));
+    }
+
+    /**
+     * Parcel status history, newest first (FEATURE_2611_03 / PLAN D29 · D30 · D34). Read-only — there is no
+     * endpoint that adds, edits or deletes a history row (D32).
+     *
+     * @param from    first KST day, inclusive (D40)
+     * @param to      last KST day, inclusive
+     * @param keyword optional — invoice number or order number, contained
+     */
+    @GetMapping("/history")
+    public ResponseEntity<ResponseDTO<List<PackingHistoryView>>> history(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) String keyword) {
+        return ResponseEntity.ok(ResponseDTO.success(packingService.history(from, to, keyword)));
     }
 }
