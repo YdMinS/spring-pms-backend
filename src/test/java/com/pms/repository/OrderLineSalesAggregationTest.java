@@ -182,7 +182,7 @@ class OrderLineSalesAggregationTest {
         em.flush();
         em.clear();
 
-        List<SalesLineView> lines = orderLineRepository.findSalesLines(FROM, TO_EXCLUSIVE, account.getId());
+        List<SalesLineView> lines = orderLineRepository.findSalesLines(FROM, TO_EXCLUSIVE, account.getId(), false);
 
         assertThat(lines).hasSize(2);
         assertThat(lines).filteredOn(view -> view.masterProductName() != null)
@@ -205,13 +205,55 @@ class OrderLineSalesAggregationTest {
         em.flush();
         em.clear();
 
-        assertThat(orderLineRepository.findSalesLines(FROM, TO_EXCLUSIVE, account.getId() + 999L)).isEmpty();
+        assertThat(orderLineRepository.findSalesLines(FROM, TO_EXCLUSIVE, account.getId() + 999L, false)).isEmpty();
+    }
+
+    /**
+     * 🔴 FEATURE_2611_04 D1 · D2: with the switch on, the lines still {@code PAID} / {@code PREPARING} leave every
+     * number (sales · quantity · missing-cost count), a line with no status (old backfill) stays in, and the switch
+     * off keeps every line as before.
+     */
+    @Test
+    void excludeUnshippedLeavesOutPaidAndPreparingButKeepsNoStatus() {
+        line(option, 1, 0, 0, "1000", "0", null, OrderStatus.PAID);
+        line(option, 1, 0, 0, "2000", "0", null, OrderStatus.PREPARING);
+        line(option, 1, 0, 0, "4000", "0", "1500", OrderStatus.SHIPPED);
+        line(option, 1, 0, 0, "8000", "0", "3000", (OrderStatus) null);   // old backfill line, no status
+        em.flush();
+        em.clear();
+
+        assertThat(orderLineRepository.aggregateSales(FROM, TO_EXCLUSIVE, null, true)).singleElement()
+                .satisfies(group -> {
+                    assertThat(group.grossSales()).isEqualByComparingTo("12000");
+                    assertThat(group.netQty()).isEqualTo(2L);
+                    assertThat(group.missingCostLines()).isEqualTo(0L);
+                });
+        assertThat(aggregate()).singleElement()
+                .satisfies(group -> {
+                    assertThat(group.grossSales()).isEqualByComparingTo("15000");
+                    assertThat(group.netQty()).isEqualTo(4L);
+                    assertThat(group.missingCostLines()).isEqualTo(2L);
+                });
+    }
+
+    /** 🔴 D2: the 「판매 내역」 list leaves out the same lines — its sum must keep matching the channel total. */
+    @Test
+    void salesLinesFollowExcludeUnshipped() {
+        line(option, 1, 0, 0, "1000", "0", null, OrderStatus.PREPARING);
+        line(option, 1, 0, 0, "4000", "0", null, OrderStatus.DELIVERED);
+        em.flush();
+        em.clear();
+
+        assertThat(orderLineRepository.findSalesLines(FROM, TO_EXCLUSIVE, account.getId(), true))
+                .singleElement()
+                .satisfies(view -> assertThat(view.grossSales()).isEqualByComparingTo("4000"));
+        assertThat(orderLineRepository.findSalesLines(FROM, TO_EXCLUSIVE, account.getId(), false)).hasSize(2);
     }
 
     // ------------------------------------------------------------- fixtures
 
     private List<SalesLineGroup> aggregate() {
-        return orderLineRepository.aggregateSales(FROM, TO_EXCLUSIVE, null);
+        return orderLineRepository.aggregateSales(FROM, TO_EXCLUSIVE, null, false);
     }
 
     private ProductListingOption option(String optionName, String masterName) {
@@ -232,12 +274,24 @@ class OrderLineSalesAggregationTest {
     }
 
     private void line(ProductListingOption listingOption, int orderQty, int cancelQty, int holdQty,
+                      String unitPrice, String discount, String costAmount, OrderStatus status) {
+        line(listingOption, orderQty, cancelQty, holdQty, unitPrice, discount, costAmount, ORDERED_AT, status);
+    }
+
+    private void line(ProductListingOption listingOption, int orderQty, int cancelQty, int holdQty,
                       String unitPrice, String discount, String costAmount, LocalDateTime orderedAt) {
+        line(listingOption, orderQty, cancelQty, holdQty, unitPrice, discount, costAmount, orderedAt,
+                OrderStatus.PAID);
+    }
+
+    private void line(ProductListingOption listingOption, int orderQty, int cancelQty, int holdQty,
+                      String unitPrice, String discount, String costAmount, LocalDateTime orderedAt,
+                      OrderStatus status) {
         Order order = em.persist(Order.builder()
                 .marketplaceAccount(account).platform(Platform.COUPANG)
                 .externalOrderId("O-" + System.nanoTime()).orderedAt(orderedAt).build());
         em.persist(OrderLine.builder()
-                .order(order).productListingOption(listingOption).status(OrderStatus.PAID)
+                .order(order).productListingOption(listingOption).status(status)
                 .itemName("양말세트").orderQty(orderQty).cancelQty(cancelQty).holdQty(holdQty)
                 .unitPrice(new BigDecimal(unitPrice))
                 .lineAmount(new BigDecimal(unitPrice).multiply(BigDecimal.valueOf(orderQty)))

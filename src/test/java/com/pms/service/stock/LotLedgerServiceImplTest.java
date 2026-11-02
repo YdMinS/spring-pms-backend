@@ -38,6 +38,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.BDDMockito.given;
 
 /**
@@ -66,7 +67,7 @@ class LotLedgerServiceImplTest {
     @BeforeEach
     void setUp() {
         given(purchaseSettingService.isStockLinked()).willReturn(true);
-        given(salesStatsService.summary(any(), any(), any())).willReturn(List.of());
+        given(salesStatsService.summary(any(), any(), any(), anyBoolean())).willReturn(List.of());
         sellerA = em.persist(Seller.builder().sellerName("A상사").businessRegistration("111-11-11111").build());
         sellerB = em.persist(Seller.builder().sellerName("B상사").businessRegistration("222-22-22222").build());
         accountA = MarketplaceAccountFixture.coupangAccount(em, sellerA);

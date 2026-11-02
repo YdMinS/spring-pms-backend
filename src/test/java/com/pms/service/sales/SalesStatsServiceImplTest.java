@@ -40,6 +40,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
@@ -92,7 +93,7 @@ class SalesStatsServiceImplTest {
         givenSales(group(coupang, 100L, 100L, "100000", "0", "0", 0));
         givenOption(100L, 500L, "0.106", "2500", "500");
 
-        assertThat(service.summary(FROM, TO, null)).singleElement()
+        assertThat(service.summary(FROM, TO, null, false)).singleElement()
                 .extracting(SellerSalesResponse::estFee)
                 .satisfies(fee -> assertThat((BigDecimal) fee).isEqualByComparingTo("11660"));
     }
@@ -108,7 +109,7 @@ class SalesStatsServiceImplTest {
         givenSales(group(coupang, 100L, 100L, "100000", "0", "0", 1));
         givenOption(100L, 500L, "0.106", "2500", "500");
 
-        assertThat(service.summary(FROM, TO, null)).singleElement()
+        assertThat(service.summary(FROM, TO, null, false)).singleElement()
                 .satisfies(row -> {
                     assertThat(row.estNetProfit()).isNull();
                     assertThat(row.costBasisReady()).isFalse();
@@ -124,7 +125,7 @@ class SalesStatsServiceImplTest {
         givenSales(group(coupang, 100L, 100L, "100000", "0", "40000", 0, 10L));
         givenOption(100L, 500L, "0.106", "2500", "500");
 
-        assertThat(service.summary(FROM, TO, null)).singleElement()
+        assertThat(service.summary(FROM, TO, null, false)).singleElement()
                 .satisfies(row -> {
                     assertThat(row.costBasisReady()).isTrue();
                     assertThat(row.estNetProfit()).isEqualByComparingTo("18340");
@@ -138,10 +139,10 @@ class SalesStatsServiceImplTest {
         given(settlementPayoutRepository.aggregateByAccount(any(), any(), any(), any(), any()))
                 .willReturn(List.of(new PayoutAggregate(10L, new BigDecimal("1804000"),
                         BigDecimal.ZERO)));
-        given(orderLineRepository.aggregateSales(any(), any(), any())).willReturn(List.of());
+        given(orderLineRepository.aggregateSales(any(), any(), any(), anyBoolean())).willReturn(List.of());
 
-        SellerSalesResponse wide = service.summary(FROM, TO, null).get(0);
-        SellerSalesResponse narrow = service.summary(TO, TO, null).get(0);
+        SellerSalesResponse wide = service.summary(FROM, TO, null, false).get(0);
+        SellerSalesResponse narrow = service.summary(TO, TO, null, false).get(0);
 
         assertThat(wide.pendingPayout()).isEqualByComparingTo("1804000");
         assertThat(narrow.pendingPayout()).isEqualByComparingTo(wide.pendingPayout());
@@ -154,9 +155,9 @@ class SalesStatsServiceImplTest {
         given(settlementPayoutRepository.aggregateByAccount(any(), any(), any(), any(), any()))
                 .willReturn(List.of(new PayoutAggregate(10L, new BigDecimal("1804000"),
                         new BigDecimal("900000"))));
-        given(orderLineRepository.aggregateSales(any(), any(), any())).willReturn(List.of());
+        given(orderLineRepository.aggregateSales(any(), any(), any(), anyBoolean())).willReturn(List.of());
 
-        assertThat(service.byChannel(FROM, TO, null)).singleElement()
+        assertThat(service.byChannel(FROM, TO, null, false)).singleElement()
                 .satisfies(row -> {
                     assertThat(row.paidAmount()).isEqualByComparingTo("900000");
                     assertThat(row.pendingPayout()).isEqualByComparingTo("1804000");
@@ -175,9 +176,9 @@ class SalesStatsServiceImplTest {
         givenAccounts(coupang);
         given(settlementPayoutRepository.aggregateByAccount(any(), any(), any(), any(), any()))
                 .willReturn(List.of());
-        given(orderLineRepository.aggregateSales(any(), any(), any())).willReturn(List.of());
+        given(orderLineRepository.aggregateSales(any(), any(), any(), anyBoolean())).willReturn(List.of());
 
-        assertThat(service.byChannel(FROM, TO, null)).singleElement()
+        assertThat(service.byChannel(FROM, TO, null, false)).singleElement()
                 .satisfies(row -> assertThat(row.pendingPayout()).isEqualByComparingTo("0"));
     }
 
@@ -190,8 +191,8 @@ class SalesStatsServiceImplTest {
         givenOptions(option(100L, 500L), option(200L, 500L));
         givenCommissionAndShipping("0.106", "2500", "500");
 
-        List<ProductProfitResponse> merged = service.byProduct(FROM, TO, null, true);
-        List<ProductProfitResponse> split = service.byProduct(FROM, TO, null, false);
+        List<ProductProfitResponse> merged = service.byProduct(FROM, TO, null, true, false);
+        List<ProductProfitResponse> split = service.byProduct(FROM, TO, null, false, false);
 
         assertThat(merged).singleElement()
                 .satisfies(row -> {
@@ -217,8 +218,8 @@ class SalesStatsServiceImplTest {
                 unmappedGroup(coupang, "30000", "1000"));
         givenOption(100L, 500L, "0.106", "2500", "500");
 
-        List<ProductProfitResponse> products = service.byProduct(FROM, TO, null, true);
-        SellerSalesResponse summary = service.summary(FROM, TO, null).get(0);
+        List<ProductProfitResponse> products = service.byProduct(FROM, TO, null, true, false);
+        SellerSalesResponse summary = service.summary(FROM, TO, null, false).get(0);
 
         assertThat(products).hasSize(2);
         assertThat(products).filteredOn(ProductProfitResponse::uncategorized).singleElement()
@@ -245,7 +246,7 @@ class SalesStatsServiceImplTest {
         given(masterChannelConfigService.resolvePlatformCategory(any()))
                 .willThrow(new IllegalArgumentException("카테고리 매핑 없음"));
 
-        assertThat(service.summary(FROM, TO, null)).singleElement()
+        assertThat(service.summary(FROM, TO, null, false)).singleElement()
                 .satisfies(row -> {
                     assertThat(row.grossSales()).isEqualByComparingTo("100000");
                     assertThat(row.estNetProfit()).isNull();
@@ -255,7 +256,7 @@ class SalesStatsServiceImplTest {
 
     @Test
     void rejectsInvertedPeriod() {
-        assertThatThrownBy(() -> service.summary(TO, FROM, null))
+        assertThatThrownBy(() -> service.summary(TO, FROM, null, false))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -272,7 +273,7 @@ class SalesStatsServiceImplTest {
         givenFixedCostLinks(link(coupang));
         givenMonthlySales(monthlySales(coupang, 9, "2000000"));
 
-        assertThat(service.byChannel(FROM, TO, null)).singleElement()
+        assertThat(service.byChannel(FROM, TO, null, false)).singleElement()
                 .satisfies(row -> {
                     assertThat(row.fixedCost()).isEqualByComparingTo("55000");
                     assertThat(row.fixedCostMonths()).isEqualTo(1);
@@ -295,7 +296,7 @@ class SalesStatsServiceImplTest {
         givenFixedCostLinks(link(coupang));
         givenMonthlySales(monthlySales(coupang, 9, "2000000"));
 
-        assertThat(service.byChannel(FROM, TO, null)).singleElement()
+        assertThat(service.byChannel(FROM, TO, null, false)).singleElement()
                 .satisfies(row -> {
                     assertThat(row.costBasisReady()).isFalse();
                     assertThat(row.estNetProfit()).isNull();
@@ -316,7 +317,7 @@ class SalesStatsServiceImplTest {
         givenSales(group(coupang, 100L, 100L, "100000", "0", "40000", 0, 10L));
         givenOption(100L, 500L, "0.106", "2500", "500");
 
-        assertThat(service.byChannel(FROM, TO, null)).singleElement()
+        assertThat(service.byChannel(FROM, TO, null, false)).singleElement()
                 .satisfies(row -> {
                     assertThat(row.fixedCost()).isEqualByComparingTo("0");
                     assertThat(row.fixedCostMonths()).isZero();
@@ -349,7 +350,7 @@ class SalesStatsServiceImplTest {
                 eq(SaleType.REFUND)))
                 .willReturn(List.<Object[]>of(new Object[]{30L, 2026, 8, new BigDecimal("5000000")}));
 
-        assertThat(service.byChannel(FROM, TO, null)).singleElement()
+        assertThat(service.byChannel(FROM, TO, null, false)).singleElement()
                 .satisfies(row -> assertThat(row.fixedCost()).isEqualByComparingTo("77000"));
     }
 
@@ -365,9 +366,48 @@ class SalesStatsServiceImplTest {
         givenFixedCostLinks(link(coupang), link(naver));
         givenMonthlySales(monthlySales(coupang, 9, "2000000"), monthlySales(naver, 9, "2000000"));
 
-        assertThat(service.summary(FROM, TO, null)).singleElement()
+        assertThat(service.summary(FROM, TO, null, false)).singleElement()
                 .extracting(SellerSalesResponse::fixedCost)
                 .satisfies(fixedCost -> assertThat((BigDecimal) fixedCost).isEqualByComparingTo("110000"));
+    }
+
+    // ── 「출고 전 주문 제외」 switch (FEATURE_2611_04 D1 · D2 · D6 · D8) ─────────────
+
+    /**
+     * 🔴 D2 · D6 · D8: the switch reaches the order-line aggregate only. The fixed cost is still judged on the whole
+     * month of every line ({@code aggregateMonthlySales} has no switch) and subtracted in full, and the pending payout
+     * stays as it is.
+     */
+    @Test
+    void testExcludeUnshippedReachesAggregateButNotFixedCostOrPayout() {
+        givenAccounts(coupang);
+        given(settlementPayoutRepository.aggregateByAccount(any(), any(), any(), any(), any()))
+                .willReturn(List.of(new PayoutAggregate(10L, new BigDecimal("1804000"), BigDecimal.ZERO)));
+        given(orderLineRepository.aggregateSales(any(), any(), any(), eq(true)))
+                .willReturn(List.of(group(coupang, 100L, 100L, "100000", "0", "40000", 0, 10L)));
+        givenOption(100L, 500L, "0.106", "2500", "500");
+        givenFixedCostLinks(link(coupang));
+        givenMonthlySales(monthlySales(coupang, 9, "2000000"));
+
+        assertThat(service.byChannel(FROM, TO, null, true)).singleElement()
+                .satisfies(row -> {
+                    assertThat(row.grossSales()).isEqualByComparingTo("100000");
+                    assertThat(row.fixedCost()).isEqualByComparingTo("55000");
+                    assertThat(row.estNetProfit()).isEqualByComparingTo("-36660");
+                    assertThat(row.pendingPayout()).isEqualByComparingTo("1804000");
+                });
+        verify(orderLineRepository).aggregateSales(any(), any(), any(), eq(true));
+        verify(orderLineRepository).aggregateMonthlySales(any(), any(), any());
+    }
+
+    /** D2: the 「판매 내역」 list takes the same switch as the channel total above it. */
+    @Test
+    void testLinesPassExcludeUnshipped() {
+        given(orderLineRepository.findSalesLines(any(), any(), eq(10L), eq(true))).willReturn(List.of());
+
+        assertThat(service.lines(FROM, TO, 10L, true)).isEmpty();
+
+        verify(orderLineRepository).findSalesLines(any(), any(), eq(10L), eq(true));
     }
 
     // ------------------------------------------------------------- fixtures
@@ -420,7 +460,7 @@ class SalesStatsServiceImplTest {
     }
 
     private void givenSales(SalesLineGroup... groups) {
-        given(orderLineRepository.aggregateSales(any(), any(), any())).willReturn(List.of(groups));
+        given(orderLineRepository.aggregateSales(any(), any(), any(), anyBoolean())).willReturn(List.of(groups));
     }
 
     private void givenOption(Long optionId, Long cellId, String commissionRate,

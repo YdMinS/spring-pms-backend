@@ -448,7 +448,7 @@ public class LotLedgerServiceImpl implements LotLedgerService {
         LocalDate from = day.withDayOfMonth(1).minusMonths(1);
         LocalDate to = from.withDayOfMonth(from.lengthOfMonth());
         Map<Long, BigDecimal> rank = new HashMap<>();
-        for (SellerSalesResponse row : salesStatsService.summary(from, to, null)) {
+        for (SellerSalesResponse row : salesStatsService.summary(from, to, null, false)) {
             rank.put(row.sellerId(), row.grossSales() == null ? BigDecimal.ZERO : row.grossSales());
         }
         return rank;
