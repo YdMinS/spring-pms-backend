@@ -3,11 +3,13 @@ package com.pms.service.packing;
 import com.pms.dto.request.BoxCandidateRequest;
 import com.pms.dto.request.ParcelCompleteRequest;
 import com.pms.dto.response.BarcodeLookupResponse;
+import com.pms.dto.response.PackingHistoryView;
 import com.pms.dto.response.PackingScanResponse;
 import com.pms.dto.response.ParcelCloseResponse;
 import com.pms.dto.response.ParcelCompleteResponse;
 import com.pms.dto.response.PendingParcelView;
 
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -79,4 +81,22 @@ public interface PackingService {
      * <p>이미 {@code UNUSED} 면 멱등, 이미 {@code PACKED} 면 400 이다.
      */
     ParcelCloseResponse unused(Long parcelId);
+
+    /**
+     * Restores an unused box to {@code PENDING} (FEATURE_2611_03 / PLAN D1 · D3 · D7 · D11).
+     *
+     * <p>Already {@code PENDING} = idempotent success · {@code PACKED} = 400 「이미 출고된 박스입니다」 ·
+     * nothing left to pack in its shipment bundle = 400 and the box stays unused (D7 · D20).
+     */
+    ParcelCloseResponse restore(Long parcelId);
+
+    /**
+     * Parcel status history, newest first (FEATURE_2611_03 / PLAN D29 · D30 · D34 · D39).
+     *
+     * @param from    first KST day, inclusive (D40 — turned into the UTC bound of KST midnight)
+     * @param to      last KST day, inclusive
+     * @param keyword blank = no keyword; otherwise matches the invoice number (hyphens and spaces stripped)
+     *                or the order number, contained and case-insensitive
+     */
+    List<PackingHistoryView> history(LocalDate from, LocalDate to, String keyword);
 }

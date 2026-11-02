@@ -14,10 +14,12 @@ public enum ParcelStatus {
     PACKED,
 
     /**
-     * 송장을 끝내 쓰지 않은 박스(D32).
+     * A box whose label ended up not being used (D32).
      *
-     * <p>택배사가 송장 2장을 발급했는데 실제로 한 박스에 다 담긴 경우가 있다 — 그때 남는 박스를 닫는 문이다.
-     * 출고·기억·절약을 남기지 않으며 되돌리기도 없다.
+     * <p>The carrier sometimes issues two labels for a bundle that fits in one box — this is the door that closes
+     * the box left over. It leaves no stock out, no box recipe and no savings. It can be restored by scanning it
+     * again on the packing screen, which puts it back to {@link #PENDING} (PLAN 2611_03 D1 · D12:
+     * 「포장 화면에서 다시 스캔해 되돌릴 수 있다(되돌리면 작업 전으로)」).
      */
     UNUSED
 }
