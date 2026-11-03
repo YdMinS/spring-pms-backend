@@ -3,6 +3,7 @@ package com.pms.repository;
 import com.pms.domain.Product;
 import com.pms.domain.ShipmentParcelItem;
 
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -19,6 +20,13 @@ import java.util.List;
 public interface ShipmentParcelItemRepository extends JpaRepository<ShipmentParcelItem, Long> {
 
     List<ShipmentParcelItem> findByShipmentParcel_Id(Long shipmentParcelId);
+
+    /**
+     * The contents of several parcels with their product, in one read, id order — the shared order detail chips
+     * (FEATURE_2611_07 / PLAN D23).
+     */
+    @EntityGraph(attributePaths = {"shipmentParcel", "product"})
+    List<ShipmentParcelItem> findByShipmentParcel_IdInOrderByIdAsc(Collection<Long> shipmentParcelIds);
 
     /**
      * 박스 여러 개의 내용물을 <b>한 번에</b> — 절약 집계의 배분 재료(FEATURE_2609_41 / PLAN 2609_41 S5).

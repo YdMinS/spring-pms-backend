@@ -582,7 +582,7 @@ public class PackingServiceImpl implements PackingService {
 
     private PackingHistoryView historyView(ShipmentParcelStatusLog row) {
         ShipmentParcel parcel = row.getShipmentParcel();
-        return new PackingHistoryView(row.getId(), utcToKst(row.getCreatedAt()), parcel.getId(),
+        return new PackingHistoryView(row.getId(), ParcelTimes.utcToKst(row.getCreatedAt()), parcel.getId(),
                 parcel.getInvoiceNumber(), parcel.getCarrierName(), parcel.getOrderShipment().getOrder().getExternalOrderId(),
                 sellerNameOf(parcel), row.getFromStatus(), row.getToStatus(), row.getChangedBy(),
                 parcel.getBoxPackage() == null ? null : parcel.getBoxPackage().getType(),
@@ -592,11 +592,6 @@ public class PackingServiceImpl implements PackingService {
     /** KST midnight of {@code day} as a UTC wall-clock time — the clock {@code created_date} is stored in (D40). */
     private static LocalDateTime kstMidnightAsUtc(LocalDate day) {
         return day.atStartOfDay(SyncWindow.KST).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
-    }
-
-    /** A stored UTC wall-clock time as a KST wall-clock time, no zone in the value (D40). */
-    private static LocalDateTime utcToKst(LocalDateTime utc) {
-        return utc == null ? null : utc.atZone(ZoneOffset.UTC).withZoneSameInstant(SyncWindow.KST).toLocalDateTime();
     }
 
     private PackingScanResponse.ParcelView parcelView(ShipmentParcel parcel, int totalParcels) {

@@ -2,10 +2,13 @@ package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.ParcelStatus;
+import com.pms.dto.response.OrderDetailResponse;
 import com.pms.dto.response.PackingHistoryView;
 import com.pms.dto.response.PackingScanResponse;
 import com.pms.dto.response.ParcelCloseResponse;
 import com.pms.dto.response.ParcelCompleteResponse;
+import com.pms.exception.ResourceNotFoundException;
+import com.pms.service.order.OrderDetailService;
 import com.pms.service.packing.PackingService;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.mock.mockito.MockBean;
@@ -40,12 +43,16 @@ public class PackingControllerTest extends BaseIntegrationTest {
     private static final String HISTORY_PATH = "/api/admin/packing/history";
     private static final String BOX_PATH = "/api/admin/packing/parcels/1/box";
     private static final String BOX_BODY = "{\"boxPackageId\":8}";
+    private static final String ORDER_PATH = "/api/admin/packing/parcels/1/order";
     private static final String COMPLETE_BODY =
             "{\"boxPackageId\":7,\"items\":[{\"orderLineId\":11,\"productId\":33,\"quantity\":2}]}";
     private static final String CANDIDATES_BODY = "{\"items\":[{\"productId\":33,\"quantity\":2}]}";
 
     @MockBean
     private PackingService packingService;
+
+    @MockBean
+    private OrderDetailService orderDetailService;
 
     @Test
     public void testScanWithAdminTokenReturnsParcel() throws Exception {
@@ -180,5 +187,45 @@ public class PackingControllerTest extends BaseIntegrationTest {
         mockMvc.perform(post(BOX_PATH).contentType(MediaType.APPLICATION_JSON).content(BOX_BODY)
                         .header("Authorization", "Bearer " + userToken))
                 .andExpect(status().isForbidden());
+    }
+
+    // ── FEATURE_2611_07: shared order detail from a 「오늘 완료」 row (PLAN D22 · D30 · D31) ──────────────
+
+    @Test
+    public void testParcelOrderWithAdminTokenReturnsOrderDetail() throws Exception {
+        given(orderDetailService.byParcel(1L)).willReturn(new OrderDetailResponse("ORD-1", "셀러A", "COUPANG", "본계정",
+                "김주문", "박수취", LocalDateTime.of(2026, 11, 3, 9, 15), List.of(),
+                List.of(new OrderDetailResponse.ParcelView(1L, "123456789012", "롯데택배", 1, ParcelStatus.PACKED,
+                        LocalDateTime.of(2026, 11, 3, 10, 30), "3호 상자", 7L,
+                        List.of(new OrderDetailResponse.ParcelItemView(33L, "양말A", "products/33.png", 3))))));
+
+        mockMvc.perform(get(ORDER_PATH).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.externalOrderId").value("ORD-1"))
+                .andExpect(jsonPath("$.data.sellerName").value("셀러A"))
+                .andExpect(jsonPath("$.data.accountAlias").value("본계정"))
+                .andExpect(jsonPath("$.data.parcels[0].status").value("PACKED"))
+                .andExpect(jsonPath("$.data.parcels[0].boxPackageId").value(7))
+                .andExpect(jsonPath("$.data.parcels[0].items[0].quantity").value(3));
+    }
+
+    @Test
+    public void testParcelOrderRequiresAuth() throws Exception {
+        mockMvc.perform(get(ORDER_PATH))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    public void testParcelOrderForbiddenForNonAdmin() throws Exception {
+        mockMvc.perform(get(ORDER_PATH).header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    public void testParcelOrderUnknownParcelReturnsNotFound() throws Exception {
+        given(orderDetailService.byParcel(1L)).willThrow(new ResourceNotFoundException("ShipmentParcel", 1L));
+
+        mockMvc.perform(get(ORDER_PATH).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound());
     }
 }

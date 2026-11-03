@@ -2,6 +2,7 @@ package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.OrderRefreshRequest;
+import com.pms.dto.response.OrderDetailResponse;
 import com.pms.dto.response.OrderItemResponse;
 import com.pms.dto.response.OrderMonthResponse;
 import com.pms.dto.response.OrderSyncResponse;
@@ -13,11 +14,13 @@ import com.pms.service.coupang.OrderSyncFacade;
 import com.pms.service.coupang.OrderSyncFacade.OrderSyncResult;
 import com.pms.service.coupang.OrderSyncPreset;
 import com.pms.service.coupang.SyncTargetService;
+import com.pms.service.order.OrderDetailService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -41,6 +44,7 @@ public class OrderController {
     private final OrderSyncFacade syncFacade;
     private final SyncTargetService syncTargetService;
     private final OrderRefreshService orderRefreshService;
+    private final OrderDetailService orderDetailService;
 
     /**
      * 주문 목록 조회. sellerId 없으면 전체.
@@ -53,6 +57,15 @@ public class OrderController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
         return ResponseEntity.ok(ResponseDTO.success(queryService.list(sellerId, from, to)));
+    }
+
+    /**
+     * The shared order detail of the order this line belongs to (FEATURE_2611_07 / PLAN D17 · D18 · D22 · D30) —
+     * opened from 「주문내역」 · 「출고관리」. Same role as the list (any logged-in user). Unknown line = 404.
+     */
+    @GetMapping("/lines/{orderLineId}/detail")
+    public ResponseEntity<ResponseDTO<OrderDetailResponse>> detail(@PathVariable Long orderLineId) {
+        return ResponseEntity.ok(ResponseDTO.success(orderDetailService.byOrderLine(orderLineId)));
     }
 
     /**

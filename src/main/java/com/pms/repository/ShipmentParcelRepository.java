@@ -2,6 +2,7 @@ package com.pms.repository;
 
 import com.pms.domain.ParcelStatus;
 import com.pms.domain.ShipmentParcel;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -41,6 +42,17 @@ public interface ShipmentParcelRepository extends JpaRepository<ShipmentParcel, 
 
     /** 배송 묶음 여러 개의 박스를 한 번에 — 작업 목록이 묶음별 총 박스 수를 셀 때 쓴다(N+1 금지). */
     List<ShipmentParcel> findByOrderShipment_IdIn(Collection<Long> orderShipmentIds);
+
+    /**
+     * One parcel with its order — the 「오늘 완료」 entry of the shared order detail (FEATURE_2611_07 / PLAN D30). A query,
+     * not {@code findById}, so the tenant filter applies.
+     */
+    @EntityGraph(attributePaths = {"orderShipment", "orderShipment.order"})
+    Optional<ShipmentParcel> findWithOrderById(Long id);
+
+    /** The parcels of several shipment bundles with their box, in one read — the shared order detail chips (D23). */
+    @EntityGraph(attributePaths = {"orderShipment", "boxPackage"})
+    List<ShipmentParcel> findWithBoxByOrderShipment_IdIn(Collection<Long> orderShipmentIds);
 
     /**
      * 상태별 박스 + 판매자 필터 — 작업 대상 목록(D16).

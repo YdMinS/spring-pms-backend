@@ -7,8 +7,12 @@ import com.pms.domain.Order;
 import com.pms.domain.OrderLine;
 import com.pms.domain.OrderShipment;
 import com.pms.domain.OrderStatus;
+import com.pms.domain.ParcelStatus;
 import com.pms.domain.Platform;
+import com.pms.domain.Product;
 import com.pms.domain.Seller;
+import com.pms.domain.ShipmentParcel;
+import com.pms.domain.ShipmentParcelItem;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.MarketplaceAccountRepository;
@@ -16,7 +20,10 @@ import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.OrderRepository;
 import com.pms.repository.OrderShipmentRepository;
+import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
+import com.pms.repository.ShipmentParcelItemRepository;
+import com.pms.repository.ShipmentParcelRepository;
 import com.pms.service.coupang.CoupangApiClient;
 import com.pms.service.coupang.OrderSyncFacade;
 import com.pms.service.coupang.OrderSyncPreset;
@@ -57,6 +64,9 @@ class OrderControllerTest extends BaseIntegrationTest {
     @Autowired private OrderShipmentRepository orderShipmentRepository;
     @Autowired private OrderLineRepository orderLineRepository;
     @Autowired private CoupangOrderLineRepository coupangOrderLineRepository;
+    @Autowired private ProductRepository productRepository;
+    @Autowired private ShipmentParcelRepository shipmentParcelRepository;
+    @Autowired private ShipmentParcelItemRepository shipmentParcelItemRepository;
 
     @MockBean private CoupangApiClient coupangApiClient;   // 동기화 시 빈 데이터 반환
 
@@ -319,5 +329,49 @@ class OrderControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].ym").value(thisMonth))
                 .andExpect(jsonPath("$.data[0].count").value(org.hamcrest.Matchers.greaterThanOrEqualTo(1)));
+    }
+
+    // ── FEATURE_2611_07: shared order detail (PLAN D17 · D18 · D22 · D30 · D31) ──────────────────────
+
+    @Test
+    void getOrderDetail_returnsSellerAliasLinesAndParcels() throws Exception {
+        OrderLine line = orderLineRepository.findAll().get(0);
+        Product product = productRepository.save(Product.builder().productName("양말").imageUrl("products/s.png")
+                .active(true).build());
+        ShipmentParcel parcel = shipmentParcelRepository.save(ShipmentParcel.builder()
+                .orderShipment(line.getOrderShipment()).invoiceNumber("123456789012").carrierName("롯데택배")
+                .parcelSeq(1).status(ParcelStatus.PACKED).packedAt(LocalDateTime.of(2026, 11, 3, 1, 30)).build());
+        shipmentParcelItemRepository.save(ShipmentParcelItem.builder()
+                .shipmentParcel(parcel).orderLine(line).product(product).quantity(2).build());
+
+        // A USER token — same role as the order list (D22).
+        mockMvc.perform(get("/api/orders/lines/" + line.getId() + "/detail")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.externalOrderId").value("O1"))
+                .andExpect(jsonPath("$.data.sellerName").value("테스트셀러"))
+                .andExpect(jsonPath("$.data.platform").value("COUPANG"))
+                .andExpect(jsonPath("$.data.accountAlias").value("쿠팡본점"))
+                .andExpect(jsonPath("$.data.receiverName").value("김철수"))
+                .andExpect(jsonPath("$.data.lines[0].id").value(line.getId()))
+                .andExpect(jsonPath("$.data.lines[0].externalItemId").value("I1"))
+                .andExpect(jsonPath("$.data.parcels[0].invoiceNumber").value("123456789012"))
+                .andExpect(jsonPath("$.data.parcels[0].status").value("PACKED"))
+                .andExpect(jsonPath("$.data.parcels[0].packedAt").value("2026-11-03T10:30:00"))
+                .andExpect(jsonPath("$.data.parcels[0].items[0].productName").value("양말"))
+                .andExpect(jsonPath("$.data.parcels[0].items[0].quantity").value(2))
+                .andExpect(jsonPath("$.data.lines[0].raw").doesNotExist());
+    }
+
+    @Test
+    void getOrderDetail_requiresAuth() throws Exception {
+        mockMvc.perform(get("/api/orders/lines/1/detail"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void getOrderDetail_unknownLine_returns404() throws Exception {
+        mockMvc.perform(get("/api/orders/lines/999999/detail").header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isNotFound());
     }
 }

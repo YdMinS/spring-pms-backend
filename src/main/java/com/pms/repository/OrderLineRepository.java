@@ -69,13 +69,23 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
 
     /**
      * One-line read for the single label sheet · single shipment · 11st seller actions (FEATURE_2610_17 / D63 · D66
-     * · D67) — fetches the account and the <b>seller</b> eagerly.
+     * · D67) and the shared order detail by an order line (FEATURE_2611_07 / PLAN D30) — fetches the account and the
+     * <b>seller</b> eagerly.
      *
-     * <p>These paths run external HTTP, so a lazy {@code seller.getSellerName()} would blow up.
+     * <p>The label sheet · shipment · 11st paths run external HTTP, so a lazy {@code seller.getSellerName()} would
+     * blow up.
      */
     @EntityGraph(attributePaths = {"order", "order.marketplaceAccount",
             "order.marketplaceAccount.seller", "orderShipment"})
     Optional<OrderLine> findWithAccountAndSellerById(Long id);
+
+    /**
+     * Every line of one order, id order — the shared order detail (FEATURE_2611_07 / PLAN D17 · D30). A query, not
+     * {@code findById}, so the tenant filter applies; the account, the seller and the shipment bundle come eagerly.
+     */
+    @EntityGraph(attributePaths = {"order", "order.marketplaceAccount", "order.marketplaceAccount.seller",
+            "orderShipment"})
+    List<OrderLine> findByOrder_IdOrderByIdAsc(Long orderId);
 
     // ── 출고 확인 (FEATURE_2609_28 / PLAN D11) ─────────────────────────────
 
