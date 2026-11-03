@@ -22,11 +22,12 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /**
- * Box memory (FEATURE_2609_40 / PLAN D22 · D23 · D24).
+ * Box memory (FEATURE_2609_40 / PLAN D22 · D23 · D24 · FEATURE_2611_06 / PLAN D5).
  *
  * <p>🔴 The key rule is the point of this class: the same combination must produce the same key no matter
  * what order the items were scanned in, and a different quantity must produce a different key. If either
@@ -146,5 +147,42 @@ class BoxRecipeServiceTest {
         assertThat(second.getAllValues().get(1).getUseCount()).isEqualTo(2);
         // Never a second row for the same (key, box) — the unique constraint would reject it anyway.
         verify(packageRepository, times(1)).findById(eq(1L));
+    }
+
+    // ---- forget (FEATURE_2611_06 D5) ----
+
+    @Test
+    void testForgetDecrementsUseCount() {
+        BoxRecipe existing = recipe(box(1L, "소박스"), 3);
+        given(boxRecipeRepository.findByRecipeKeyAndBoxPackage_Id("12:2|45:1", 1L)).willReturn(Optional.of(existing));
+
+        service.forget(List.of(new RecipeItem(45L, 1), new RecipeItem(12L, 2)), 1L);
+
+        ArgumentCaptor<BoxRecipe> saved = ArgumentCaptor.forClass(BoxRecipe.class);
+        verify(boxRecipeRepository).save(saved.capture());
+        assertThat(saved.getValue().getUseCount()).isEqualTo(2);
+        assertThat(saved.getValue().getLastUsedAt()).isEqualTo(existing.getLastUsedAt());
+        verify(boxRecipeRepository, never()).delete(any());
+    }
+
+    @Test
+    void testForgetDeletesRowWhenUseCountReachesZero() {
+        BoxRecipe existing = recipe(box(1L, "소박스"), 1);
+        given(boxRecipeRepository.findByRecipeKeyAndBoxPackage_Id("12:2|45:1", 1L)).willReturn(Optional.of(existing));
+
+        service.forget(List.of(new RecipeItem(12L, 2), new RecipeItem(45L, 1)), 1L);
+
+        verify(boxRecipeRepository).delete(existing);
+        verify(boxRecipeRepository, never()).save(any());
+    }
+
+    @Test
+    void testForgetSkipsWhenNothingWasRemembered() {
+        given(boxRecipeRepository.findByRecipeKeyAndBoxPackage_Id("12:2|45:1", 1L)).willReturn(Optional.empty());
+
+        service.forget(List.of(new RecipeItem(12L, 2), new RecipeItem(45L, 1)), 1L);
+
+        verify(boxRecipeRepository, never()).save(any());
+        verify(boxRecipeRepository, never()).delete(any());
     }
 }

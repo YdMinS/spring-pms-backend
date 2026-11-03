@@ -20,7 +20,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * Default {@link BoxRecipeService} (FEATURE_2609_40 / PLAN D22 · D23 · D24).
+ * Default {@link BoxRecipeService} (FEATURE_2609_40 / PLAN D22 · D23 · D24 · FEATURE_2611_06 / PLAN D5).
  *
  * <p>🔴 Every key in this class comes from {@link BoxRecipeKey} — never build the string inline.</p>
  */
@@ -102,5 +102,27 @@ public class BoxRecipeServiceImpl implements BoxRecipeService {
                 .useCount(1)
                 .lastUsedAt(LocalDateTime.now())
                 .build()); // tenant_id is filled by @TenantId — never set by hand
+    }
+
+    @Override
+    @Transactional
+    public void forget(List<RecipeItem> items, Long packageId) {
+        String key = BoxRecipeKey.of(items);
+        if (key.isEmpty() || packageId == null) {
+            return;
+        }
+
+        BoxRecipe existing = boxRecipeRepository.findByRecipeKeyAndBoxPackage_Id(key, packageId).orElse(null);
+        if (existing == null) {
+            // Nothing was remembered for the old box (the memory failed at completion) — nothing to take back.
+            return;
+        }
+        if (existing.getUseCount() <= 1) {
+            boxRecipeRepository.delete(existing);
+            return;
+        }
+        boxRecipeRepository.save(existing.toBuilder()
+                .useCount(existing.getUseCount() - 1)
+                .build());
     }
 }

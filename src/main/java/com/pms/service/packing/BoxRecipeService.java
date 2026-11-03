@@ -5,7 +5,7 @@ import java.util.List;
 /**
  * The box memory (FEATURE_2609_40 / PLAN D22 · D23 · D24 · D25).
  *
- * <p>🔴 The ONLY window onto {@code box_recipe}. Both methods route through {@link BoxRecipeKey} so the
+ * <p>🔴 The ONLY window onto {@code box_recipe}. Every method routes through {@link BoxRecipeKey} so the
  * recording side and the lookup side can never disagree about what "the same combination" means.</p>
  *
  * <p>⚠️ A future volume-based suggestion must not override this: a remembered box always wins and the
@@ -27,7 +27,8 @@ public interface BoxRecipeService {
     List<BoxCandidate> candidates(List<RecipeItem> items);
 
     /**
-     * Record that this combination went into this box (PLAN D24). Called when a parcel is completed.
+     * Record that this combination went into this box (PLAN D24). Called when a parcel is completed and when a
+     * packed parcel's box changes (FEATURE_2611_06 / PLAN D5).
      * Existing memory gets {@code use_count + 1} and a fresh {@code last_used_at}; otherwise a row with
      * {@code use_count = 1} is created.
      *
@@ -38,4 +39,16 @@ public interface BoxRecipeService {
      * @param packageId the box that was actually used
      */
     void remember(List<RecipeItem> items, Long packageId);
+
+    /**
+     * Take back one use of this combination in this box (FEATURE_2611_06 / PLAN D5). Called when a packed parcel's
+     * box is changed: {@code use_count - 1}, and the row is deleted when that reaches 0. {@code last_used_at} stays.
+     *
+     * <p>⚠️ No row = nothing to take back (the memory failed when the parcel was completed) — a no-op, not an
+     * error.</p>
+     *
+     * @param items     what is in the box (empty = no-op)
+     * @param packageId the box the parcel had before the change
+     */
+    void forget(List<RecipeItem> items, Long packageId);
 }

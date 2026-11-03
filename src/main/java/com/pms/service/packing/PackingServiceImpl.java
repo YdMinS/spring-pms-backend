@@ -58,14 +58,18 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * {@link PackingService} 구현 (FEATURE_2609_40 / PLAN D9 ~ D19 · D27 ~ D32).
+ * {@link PackingService} implementation (FEATURE_2609_40 / PLAN D9 ~ D19 · D27 ~ D32 · FEATURE_2611_06 / PLAN D1 ·
+ * D4 ~ D7).
  *
- * <p>🔴 <b>잔량은 {@code 필요 − STOCK_OUT 합계} 하나로 끝난다</b>(D28). 완료가 그 자리에서 출고를 남기므로
- * 이미 담긴 수량은 자동으로 빠져 있다 — {@code shipment_parcel_item} 을 잔량에서 <b>다시 빼면 이중 차감</b>이다.
- * 그래서 이 클래스는 잔량 계산에 {@code parcelItemRepository} 를 쓰지 않는다(멱등 응답에서만 읽는다).
+ * <p>🔴 <b>The remaining quantity is {@code required − STOCK_OUT total} and nothing else</b> (D28). Completion writes
+ * the stock out on the spot, so packed quantities are already taken off — subtracting {@code shipment_parcel_item}
+ * from the remaining quantity <b>again would count it twice</b>. So this class never uses
+ * {@code parcelItemRepository} for the remaining quantity (it reads it only for the idempotent complete response and
+ * for a box change's packed quantity and box memory, FEATURE_2611_06 D5).
  *
- * <p>🔴 <b>{@code isTerminal()} 로 라인을 거르지 않는다</b>(D27). {@code SHIPPED}(배송지시)가 종결 상태에
- * 들어 있어 그것으로 거르면 포장 시점의 라인이 통째로 사라진다 — 빼는 것은 {@code isFullyCancelled()} 뿐이다.
+ * <p>🔴 <b>Never filter lines with {@code isTerminal()}</b> (D27). {@code SHIPPED} (shipping instructed) counts as
+ * terminal, so filtering with it drops every line at packing time — the only lines left out are
+ * {@code isFullyCancelled()}.
  */
 @Slf4j
 @Service
@@ -322,7 +326,7 @@ public class PackingServiceImpl implements PackingService {
         // ③ 절약 3칸 (D4)
         Savings savings = savings(packedQtyByLine, linesById, remainingById);
 
-        // ④ 상자 기억 (D24) — 기억일 뿐이라 실패해도 출고를 되돌리지 않는다.
+        // ④ Box memory (D24). The exception is swallowed, but BoxRecipeService joins this transaction, so a failure inside it still marks the completion rollback-only.
         try {
             boxRecipeService.remember(recipeItems, box.getId());
         } catch (RuntimeException e) {
@@ -392,6 +396,52 @@ public class PackingServiceImpl implements PackingService {
                 .build());
         parcelStatusRecorder.record(saved, ParcelStatus.UNUSED, ParcelStatus.PENDING, currentUsername());
         return new ParcelCloseResponse(saved.getId(), saved.getStatus());
+    }
+
+    @Override
+    @Transactional
+    public ParcelCompleteResponse changeBox(Long parcelId, Long boxPackageId) {
+        ShipmentParcel parcel = parcel(parcelId);
+        if (parcel.getStatus() != ParcelStatus.PACKED) {
+            throw new IllegalArgumentException("포장 완료한 박스만 상자를 바꿀 수 있습니다");
+        }
+        Package oldBox = parcel.getBoxPackage();
+        if (oldBox != null && oldBox.getId().equals(boxPackageId)) {
+            // D4: the same box again changes nothing — no memory move, no history row (D7).
+            return completedResponse(parcel);
+        }
+        Package box = packageRepository.findById(boxPackageId)
+                .orElseThrow(() -> new IllegalArgumentException("상자를 찾을 수 없습니다"));
+
+        // 🔴 D4: only the box and its actual cost move — stock out, contents, packedAt, packedBy and the two
+        //    expected costs stay as the complete path wrote them.
+        ShipmentParcel saved = parcelRepository.save(parcel.toBuilder()
+                .boxPackage(box)
+                .actualBoxCost(box.getCost() == null ? BigDecimal.ZERO : box.getCost())
+                .build());
+
+        List<ShipmentParcelItem> items = parcelItemRepository.findByShipmentParcel_Id(saved.getId());
+        Map<Long, Integer> recipeQtyByProduct = new LinkedHashMap<>();
+        items.forEach(item -> recipeQtyByProduct.merge(item.getProduct().getId(), item.getQuantity(), Integer::sum));
+        List<RecipeItem> recipeItems = new ArrayList<>();
+        recipeQtyByProduct.forEach((productId, qty) -> recipeItems.add(new RecipeItem(productId, qty)));
+
+        // D5: the memory follows the box. Like the complete path (2609_40 D24) the exception is swallowed, but BoxRecipeService joins this transaction, so a failure inside it still marks the box change rollback-only.
+        try {
+            if (oldBox != null) {
+                boxRecipeService.forget(recipeItems, oldBox.getId());
+            }
+            boxRecipeService.remember(recipeItems, box.getId());
+        } catch (RuntimeException e) {
+            log.warn("box recipe was not moved for parcel {} — the box change is rolled back with it (same transaction)", saved.getId(), e);
+        }
+
+        // D7 · D14: one 「상자 변경」 row (PACKED -> PACKED) by the person who changed it.
+        parcelStatusRecorder.recordBoxChange(saved, currentUsername());
+
+        int packedQty = items.stream().mapToInt(ShipmentParcelItem::getQuantity).sum();
+        return new ParcelCompleteResponse(saved.getId(), saved.getStatus(), packedQty, List.of(),
+                saved.getExpectedBoxCost(), saved.getActualBoxCost(), saved.getExpectedDeliveryCost());
     }
 
     @Override
@@ -535,7 +585,8 @@ public class PackingServiceImpl implements PackingService {
         return new PackingHistoryView(row.getId(), utcToKst(row.getCreatedAt()), parcel.getId(),
                 parcel.getInvoiceNumber(), parcel.getCarrierName(), parcel.getOrderShipment().getOrder().getExternalOrderId(),
                 sellerNameOf(parcel), row.getFromStatus(), row.getToStatus(), row.getChangedBy(),
-                parcel.getBoxPackage() == null ? null : parcel.getBoxPackage().getType());
+                parcel.getBoxPackage() == null ? null : parcel.getBoxPackage().getType(),
+                parcel.getBoxPackage() == null ? null : parcel.getBoxPackage().getId());
     }
 
     /** KST midnight of {@code day} as a UTC wall-clock time — the clock {@code created_date} is stored in (D40). */
