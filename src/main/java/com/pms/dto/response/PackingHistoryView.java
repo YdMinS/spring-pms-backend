@@ -14,8 +14,10 @@ import java.time.LocalDateTime;
  *                        stored UTC {@code created_date} plus 9 hours; the screens print it as is
  * @param externalOrderId the order number
  * @param changedBy       who moved it, null when unknown
+ * @param boxName         the box the parcel is packed in ({@code Package.type}), null when it has none
  */
 public record PackingHistoryView(Long id, LocalDateTime changedAt, Long parcelId, String invoiceNumber,
                                  String carrierName, String externalOrderId, String sellerName,
-                                 ParcelStatus fromStatus, ParcelStatus toStatus, String changedBy) {
+                                 ParcelStatus fromStatus, ParcelStatus toStatus, String changedBy,
+                                 String boxName) {
 }
