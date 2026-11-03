@@ -122,7 +122,7 @@ public class PackingControllerTest extends BaseIntegrationTest {
         given(packingService.history(eq(LocalDate.of(2026, 11, 1)), eq(LocalDate.of(2026, 11, 2)), eq("2558-2825")))
                 .willReturn(List.of(new PackingHistoryView(5L, LocalDateTime.of(2026, 11, 2, 9, 30), 1L,
                         "255828253026", "롯데택배", "ORD-1", "셀러A", ParcelStatus.PENDING, ParcelStatus.UNUSED,
-                        "packer@oclyx.com")));
+                        "packer@oclyx.com", null)));
 
         mockMvc.perform(get(HISTORY_PATH).param("from", "2026-11-01").param("to", "2026-11-02")
                         .param("keyword", "2558-2825")

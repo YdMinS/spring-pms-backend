@@ -1,5 +1,6 @@
 package com.pms.service.packing;
 
+import com.pms.domain.Package;
 import com.pms.domain.ParcelStatus;
 import com.pms.domain.ShipmentParcel;
 import com.pms.domain.ShipmentParcelStatusLog;
@@ -69,7 +70,21 @@ class PackingHistoryTest {
             assertThat(view.fromStatus()).isEqualTo(ParcelStatus.PENDING);
             assertThat(view.toStatus()).isEqualTo(ParcelStatus.UNUSED);
             assertThat(view.changedBy()).isEqualTo("packer@oclyx.com");
+            assertThat(view.boxName()).isNull();
         });
+    }
+
+    @Test
+    void testHistoryPackedRowCarriesBoxName() {
+        ShipmentParcel parcel = PackingFixtures.parcel(PARCEL_ID, PackingFixtures.shipment(), ParcelStatus.PACKED, 1)
+                .toBuilder().boxPackage(Package.builder().id(7L).type("3호 상자").build()).build();
+        ShipmentParcelStatusLog row = ShipmentParcelStatusLog.builder().id(5L).shipmentParcel(parcel)
+                .fromStatus(ParcelStatus.PENDING).toStatus(ParcelStatus.PACKED).changedBy("packer@oclyx.com").build();
+        given(statusLogRepository.search(LocalDateTime.of(2026, 11, 1, 15, 0), LocalDateTime.of(2026, 11, 2, 15, 0),
+                null, null)).willReturn(List.of(row));
+
+        assertThat(service.history(DAY, DAY, null)).singleElement()
+                .satisfies(view -> assertThat(view.boxName()).isEqualTo("3호 상자"));
     }
 
     @Test
