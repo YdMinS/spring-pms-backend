@@ -9,10 +9,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
- * Records parcel status moves (FEATURE_2611_03 / PLAN D8 · D15 · D16 · D17).
+ * Records parcel status moves and box changes (FEATURE_2611_03 / PLAN D8 · D15 · D16 · D17 · FEATURE_2611_06 /
+ * PLAN D7 · D14).
  *
  * <p><b>Purpose</b>: the <b>only component</b> that writes {@code shipment_parcel_status_log}.
- * <b>Required rule</b>: code that moves a parcel status calls {@link #record} right after saving the parcel.
+ * <b>Required rule</b>: code that moves a parcel status calls {@link #record} right after saving the parcel; code that
+ * changes the box of a packed parcel calls {@link #recordBoxChange}.
  * <b>File</b>: {@code service/packing/ParcelStatusRecorder.java}
  *
  * <p>Call sites (all in {@code PackingServiceImpl}):
@@ -20,6 +22,7 @@ import org.springframework.stereotype.Component;
  *   <li>{@code complete} — PENDING → PACKED</li>
  *   <li>{@code unused} — PENDING → UNUSED</li>
  *   <li>{@code restore} — UNUSED → PENDING</li>
+ *   <li>{@code changeBox} — PACKED → PACKED (「상자 변경」, {@link #recordBoxChange})</li>
  * </ol>
  *
  * <p><b>Usage</b>:
@@ -28,8 +31,9 @@ import org.springframework.stereotype.Component;
  * parcelStatusRecorder.record(saved, ParcelStatus.PENDING, ParcelStatus.UNUSED, currentUsername());
  * }</pre>
  *
- * <p>🔴 <b>Moves only</b> (D16): {@code from == to} writes nothing. Parcel creation
- * ({@code ShipmentParcelRecorder}) and idempotent repeats never call this.
+ * <p>🔴 <b>{@link #record} writes moves only</b> (D16): {@code from == to} writes nothing. Parcel creation
+ * ({@code ShipmentParcelRecorder}) and idempotent repeats never call it. The one row with the same status on both
+ * sides is a box change, written only through {@link #recordBoxChange} (FEATURE_2611_06 D14).
  *
  * <p>⚠️ Exceptions are logged and swallowed, but a failed INSERT still marks the caller's transaction
  * rollback-only (it runs in that transaction), so the caller fails too — D17 holds only for failures before the save.
@@ -65,6 +69,30 @@ public class ParcelStatusRecorder {
         } catch (RuntimeException e) {
             log.warn("[PARCEL-STATUS-LOG] failed to record parcel {} {} -> {}: {}",
                     parcel.getId(), from, to, e.getMessage());
+        }
+    }
+
+    /**
+     * One 「상자 변경」 row — {@code PACKED → PACKED} (FEATURE_2611_06 / PLAN D7 · D14). Same failure handling as
+     * {@link #record}. A request for the same box never calls this (D4).
+     *
+     * @param parcel    the packed parcel after its box was changed
+     * @param changedBy who changed it (null when unauthenticated)
+     */
+    public void recordBoxChange(ShipmentParcel parcel, String changedBy) {
+        if (parcel == null) {
+            return;
+        }
+        try {
+            statusLogRepository.save(ShipmentParcelStatusLog.builder()
+                    .shipmentParcel(parcel)
+                    .fromStatus(ParcelStatus.PACKED)
+                    .toStatus(ParcelStatus.PACKED)
+                    .changedBy(changedBy)
+                    .build());
+        } catch (RuntimeException e) {
+            log.warn("[PARCEL-STATUS-LOG] failed to record box change of parcel {}: {}",
+                    parcel.getId(), e.getMessage());
         }
     }
 }

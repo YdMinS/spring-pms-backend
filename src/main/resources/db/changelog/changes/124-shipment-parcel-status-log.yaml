@@ -1,8 +1,9 @@
 # Parcel (box) status history (FEATURE_2611_03 / PLAN D8 · D15 · D16 · D35 ~ D38).
 # ① One row = one real status move of a shipment_parcel: PENDING -> PACKED (packing done),
-#    PENDING -> UNUSED (label not used), UNUSED -> PENDING (unused restored).
+#    PENDING -> UNUSED (label not used), UNUSED -> PENDING (unused restored) — or one box change of a packed
+#    parcel, PACKED -> PACKED (FEATURE_2611_06 D7 · D14).
 #    The (from_status, to_status) pair alone names the action, so there is NO action column (D15).
-# ② Only real moves are written. Parcel creation (order sync / manual invoice) and idempotent repeats
+# ② Only real moves and real box changes are written. Parcel creation (order sync / manual invoice) and idempotent repeats
 #    (a second complete / unused / restore on the same status) write nothing (D16).
 # ③ 124-2 fills one row per parcel already closed before this table existed (D35 ~ D38): before this
 #    feature a parcel could only be closed from PENDING, so from_status = PENDING and the actor / time are

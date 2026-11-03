@@ -91,6 +91,18 @@ public interface PackingService {
     ParcelCloseResponse restore(Long parcelId);
 
     /**
+     * Changes the box of a packed parcel (FEATURE_2611_06 / PLAN D1 · D4 ~ D7 · D14).
+     *
+     * <p>Only {@code boxPackage} and {@code actualBoxCost} (the new box's cost, 0 when empty) change; stock out,
+     * contents, {@code packedAt}, {@code packedBy} and the two expected costs stay. The box memory moves from the old
+     * box to the new one and one 「상자 변경」 history row is written.
+     *
+     * <p>Not {@code PACKED} = 400 「포장 완료한 박스만 상자를 바꿀 수 있습니다」 · the same box = success with nothing
+     * changed (no memory, no history) · unknown box = 400 「상자를 찾을 수 없습니다」.
+     */
+    ParcelCompleteResponse changeBox(Long parcelId, Long boxPackageId);
+
+    /**
      * Parcel status history, newest first (FEATURE_2611_03 / PLAN D29 · D30 · D34 · D39).
      *
      * @param from    first KST day, inclusive (D40 — turned into the UTC bound of KST midnight)

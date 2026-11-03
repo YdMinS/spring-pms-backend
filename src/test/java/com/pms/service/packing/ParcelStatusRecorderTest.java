@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
-/** The only writer of {@code shipment_parcel_status_log} (FEATURE_2611_03 / PLAN D15 · D16). */
+/** The only writer of {@code shipment_parcel_status_log} (FEATURE_2611_03 / PLAN D15 · D16 · FEATURE_2611_06 / PLAN D14). */
 @ExtendWith(MockitoExtension.class)
 class ParcelStatusRecorderTest {
 
@@ -44,5 +44,19 @@ class ParcelStatusRecorderTest {
         recorder.record(parcel, ParcelStatus.UNUSED, ParcelStatus.UNUSED, "packer@oclyx.com");
 
         verifyNoInteractions(statusLogRepository);
+    }
+
+    @Test
+    void testRecordBoxChangeWritesPackedToPackedRow() {
+        ShipmentParcel packed = PackingFixtures.parcel(PARCEL_ID, PackingFixtures.shipment(), ParcelStatus.PACKED, 1);
+
+        recorder.recordBoxChange(packed, "packer@oclyx.com");
+
+        ArgumentCaptor<ShipmentParcelStatusLog> captor = ArgumentCaptor.forClass(ShipmentParcelStatusLog.class);
+        verify(statusLogRepository).save(captor.capture());
+        assertThat(captor.getValue().getShipmentParcel()).isSameAs(packed);
+        assertThat(captor.getValue().getFromStatus()).isEqualTo(ParcelStatus.PACKED);
+        assertThat(captor.getValue().getToStatus()).isEqualTo(ParcelStatus.PACKED);
+        assertThat(captor.getValue().getChangedBy()).isEqualTo("packer@oclyx.com");
     }
 }

@@ -6,7 +6,8 @@ import java.math.BigDecimal;
 import java.util.List;
 
 /**
- * Result of completing a box (FEATURE_2609_40 / PLAN D4 · D15).
+ * Result of completing a box (FEATURE_2609_40 / PLAN D4 · D15) — also the response of a packed box's box change, with
+ * the costs after the change (FEATURE_2611_06 / PLAN D8).
  *
  * <p>🔴 It carries no saving amount — {@code expected − actual} can always be subtracted, and storing or sending it
  * separately makes room for the three values to disagree (D4). The summary screen (2609_41) computes from these three
@@ -19,7 +20,8 @@ import java.util.List;
  * @param actualBoxCost        the cost of the box actually used (0 for a reused box)
  * @param expectedDeliveryCost the delivery cost that went into the selling prices (input of 2609_41)
  * @param notices              lines like 「○○ 재고 N개 사용(채무 ₩M)」 for goods borrowed from another seller
- *                             (FEATURE_2610_19 D49 · D137). Empty on a repeated request for a completed box.
+ *                             (FEATURE_2610_19 D49 · D137). Empty on a repeated request for a completed box and on a
+ *                             box change.
  */
 public record ParcelCompleteResponse(Long parcelId, ParcelStatus status, int packedQty, List<String> notices,
                                      BigDecimal expectedBoxCost, BigDecimal actualBoxCost,

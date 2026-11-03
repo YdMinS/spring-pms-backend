@@ -2,6 +2,7 @@ package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.BoxCandidateRequest;
+import com.pms.dto.request.ParcelBoxChangeRequest;
 import com.pms.dto.request.ParcelCompleteRequest;
 import com.pms.dto.response.BarcodeLookupResponse;
 import com.pms.dto.response.PackingHistoryView;
@@ -104,6 +105,17 @@ public class PackingController {
     @PostMapping("/parcels/{id}/restore")
     public ResponseEntity<ResponseDTO<ParcelCloseResponse>> restore(@PathVariable Long id) {
         return ResponseEntity.ok(ResponseDTO.success(packingService.restore(id)));
+    }
+
+    /**
+     * Changes the box of a packed parcel (FEATURE_2611_06 / PLAN D1 · D4 · D8). Not packed = 400, same box = 200 with
+     * nothing changed, unknown box = 400. The response is the complete response with the costs after the change.
+     */
+    @PostMapping("/parcels/{id}/box")
+    public ResponseEntity<ResponseDTO<ParcelCompleteResponse>> changeBox(
+            @PathVariable Long id,
+            @Valid @RequestBody ParcelBoxChangeRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(packingService.changeBox(id, request.boxPackageId())));
     }
 
     /**

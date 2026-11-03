@@ -5,11 +5,13 @@ import com.pms.domain.ParcelStatus;
 import com.pms.dto.response.PackingHistoryView;
 import com.pms.dto.response.PackingScanResponse;
 import com.pms.dto.response.ParcelCloseResponse;
+import com.pms.dto.response.ParcelCompleteResponse;
 import com.pms.service.packing.PackingService;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -36,6 +38,8 @@ public class PackingControllerTest extends BaseIntegrationTest {
     private static final String CANDIDATES_PATH = "/api/admin/packing/box-candidates";
     private static final String RESTORE_PATH = "/api/admin/packing/parcels/1/restore";
     private static final String HISTORY_PATH = "/api/admin/packing/history";
+    private static final String BOX_PATH = "/api/admin/packing/parcels/1/box";
+    private static final String BOX_BODY = "{\"boxPackageId\":8}";
     private static final String COMPLETE_BODY =
             "{\"boxPackageId\":7,\"items\":[{\"orderLineId\":11,\"productId\":33,\"quantity\":2}]}";
     private static final String CANDIDATES_BODY = "{\"items\":[{\"productId\":33,\"quantity\":2}]}";
@@ -122,7 +126,7 @@ public class PackingControllerTest extends BaseIntegrationTest {
         given(packingService.history(eq(LocalDate.of(2026, 11, 1)), eq(LocalDate.of(2026, 11, 2)), eq("2558-2825")))
                 .willReturn(List.of(new PackingHistoryView(5L, LocalDateTime.of(2026, 11, 2, 9, 30), 1L,
                         "255828253026", "롯데택배", "ORD-1", "셀러A", ParcelStatus.PENDING, ParcelStatus.UNUSED,
-                        "packer@oclyx.com", null)));
+                        "packer@oclyx.com", "3호 상자", 7L)));
 
         mockMvc.perform(get(HISTORY_PATH).param("from", "2026-11-01").param("to", "2026-11-02")
                         .param("keyword", "2558-2825")
@@ -131,7 +135,9 @@ public class PackingControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data[0].invoiceNumber").value("255828253026"))
                 .andExpect(jsonPath("$.data[0].fromStatus").value("PENDING"))
                 .andExpect(jsonPath("$.data[0].toStatus").value("UNUSED"))
-                .andExpect(jsonPath("$.data[0].changedBy").value("packer@oclyx.com"));
+                .andExpect(jsonPath("$.data[0].changedBy").value("packer@oclyx.com"))
+                .andExpect(jsonPath("$.data[0].boxName").value("3호 상자"))
+                .andExpect(jsonPath("$.data[0].boxPackageId").value(7));
     }
 
     @Test
@@ -143,6 +149,35 @@ public class PackingControllerTest extends BaseIntegrationTest {
     @Test
     public void testHistoryForbiddenForNonAdmin() throws Exception {
         mockMvc.perform(get(HISTORY_PATH).param("from", "2026-11-01").param("to", "2026-11-02")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    // ── FEATURE_2611_06: box change of a packed parcel (PLAN D8 · D12) ──────────────────────
+
+    @Test
+    public void testChangeBoxWithAdminTokenReturnsCostsAfterChange() throws Exception {
+        given(packingService.changeBox(1L, 8L)).willReturn(new ParcelCompleteResponse(1L, ParcelStatus.PACKED, 3,
+                List.of(), new BigDecimal("500.00"), new BigDecimal("450"), new BigDecimal("3000.00")));
+
+        mockMvc.perform(post(BOX_PATH).contentType(MediaType.APPLICATION_JSON).content(BOX_BODY)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.parcelId").value(1))
+                .andExpect(jsonPath("$.data.status").value("PACKED"))
+                .andExpect(jsonPath("$.data.packedQty").value(3))
+                .andExpect(jsonPath("$.data.actualBoxCost").value(450));
+    }
+
+    @Test
+    public void testChangeBoxRequiresAuth() throws Exception {
+        mockMvc.perform(post(BOX_PATH).contentType(MediaType.APPLICATION_JSON).content(BOX_BODY))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    public void testChangeBoxForbiddenForNonAdmin() throws Exception {
+        mockMvc.perform(post(BOX_PATH).contentType(MediaType.APPLICATION_JSON).content(BOX_BODY)
                         .header("Authorization", "Bearer " + userToken))
                 .andExpect(status().isForbidden());
     }
