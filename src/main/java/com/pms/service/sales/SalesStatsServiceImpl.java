@@ -108,7 +108,8 @@ public class SalesStatsServiceImpl implements SalesStatsService {
     // ── ① 판매자 ──────────────────────────────────────────────────────────
 
     @Override
-    public List<SellerSalesResponse> summary(LocalDate from, LocalDate to, Long sellerId) {
+    public List<SellerSalesResponse> summary(LocalDate from, LocalDate to, Long sellerId,
+                                             boolean excludeUnshipped) {
         Period period = Period.of(from, to);
         List<MarketplaceAccount> accounts = marketplaceAccountRepository.findAllWithSeller(sellerId);
         Map<Long, PayoutAggregate> payouts = payouts(period, sellerId);
@@ -131,7 +132,7 @@ public class SalesStatsServiceImpl implements SalesStatsService {
                     BigDecimal::add);
         }
 
-        for (GroupSales sales : collect(period, sellerId)) {
+        for (GroupSales sales : collect(period, sellerId, excludeUnshipped)) {
             Long owner = sales.group().sellerId();
             sellerNames.putIfAbsent(owner, sales.group().sellerName());
             salesBySeller.computeIfAbsent(owner, key -> new Acc()).addSales(sales);
@@ -154,11 +155,12 @@ public class SalesStatsServiceImpl implements SalesStatsService {
     // ── ② 채널 ────────────────────────────────────────────────────────────
 
     @Override
-    public List<ChannelSalesResponse> byChannel(LocalDate from, LocalDate to, Long sellerId) {
+    public List<ChannelSalesResponse> byChannel(LocalDate from, LocalDate to, Long sellerId,
+                                                boolean excludeUnshipped) {
         Period period = Period.of(from, to);
         Map<Long, PayoutAggregate> payouts = payouts(period, sellerId);
         Map<Long, Acc> salesByAccount = new HashMap<>();
-        for (GroupSales sales : collect(period, sellerId)) {
+        for (GroupSales sales : collect(period, sellerId, excludeUnshipped)) {
             salesByAccount.computeIfAbsent(sales.group().accountId(), key -> new Acc()).addSales(sales);
         }
 
@@ -190,7 +192,7 @@ public class SalesStatsServiceImpl implements SalesStatsService {
 
     @Override
     public List<ProductProfitResponse> byProduct(LocalDate from, LocalDate to, Long sellerId,
-                                                 boolean crossChannel) {
+                                                 boolean crossChannel, boolean excludeUnshipped) {
         Period period = Period.of(from, to);
         Map<Long, MarketplaceAccount> accounts = marketplaceAccountRepository.findAllWithSeller(sellerId)
                 .stream().collect(Collectors.toMap(MarketplaceAccount::getId, Function.identity(),
@@ -199,7 +201,7 @@ public class SalesStatsServiceImpl implements SalesStatsService {
         // 집계 경로는 하나, 그룹 키만 바꾼다. 마스터가 없는 라인은 버리지 않고 `미분류` 한 행으로 모은다 —
         // 여기서 버리면 이 목록의 합계가 ①과 어긋나고, 어긋나는 순간 화면이 신뢰를 잃는다.
         Map<ProductKey, Acc> byKey = new LinkedHashMap<>();
-        for (GroupSales sales : collect(period, sellerId)) {
+        for (GroupSales sales : collect(period, sellerId, excludeUnshipped)) {
             Long master = sales.group().masterProductId();
             Long account = crossChannel ? null : sales.group().accountId();
             byKey.computeIfAbsent(new ProductKey(master, account,
@@ -229,12 +231,13 @@ public class SalesStatsServiceImpl implements SalesStatsService {
     // ── ④ 판매 내역 ───────────────────────────────────────────────────────
 
     @Override
-    public List<SalesLineView> lines(LocalDate from, LocalDate to, Long accountId) {
+    public List<SalesLineView> lines(LocalDate from, LocalDate to, Long accountId, boolean excludeUnshipped) {
         if (accountId == null) {
             throw new IllegalArgumentException("판매 내역은 채널(accountId)을 지정해야 조회할 수 있습니다.");
         }
         Period period = Period.of(from, to);
-        return orderLineRepository.findSalesLines(period.fromTime(), period.toExclusive(), accountId);
+        return orderLineRepository.findSalesLines(period.fromTime(), period.toExclusive(), accountId,
+                excludeUnshipped);
     }
 
     // ── ⑤ per date (FEATURE_2610_29 D22) ────────────────────────────────
@@ -266,9 +269,11 @@ public class SalesStatsServiceImpl implements SalesStatsService {
      * <p>⚠️ 수수료율·배송비·상자비는 <b>셀 단위 캐시</b>로 한 번씩만 resolve 한다. 그룹마다 resolver 를
      * 부르면 (셀 → 마스터 → 카테고리 → 매핑) 경로가 그대로 N+1 이 된다.
      */
-    private List<GroupSales> collect(Period period, Long sellerId) {
-        List<SalesLineGroup> groups =
-                orderLineRepository.aggregateSales(period.fromTime(), period.toExclusive(), sellerId);
+    private List<GroupSales> collect(Period period, Long sellerId, boolean excludeUnshipped) {
+        // FEATURE_2611_04 D2: excludeUnshipped goes to this aggregate only — 🔴 fixedCostByAccount and payouts never
+        // take it (D6 · D8).
+        List<SalesLineGroup> groups = orderLineRepository.aggregateSales(period.fromTime(), period.toExclusive(),
+                sellerId, excludeUnshipped);
         Map<Long, ProductListingOption> options = options(groups);
 
         Map<Long, BigDecimal> commissionCache = new HashMap<>();

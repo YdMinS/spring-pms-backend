@@ -36,6 +36,9 @@ public class SalesStatsController {
 
     private final SalesStatsService salesStatsService;
 
+    // excludeUnshipped on ①②③④ (FEATURE_2611_04 D1 · D2 · D4): true = the 「출고 전 주문 제외」 switch of the sales
+    // screens. Absent = false = the numbers as before, which is what the dashboard cards send. ⑤ does not take it.
+
     /**
      * ① 판매자별 요약. {@code sellerId} 없으면 전 판매자.
      *
@@ -46,8 +49,10 @@ public class SalesStatsController {
     public ResponseEntity<ResponseDTO<List<SellerSalesResponse>>> summary(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
-            @RequestParam(required = false) Long sellerId) {
-        return ResponseEntity.ok(ResponseDTO.success(salesStatsService.summary(from, to, sellerId)));
+            @RequestParam(required = false) Long sellerId,
+            @RequestParam(required = false, defaultValue = "false") boolean excludeUnshipped) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                salesStatsService.summary(from, to, sellerId, excludeUnshipped)));
     }
 
     /** ② 채널(계정)별. 현금주의({@code paidAmount})는 여기서만 제공한다(PLAN D4-1). */
@@ -55,8 +60,10 @@ public class SalesStatsController {
     public ResponseEntity<ResponseDTO<List<ChannelSalesResponse>>> byChannel(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
-            @RequestParam(required = false) Long sellerId) {
-        return ResponseEntity.ok(ResponseDTO.success(salesStatsService.byChannel(from, to, sellerId)));
+            @RequestParam(required = false) Long sellerId,
+            @RequestParam(required = false, defaultValue = "false") boolean excludeUnshipped) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                salesStatsService.byChannel(from, to, sellerId, excludeUnshipped)));
     }
 
     /**
@@ -70,9 +77,10 @@ public class SalesStatsController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
             @RequestParam(required = false) Long sellerId,
-            @RequestParam(required = false, defaultValue = "true") boolean crossChannel) {
+            @RequestParam(required = false, defaultValue = "true") boolean crossChannel,
+            @RequestParam(required = false, defaultValue = "false") boolean excludeUnshipped) {
         return ResponseEntity.ok(ResponseDTO.success(
-                salesStatsService.byProduct(from, to, sellerId, crossChannel)));
+                salesStatsService.byProduct(from, to, sellerId, crossChannel, excludeUnshipped)));
     }
 
     /**
@@ -85,8 +93,10 @@ public class SalesStatsController {
     public ResponseEntity<ResponseDTO<List<SalesLineView>>> lines(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
-            @RequestParam Long accountId) {
-        return ResponseEntity.ok(ResponseDTO.success(salesStatsService.lines(from, to, accountId)));
+            @RequestParam Long accountId,
+            @RequestParam(required = false, defaultValue = "false") boolean excludeUnshipped) {
+        return ResponseEntity.ok(ResponseDTO.success(
+                salesStatsService.lines(from, to, accountId, excludeUnshipped)));
     }
 
     /**
