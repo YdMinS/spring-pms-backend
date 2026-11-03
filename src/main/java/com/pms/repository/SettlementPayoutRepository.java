@@ -110,8 +110,8 @@ public interface SettlementPayoutRepository extends JpaRepository<SettlementPayo
             MarketplaceAccount marketplaceAccount, String revenueRecognitionMonth);
 
     /**
-     * Payouts summed per channel (account) — the sales screen's "money to receive" · paid in the period
-     * (FEATURE_2609_30 / 03 ①②).
+     * Payouts summed per channel (account) — two values: scheduled regardless of the period · paid in the period
+     * (FEATURE_2609_30 / 03 ①②). The sales screens show only the paid-in-the-period value (FEATURE_2611_05 D9).
      *
      * <p>🔴 {@code pendingPayout} has <b>no period condition</b> (D4). The payout axis is the revenue-recognition date,
      * which does not line up with the sale-date period — cutting by the sale period makes "money to receive" smaller

@@ -40,10 +40,11 @@ public class SalesStatsController {
     // screens. Absent = false = the numbers as before, which is what the dashboard cards send. ⑤ does not take it.
 
     /**
-     * ① 판매자별 요약. {@code sellerId} 없으면 전 판매자.
+     * ① Summary per seller. No {@code sellerId} = every seller.
      *
-     * <p>🔴 {@code pendingPayout}("받을 돈")만 <b>기간 무관</b>이다 — 축이 매출인식일이라 판매일 기간과
-     * 겹치지 않는다(PLAN D4). 화면은 이 값을 기간 라벨 밖에 놓아야 한다.
+     * <p>The estimated settlement ({@code estSettlement}) follows the period and the switch like the sales
+     * (FEATURE_2611_05 D6); the fixed cost taken out of it is judged as before. The scheduled payouts regardless of the
+     * period are not sent (FEATURE_2611_05 D13).
      */
     @GetMapping("/summary")
     public ResponseEntity<ResponseDTO<List<SellerSalesResponse>>> summary(

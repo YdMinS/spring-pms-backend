@@ -89,7 +89,6 @@ class SalesStatsServiceImplTest {
     @Test
     void estFeeIncludesFeeVat() {
         givenAccounts(coupang);
-        givenNoPayouts();
         givenSales(group(coupang, 100L, 100L, "100000", "0", "0", 0));
         givenOption(100L, 500L, "0.106", "2500", "500");
 
@@ -105,7 +104,6 @@ class SalesStatsServiceImplTest {
     @Test
     void estNetProfitNullWhenSnapshotMissing() {
         givenAccounts(coupang);
-        givenNoPayouts();
         givenSales(group(coupang, 100L, 100L, "100000", "0", "0", 1));
         givenOption(100L, 500L, "0.106", "2500", "500");
 
@@ -113,6 +111,8 @@ class SalesStatsServiceImplTest {
                 .satisfies(row -> {
                     assertThat(row.estNetProfit()).isNull();
                     assertThat(row.costBasisReady()).isFalse();
+                    // FEATURE_2611_05 D7: only a missing commission base blanks the estimated settlement.
+                    assertThat(row.estSettlement()).isEqualByComparingTo("88340");
                 });
     }
 
@@ -120,7 +120,6 @@ class SalesStatsServiceImplTest {
     @Test
     void estNetProfitSubtractsCostFeeAndShipping() {
         givenAccounts(coupang);
-        givenNoPayouts();
         // 10개 · 매출 100,000 · 원가 40,000 · 수수료 11,660 · (배송 2,500 + 상자 500) × 10 = 30,000
         givenSales(group(coupang, 100L, 100L, "100000", "0", "40000", 0, 10L));
         givenOption(100L, 500L, "0.106", "2500", "500");
@@ -130,22 +129,6 @@ class SalesStatsServiceImplTest {
                     assertThat(row.costBasisReady()).isTrue();
                     assertThat(row.estNetProfit()).isEqualByComparingTo("18340");
                 });
-    }
-
-    /** 🔴 D4: "받을 돈"은 판매일 기간과 축이 달라 기간을 좁혀도 그대로다. */
-    @Test
-    void pendingPayoutIgnoresPeriodFilter() {
-        givenAccounts(coupang);
-        given(settlementPayoutRepository.aggregateByAccount(any(), any(), any(), any(), any()))
-                .willReturn(List.of(new PayoutAggregate(10L, new BigDecimal("1804000"),
-                        BigDecimal.ZERO)));
-        given(orderLineRepository.aggregateSales(any(), any(), any(), anyBoolean())).willReturn(List.of());
-
-        SellerSalesResponse wide = service.summary(FROM, TO, null, false).get(0);
-        SellerSalesResponse narrow = service.summary(TO, TO, null, false).get(0);
-
-        assertThat(wide.pendingPayout()).isEqualByComparingTo("1804000");
-        assertThat(narrow.pendingPayout()).isEqualByComparingTo(wide.pendingPayout());
     }
 
     /** 현금주의({@code paidAmount})는 채널 레벨에만 있다 — 채널마다 정산 주기가 달라 판매자 합산은 뜻을 잃는다(D4-1). */
@@ -160,16 +143,15 @@ class SalesStatsServiceImplTest {
         assertThat(service.byChannel(FROM, TO, null, false)).singleElement()
                 .satisfies(row -> {
                     assertThat(row.paidAmount()).isEqualByComparingTo("900000");
-                    assertThat(row.pendingPayout()).isEqualByComparingTo("1804000");
                     assertThat(row.platform()).isEqualTo(Platform.COUPANG);
                 });
     }
 
     /**
-     * 🔴 정산 묶음이 하나도 없는 채널도 행이 나와야 한다.
+     * 🔴 A channel without any payout still gets a row.
      *
-     * <p>집계 쿼리는 {@code group by} 라 묶음이 없는 계정의 행을 아예 내주지 않으므로, 그 빈자리를
-     * {@link PayoutAggregate#empty} 가 0 으로 메운다. 없으면 그 채널의 "받을 돈" 칸이 통째로 비어 버린다.
+     * <p>The aggregate query is a {@code group by}, so it gives no row for an account without payouts —
+     * {@link PayoutAggregate#empty} fills that gap with 0. Without it the channel's 「지급확정」 cell would be empty.
      */
     @Test
     void channelWithNoPayoutsStillProducesRow() {
@@ -179,7 +161,7 @@ class SalesStatsServiceImplTest {
         given(orderLineRepository.aggregateSales(any(), any(), any(), anyBoolean())).willReturn(List.of());
 
         assertThat(service.byChannel(FROM, TO, null, false)).singleElement()
-                .satisfies(row -> assertThat(row.pendingPayout()).isEqualByComparingTo("0"));
+                .satisfies(row -> assertThat(row.paidAmount()).isEqualByComparingTo("0"));
     }
 
     /** 같은 마스터가 두 계정에 걸리면 cross=true 는 1행, cross=false 는 2행이다(집계 경로는 하나). */
@@ -213,7 +195,6 @@ class SalesStatsServiceImplTest {
     @Test
     void unmappedLinesGoToUncategorizedRow() {
         givenAccounts(coupang);
-        givenNoPayouts();
         givenSales(group(coupang, 100L, 100L, "100000", "5000", "0", 1),
                 unmappedGroup(coupang, "30000", "1000"));
         givenOption(100L, 500L, "0.106", "2500", "500");
@@ -234,13 +215,14 @@ class SalesStatsServiceImplTest {
                 .isEqualByComparingTo(summary.discount());
         assertThat(products.stream().mapToLong(ProductProfitResponse::netQty).sum())
                 .isEqualTo(summary.netQty());
+        // FEATURE_2611_05 D7: an unlinked line has no commission base, so the seller's estimated settlement is unknown.
+        assertThat(summary.estSettlement()).isNull();
     }
 
     /** 카테고리 매핑이 없는 셀 하나 때문에 화면 전체가 500 이 되면 안 된다 — 그 그룹만 손익을 포기한다. */
     @Test
     void missingCommissionBaseDoesNotFailTheReport() {
         givenAccounts(coupang);
-        givenNoPayouts();
         givenSales(group(coupang, 100L, 100L, "100000", "0", "0", 0));
         givenOptions(option(100L, 500L));
         given(masterChannelConfigService.resolvePlatformCategory(any()))
@@ -251,6 +233,7 @@ class SalesStatsServiceImplTest {
                     assertThat(row.grossSales()).isEqualByComparingTo("100000");
                     assertThat(row.estNetProfit()).isNull();
                     assertThat(row.costBasisReady()).isFalse();
+                    assertThat(row.estSettlement()).isNull();
                 });
     }
 
@@ -358,7 +341,6 @@ class SalesStatsServiceImplTest {
     @Test
     void testSummarySumsChannelFixedCost() {
         givenAccounts(coupang, naver);
-        givenNoPayouts();
         givenSales(group(coupang, 100L, 100L, "100000", "0", "0", 0),
                 group(naver, 200L, 100L, "60000", "0", "0", 0));
         givenOptions(option(100L, 500L), option(200L, 500L));
@@ -367,22 +349,24 @@ class SalesStatsServiceImplTest {
         givenMonthlySales(monthlySales(coupang, 9, "2000000"), monthlySales(naver, 9, "2000000"));
 
         assertThat(service.summary(FROM, TO, null, false)).singleElement()
-                .extracting(SellerSalesResponse::fixedCost)
-                .satisfies(fixedCost -> assertThat((BigDecimal) fixedCost).isEqualByComparingTo("110000"));
+                .satisfies(row -> {
+                    assertThat(row.fixedCost()).isEqualByComparingTo("110000");
+                    // FEATURE_2611_05 D5 · D12: 160,000 − fee 18,656 − the same fixed cost 110,000.
+                    assertThat(row.estSettlement()).isEqualByComparingTo("31344");
+                });
     }
 
     // ── 「출고 전 주문 제외」 switch (FEATURE_2611_04 D1 · D2 · D6 · D8) ─────────────
 
     /**
-     * 🔴 D2 · D6 · D8: the switch reaches the order-line aggregate only. The fixed cost is still judged on the whole
-     * month of every line ({@code aggregateMonthlySales} has no switch) and subtracted in full, and the pending payout
-     * stays as it is.
+     * 🔴 D2 · D6: the switch reaches the order-line aggregate only. The fixed cost is still judged on the whole month of
+     * every line ({@code aggregateMonthlySales} has no switch) and subtracted in full. FEATURE_2611_05 D6: the
+     * estimated settlement follows the switch with the other order-line numbers.
      */
     @Test
-    void testExcludeUnshippedReachesAggregateButNotFixedCostOrPayout() {
+    void testExcludeUnshippedReachesAggregateButNotFixedCost() {
         givenAccounts(coupang);
-        given(settlementPayoutRepository.aggregateByAccount(any(), any(), any(), any(), any()))
-                .willReturn(List.of(new PayoutAggregate(10L, new BigDecimal("1804000"), BigDecimal.ZERO)));
+        givenNoPayouts();
         given(orderLineRepository.aggregateSales(any(), any(), any(), eq(true)))
                 .willReturn(List.of(group(coupang, 100L, 100L, "100000", "0", "40000", 0, 10L)));
         givenOption(100L, 500L, "0.106", "2500", "500");
@@ -394,7 +378,7 @@ class SalesStatsServiceImplTest {
                     assertThat(row.grossSales()).isEqualByComparingTo("100000");
                     assertThat(row.fixedCost()).isEqualByComparingTo("55000");
                     assertThat(row.estNetProfit()).isEqualByComparingTo("-36660");
-                    assertThat(row.pendingPayout()).isEqualByComparingTo("1804000");
+                    assertThat(row.estSettlement()).isEqualByComparingTo("33340");
                 });
         verify(orderLineRepository).aggregateSales(any(), any(), any(), eq(true));
         verify(orderLineRepository).aggregateMonthlySales(any(), any(), any());
@@ -408,6 +392,30 @@ class SalesStatsServiceImplTest {
         assertThat(service.lines(FROM, TO, 10L, true)).isEmpty();
 
         verify(orderLineRepository).findSalesLines(any(), any(), eq(10L), eq(true));
+    }
+
+    // ── estimated settlement (FEATURE_2611_05 D4 · D5 · D12) ──────────────────
+
+    /**
+     * 🔴 Sales − (discount − platform discount) − estimated fee − fixed cost. The platform-funded discount is not the
+     * seller's money (D4), and cost · delivery · box stay out — they are the seller's costs, not the market's (D12).
+     */
+    @Test
+    void estSettlementTakesOutNonPlatformDiscountFeeAndFixedCostOnly() {
+        givenAccounts(coupang);
+        givenNoPayouts();
+        // 10 pcs · sales 100,000 · discount 5,000 of which the platform funds 2,000 · cost 40,000
+        givenSales(new SalesLineGroup(seller.getId(), seller.getSellerName(), coupang.getId(),
+                100L, 100L, "양말세트", 10L, 0L, 0L,
+                new BigDecimal("100000"), BigDecimal.ZERO, BigDecimal.ZERO,
+                new BigDecimal("5000"), new BigDecimal("2000"), new BigDecimal("40000"), 0L));
+        givenOption(100L, 500L, "0.106", "2500", "500");
+        givenFixedCostLinks(link(coupang));
+        givenMonthlySales(monthlySales(coupang, 9, "2000000"));
+
+        assertThat(service.byChannel(FROM, TO, null, false)).singleElement()
+                // 100,000 − 3,000 − 11,660 − 55,000
+                .satisfies(row -> assertThat(row.estSettlement()).isEqualByComparingTo("30340"));
     }
 
     // ------------------------------------------------------------- fixtures
@@ -505,7 +513,7 @@ class SalesStatsServiceImplTest {
         return new SalesLineGroup(seller.getId(), seller.getSellerName(), account.getId(),
                 optionId, masterId, "양말세트", netQty, 0L, 0L,
                 new BigDecimal(gross), BigDecimal.ZERO, BigDecimal.ZERO,
-                new BigDecimal(discount), new BigDecimal(cost), missingCostLines);
+                new BigDecimal(discount), BigDecimal.ZERO, new BigDecimal(cost), missingCostLines);
     }
 
     /** 채널 옵션 연결이 없는 그룹(백필 누락·WING 수정분). */
@@ -513,6 +521,6 @@ class SalesStatsServiceImplTest {
         return new SalesLineGroup(seller.getId(), seller.getSellerName(), account.getId(),
                 null, null, null, 2L, 0L, 0L,
                 new BigDecimal(gross), BigDecimal.ZERO, BigDecimal.ZERO,
-                new BigDecimal(discount), BigDecimal.ZERO, 2L);
+                new BigDecimal(discount), BigDecimal.ZERO, BigDecimal.ZERO, 2L);
     }
 }

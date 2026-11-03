@@ -25,13 +25,14 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 채널별 지급 묶음 집계 쿼리 (FEATURE_2609_30 / PLAN D4 · D5-5).
+ * The per-channel payout aggregate query (FEATURE_2609_30 / PLAN D4 · D5-5).
  *
- * <p>🔴 <b>이 규칙들은 JPQL 안에 있어 목으로는 검증되지 않는다</b> — "받을 돈"에 기간이 걸리지 않는 것과
- * 지급 확정액에만 기간이 걸리는 것이다. 둘을 뒤집으면 화면의 두 금액이 조용히 서로의 값을 갖는다.
+ * <p>🔴 <b>These rules are inside the JPQL, so mocks cannot check them</b> — the scheduled sum takes no period, and
+ * only the paid amount takes the period. Swap the two and the 「지급확정」 cell silently carries the scheduled sum (the
+ * sales screens show only the paid amount since FEATURE_2611_05 D9).
  *
- * <p>🔴 대사 상태별 건수는 이 집계가 세지 않는다(FEATURE_2609_34) — 기간이 안 걸리는 건수를 기간 행에
- * 배지로 걸면 오해를 만든다. 대사 상태는 인식월 정산 목록이 건별로 보여준다.
+ * <p>🔴 This aggregate does not count reconciliation statuses (FEATURE_2609_34) — a count without the period, shown
+ * as a badge on a period row, misleads. Reconciliation status is shown per payout by the recognition-month list.
  */
 @DataJpaTest
 @ActiveProfiles("test")
@@ -95,10 +96,10 @@ class SettlementPayoutAggregationTest {
     }
 
     /**
-     * 🔴 묶음이 없는 계정은 {@code group by} 라 <b>행 자체가 나오지 않는다</b>.
+     * 🔴 An account without payouts gives <b>no row at all</b> — the query is a {@code group by}.
      *
-     * <p>그래서 서비스가 {@code PayoutAggregate.empty} 로 메운다 — 그 0 이 없으면 정산 이력이 없는 채널의
-     * "받을 돈" 칸이 통째로 비어 버린다.
+     * <p>So the service fills it with {@code PayoutAggregate.empty} — without that 0, the 「지급확정」 cell of a channel
+     * with no settlement history would be empty.
      */
     @Test
     void accountWithoutPayoutsProducesNoRow() {

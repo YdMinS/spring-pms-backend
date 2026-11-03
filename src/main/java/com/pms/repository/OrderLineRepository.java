@@ -228,6 +228,8 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
                                                      else l.holdQty end)),
                 sum(coalesce(l.discountAmount, 0) * (l.orderQty - l.cancelQty)
                         / coalesce(nullif(l.orderQty, 0), 1)),
+                sum(coalesce(l.platformDiscountAmount, 0) * (l.orderQty - l.cancelQty)
+                        / coalesce(nullif(l.orderQty, 0), 1)),
                 sum(coalesce(l.costAmount, 0) * (l.orderQty - l.cancelQty)
                         / coalesce(nullif(l.orderQty, 0), 1)),
                 sum(case when l.costAmount is null and l.orderQty > l.cancelQty then 1 else 0 end))

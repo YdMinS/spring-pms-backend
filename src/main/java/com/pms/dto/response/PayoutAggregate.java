@@ -8,7 +8,8 @@ import java.math.BigDecimal;
  * <p>🔴 {@code pendingPayout} ("money to receive") has <b>no period filter</b> (D4). The payout axis is the
  * revenue-recognition date, which does not line up with the sale-date period — to avoid misreadings like "September
  * sales 5,000,000 / September settlement due 1,800,000", the period is not applied at all and the value is called
- * <b>"money to receive"</b>.
+ * <b>"money to receive"</b>. FEATURE_2611_05 D9 · D13: the sales responses no longer send it — the sales service reads
+ * only {@code paidAmount}; the field stays because the aggregate query is not changed.
  *
  * <p>⚠️ {@code recon_status = AMOUNT_ONLY} (additional · reserve payouts) is included in {@code pendingPayout} too —
  * they carry no lines but are money actually to be received (D5-4 · D5-5).
