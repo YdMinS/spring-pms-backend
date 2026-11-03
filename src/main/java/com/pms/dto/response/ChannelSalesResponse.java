@@ -17,7 +17,10 @@ import java.time.LocalDateTime;
  * @param refundedAmount         amount <b>taken out of the sales</b> by confirmed cancels ("refunded")
  * @param pendingRefundAmount    amount still in the sales that may come out ("refund pending").
  *                               🔴 capped by the effective quantity — a share already cancelled is not counted again
- * @param pendingPayout          "money to receive", independent of the period (D4)
+ * @param estSettlement          estimated settlement of the period's sales (FEATURE_2611_05 D12): sales − (discount −
+ *                               platform discount) − estimated fee − {@code fixedCost}. 🔴 {@code null} when any line
+ *                               has no commission base (D7) — never 0. The scheduled payouts regardless of the period
+ *                               are no longer sent (FEATURE_2611_05 D9 · D13)
  * @param paidAmount             paid in the period ({@code status = PAID}), cut by the confirmed payout date when
  *                               present, else {@code settlementDate} (FEATURE_2610_20 / D38 — the 11st 「지급 완료」
  *                               date). 🔴 Coupang's payment history never sends {@code finalSettlementDate} (always
@@ -47,7 +50,7 @@ public record ChannelSalesResponse(
         long cancelQty,
         BigDecimal refundedAmount,
         BigDecimal pendingRefundAmount,
-        BigDecimal pendingPayout,
+        BigDecimal estSettlement,
         BigDecimal paidAmount,
         LocalDateTime lastSettlementSyncAt,
         BigDecimal fixedCost,
