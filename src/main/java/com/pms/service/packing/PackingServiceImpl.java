@@ -534,7 +534,8 @@ public class PackingServiceImpl implements PackingService {
         ShipmentParcel parcel = row.getShipmentParcel();
         return new PackingHistoryView(row.getId(), utcToKst(row.getCreatedAt()), parcel.getId(),
                 parcel.getInvoiceNumber(), parcel.getCarrierName(), parcel.getOrderShipment().getOrder().getExternalOrderId(),
-                sellerNameOf(parcel), row.getFromStatus(), row.getToStatus(), row.getChangedBy());
+                sellerNameOf(parcel), row.getFromStatus(), row.getToStatus(), row.getChangedBy(),
+                parcel.getBoxPackage() == null ? null : parcel.getBoxPackage().getType());
     }
 
     /** KST midnight of {@code day} as a UTC wall-clock time — the clock {@code created_date} is stored in (D40). */
