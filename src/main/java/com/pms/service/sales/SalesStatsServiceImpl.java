@@ -112,20 +112,17 @@ public class SalesStatsServiceImpl implements SalesStatsService {
                                              boolean excludeUnshipped) {
         Period period = Period.of(from, to);
         List<MarketplaceAccount> accounts = marketplaceAccountRepository.findAllWithSeller(sellerId);
-        Map<Long, PayoutAggregate> payouts = payouts(period, sellerId);
         // 🔴 채널 탭과 같은 helper 를 1회만 부른다 — 두 탭이 각자 계산하면 합계가 어긋난다.
         Map<Long, FixedCostResult> fixedCosts = fixedCostByAccount(period, sellerId, accountIds(accounts));
 
-        // 판매자 행은 계정 목록으로 만든다 — 이 기간에 판 게 없어도 "받을 돈"은 있을 수 있다.
+        // Seller rows come from the account list — a seller who sold nothing in the period still gets a row, and its
+        // fixed cost can still be charged (FEATURE_2611_05 D9: the scheduled payouts are no longer read here).
         Map<Long, String> sellerNames = new LinkedHashMap<>();
         Map<Long, Acc> salesBySeller = new HashMap<>();
-        Map<Long, Acc> payoutBySeller = new HashMap<>();
         Map<Long, BigDecimal> fixedBySeller = new HashMap<>();
         for (MarketplaceAccount account : accounts) {
             Long owner = account.getSeller().getId();
             sellerNames.putIfAbsent(owner, account.getSeller().getSellerName());
-            payoutBySeller.computeIfAbsent(owner, key -> new Acc())
-                    .addPayout(payouts.get(account.getId()));
             // 🔴 판매자 단위로 임계를 다시 판정하지 않는다(D12) — 채널 판정 결과를 더하기만 한다.
             fixedBySeller.merge(owner,
                     fixedCosts.getOrDefault(account.getId(), FixedCostResult.zero()).amount(),
@@ -141,12 +138,11 @@ public class SalesStatsServiceImpl implements SalesStatsService {
         List<SellerSalesResponse> rows = new ArrayList<>();
         sellerNames.forEach((owner, name) -> {
             Acc sales = salesBySeller.getOrDefault(owner, new Acc());
-            Acc payout = payoutBySeller.getOrDefault(owner, new Acc());
             BigDecimal fixedCost = fixedBySeller.getOrDefault(owner, BigDecimal.ZERO);
             rows.add(new SellerSalesResponse(owner, name,
                     scale(sales.grossSales), scale(sales.discount), sales.netQty, sales.holdQty,
                     scale(sales.estFee), netProfit(sales.profit(), fixedCost), sales.profitReady(),
-                    scale(payout.pendingPayout), scale(fixedCost)));
+                    sales.settlement(fixedCost), scale(fixedCost)));
         });
         rows.sort(Comparator.comparing(SellerSalesResponse::grossSales).reversed());
         return rows;
@@ -180,7 +176,7 @@ public class SalesStatsServiceImpl implements SalesStatsService {
                     scale(sales.grossSales), scale(sales.discount), sales.netQty, sales.holdQty,
                     scale(sales.estFee), netProfit(sales.profit(), fixedCost.amount()), sales.profitReady(),
                     sales.cancelQty, scale(sales.refundedAmount), scale(sales.pendingRefundAmount),
-                    scale(nz(payout.pendingPayout())), scale(nz(payout.paidAmount())),
+                    sales.settlement(fixedCost.amount()), scale(nz(payout.paidAmount())),
                     account.getLastSettlementSyncAt(),
                     scale(fixedCost.amount()), fixedCost.chargedMonths()));
         }
@@ -329,8 +325,13 @@ public class SalesStatsServiceImpl implements SalesStatsService {
             profit = gross.subtract(nz(group.costAmount())).subtract(estFee)
                     .subtract(shipping.total().multiply(qty));
         }
+        // FEATURE_2611_05 D1 · D4 · D7 · D12: estimated settlement = sales − (discount − platform discount) − estFee.
+        // Cost, delivery and box are the seller's own costs, not the market's — they stay out. 🔴 No commission base
+        // → null (an estFee of 0 would inflate it); a missing cost snapshot does not matter here.
+        BigDecimal settlement = commissionRate == null ? null
+                : gross.subtract(nz(group.discount()).subtract(nz(group.platformDiscount()))).subtract(estFee);
         return new GroupSales(group, gross, nz(group.discount()), group.netQty(), group.holdQty(),
-                estFee, profit);
+                estFee, profit, settlement);
     }
 
     /**
@@ -474,10 +475,13 @@ public class SalesStatsServiceImpl implements SalesStatsService {
     }
 
     /**
-     * 채널별 "받을 돈"·입금 확정. 🔴 {@code pendingPayout} 에는 기간이 걸리지 않는다(D4).
+     * Paid in the period, per channel ({@code paidAmount}). 🔴 The aggregate also carries the scheduled payouts
+     * regardless of the period ({@code pendingPayout}); the sales responses no longer send them (FEATURE_2611_05 D9 ·
+     * D13). The aggregate itself is left as it is — {@code paidAmount} comes from the same query.
      *
-     * <p>🔴 <b>대사 상태 건수는 여기서 내려보내지 않는다</b>(FEATURE_2609_34) — 기간이 걸리지 않는 건수를
-     * 기간 행에 배지로 걸면 오해를 만든다. 대사 상태는 인식월 정산 목록이 건별로 보여준다.
+     * <p>🔴 <b>Reconciliation status counts are not sent from here</b> (FEATURE_2609_34) — a count that the period
+     * does not narrow, shown as a badge on a period row, misleads. Reconciliation status is shown per payout by the
+     * recognition-month list.
      */
     private Map<Long, PayoutAggregate> payouts(Period period, Long sellerId) {
         return settlementPayoutRepository.aggregateByAccount(sellerId, period.from(), period.to(),
@@ -508,7 +512,8 @@ public class SalesStatsServiceImpl implements SalesStatsService {
 
     /** 그룹 1건의 계산 결과. {@code estNetProfit == null} = 재료가 빠져 순이익을 낼 수 없는 그룹. */
     private record GroupSales(SalesLineGroup group, BigDecimal grossSales, BigDecimal discount,
-                              long netQty, long holdQty, BigDecimal estFee, BigDecimal estNetProfit) {
+                              long netQty, long holdQty, BigDecimal estFee, BigDecimal estNetProfit,
+                              BigDecimal estSettlement) {
 
         /** 취소·환불 값은 가공하지 않고 그대로 통과시킨다(DB 가 이미 접었다). */
         long cancelQty() {
@@ -540,7 +545,10 @@ public class SalesStatsServiceImpl implements SalesStatsService {
         private BigDecimal discount = BigDecimal.ZERO;
         private BigDecimal estFee = BigDecimal.ZERO;
         private BigDecimal estNetProfit = BigDecimal.ZERO;
-        private BigDecimal pendingPayout = BigDecimal.ZERO;
+        // FEATURE_2611_05 D7 · D12: AND like profitReady — one group without a commission base makes the row's
+        // estimated settlement null, not a partial sum.
+        private BigDecimal estSettlement = BigDecimal.ZERO;
+        private boolean settlementReady = true;
         private BigDecimal refundedAmount = BigDecimal.ZERO;
         private BigDecimal pendingRefundAmount = BigDecimal.ZERO;
         private long netQty;
@@ -562,13 +570,16 @@ public class SalesStatsServiceImpl implements SalesStatsService {
             } else {
                 estNetProfit = estNetProfit.add(sales.estNetProfit());
             }
+            if (sales.estSettlement() == null) {
+                settlementReady = false;
+            } else {
+                estSettlement = estSettlement.add(sales.estSettlement());
+            }
         }
 
-        void addPayout(PayoutAggregate payout) {
-            if (payout == null) {
-                return;
-            }
-            pendingPayout = pendingPayout.add(nz(payout.pendingPayout()));
+        /** FEATURE_2611_05 D5 · D12: the same fixed cost the net profit takes out; null when not ready (D7). */
+        BigDecimal settlement(BigDecimal fixedCost) {
+            return settlementReady ? scale(estSettlement).subtract(nz(fixedCost)) : null;
         }
 
         BigDecimal profit() {

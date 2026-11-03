@@ -45,6 +45,9 @@ public record SalesLineGroup(
         BigDecimal refundedAmount,
         BigDecimal pendingRefundAmount,
         BigDecimal discount,
+        // FEATURE_2611_05 D4: Σ (platformDiscountAmount × netQty / orderQty) — the platform-funded share of discount,
+        // split by the same live-quantity ratio. Only the estimated settlement reads it.
+        BigDecimal platformDiscount,
         BigDecimal costAmount,
         long missingCostLines) {
 }

@@ -282,8 +282,7 @@ public class SettlementReconciliationServiceImpl implements SettlementReconcilia
 
     /**
      * FEATURE_2610_20 / D40: an 11st payout still scheduled after its remittance date (before today, KST) waits for
-     * the person's 「지급 완료」 mark — the screens show 「입금 확인 필요」. Display only; the stored status is untouched,
-     * so the sales screen's "money to receive" keeps it.
+     * the person's 「지급 완료」 mark — the screens show 「입금 확인 필요」. Display only; the stored status is untouched.
      */
     private static boolean paymentCheckNeeded(SettlementPayout payout, MarketplaceAccount account) {
         return account != null

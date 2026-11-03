@@ -56,7 +56,8 @@ class SalesStatsControllerTest extends BaseIntegrationTest {
         MarketplaceAccountFixture.saveCredential(credentialRepository, account, "V1", null);
         accountId = account.getId();
 
-        // 🔴 판매일 기간과 상관없이 잡혀야 하는 "받을 돈"(PLAN D4) — 지급일은 조회 기간 밖으로 둔다.
+        // A scheduled payout dated outside the period — FEATURE_2611_05 D9 · D13: it must not show up in the sales
+        // responses any more.
         settlementPayoutRepository.save(SettlementPayout.builder()
                 .marketplaceAccount(account)
                 .settlementType(SettlementType.WEEKLY)
@@ -95,9 +96,12 @@ class SalesStatsControllerTest extends BaseIntegrationTest {
 
     // ---- happy paths ----
 
-    /** 판매 실적이 없어도 "받을 돈"은 기간과 무관하게 잡힌다(PLAN D4). */
+    /**
+     * Nothing sold: the estimated settlement is 0 (no fixed cost), and the scheduled payout is not sent
+     * (FEATURE_2611_05 D12 · D13).
+     */
     @Test
-    void summary_adminToken_returns200WithPendingPayout() throws Exception {
+    void summary_adminToken_returns200WithEstSettlementWithoutPendingPayout() throws Exception {
         mockMvc.perform(get(SUMMARY)
                         .param("from", "2026-09-01").param("to", "2026-09-30")
                         .header("Authorization", "Bearer " + adminToken))
@@ -107,22 +111,11 @@ class SalesStatsControllerTest extends BaseIntegrationTest {
                 // 판 것이 없으면 순이익 0 이 정직한 값이다 — 재료가 빠져 못 내는 null 과는 다르다.
                 .andExpect(jsonPath("$.data[0].estNetProfit").value(0))
                 .andExpect(jsonPath("$.data[0].costBasisReady").value(true))
-                .andExpect(jsonPath("$.data[0].pendingPayout").value(1804000.00))
+                .andExpect(jsonPath("$.data[0].estSettlement").value(0))
+                .andExpect(jsonPath("$.data[0].pendingPayout").doesNotExist())
                 // 🔴 대사 상태 건수는 응답에 없다(FEATURE_2609_34) — 기간이 안 걸리는 건수를 기간 행에
                 //    실으면 "이 기간에 N건이 어긋났다"로 읽힌다. 대사는 인식월 정산 목록이 건별로 보여준다.
                 .andExpect(jsonPath("$.data[0].unreconciledPayouts").doesNotExist());
-    }
-
-    /** FEATURE_2611_04 D8: the 「출고 전 주문 제외」 switch leaves the pending payout as it is. */
-    @Test
-    void summary_excludeUnshipped_keepsPendingPayout() throws Exception {
-        mockMvc.perform(get(SUMMARY)
-                        .param("from", "2026-09-01").param("to", "2026-09-30")
-                        .param("excludeUnshipped", "true")
-                        .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].grossSales").value(0))
-                .andExpect(jsonPath("$.data[0].pendingPayout").value(1804000.00));
     }
 
     @Test
@@ -132,6 +125,8 @@ class SalesStatsControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data[0].accountAlias").value("메인"))
                 .andExpect(jsonPath("$.data[0].platform").value("COUPANG"))
                 .andExpect(jsonPath("$.data[0].paidAmount").value(0))
+                .andExpect(jsonPath("$.data[0].estSettlement").value(0))
+                .andExpect(jsonPath("$.data[0].pendingPayout").doesNotExist())
                 .andExpect(jsonPath("$.data[0].amountOnlyPayouts").doesNotExist())
                 .andExpect(jsonPath("$.data[0].payoutCount").doesNotExist());
     }

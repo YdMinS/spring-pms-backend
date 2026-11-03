@@ -10,25 +10,27 @@ import java.time.LocalDate;
 import java.util.List;
 
 /**
- * 매출 집계 — <b>오늘까지의 매출</b>에 답한다 (FEATURE_2609_30 / PLAN D2 · D4 · D14).
+ * Sales aggregation — answers <b>the sales up to today</b> (FEATURE_2609_30 / PLAN D2 · D4 · D14).
  *
- * <p>🔴 <b>정산 원장을 읽어 매출을 만들지 않는다.</b> 매출의 정본은 {@code order_line} 이다(D2).
- * 정산 API 두 개는 축이 매출인식일(구매확정·배송완료 +3일)이라 오늘 것을 아예 주지 못하고,
- * 두 축을 섞으면 <i>"어제 매출이 왜 바뀌었지"</i> 가 반드시 나온다. 이 서비스가 정산에서 가져오는 것은
- * <b>"받을 돈"(pendingPayout)과 대사 배지뿐</b>이며, 그것도 기간 필터 없이 그대로 옮긴다(D4).
+ * <p>🔴 <b>Sales are never built by reading the settlement ledger.</b> The source of truth for sales is
+ * {@code order_line} (D2). Both settlement APIs run on the revenue-recognition date (purchase confirmed or delivered
+ * + 3 days), so they cannot give today's numbers at all, and mixing the two axes always ends in
+ * <i>"why did yesterday's sales change"</i>. The estimated settlement is built from order lines too
+ * (FEATURE_2611_05 D1); the only things taken from the ledger are a channel's payouts paid in the period
+ * ({@code paidAmount}) and the 11st purchase-confirmed amount used to judge the fixed cost (FEATURE_2610_20 / D42).
  *
- * <p>세 메서드는 <b>같은 집계 경로 하나</b>({@code OrderLineRepository.aggregateSales})를 쓰고 그룹 키만
- * 바꾼다 — 그래야 판매자 합계와 상품별 목록의 합계가 어긋나지 않는다.
+ * <p>The three methods use <b>one and the same aggregation path</b> ({@code OrderLineRepository.aggregateSales}) and
+ * only change the group key — so the seller totals and the per-product list totals never drift apart.
  *
- * <p>기간 기본값: {@code to} = 오늘, {@code from} = 이번 달 1일. {@code from > to} 는 400.
+ * <p>Period defaults: {@code to} = today, {@code from} = the 1st of this month. {@code from > to} is 400.
  */
 public interface SalesStatsService {
 
-    // excludeUnshipped on ①②③④ (FEATURE_2611_04 D1 · D2 · D6 · D8): true = every number built from order lines
-    // (sales, discount, fee, quantity, refund columns, net profit) and the ④ line list leave out the lines whose
-    // status is still PAID or PREPARING; a line with no status stays in. 🔴 The fixed cost is still subtracted in full
-    // and judged on the whole month's sales of every line, and the pending payout does not move. false = the numbers
-    // as before (the dashboard cards and the stock rank pass false).
+    // excludeUnshipped on ①②③④ (FEATURE_2611_04 D1 · D2 · D6): true = every number built from order lines
+    // (sales, discount, fee, quantity, refund columns, net profit, estimated settlement — FEATURE_2611_05 D6) and the
+    // ④ line list leave out the lines whose status is still PAID or PREPARING; a line with no status stays in.
+    // 🔴 The fixed cost is still subtracted in full and judged on the whole month's sales of every line. false = the
+    // numbers as before (the dashboard cards and the stock rank pass false).
 
     /** ① 판매자별 한 줄. {@code sellerId} 가 null 이면 전 판매자. */
     List<SellerSalesResponse> summary(LocalDate from, LocalDate to, Long sellerId, boolean excludeUnshipped);

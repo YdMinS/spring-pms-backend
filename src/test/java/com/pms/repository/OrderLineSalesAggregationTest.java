@@ -250,6 +250,31 @@ class OrderLineSalesAggregationTest {
         assertThat(orderLineRepository.findSalesLines(FROM, TO_EXCLUSIVE, account.getId(), false)).hasSize(2);
     }
 
+    /**
+     * FEATURE_2611_05 D4: the platform-funded discount is split by the live quantity like the total discount — half
+     * cancelled, half of it is the period's — so {@code discount − platformDiscount} stays the same share.
+     */
+    @Test
+    void platformDiscountIsProratedByNetQty() {
+        Order order = em.persist(Order.builder()
+                .marketplaceAccount(account).platform(Platform.COUPANG)
+                .externalOrderId("O-" + System.nanoTime()).orderedAt(ORDERED_AT).build());
+        em.persist(OrderLine.builder()
+                .order(order).productListingOption(option).status(OrderStatus.DELIVERED)
+                .itemName("양말세트").orderQty(10).cancelQty(5).holdQty(0)
+                .unitPrice(new BigDecimal("1000")).lineAmount(new BigDecimal("10000"))
+                .discountAmount(new BigDecimal("1000")).platformDiscountAmount(new BigDecimal("400"))
+                .build());
+        line(option, 1, 0, 0, "1000", "100", null);   // no platform discount reported → counts as 0
+        em.flush();
+        em.clear();
+
+        assertThat(aggregate()).singleElement().satisfies(group -> {
+            assertThat(group.discount()).isEqualByComparingTo("600");
+            assertThat(group.platformDiscount()).isEqualByComparingTo("200");
+        });
+    }
+
     // ------------------------------------------------------------- fixtures
 
     private List<SalesLineGroup> aggregate() {
