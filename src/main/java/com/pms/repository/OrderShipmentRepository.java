@@ -21,6 +21,12 @@ public interface OrderShipmentRepository extends JpaRepository<OrderShipment, Lo
     Optional<OrderShipment> findByOrder_IdAndExternalShipmentId(Long orderId, String externalShipmentId);
 
     /**
+     * Every shipment bundle of one order, id order — the parcel order of the shared order detail (FEATURE_2611_07 /
+     * PLAN D29).
+     */
+    List<OrderShipment> findByOrder_IdOrderByIdAsc(Long orderId);
+
+    /**
      * 내부 단계를 바꾸는 <b>유일한</b> 쓰기 경로 ① (FEATURE_2609_75 / D1). 엔티티 칸이 {@code updatable = false} 라
      * 엔티티 저장으로는 바뀌지 않는다. ids 는 테넌트 필터가 걸린 조회에서 얻은 값만 넘긴다(native 라 필터가 없다).
      *

@@ -5,12 +5,14 @@ import com.pms.dto.request.BoxCandidateRequest;
 import com.pms.dto.request.ParcelBoxChangeRequest;
 import com.pms.dto.request.ParcelCompleteRequest;
 import com.pms.dto.response.BarcodeLookupResponse;
+import com.pms.dto.response.OrderDetailResponse;
 import com.pms.dto.response.PackingHistoryView;
 import com.pms.dto.response.PackingScanResponse;
 import com.pms.dto.response.ParcelCloseResponse;
 import com.pms.dto.response.ParcelCompleteResponse;
 import com.pms.dto.response.PendingParcelView;
 import com.pms.service.packing.BoxCandidate;
+import com.pms.service.order.OrderDetailService;
 import com.pms.service.packing.PackingService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -46,6 +48,7 @@ import java.util.List;
 public class PackingController {
 
     private final PackingService packingService;
+    private final OrderDetailService orderDetailService;
 
     /** 송장번호 → 박스 + 담을 것 + 상자 후보. 못 찾으면 404, 이미 닫힌 박스는 200 + 상태. */
     @GetMapping("/scan")
@@ -116,6 +119,15 @@ public class PackingController {
             @PathVariable Long id,
             @Valid @RequestBody ParcelBoxChangeRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(packingService.changeBox(id, request.boxPackageId())));
+    }
+
+    /**
+     * The shared order detail of the order this parcel belongs to (FEATURE_2611_07 / PLAN D17 · D22 · D30) — opened
+     * from a 「오늘 완료」 row. Read-only. Unknown parcel = 404.
+     */
+    @GetMapping("/parcels/{id}/order")
+    public ResponseEntity<ResponseDTO<OrderDetailResponse>> parcelOrder(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(orderDetailService.byParcel(id)));
     }
 
     /**

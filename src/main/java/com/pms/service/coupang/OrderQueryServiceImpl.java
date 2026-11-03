@@ -62,6 +62,11 @@ public class OrderQueryServiceImpl implements OrderQueryService {
         List<OrderLine> lines = (from == null && to == null)
                 ? defaultWindow(sellerId)
                 : period(sellerId, from, to);
+        return rows(lines);
+    }
+
+    @Override
+    public List<OrderItemResponse> rows(List<OrderLine> lines) {
         Map<Long, CoupangOrderLine> mirrors = mirrorsByLineId(lines);
         Map<Long, ElevenstOrderLine> elevenstMirrors = elevenstMirrorsByLineId(lines);
         Map<Long, Product> thumbnails = thumbnailsByLineId(lines);

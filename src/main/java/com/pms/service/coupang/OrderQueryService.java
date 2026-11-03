@@ -1,5 +1,6 @@
 package com.pms.service.coupang;
 
+import com.pms.domain.OrderLine;
 import com.pms.dto.response.OrderItemResponse;
 import com.pms.dto.response.OrderMonthResponse;
 
@@ -7,7 +8,8 @@ import java.time.LocalDate;
 import java.util.List;
 
 /**
- * 동기화된 주문 라인 조회 (GET /api/orders, 화면 표시/검증용 read).
+ * Reads of the synced order lines — GET /api/orders and the line rows of the shared order detail (FEATURE_2611_07 /
+ * PLAN D17). Read-only, for screen display and checks.
  */
 public interface OrderQueryService {
 
@@ -22,6 +24,12 @@ public interface OrderQueryService {
      * 둘 다 null 이면 기본 창 = 오늘 − {@code coupang.sync-days} (기존 동작).
      */
     List<OrderItemResponse> list(Long sellerId, LocalDate from, LocalDate to);
+
+    /**
+     * The given lines as order list rows, in the given order — the same mapping {@link #list} uses. The shared order
+     * detail (FEATURE_2611_07 / PLAN D17) calls it so its lines carry exactly the fields of one list row.
+     */
+    List<OrderItemResponse> rows(List<OrderLine> lines);
 
     /** 주문이 존재하는 달과 건수(최신순) — GET /api/orders/months. 판매자 필터와 무관한 전체 기준(D17). */
     List<OrderMonthResponse> months();
