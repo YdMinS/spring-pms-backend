@@ -30,7 +30,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verify;
 
-/** The packing history read (FEATURE_2611_03 / PLAN D29 · D30 · D34 · D39 · D40). */
+/** The packing history read (FEATURE_2611_03 / PLAN D29 · D30 · D34 · D39 · D40 · FEATURE_2611_06 / PLAN D9). */
 @ExtendWith(MockitoExtension.class)
 class PackingHistoryTest {
 
@@ -71,6 +71,7 @@ class PackingHistoryTest {
             assertThat(view.toStatus()).isEqualTo(ParcelStatus.UNUSED);
             assertThat(view.changedBy()).isEqualTo("packer@oclyx.com");
             assertThat(view.boxName()).isNull();
+            assertThat(view.boxPackageId()).isNull();
         });
     }
 
@@ -84,7 +85,11 @@ class PackingHistoryTest {
                 null, null)).willReturn(List.of(row));
 
         assertThat(service.history(DAY, DAY, null)).singleElement()
-                .satisfies(view -> assertThat(view.boxName()).isEqualTo("3호 상자"));
+                .satisfies(view -> {
+                    assertThat(view.boxName()).isEqualTo("3호 상자");
+                    // FEATURE_2611_06 D9: the box id rides along so the change dialog can preselect it.
+                    assertThat(view.boxPackageId()).isEqualTo(7L);
+                });
     }
 
     @Test
