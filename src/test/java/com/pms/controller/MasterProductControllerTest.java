@@ -340,6 +340,24 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.size").value(50));
     }
 
+    /**
+     * A server-drawn cover (collage cover, uploaded pool photo) has no product image reference — the list cover
+     * query must still return its own URL (an implicit inner join on the reference used to drop it).
+     */
+    @Test
+    void list_coverWithoutProductImageReference_returnsPoolImageUrl() throws Exception {
+        MasterProduct master = masterProductRepository.findById(masterId).orElseThrow();
+        MasterProductImage image = masterProductImageRepository.save(MasterProductImage.builder()
+                .masterProduct(master).sortOrder(0).imageUrl("http://x/collage-cover.png").build());
+        masterImageZoneAssignmentRepository.save(MasterImageZoneAssignment.builder()
+                .image(image).zoneId(MasterImageZoneAssignment.SOURCE_ZONE).sortOrder(0).build());
+
+        mockMvc.perform(get(PATH).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content[?(@.id == " + masterId + ")].sourceImageUrl")
+                        .value("http://x/collage-cover.png"));
+    }
+
     @Test
     void list_invalidSort_returns400() throws Exception {
         mockMvc.perform(get(PATH).param("sort", "hack,desc")
