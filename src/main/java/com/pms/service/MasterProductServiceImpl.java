@@ -969,6 +969,48 @@ public class MasterProductServiceImpl implements MasterProductService {
         return mapToResponse(master);
     }
 
+    /**
+     * FEATURE_2611_09 / D3 · D7. Contract: {@link MasterProductService#replaceComponentProduct}.
+     *
+     * <p>Same follow-up as {@link #updateComposition} for an option whose quantity vector moved (here the
+     * product key moved, the numbers did not): {@code onOptionComponentsChanged} re-prices the cells carrying
+     * the option and {@link #markNeedsMarketSync} flags the on-market ones.</p>
+     */
+    @Override
+    @Transactional
+    public int replaceComponentProduct(Long masterId, Product from, Product to) {
+        requireScopedMaster(masterId);
+        for (MasterProductComponent component : componentRepository.findByMasterProductId(masterId)) {
+            if (component.getProduct().getId().equals(from.getId())) {
+                componentRepository.save(component.toBuilder().product(to).build());
+            }
+        }
+        List<MasterProductOption> options = optionRepository.findByMasterProductId(masterId);
+        if (options.isEmpty()) {
+            return 0;
+        }
+        // One query for every option's items — not one per option.
+        Map<Long, List<MasterProductOptionItem>> itemsByOption = optionItemRepository
+                .findByOptionIdIn(options.stream().map(MasterProductOption::getId).toList()).stream()
+                .collect(Collectors.groupingBy(item -> item.getOption().getId()));
+        int rewritten = 0;
+        for (MasterProductOption option : options) {
+            boolean changed = false;
+            for (MasterProductOptionItem item : itemsByOption.getOrDefault(option.getId(), List.of())) {
+                if (item.getProduct().getId().equals(from.getId())) {
+                    optionItemRepository.save(item.toBuilder().product(to).build());
+                    changed = true;
+                    rewritten++;
+                }
+            }
+            if (changed) {
+                masterOptionChannelSync.onOptionComponentsChanged(masterId, option);
+                markNeedsMarketSync(masterId, option);
+            }
+        }
+        return rewritten;
+    }
+
     @Override
     @Transactional
     public MasterProductResponse updateTags(Long id, List<String> tags) {

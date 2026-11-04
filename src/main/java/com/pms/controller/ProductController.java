@@ -2,8 +2,10 @@ package com.pms.controller;
 
 import com.pms.domain.Product;
 import com.pms.dto.request.CreateProductRequest;
+import com.pms.dto.request.MergePreviewRequest;
 import com.pms.dto.request.MergeProductsRequest;
 import com.pms.dto.request.UpdateProductRequest;
+import com.pms.dto.response.MergePreviewResponse;
 import com.pms.dto.response.MergeProductsResponse;
 import com.pms.dto.response.ProductResponse;
 import com.pms.dto.response.ProductUsageResponse;
@@ -12,9 +14,11 @@ import com.pms.exception.ImageNotFoundException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.ProductRepository;
 import com.pms.service.ImageStorageService;
+import com.pms.service.MergeMasterLinkService;
 import com.pms.service.ProductMergeService;
 import com.pms.service.ProductService;
 import com.pms.service.ProductUsageService;
+import com.pms.service.listing.MasterPropagationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -53,6 +57,8 @@ public class ProductController {
     private final ProductRepository productRepository;
     private final ProductUsageService productUsageService;
     private final ProductMergeService productMergeService;
+    private final MergeMasterLinkService mergeMasterLinkService;
+    private final MasterPropagationService masterPropagationService;
 
     /**
      * Create a new product (ADMIN only)
@@ -168,11 +174,48 @@ public class ProductController {
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     @ApiResponse(responseCode = "404", description = "Product not found",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
-    @ApiResponse(responseCode = "409", description = "Barcode already used, or the discarded product is still linked",
+    @ApiResponse(responseCode = "409",
+            description = "Barcode already used, or a master holds both products / would equal two masters",
             content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
     public ResponseEntity<ResponseDTO<MergeProductsResponse>> merge(
             @Valid @RequestBody MergeProductsRequest request) {
         MergeProductsResponse response = productMergeService.merge(request);
+        // 🔴 FEATURE_2611_09 / D7 · D21: asset regeneration runs AFTER the merge has committed, for the same reason
+        // as the composition save (2609_64/D12) — propagateOne opens REQUIRES_NEW per cell and would block on the
+        // rows the merge still holds. Per-cell failures are swallowed and only counted, so the merge stays a 200.
+        for (Long masterId : response.changedMasterIds()) {
+            masterPropagationService.propagate(masterId);
+        }
+        return ResponseEntity.ok(ResponseDTO.success(response));
+    }
+
+    /**
+     * What a merge would do to the masters — read before [병합하기] (ADMIN only, FEATURE_2611_09 / D28)
+     *
+     * <p>⚠️ Same authority note as {@code /merge}: the ADMIN rule is the explicit
+     * {@code POST /api/products/merge/preview} matcher in {@code config/SecurityConfig}.</p>
+     *
+     * @param request the surviving product and the discarded one
+     * @return HTTP 200 OK with MergePreviewResponse
+     */
+    @PostMapping("/merge/preview")
+    @Operation(summary = "Preview the master side of a product merge", description = "ADMIN role required")
+    @SecurityRequirement(name = "bearerAuth")
+    @ApiResponse(responseCode = "200", description = "Preview built — nothing was changed",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "401", description = "Authentication required",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "403", description = "Permission denied (ADMIN role required)",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "404", description = "Product not found",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    @ApiResponse(responseCode = "409",
+            description = "A master holds both products, or would equal two masters",
+            content = @Content(schema = @Schema(implementation = ResponseDTO.class)))
+    public ResponseEntity<ResponseDTO<MergePreviewResponse>> previewMerge(
+            @Valid @RequestBody MergePreviewRequest request) {
+        MergePreviewResponse response =
+                mergeMasterLinkService.preview(request.targetProductId(), request.sourceProductId());
         return ResponseEntity.ok(ResponseDTO.success(response));
     }
 
