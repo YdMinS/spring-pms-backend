@@ -27,6 +27,7 @@ import java.util.Objects;
 /**
  * Collage thumbnail JPEG (FEATURE_2610_21 D5 · D10 · D18 · D39 · D48 · D49 · D50) — shared by generation
  * ({@code ListingAssetServiceImpl.regenerateAssets}) and the editor preview, so both take the same path (D35).
+ * {@link #drawCollageOnly} draws the collage alone (step 1 only) for the master cover photo (FEATURE_2611_10 D30).
  *
  * <ol>
  *   <li>Cell photos = the chosen {@code productImageId} when it is still a photo of that cell's product, otherwise the
@@ -70,6 +71,40 @@ public class CollageThumbnailRenderer {
      */
     public byte[] render(ThumbnailTemplate template, Map<String, String> textBindings,
                          CollageLayout layout, List<Product> products) {
+        Map<Long, BufferedImage> photos = cellPhotos(layout, products);
+        boolean useTemplate = Boolean.TRUE.equals(layout.useTemplate());
+        int canvasW = template.getCanvasWidth() == null ? 0 : template.getCanvasWidth();
+        int canvasH = template.getCanvasHeight() == null ? 0 : template.getCanvasHeight();
+        TemplateElement.Region slot = useTemplate ? slotRegion(template) : null;
+        int width = slot != null ? slot.getW() : canvasW;
+        int height = slot != null ? slot.getH() : canvasH;
+        byte[] collage = collageRenderer.drawPng(layout, photos, width, height);
+        List<ImageOp> ops = thumbnailPresetResolver.productImageOps(template);
+        byte[] productImage = ops.isEmpty() ? collage
+                : imageProcessor.process(imageDecodeSupport.flattenOnWhite(collage), ops);
+        if (useTemplate) {
+            return thumbnailRenderer.render(template, textBindings, Map.of(PRODUCT_IMAGE_BIND, productImage));
+        }
+        return thumbnailRenderer.render(wholeCanvas(template, canvasW, canvasH), Map.of(),
+                Map.of(PRODUCT_IMAGE_BIND, productImage));
+    }
+
+    /**
+     * The collage alone as PNG — no template, no preset, no JPEG step (FEATURE_2611_10 D30). Cell photos follow
+     * step 1 above; the size is the caller's. Used for the master cover photo ([대표사진으로 저장], D15).
+     *
+     * @param layout   a validated / adjusted collage
+     * @param products the master's components, ascending id
+     * @param width    collage width in pixels
+     * @param height   collage height in pixels
+     * @return PNG bytes (with alpha, as {@link CollageRenderer#drawPng} draws them)
+     */
+    public byte[] drawCollageOnly(CollageLayout layout, List<Product> products, int width, int height) {
+        return collageRenderer.drawPng(layout, cellPhotos(layout, products), width, height);
+    }
+
+    /** Step 1: decoded cell photos by product id — 400 「셀에 등록상품이 없습니다」 when no cell has a photo. */
+    private Map<Long, BufferedImage> cellPhotos(CollageLayout layout, List<Product> products) {
         Map<Long, BufferedImage> photos = new HashMap<>();
         Map<Long, ProductImage> chosen = chosenPhotos(layout);
         for (Product product : products) {
@@ -89,21 +124,7 @@ public class CollageThumbnailRenderer {
         if (photos.isEmpty()) {
             throw new IllegalArgumentException("셀에 등록상품이 없습니다");
         }
-        boolean useTemplate = Boolean.TRUE.equals(layout.useTemplate());
-        int canvasW = template.getCanvasWidth() == null ? 0 : template.getCanvasWidth();
-        int canvasH = template.getCanvasHeight() == null ? 0 : template.getCanvasHeight();
-        TemplateElement.Region slot = useTemplate ? slotRegion(template) : null;
-        int width = slot != null ? slot.getW() : canvasW;
-        int height = slot != null ? slot.getH() : canvasH;
-        byte[] collage = collageRenderer.drawPng(layout, photos, width, height);
-        List<ImageOp> ops = thumbnailPresetResolver.productImageOps(template);
-        byte[] productImage = ops.isEmpty() ? collage
-                : imageProcessor.process(imageDecodeSupport.flattenOnWhite(collage), ops);
-        if (useTemplate) {
-            return thumbnailRenderer.render(template, textBindings, Map.of(PRODUCT_IMAGE_BIND, productImage));
-        }
-        return thumbnailRenderer.render(wholeCanvas(template, canvasW, canvasH), Map.of(),
-                Map.of(PRODUCT_IMAGE_BIND, productImage));
+        return photos;
     }
 
     /** The chosen gallery photos of the layout's cells by id (one query; deleted ids are simply absent). */

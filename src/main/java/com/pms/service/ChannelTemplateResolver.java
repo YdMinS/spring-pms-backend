@@ -66,8 +66,8 @@ public class ChannelTemplateResolver {
     }
 
     /**
-     * Tenant default thumbnail template (throws if none exists) — also the collage preview without a listing
-     * (FEATURE_2610_21 D46).
+     * Tenant default thumbnail template (throws if none exists) — also the collage preview and the collage cover
+     * photo size without a listing (FEATURE_2610_21 D46 · FEATURE_2611_10 D30).
      */
     public ThumbnailTemplate defaultThumbnail() {
         return thumbnailTemplateRepository.findByIsDefaultTrueAndActiveTrue()

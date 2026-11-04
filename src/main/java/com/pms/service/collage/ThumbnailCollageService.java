@@ -4,6 +4,7 @@ import com.pms.dto.request.CollagePreviewRequest;
 import com.pms.dto.request.CollageSaveRequest;
 import com.pms.dto.response.CollageOverviewResponse;
 import com.pms.dto.response.CollageStageResponse;
+import com.pms.dto.response.MasterProductImageResponse;
 
 /**
  * Collage stages of one master (FEATURE_2610_21 D9 · D20 · D40~D42 · D46). All methods resolve the master
@@ -12,7 +13,8 @@ import com.pms.dto.response.CollageStageResponse;
  * <p>Stage arguments: {@code MASTER} ignores {@code sellerId}/{@code listingId}; {@code SELLER} needs a seller that
  * has a listing of this master (400 otherwise); {@code LISTING} needs a listing of this master (404 otherwise).</p>
  *
- * <p>⚠️ Saving never regenerates a thumbnail (D20) — the listing's [저장 후 재생성] applies it.</p>
+ * <p>⚠️ Saving never regenerates a thumbnail (D20) — the listing's [저장 후 재생성] applies it. The same holds for
+ * {@link #saveAsCover} (FEATURE_2611_10 D32).</p>
  */
 public interface ThumbnailCollageService {
 
@@ -31,4 +33,13 @@ public interface ThumbnailCollageService {
 
     /** Preview JPEG of an unsaved collage — nothing is stored or uploaded (D20 · D35 · D46). */
     byte[] preview(Long masterId, CollagePreviewRequest request);
+
+    /**
+     * [대표사진으로 저장] (FEATURE_2611_10 D15 · D29 ~ D31): draw the stored, switched-on master-default collage
+     * (adjusted to the current components) without template or preset, at the canvas size of the preview template
+     * ({@code listingId} null = the tenant default template), upload it as a master-owned pool image and make it the
+     * cover photo. The previous cover stays in the pool. 400 when the master has fewer than 2 components or no
+     * switched-on master-default collage; 404 when {@code listingId} is not a listing of this master.
+     */
+    MasterProductImageResponse saveAsCover(Long masterId, Long listingId);
 }

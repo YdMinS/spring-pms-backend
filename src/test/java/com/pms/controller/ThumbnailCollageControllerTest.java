@@ -17,10 +17,12 @@ import com.pms.repository.ProductImageRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
+import com.pms.service.ImageStorageService;
 import com.pms.service.ProductImageLoader;
 import com.pms.service.collage.CollageLayouts;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 
@@ -34,6 +36,8 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -46,8 +50,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * Collage stage endpoints (FEATURE_2610_21): authority (401/403), stage inheritance listing ?? seller ?? master
- * (D37 · D41), switch-off (D42), deletion (D21), validation (D3 · D47) and the preview JPEG (D20 · D46).
- * {@link ProductImageLoader} returns a real PNG so the collage is actually drawn.
+ * (D37 · D41), switch-off (D42), deletion (D21), validation (D3 · D47), the preview JPEG (D20 · D46) and
+ * [대표사진으로 저장] (FEATURE_2611_10 D15 · D29 ~ D31). {@link ProductImageLoader} returns a real PNG so the collage is
+ * actually drawn; {@link ImageStorageService} is stubbed so the cover upload does no disk I/O.
  */
 class ThumbnailCollageControllerTest extends BaseIntegrationTest {
 
@@ -59,6 +64,7 @@ class ThumbnailCollageControllerTest extends BaseIntegrationTest {
     @Autowired private ProductImageRepository productImageRepository;
 
     @MockBean private ProductImageLoader productImageLoader;
+    @MockBean private ImageStorageService imageStorageService;
 
     private Long masterId;
     private Long sellerId;
@@ -290,5 +296,85 @@ class ThumbnailCollageControllerTest extends BaseIntegrationTest {
 
         verify(productImageLoader).loadUrl("products/a2.png");
         verify(productImageLoader).loadUrl("products/b1.png");
+    }
+
+    // ------------------------------------------------------------------ POST /cover (FEATURE_2611_10)
+
+    @Test
+    void saveCover_noToken_returns401() throws Exception {
+        mockMvc.perform(post(base() + "/cover")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void saveCover_userToken_returns403() throws Exception {
+        mockMvc.perform(post(base() + "/cover").header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    /**
+     * D15 · D30 · D31: the saved master-default collage is drawn without template (PNG with alpha) at the preview
+     * template's canvas size (300×200, not the 240×160 photo slot), stored as a new master-owned pool image and made
+     * the cover; the previous cover stays in the pool.
+     */
+    @Test
+    void saveCover_drawsMasterCollageAtCanvasSizeAndMakesItTheCover() throws Exception {
+        String imported = mockMvc.perform(post("/api/admin/master-products/" + masterId + "/images/import")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json")
+                        .content(objectMapper.writeValueAsString(Map.of("productImageIds", List.of(photoA2)))))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        long oldCover = objectMapper.readTree(imported).path("data").get(0).path("id").asLong();
+        mockMvc.perform(put("/api/admin/master-products/" + masterId + "/source-image")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json")
+                        .content(objectMapper.writeValueAsString(Map.of("imageId", oldCover))))
+                .andExpect(status().isOk());
+        mockMvc.perform(put(base() + "/stage").param("stage", "MASTER")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json")
+                        .content(saveBody(true, CollageLayouts.initial(List.of(productA, productB)))))
+                .andExpect(status().isOk());
+        given(imageStorageService.uploadBytes(any(), eq("master-pool"), anyString(), eq("image/png")))
+                .willReturn("master-pool/cover.png");
+
+        mockMvc.perform(post(base() + "/cover").param("listingId", listingId.toString())
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.imageUrl").value("master-pool/cover.png"))
+                .andExpect(jsonPath("$.data.isSource").value(true))
+                .andExpect(jsonPath("$.data.productImageId").doesNotExist());
+
+        ArgumentCaptor<byte[]> bytes = ArgumentCaptor.forClass(byte[].class);
+        ArgumentCaptor<String> fileName = ArgumentCaptor.forClass(String.class);
+        verify(imageStorageService).uploadBytes(bytes.capture(), eq("master-pool"), fileName.capture(),
+                eq("image/png"));
+        assertThat(fileName.getValue()).endsWith(".png");
+        BufferedImage drawn = ImageIO.read(new java.io.ByteArrayInputStream(bytes.getValue()));
+        assertThat(drawn.getWidth()).isEqualTo(300);
+        assertThat(drawn.getHeight()).isEqualTo(200);
+        assertThat(drawn.getColorModel().hasAlpha()).isTrue();
+
+        mockMvc.perform(get("/api/admin/master-products/" + masterId + "/images")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].id").value(oldCover))
+                .andExpect(jsonPath("$.data[0].isSource").value(false))
+                .andExpect(jsonPath("$.data[1].imageUrl").value("master-pool/cover.png"))
+                .andExpect(jsonPath("$.data[1].isSource").value(true));
+    }
+
+    /** D29: a master-default stage that is switched off has nothing to draw. */
+    @Test
+    void saveCover_masterCollageSwitchedOff_returns400() throws Exception {
+        mockMvc.perform(put(base() + "/stage").param("stage", "MASTER")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content(saveBody(false, null)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post(base() + "/cover").header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("저장된 마스터 기본 콜라주가 없습니다."));
     }
 }

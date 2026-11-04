@@ -19,12 +19,14 @@ import com.pms.dto.response.CollagePreviewTarget;
 import com.pms.dto.response.CollageProductView;
 import com.pms.dto.response.CollageStageResponse;
 import com.pms.dto.response.CollageStageView;
+import com.pms.dto.response.MasterProductImageResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductImageRepository;
 import com.pms.repository.ThumbnailCollageRepository;
 import com.pms.service.ChannelTemplateResolver;
 import com.pms.service.ListingAssetService;
+import com.pms.service.MasterProductImageService;
 import com.pms.service.MasterProductService;
 import com.pms.service.ThumbnailRenderer;
 import lombok.RequiredArgsConstructor;
@@ -42,7 +44,8 @@ import java.util.Map;
  * {@link ThumbnailCollageService} (FEATURE_2610_21). Stage resolution is {@link ThumbnailCollageResolver#pick}
  * (listing ?? seller ?? master, D37); layouts are adjusted on read (D43); validation is
  * {@link CollageLayouts#validate} plus, on save, the cell-photo check (FEATURE_2610_32 D17); preview rendering is
- * {@link CollageThumbnailRenderer} (D35).
+ * {@link CollageThumbnailRenderer} (D35). The cover photo ({@link #saveAsCover}, FEATURE_2611_10) is drawn by
+ * {@link CollageThumbnailRenderer#drawCollageOnly} and stored through {@link MasterProductImageService}.
  */
 @Service
 @RequiredArgsConstructor
@@ -58,6 +61,7 @@ public class ThumbnailCollageServiceImpl implements ThumbnailCollageService {
     private final CollageThumbnailRenderer collageThumbnailRenderer;
     private final CollageStageTargets collageStageTargets;
     private final ProductImageRepository productImageRepository;
+    private final MasterProductImageService masterProductImageService;
 
     @Override
     public CollageOverviewResponse overview(Long masterId) {
@@ -148,6 +152,30 @@ public class ThumbnailCollageServiceImpl implements ThumbnailCollageService {
         }
         ThumbnailTemplate template = channelTemplateResolver.defaultThumbnail();
         return collageThumbnailRenderer.render(template, fieldDefaults(template), layout, products);
+    }
+
+    @Override
+    @Transactional
+    public MasterProductImageResponse saveAsCover(Long masterId, Long listingId) {
+        MasterProduct master = requireMaster(masterId);
+        if (!masterProductService.isBundle(master.getId())) {
+            throw new IllegalArgumentException("구성품이 2개 이상인 마스터만 콜라주를 만들 수 있습니다.");
+        }
+        ThumbnailCollage own = thumbnailCollageResolver.rowsByScopeKey(master.getId()).get(CollageScopes.MASTER);
+        if (!enabledWithLayout(own)) {
+            throw new IllegalArgumentException("저장된 마스터 기본 콜라주가 없습니다.");
+        }
+        List<Product> products = thumbnailCollageResolver.components(master.getId());
+        CollageLayout layout = CollageLayouts.adjust(own.getLayout(), products.stream().map(Product::getId).toList());
+        ThumbnailTemplate template = listingId == null
+                ? channelTemplateResolver.defaultThumbnail()
+                : channelTemplateResolver.resolveThumbnail(collageStageTargets.requireListing(master.getId(), listingId));
+        int width = template.getCanvasWidth() == null ? 0 : template.getCanvasWidth();
+        int height = template.getCanvasHeight() == null ? 0 : template.getCanvasHeight();
+        byte[] png = collageThumbnailRenderer.drawCollageOnly(layout, products, width, height);
+        MasterProductImageResponse pooled = masterProductImageService.uploadBytesToPool(master.getId(), png,
+                "image/png", ".png");
+        return masterProductImageService.setSourceImage(master.getId(), pooled.getId());
     }
 
     // ---------------------------------------------------------------- helpers

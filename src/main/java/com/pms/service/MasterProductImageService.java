@@ -8,7 +8,8 @@ import java.util.List;
 /**
  * Manages a {@link com.pms.domain.MasterProduct}'s image pool and its field mappings (FEATURE_2608_06 / 37).
  *
- * <p>Every image is uploaded into the pool first ({@link #uploadToPool}); it is then mapped — by drag/select
+ * <p>Every image is uploaded into the pool first ({@link #uploadToPool}, or {@link #uploadBytesToPool} for a
+ * server-drawn image); it is then mapped — by drag/select
  * — onto detail zones and thumbnail template image groups ({@link #setZoneImages}) and/or the cover photo
  * ({@link #setSourceImage}). One pool image can be reused across several fields (M:N via
  * {@code MasterImageZoneAssignment}).</p>
@@ -20,6 +21,13 @@ public interface MasterProductImageService {
 
     /** Upload one image into the master's pool (no zone binding); appended after the current max sortOrder. */
     MasterProductImageResponse uploadToPool(Long masterId, MultipartFile file);
+
+    /**
+     * Store server-drawn image bytes (no multipart, no {@code ImageValidator}) as a master-owned pool image —
+     * same storage category and sortOrder rule as {@link #uploadToPool}, no mapping. Used by the collage
+     * [대표사진으로 저장] (FEATURE_2611_10 D31).
+     */
+    MasterProductImageResponse uploadBytesToPool(Long masterId, byte[] bytes, String contentType, String extension);
 
     /**
      * Import product image slots into the pool as reference entries (live-links, no copy — FEATURE_2608_06 / 40).
