@@ -49,10 +49,13 @@ public interface MasterImageZoneAssignmentRepository extends JpaRepository<Maste
      * {@code ProductImageUrlResolver} (40; a reference entry serves the live product URL). Returns rows of
      * {@code [masterProductId (Long), imageUrl (String)]}; for {@code __source__} each master has at most
      * one row (single-cover invariant).
+     *
+     * <p>⚠️ The reference photo must be an explicit LEFT JOIN — an implicit path ({@code a.image.productImage})
+     * is an inner join and drops pool photos without a reference (collage cover · uploaded photo).</p>
      */
-    @Query("SELECT a.image.masterProduct.id, COALESCE(a.image.productImage.imageUrl, a.image.imageUrl) "
-            + "FROM MasterImageZoneAssignment a "
-            + "WHERE a.zoneId = :zoneId AND a.image.masterProduct.id IN :masterIds")
+    @Query("SELECT i.masterProduct.id, COALESCE(p.imageUrl, i.imageUrl) "
+            + "FROM MasterImageZoneAssignment a JOIN a.image i LEFT JOIN i.productImage p "
+            + "WHERE a.zoneId = :zoneId AND i.masterProduct.id IN :masterIds")
     List<Object[]> findZoneImageUrlsByMasterIds(
             @Param("zoneId") String zoneId, @Param("masterIds") Collection<Long> masterIds);
 
