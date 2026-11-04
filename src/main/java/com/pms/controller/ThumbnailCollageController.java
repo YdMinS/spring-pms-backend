@@ -5,6 +5,7 @@ import com.pms.dto.request.CollagePreviewRequest;
 import com.pms.dto.request.CollageSaveRequest;
 import com.pms.dto.response.CollageOverviewResponse;
 import com.pms.dto.response.CollageStageResponse;
+import com.pms.dto.response.MasterProductImageResponse;
 import com.pms.service.collage.CollageStage;
 import com.pms.service.collage.ThumbnailCollageService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -18,7 +19,8 @@ import org.springframework.web.bind.annotation.*;
 /**
  * Thumbnail collage stages of a master (FEATURE_2610_21). ADMIN-only via the global {@code /api/admin/**} rule
  * (SecurityConfig) — no per-method {@code @PreAuthorize}. Stage = query {@code stage=MASTER|SELLER|LISTING} +
- * {@code sellerId} (SELLER) / {@code listingId} (LISTING).
+ * {@code sellerId} (SELLER) / {@code listingId} (LISTING). {@code POST /cover} = [대표사진으로 저장]
+ * (FEATURE_2611_10 D15 — the master-default collage becomes the master cover photo).
  */
 @RestController
 @RequestMapping("/api/admin/master-products/{masterId}/collage")
@@ -80,5 +82,15 @@ public class ThumbnailCollageController {
         return ResponseEntity.ok()
                 .contentType(MediaType.IMAGE_JPEG)
                 .body(jpeg);
+    }
+
+    @PostMapping("/cover")
+    @Operation(summary = "Draw the saved master-default collage into the pool and make it the cover photo "
+            + "(no regeneration)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<MasterProductImageResponse>> saveAsCover(
+            @PathVariable Long masterId,
+            @RequestParam(required = false) Long listingId) {
+        return ResponseEntity.ok(ResponseDTO.success(thumbnailCollageService.saveAsCover(masterId, listingId)));
     }
 }

@@ -65,9 +65,23 @@ public class MasterProductImageServiceImpl implements MasterProductImageService 
             throw new IllegalArgumentException("업로드 파일을 읽을 수 없습니다", e);
         }
         String contentType = StringUtils.hasText(file.getContentType()) ? file.getContentType() : "image/jpeg";
+        return storeInPool(master, bytes, contentType, ".jpg");
+    }
+
+    @Override
+    @Transactional
+    public MasterProductImageResponse uploadBytesToPool(Long masterId, byte[] bytes, String contentType,
+                                                        String extension) {
+        return storeInPool(requireScopedMaster(masterId), bytes, contentType, extension);
+    }
+
+    /** Upload the bytes, then append a master-owned pool row (imageUrl set, productImage null, no mapping). */
+    private MasterProductImageResponse storeInPool(MasterProduct master, byte[] bytes, String contentType,
+                                                   String extension) {
+        Long masterId = master.getId();
         String url = imageStorageService.uploadBytes(
                 bytes, STORAGE_CATEGORY,
-                "master_" + masterId + "_" + System.currentTimeMillis() + ".jpg", contentType);
+                "master_" + masterId + "_" + System.currentTimeMillis() + extension, contentType);
 
         // Next position = max(sortOrder)+1. Do NOT use size() — a delete leaves a gap and size() would
         // collide with an existing sortOrder.
