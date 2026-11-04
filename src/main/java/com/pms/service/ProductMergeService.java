@@ -7,9 +7,7 @@ import com.pms.domain.ShoppingListItem;
 import com.pms.domain.StockMovementType;
 import com.pms.dto.request.MergeProductsRequest;
 import com.pms.dto.response.MergeProductsResponse;
-import com.pms.dto.response.ProductUsageResponse;
 import com.pms.exception.BusinessException;
-import com.pms.exception.ProductInUseException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.BoxRecipeRepository;
 import com.pms.repository.PriceChangeLogRepository;
@@ -41,13 +39,15 @@ import java.util.Set;
 /**
  * Merge two duplicate products into one (FEATURE_2609_69 / B).
  *
- * <p>🔴 <b>Nothing here is automatic.</b> Only the values a person picked and the history a person ticked
- * move to the target; the source is then soft-deleted through the ordinary guarded delete. Everything runs
- * in one transaction — a failure leaves both products exactly as they were (PLAN D6).</p>
+ * <p>🔴 <b>Nothing here is automatic.</b> Of the fields and the history, only the values a person picked and the
+ * history a person ticked move to the target; the source is then soft-deleted through the ordinary guarded
+ * delete. Everything runs in one transaction — a failure leaves both products exactly as they were (PLAN D6).</p>
  *
- * <p>🔴 <b>Links are never migrated</b> (PLAN D6-a): {@code master_product_component} rows stay put. A source
- * that still carries one is refused with 409 <b>before</b> any row moves — migrating history first and then
- * failing the delete would make the operator come back.</p>
+ * <p>🔁 <b>Master links move with every merge</b> (FEATURE_2611_09 / D1 — reverses 2609_69 D6-a), through
+ * {@link MergeMasterLinkService}: its refusals (a master holding both products, a choice missing) are raised
+ * <b>before</b> any row moves (D6) — migrating history first and then failing would make the operator come back.
+ * The masters it empties are deleted as the last step before the source's delete (D20): that delete removes
+ * edited S3 photos before the commit.</p>
  *
  * <p>🔴 <b>No cost recalculation is triggered</b> (PLAN D10). A line's cost is baked in when it ships, so
  * moving purchase history cannot change what already left; future lines using the surviving product's
@@ -64,7 +64,7 @@ public class ProductMergeService {
 
     private final ProductRepository productRepository;
     private final ProductService productService;
-    private final ProductUsageService productUsageService;
+    private final MergeMasterLinkService mergeMasterLinkService;
     private final ProductMergeSnapshotWriter snapshotWriter;
     private final PurchaseRecordRepository purchaseRecordRepository;
     private final StockMovementRepository stockMovementRepository;
@@ -81,7 +81,8 @@ public class ProductMergeService {
      * Run one merge.
      *
      * @throws ResourceNotFoundException either product (or the chosen representative image) does not exist
-     * @throws BusinessException         400 for a bad request, 409 for a barcode clash or a remaining link
+     * @throws BusinessException         400 for a bad request or a bad master option choice, 409 for a barcode
+     *                                   clash or a master the links cannot move into (FEATURE_2611_09 / D4 · D27)
      */
     @Transactional
     public MergeProductsResponse merge(MergeProductsRequest request) {
@@ -100,13 +101,16 @@ public class ProductMergeService {
         MergeProductsRequest.TransferOptions transfer = request.transfer();
 
         assertBarcodeFree(fields.barcodeId(), targetId, sourceId);
-        assertSourceUnlinked(sourceId);
         ProductImage representative = resolveRepresentative(fields.representativeImageId(),
                 targetId, sourceId, transfer.images());
         assertLotRecordsMoveTogether(sourceId, transfer);
+        // FEATURE_2611_09 / D6: every master refusal is raised here, before anything moves.
+        MergeMasterLinkService.Plan masterPlan =
+                mergeMasterLinkService.plan(target, source, request.masterOptionChoices());
 
-        // Snapshot BEFORE anything moves (PLAN D7). A write failure throws and rolls the merge back.
-        String snapshotFileName = snapshotWriter.write(target, source);
+        // Snapshot BEFORE anything moves (PLAN D7 · FEATURE_2611_09 / D22). A write failure throws and rolls the
+        // merge back.
+        String snapshotFileName = snapshotWriter.write(target, source, masterPlan);
 
         // 🔴 Release the source's barcode BEFORE the target claims it. The usual merge is "the surviving
         // product takes the duplicate's barcode", and the source keeps every column through its soft
@@ -154,19 +158,28 @@ public class ProductMergeService {
         // be rewritten without colliding with the target's own key (PLAN D12).
         dropped.put("boxRecipes", boxRecipeRepository.deleteByProductIdInKey(sourceId));
 
+        // FEATURE_2611_09 / D1 · D11: the master links, with no checkbox (D2). Counted before applyFields so the
+        // migration note carries it.
+        List<Long> changedMasterIds = mergeMasterLinkService.moveLinks(masterPlan, target, source);
+        moved.put("masterProducts", masterPlan.sourceMasterCount());
+
         String representativeUrl = renumberGallery(targetId, sourceImageIds, representative);
 
         applyFields(target, fields, representativeUrl, transfer.appendMemo(), sourceId, sourceName, moved);
 
         mergePurchasePlaces(target, sourceId);
 
+        // FEATURE_2611_09 / D20: the emptied masters go right before the source — their photo delete removes S3
+        // files before the commit, so nothing that can still roll back may follow it but the delete below.
+        mergeMasterLinkService.deleteEmptiedMasters(masterPlan);
+
         // Soft delete last, through the ordinary guarded path (01). If the guard fires here, a link was
-        // missed and the whole transaction rolls back — there is deliberately no guard-free variant.
+        // missed and the whole transaction rolls back — there is deliberately no guard-free variant (D9).
         productService.deleteProduct(sourceId);
 
-        log.info("Merged product {} into {} (moved={}, dropped={}, snapshot={})",
-                sourceId, targetId, moved, dropped, snapshotFileName);
-        return new MergeProductsResponse(targetId, moved, dropped, snapshotFileName);
+        log.info("Merged product {} into {} (moved={}, dropped={}, snapshot={}, masters={})",
+                sourceId, targetId, moved, dropped, snapshotFileName, changedMasterIds);
+        return new MergeProductsResponse(targetId, moved, dropped, snapshotFileName, changedMasterIds);
     }
 
     private Product requireProduct(Long id) {
@@ -213,17 +226,6 @@ public class ProductMergeService {
             return;
         }
         productRepository.saveAndFlush(source.toBuilder().barcodeId(null).build());
-    }
-
-    /**
-     * 🔴 Checked before anything moves. The delete at the end would catch this too, but by then the history
-     * has already been migrated and the operator has to start over.
-     */
-    private void assertSourceUnlinked(Long sourceId) {
-        ProductUsageResponse usage = productUsageService.getUsage(sourceId);
-        if (!usage.deletable()) {
-            throw new ProductInUseException(usage.blockers());
-        }
     }
 
     /**
@@ -445,6 +447,7 @@ public class ProductMergeService {
         addPart(parts, moved, "images", "사진", "장");
         addPart(parts, moved, "shoppingListItems", "구매목록", "건");
         addPart(parts, moved, "priceChangeLogs", "가격이력", "건");
+        addPart(parts, moved, "masterProducts", "마스터", "개");
 
         String head = "[" + LocalDate.now() + "] 물품 #" + sourceId + " 「" + sourceName + "」 정리하며 ";
         return parts.isEmpty() ? head + "가져온 기록 없이 병합함" : head + String.join(" · ", parts) + "을 가져옴";

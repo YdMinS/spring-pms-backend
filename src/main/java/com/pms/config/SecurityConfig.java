@@ -49,6 +49,8 @@ public class SecurityConfig {
                         // without this line /api/products/merge falls through to anyRequest().authenticated()
                         // and a plain user could merge products.
                         .requestMatchers(HttpMethod.POST, "/api/products/merge").hasRole("ADMIN")
+                        // Merge preview (FEATURE_2611_09 / D28): same reason — an exact matcher of its own.
+                        .requestMatchers(HttpMethod.POST, "/api/products/merge/preview").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PATCH, "/api/products/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.DELETE, "/api/products/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PUT, "/api/products/*/image").hasRole("ADMIN")

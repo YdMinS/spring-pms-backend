@@ -5,14 +5,16 @@ import java.util.List;
 /**
  * Where a single product is currently used (FEATURE_2609_69 / A).
  *
- * <p>Links block deletion and are <b>never migrated automatically</b> (PLAN D6-a) — the operator has to
- * unlink them by hand, the same rule that makes a master require its options to be removed first:</p>
+ * <p>Links block deletion: a plain delete never moves them, so the operator unlinks them by hand — the same
+ * rule that makes a master require its options to be removed first. Only the product merge moves them to the
+ * kept product (FEATURE_2611_09 / D1 — reverses PLAN D6-a):</p>
  * <ul>
  *   <li>{@code masterProducts} — {@code master_product_component}, the real master ↔ product mapping.
  *       Unlinked on the master product screen.</li>
- *   <li>{@code listingOptions} — 그 마스터를 쓰는 채널 옵션들. 🔴 2609_71 이후 <b>끊는 곳은 마스터 한
- *       군데</b>다: 셀 구성품 사본이 사라져 이 목록은 마스터 옵션 items 를 FK 로 따라 내려온 파급 범위이며,
- *       비어 있지 않으면 {@code masterProducts} 도 반드시 비어 있지 않다.</li>
+ *   <li>{@code listingOptions} — the channel options that use those masters. 🔴 Since 2609_71 <b>they are
+ *       unlinked in one place, the master</b>: the cell component copies are gone, so this list is the reach that
+ *       follows the master option items down their FK, and when it is not empty {@code masterProducts} is never
+ *       empty either.</li>
  * </ul>
  *
  * <p>{@code master_product_option_item} is not an independent mapping — it is the quantity vector over
