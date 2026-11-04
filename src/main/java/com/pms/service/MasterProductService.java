@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.domain.Product;
 import com.pms.dto.request.MasterCategoryRequest;
 import com.pms.dto.request.MasterCompositionRequest;
 import com.pms.dto.request.MasterOptionRequest;
@@ -146,6 +147,27 @@ public interface MasterProductService {
      * 구성으로 상세·판매가를 되돌려 놓는다. 호출은 커밋 뒤 컨트롤러가 한다(2609_64/D12).</p>
      */
     MasterProductResponse updateComposition(Long id, MasterCompositionRequest request);
+
+    /**
+     * Put {@code to} in place of {@code from} in one master's component set (FEATURE_2611_09 / D1 · D3 · D7) —
+     * the product merge moves the discarded product's master links with it.
+     *
+     * <p>🔴 The existing component row and option item rows are rewritten in place (only their product changes,
+     * the quantities stay) — never deleted and re-created, so the row ids in the merge snapshot stay valid.
+     * Every option that carried {@code from} then gets the same in-transaction follow-up as a composition save
+     * whose quantities moved: its cells are re-priced and the on-market cells carrying it are flagged
+     * [수정 요청]. Nothing is sent to a market.</p>
+     *
+     * <p>⚠️ Asset regeneration is not called here, for the reason given on {@link #updateComposition}: the caller
+     * runs {@code MasterPropagationService.propagate} after the merge has committed.</p>
+     *
+     * <p>The caller has already refused a master holding both products (D4) — {@code to} is never already in
+     * this master, so the unique keys cannot fire.</p>
+     *
+     * @param masterId the master holding {@code from} (tenant-scoped; 404 if absent)
+     * @return how many option item rows were rewritten
+     */
+    int replaceComponentProduct(Long masterId, Product from, Product to);
 
     /**
      * Replace the master's tag pool (33). The list is order-preserving deduped; an empty list clears it.

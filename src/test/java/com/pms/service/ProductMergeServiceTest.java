@@ -9,9 +9,7 @@ import com.pms.domain.Seller;
 import com.pms.domain.ShoppingListItem;
 import com.pms.dto.request.MergeProductsRequest;
 import com.pms.dto.response.MergeProductsResponse;
-import com.pms.dto.response.ProductUsageResponse;
 import com.pms.exception.BusinessException;
-import com.pms.exception.ProductInUseException;
 import com.pms.repository.BoxRecipeRepository;
 import com.pms.repository.MasterProductComponentRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
@@ -31,13 +29,16 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -45,6 +46,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -57,9 +59,10 @@ import static org.mockito.Mockito.verifyNoInteractions;
  * here (backend rule: services are mocked, controllers are integration). What a mock cannot prove — bulk
  * flush, FK and unique behaviour, and the rollback — lives in {@code ProductMergeIntegrationTest}.</p>
  *
- * <p>🔴 The three link repositories below are declared as mocks although they are deliberately <b>not</b>
- * constructor dependencies of the service. Verifying "never called" on a collaborator the service cannot
- * even reach is the strongest available statement of PLAN D6-a: links are never migrated.</p>
+ * <p>🔴 The two link repositories below are declared as mocks although they are deliberately <b>not</b>
+ * constructor dependencies of the service. Since FEATURE_2611_09 the master links do move, but only through
+ * {@link MergeMasterLinkService} — verifying "never called" on a repository the service cannot even reach keeps
+ * it that way (one owner for the master rules).</p>
  */
 @ExtendWith(MockitoExtension.class)
 @DisplayName("ProductMergeService - Unit Tests")
@@ -70,7 +73,7 @@ class ProductMergeServiceTest {
 
     @Mock private ProductRepository productRepository;
     @Mock private ProductService productService;
-    @Mock private ProductUsageService productUsageService;
+    @Mock private MergeMasterLinkService mergeMasterLinkService;
     @Mock private ProductMergeSnapshotWriter snapshotWriter;
     @Mock private PurchaseRecordRepository purchaseRecordRepository;
     @Mock private StockMovementRepository stockMovementRepository;
@@ -107,17 +110,16 @@ class ProductMergeServiceTest {
         given(productRepository.findScopedById(SOURCE_ID)).willReturn(Optional.of(source));
     }
 
-    private void givenSourceIsUnlinked() {
-        given(productUsageService.getUsage(SOURCE_ID)).willReturn(usage(true, List.of()));
-    }
+    /** The source sits in no master — the master step has nothing to do (FEATURE_2611_09). */
+    private static final MergeMasterLinkService.Plan NO_MASTERS =
+            new MergeMasterLinkService.Plan(0, List.of(), List.of());
 
-    private ProductUsageResponse usage(boolean deletable, List<String> blockers) {
-        return new ProductUsageResponse(SOURCE_ID, List.of(), List.of(),
-                new ProductUsageResponse.HistoryCounts(0, 0, 0, 0, 0, 0), deletable, blockers);
+    private void givenNoMasterLinks() {
+        given(mergeMasterLinkService.plan(target, source, null)).willReturn(NO_MASTERS);
     }
 
     private void givenSnapshotIsWritten() {
-        given(snapshotWriter.write(any(), any())).willReturn("merge_10_589_20260922120000.json");
+        given(snapshotWriter.write(any(), any(), any())).willReturn("merge_10_589_20260922120000.json");
     }
 
     private MergeProductsRequest.TransferOptions allTransfersOn(boolean appendMemo) {
@@ -135,7 +137,7 @@ class ProductMergeServiceTest {
 
     private MergeProductsRequest request(MergeProductsRequest.MergedFields fields,
                                          MergeProductsRequest.TransferOptions transfer) {
-        return new MergeProductsRequest(TARGET_ID, SOURCE_ID, fields, transfer);
+        return new MergeProductsRequest(TARGET_ID, SOURCE_ID, fields, transfer, null);
     }
 
     private ProductImage image(Long id, Product owner, int sortOrder, String url) {
@@ -171,7 +173,7 @@ class ProductMergeServiceTest {
     @DisplayName("Only the ticked history moves - the rest is never reassigned")
     void testMergeMovesOnlyCheckedHistory() {
         givenBothProductsExist();
-        givenSourceIsUnlinked();
+        givenNoMasterLinks();
         givenSnapshotIsWritten();
         given(purchaseRecordRepository.reassignProduct(target, SOURCE_ID)).willReturn(2);
 
@@ -193,7 +195,7 @@ class ProductMergeServiceTest {
     @DisplayName("box_recipe rows holding the source id are deleted, with no checkbox")
     void testMergeDeletesBoxRecipeRowsOfSource() {
         givenBothProductsExist();
-        givenSourceIsUnlinked();
+        givenNoMasterLinks();
         givenSnapshotIsWritten();
         given(boxRecipeRepository.deleteByProductIdInKey(SOURCE_ID)).willReturn(2);
 
@@ -203,7 +205,7 @@ class ProductMergeServiceTest {
         assertThat(response.droppedOnConflict()).containsEntry("boxRecipes", 2);
     }
 
-    // ---- links are never migrated ---------------------------------------------------------------
+    // ---- lot records · master links (FEATURE_2611_09) ----------------------------------------------
 
     /**
      * FEATURE_2610_19 D150: a source with a lot record (here an undecided purchase) must move its purchase records
@@ -213,7 +215,6 @@ class ProductMergeServiceTest {
     @DisplayName("A source with lot records must move purchase records and stock rows together")
     void testMergeRejectsSplitLotRecords() {
         givenBothProductsExist();
-        givenSourceIsUnlinked();
         given(purchaseRecordRepository.existsByProduct_IdAndSellerIsNull(SOURCE_ID)).willReturn(true);
         MergeProductsRequest.TransferOptions onlyPurchases =
                 new MergeProductsRequest.TransferOptions(true, false, true, true, true, true, false);
@@ -228,41 +229,65 @@ class ProductMergeServiceTest {
     }
 
     @Test
-    @DisplayName("A master link on the source blocks the merge with 409 and moves nothing")
-    void testMergeRejectsWhenMasterLinkRemains() {
+    @DisplayName("A master refusal (FEATURE_2611_09 D4) stops the merge before anything moves")
+    void testMergeMasterRefusalMovesNothing() {
         givenBothProductsExist();
-        given(productUsageService.getUsage(SOURCE_ID))
-                .willReturn(usage(false, List.of("마스터 상품 1개(마스터 상품 화면에서 해제)")));
+        given(mergeMasterLinkService.plan(target, source, null)).willThrow(new BusinessException(
+                "남길 물품과 버릴 물품이 함께 들어 있는 마스터 상품이 있습니다: 견과 세트(#7). "
+                        + "마스터 구성 편집에서 한쪽을 먼저 빼 주세요.", HttpStatus.CONFLICT));
 
         assertThatThrownBy(() -> service.merge(request(noFields(), allTransfersOn(true))))
-                .isInstanceOf(ProductInUseException.class)
-                .hasMessageContaining("마스터 상품 1개");
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("견과 세트(#7)");
 
         verifyNoInteractions(snapshotWriter, purchaseRecordRepository, stockMovementRepository,
                 shipmentParcelItemRepository, productImageRepository, priceChangeLogRepository,
                 shoppingListItemRepository, boxRecipeRepository);
+        verify(mergeMasterLinkService, never()).moveLinks(any(), any(), any());
         verify(productService, never()).deleteProduct(any());
     }
 
     @Test
-    @DisplayName("A listing-option link on the source blocks the merge with 409")
-    void testMergeRejectsWhenListingLinkRemains() {
+    @DisplayName("Master links move after the snapshot; emptied masters are deleted right before the source (D1 · D20)")
+    void testMergeMovesMasterLinksAndDeletesEmptiedMastersLast() {
         givenBothProductsExist();
-        given(productUsageService.getUsage(SOURCE_ID))
-                .willReturn(usage(false, List.of("판매 옵션 2개(셀 화면에서 해제)")));
+        MergeMasterLinkService.Plan plan = new MergeMasterLinkService.Plan(2, List.of(7L),
+                List.of(new MergeMasterLinkService.Pair(8L, 9L, Map.of())));
+        given(mergeMasterLinkService.plan(target, source, null)).willReturn(plan);
+        givenSnapshotIsWritten();
+        given(mergeMasterLinkService.moveLinks(plan, target, source)).willReturn(List.of(7L, 9L));
 
-        assertThatThrownBy(() -> service.merge(request(noFields(), allTransfersOn(true))))
-                .isInstanceOf(ProductInUseException.class)
-                .hasMessageContaining("판매 옵션 2개");
+        MergeProductsResponse response = service.merge(request(noFields(), noTransfers()));
 
-        verifyNoInteractions(snapshotWriter);
+        InOrder order = inOrder(snapshotWriter, mergeMasterLinkService, productRepository, productService);
+        order.verify(snapshotWriter).write(target, source, plan);
+        order.verify(mergeMasterLinkService).moveLinks(plan, target, source);
+        order.verify(productRepository).save(any());
+        order.verify(mergeMasterLinkService).deleteEmptiedMasters(plan);
+        order.verify(productService).deleteProduct(SOURCE_ID);
+        assertThat(response.changedMasterIds()).containsExactly(7L, 9L);
+        assertThat(response.moved()).containsEntry("masterProducts", 2);
     }
 
     @Test
-    @DisplayName("A normal merge never touches the link repositories")
+    @DisplayName("The migration note counts the masters the source was in (D11)")
+    void testMergeMemoCountsMasters() {
+        givenBothProductsExist();
+        given(mergeMasterLinkService.plan(target, source, null))
+                .willReturn(new MergeMasterLinkService.Plan(2, List.of(7L, 8L), List.of()));
+        givenSnapshotIsWritten();
+
+        service.merge(request(noFields(),
+                new MergeProductsRequest.TransferOptions(false, false, false, false, false, false, true)));
+
+        assertThat(savedTarget().getDescription()).contains("마스터 2개");
+    }
+
+    @Test
+    @DisplayName("The merge itself never writes the link repositories — MergeMasterLinkService does")
     void testMergeDoesNotTouchLinks() {
         givenBothProductsExist();
-        givenSourceIsUnlinked();
+        givenNoMasterLinks();
         givenSnapshotIsWritten();
         given(productImageRepository.findByProductIdOrderBySortOrderAsc(SOURCE_ID)).willReturn(List.of());
         given(shoppingListItemRepository.findByProductId(SOURCE_ID)).willReturn(List.of());
@@ -280,7 +305,7 @@ class ProductMergeServiceTest {
     @DisplayName("A shopping row on an order line the target already sits on is dropped, not summed")
     void testMergeDropsConflictingShoppingListItem() {
         givenBothProductsExist();
-        givenSourceIsUnlinked();
+        givenNoMasterLinks();
         givenSnapshotIsWritten();
         ShoppingListItem itemOnLine100 = shoppingRow(1L, 100L, 3);
         ShoppingListItem itemOnLine200 = shoppingRow(2L, 200L, 5);
@@ -304,7 +329,7 @@ class ProductMergeServiceTest {
     @DisplayName("Conflicting shopping quantities are not added together")
     void testMergeDoesNotSumShoppingQuantity() {
         givenBothProductsExist();
-        givenSourceIsUnlinked();
+        givenNoMasterLinks();
         givenSnapshotIsWritten();
         ShoppingListItem sourceRow = shoppingRow(1L, 100L, 3);   // target already has 2 on line 100
         given(shoppingListItemRepository.findOrderLineIdsByProductId(TARGET_ID)).willReturn(Set.of(100L));
@@ -322,7 +347,7 @@ class ProductMergeServiceTest {
     @DisplayName("A manual row collides only with the target's manual row of the same seller (FEATURE_2610_09 D18)")
     void testMergeManualRowCollidesPerSeller() {
         givenBothProductsExist();
-        givenSourceIsUnlinked();
+        givenNoMasterLinks();
         givenSnapshotIsWritten();
         ShoppingListItem manualOfSeller3 = shoppingRow(1L, null, 0).toBuilder()
                 .seller(Seller.builder().id(3L).build()).manualQty(2).build();
@@ -348,7 +373,7 @@ class ProductMergeServiceTest {
     @DisplayName("Only the fields that were provided are overwritten")
     void testMergeOverwritesOnlyProvidedFields() {
         givenBothProductsExist();
-        givenSourceIsUnlinked();
+        givenNoMasterLinks();
         givenSnapshotIsWritten();
         MergeProductsRequest.MergedFields fields = new MergeProductsRequest.MergedFields(
                 "원더풀 피스타치오 1kg", null, "014113950374", null, null,
@@ -368,7 +393,7 @@ class ProductMergeServiceTest {
     void testMergeAppendsMemoWhenEnabled() {
         target = target.toBuilder().description("기존 설명").build();
         givenBothProductsExist();
-        givenSourceIsUnlinked();
+        givenNoMasterLinks();
         givenSnapshotIsWritten();
         given(purchaseRecordRepository.reassignProduct(target, SOURCE_ID)).willReturn(3);
 
@@ -387,7 +412,7 @@ class ProductMergeServiceTest {
     void testMergeSkipsMemoWhenDisabled() {
         target = target.toBuilder().description("기존 설명").build();
         givenBothProductsExist();
-        givenSourceIsUnlinked();
+        givenNoMasterLinks();
         givenSnapshotIsWritten();
 
         service.merge(request(noFields(), noTransfers()));
@@ -401,7 +426,7 @@ class ProductMergeServiceTest {
     @DisplayName("Migrated images are re-numbered so no two share a position")
     void testMergeRenumbersImageSortOrder() {
         givenBothProductsExist();
-        givenSourceIsUnlinked();
+        givenNoMasterLinks();
         givenSnapshotIsWritten();
         ProductImage sourceFirst = image(31L, source, 0, "https://cdn/s0.jpg");
         ProductImage sourceSecond = image(32L, source, 1, "https://cdn/s1.jpg");
@@ -430,7 +455,7 @@ class ProductMergeServiceTest {
     @DisplayName("The chosen representative becomes position 0 and the product's imageUrl")
     void testMergeSetsRepresentativeImage() {
         givenBothProductsExist();
-        givenSourceIsUnlinked();
+        givenNoMasterLinks();
         givenSnapshotIsWritten();
         ProductImage sourceImage = image(31L, source, 0, "https://cdn/s0.jpg");
         given(productImageRepository.findById(31L)).willReturn(Optional.of(sourceImage));
@@ -458,7 +483,6 @@ class ProductMergeServiceTest {
     @DisplayName("A source image cannot be the representative when images are not migrated")
     void testMergeRejectsSourceImageAsRepresentativeWhenImagesOff() {
         givenBothProductsExist();
-        givenSourceIsUnlinked();
         given(productImageRepository.findById(31L))
                 .willReturn(Optional.of(image(31L, source, 0, "https://cdn/s0.jpg")));
 
@@ -499,10 +523,10 @@ class ProductMergeServiceTest {
     @DisplayName("Target and source must differ")
     void testMergeRejectsSameId() {
         assertThatThrownBy(() -> service.merge(new MergeProductsRequest(
-                TARGET_ID, TARGET_ID, noFields(), allTransfersOn(true))))
+                TARGET_ID, TARGET_ID, noFields(), allTransfersOn(true), null)))
                 .isInstanceOf(BusinessException.class);
 
-        verifyNoInteractions(productRepository, productUsageService, snapshotWriter);
+        verifyNoInteractions(productRepository, mergeMasterLinkService, snapshotWriter);
     }
 
     @Test
@@ -525,7 +549,7 @@ class ProductMergeServiceTest {
     @DisplayName("Purchase places are never picked — the target gains the places only the source had")
     void testMergeAddsSourceOnlyPurchasePlacesToTarget() {
         givenBothProductsExist();
-        givenSourceIsUnlinked();
+        givenNoMasterLinks();
         givenSnapshotIsWritten();
         PurchasePlace emart = PurchasePlace.builder().id(1L).name("이마트").sortOrder(0).build();
         PurchasePlace noBrand = PurchasePlace.builder().id(3L).name("노브랜드").sortOrder(2).build();
@@ -551,7 +575,7 @@ class ProductMergeServiceTest {
     @DisplayName("The source is soft-deleted through the guarded delete, after the history moved")
     void testMergeSoftDeletesSource() {
         givenBothProductsExist();
-        givenSourceIsUnlinked();
+        givenNoMasterLinks();
         givenSnapshotIsWritten();
 
         service.merge(request(noFields(), noTransfers()));
@@ -565,12 +589,12 @@ class ProductMergeServiceTest {
     @DisplayName("The snapshot is written before anything moves and its name comes back")
     void testMergeWritesSnapshotBeforeMoving() {
         givenBothProductsExist();
-        givenSourceIsUnlinked();
+        givenNoMasterLinks();
         givenSnapshotIsWritten();
 
         MergeProductsResponse response = service.merge(request(noFields(), noTransfers()));
 
-        verify(snapshotWriter).write(target, source);
+        verify(snapshotWriter).write(target, source, NO_MASTERS);
         assertThat(response.snapshotFileName()).isEqualTo("merge_10_589_20260922120000.json");
     }
 }

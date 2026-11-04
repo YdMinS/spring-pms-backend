@@ -1,31 +1,54 @@
 package com.pms.dto.request;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * Merge two duplicate products into one (FEATURE_2609_69 / B).
  *
- * <p>🔴 <b>This is not an automatic merge.</b> Only the values a person picked ({@link MergedFields}) and
- * the history a person ticked ({@link TransferOptions}) move to {@code targetProductId}; the source is then
- * soft-deleted. Everything runs in one transaction — a failure changes nothing (PLAN D6).</p>
+ * <p>🔴 <b>This is not an automatic merge.</b> Of the fields and the history, only the values a person picked
+ * ({@link MergedFields}) and the history a person ticked ({@link TransferOptions}) move to
+ * {@code targetProductId}; the source is then soft-deleted. Everything runs in one transaction — a failure
+ * changes nothing (PLAN D6).</p>
  *
- * <p>🔴 <b>Links are never migrated</b> (PLAN D6-a): {@code master_product_component} rows stay where they
- * are. If the source still carries one, the merge is refused with 409 and the operator unlinks it on the
- * master product screen first — 2609_71 이후 끊는 곳은 마스터 한 군데다.</p>
+ * <p>🔁 <b>Master links move with every merge</b> (FEATURE_2611_09 / D1 · D2 — reverses 2609_69 D6-a): the
+ * source's {@code master_product_component} rows and option quantity rows are rewritten to the target, with
+ * no checkbox. A master whose component set would then equal another master's is deleted and its listings move
+ * to that other master (D5 · D16 · D17 · D20) — {@link #masterOptionChoices} says which option of the
+ * surviving master each of its options becomes (D18 · D23 · D24).</p>
  *
- * @param targetProductId the product that survives
- * @param sourceProductId the product that gets soft-deleted
- * @param fields          values to overwrite on the target; a null field keeps the target's own value
- * @param transfer        which history tables to move — the screen sends every box ticked (PLAN D6-b)
+ * @param targetProductId     the product that survives
+ * @param sourceProductId     the product that gets soft-deleted
+ * @param fields              values to overwrite on the target; a null field keeps the target's own value
+ * @param transfer            which history tables to move — the screen sends every box ticked (PLAN D6-b)
+ * @param masterOptionChoices one entry per option of every master the merge deletes (FEATURE_2611_09 / D23);
+ *                            null = empty. A missing entry, or a target option outside the surviving master,
+ *                            is a 400 (D28). Entries for other options are ignored.
  */
 public record MergeProductsRequest(
         @NotNull Long targetProductId,
         @NotNull Long sourceProductId,
         @NotNull MergedFields fields,
-        @NotNull TransferOptions transfer
+        @NotNull TransferOptions transfer,
+        List<@Valid MasterOptionChoice> masterOptionChoices
 ) {
+
+    /**
+     * Where one option of a deleted master goes (FEATURE_2611_09 / D23 · D24).
+     *
+     * @param sourceOptionId the deleted master's option
+     * @param targetOptionId an option of the surviving master; wins when set
+     * @param newOptionName  used only when {@code targetOptionId} is null: create an option of this name (trimmed)
+     *                       on the surviving master, with the deleted option's quantities (D24 ④)
+     */
+    public record MasterOptionChoice(
+            @NotNull Long sourceOptionId,
+            Long targetOptionId,
+            String newOptionName
+    ) {}
 
     /**
      * Per-table opt-in for history migration. An unticked table is left on the source and is buried with it

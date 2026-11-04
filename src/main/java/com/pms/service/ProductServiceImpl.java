@@ -510,8 +510,9 @@ public class ProductServiceImpl implements ProductService {
 
         // Deletion guard (FEATURE_2609_69 / A): a product still composing a master or a channel listing
         // option may not be deleted. Since this is a soft delete no FK would fire — those rows would just
-        // keep pointing at a hidden product. The links are never migrated automatically (PLAN D6-a), so the
-        // operator unlinks them first. 🔴 The merge flow (03) uses this same path: no guard-free variant.
+        // keep pointing at a hidden product. A plain delete never moves the links, so the operator unlinks them
+        // first; the merge moves them before it gets here (FEATURE_2611_09 / D1). 🔴 The merge flow (03) uses this
+        // same path: no guard-free variant.
         ProductUsageResponse usage = productUsageService.getUsage(id);
         if (!usage.deletable()) {
             throw new ProductInUseException(usage.blockers());
