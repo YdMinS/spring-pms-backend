@@ -36,9 +36,8 @@ public class ListingChannelImageServiceImpl implements ListingChannelImageServic
     private static final Logger log = LoggerFactory.getLogger(ListingChannelImageServiceImpl.class);
 
     /**
-     * {@link ListingChannel#fetchProduct} 를 실제로 구현한 플랫폼. ⚠️ 어댑터 기본 구현의
-     * {@code UnsupportedOperationException} 은 전역 핸들러가 없어 <b>500</b> 이 되므로 여기서 400 으로 막는다
-     * ({@code CoupangListingImportServiceImpl} 과 같은 이유·같은 방식).
+     * Platforms whose market photos can be taken as product photos. Every adapter reads a product (FEATURE_2611_11 /
+     * D17), but this feature stays Coupang-only (discussion LISTING_MARKET_VALUE_SOURCE §4) — others get a 400 here.
      */
     private static final Set<Platform> SUPPORTED_PLATFORMS = Set.of(Platform.COUPANG);
 

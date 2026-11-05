@@ -404,7 +404,7 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
         if (cell.getPlatformProductId() == null) {
             throw new IllegalArgumentException("미등록");
         }
-        // fetchProduct's default implementation throws UnsupportedOperationException (→ 500) — gate first.
+        // Option linking reads Coupang option ids (vendorItemId); other markets give none (FEATURE_2610_13 / D128) — gate first.
         if (cell.getPlatform() != Platform.COUPANG) {
             throw new IllegalArgumentException(cell.getPlatform() + " 옵션 연결 미지원");
         }

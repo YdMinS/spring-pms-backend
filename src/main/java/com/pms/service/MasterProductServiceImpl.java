@@ -71,6 +71,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
@@ -290,7 +291,8 @@ public class MasterProductServiceImpl implements MasterProductService {
                     listingsByKey.getOrDefault(matchKey(sellerId, acc.getPlatform()), List.of());
             List<MatrixCell> cells = new ArrayList<>();
             for (ProductListing pl : cellListings) {
-                // 67: registration name is always auto-generated per channel from this listing's active options.
+                // 67: registration name is auto-generated per channel from this listing's active options — unless the
+                // listing stores its own (FEATURE_2611_11 / D4 · D15: stored ?? automatic).
                 List<ProductListingOption> activeOptions =
                         activeOptionsByListing.getOrDefault(pl.getId(), List.of());
                 // 69: suffix = channel(this row's account) ?? master ?? seller ?? system. Pure overload reuses the
@@ -317,7 +319,9 @@ public class MasterProductServiceImpl implements MasterProductService {
                         .platformProductId(pl.getPlatformProductId())
                         .sellingPrice(priceByListing.get(pl.getId()))
                         .auctionSellingPrice(auctionPriceByListing.get(pl.getId()))
-                        .registrationName(registrationNameGenerator.generate(master, activeOptions, suffix))
+                        .registrationName(StringUtils.hasText(pl.getRegistrationName()) ? pl.getRegistrationName()
+                                : registrationNameGenerator.generate(master, activeOptions, suffix))
+                        .registrationNameAuto(!StringUtils.hasText(pl.getRegistrationName()))
                         .status(pl.getStatus() != null ? pl.getStatus().name() : null)
                         .categoryCode(category == null ? null : category.category().getCode())
                         .categoryName(category == null ? null : category.category().getName())

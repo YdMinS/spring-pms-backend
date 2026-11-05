@@ -1,0 +1,103 @@
+# Market values of a listing (FEATURE_2611_11).
+#   125-1 product_listing.registration_name = this listing's own 「등록상품명」; NULL = the automatic name (D4 · D5).
+#         Existing rows start NULL — exactly the old behaviour (always automatic).
+#   125-2 listing_market_image = the marketplace photos of a listing, copied into our storage (D8 · D21 · D36 · D37).
+#         product_listing_option_id is a plain id (no FK) — NULL = a product-level photo.
+#   125-3 tenant_elevenst_setting = the company's 11st photo lookup key, encrypted (D39). One row per tenant.
+# ⚠️ listing_market_image.representative is BOOLEAN -> the 006 BIT follow-up (dbms: mysql) below.
+# ⚠️ H2 constraint names are schema-global unique -> table-prefixed names.
+databaseChangeLog:
+
+  - changeSet:
+      id: 125-1-product-listing-registration-name
+      author: oclyx
+      comment: "FEATURE_2611_11 D4: product_listing.registration_name (VARCHAR(255) NULL)."
+      changes:
+        - addColumn:
+            tableName: product_listing
+            columns:
+              - column:
+                  name: registration_name
+                  type: VARCHAR(255)
+      rollback:
+        - dropColumn: { tableName: product_listing, columnName: registration_name }
+
+  - changeSet:
+      id: 125-2-listing-market-image
+      author: oclyx
+      comment: "FEATURE_2611_11 D8 D21 D36: listing_market_image (marketplace photos copied into our storage)."
+      changes:
+        - createTable:
+            tableName: listing_market_image
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: product_listing_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: product_listing_option_id, type: BIGINT }
+              - column: { name: representative, type: BOOLEAN, constraints: { nullable: false } }
+              - column: { name: market_image_type, type: VARCHAR(30) }
+              - column: { name: sort_order, type: INT, constraints: { nullable: false } }
+              - column: { name: image_url, type: VARCHAR(1024), constraints: { nullable: false } }
+        - addForeignKeyConstraint:
+            constraintName: fk_listingmarketimage_tenant
+            baseTableName: listing_market_image
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_listingmarketimage_listing
+            baseTableName: listing_market_image
+            baseColumnNames: product_listing_id
+            referencedTableName: product_listing
+            referencedColumnNames: id
+        - createIndex:
+            indexName: idx_listing_market_image_listing
+            tableName: listing_market_image
+            columns:
+              - column: { name: product_listing_id }
+      rollback:
+        - dropTable: { tableName: listing_market_image }
+
+  # MySQL only: abstract BOOLEAN -> TINYINT, but Hibernate expects BIT(1). Re-type + re-declare NOT NULL
+  # (MySQL MODIFY drops it). Mirrors 109-4. H2 untouched.
+  - changeSet:
+      id: 125-2-listing-market-image-mysql-bit
+      author: oclyx
+      dbms: mysql
+      comment: "listing_market_image.representative TINYINT -> BIT(1) to satisfy Hibernate schema validation."
+      changes:
+        - modifyDataType:
+            tableName: listing_market_image
+            columnName: representative
+            newDataType: BIT(1)
+        - addNotNullConstraint:
+            tableName: listing_market_image
+            columnName: representative
+            columnDataType: BIT(1)
+      rollback: [] # dropping the table in 125-2 removes the column
+
+  - changeSet:
+      id: 125-3-tenant-elevenst-setting
+      author: oclyx
+      comment: "FEATURE_2611_11 D39: tenant_elevenst_setting (one row per tenant, encrypted 11st photo lookup key)."
+      changes:
+        - createTable:
+            tableName: tenant_elevenst_setting
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: photo_api_key, type: VARCHAR(512) }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_tenantelevenstsetting_tenant
+            baseTableName: tenant_elevenst_setting
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            constraintName: uq_tenant_elevenst_setting_tenant
+            tableName: tenant_elevenst_setting
+            columnNames: tenant_id
+      rollback:
+        - dropTable: { tableName: tenant_elevenst_setting }

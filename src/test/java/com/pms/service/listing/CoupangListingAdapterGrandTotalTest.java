@@ -68,6 +68,7 @@ class CoupangListingAdapterGrandTotalTest {
     @Mock private OptionCheckSuffixResolver optionCheckSuffixResolver;
     @Mock private MasterProductService masterProductService;
     @Mock private CoupangShippingConfigResolver shippingConfigResolver;
+    @Mock private com.pms.repository.ListingMarketImageRepository marketImageRepository;
     @Spy private ObjectMapper objectMapper = new ObjectMapper();
     @InjectMocks private CoupangListingAdapter adapter;
 

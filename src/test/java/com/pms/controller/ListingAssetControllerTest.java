@@ -403,6 +403,58 @@ class ListingAssetControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
+    // ---- 「등록상품명」 (FEATURE_2611_11 / D5) · 「마켓 기준으로 맞추기」 (D9) ----
+
+    @Test
+    void updateRegistrationName_adminToken_storesTrimmed_blankClears() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + listingId + "/registration-name")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content("{\"registrationName\":\"  마켓 등록상품명  \"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"));
+        assertThat(productListingRepository.findById(listingId).orElseThrow().getRegistrationName())
+                .isEqualTo("마켓 등록상품명");
+        mockMvc.perform(patch(PATH + "/" + listingId + "/registration-name")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content("{\"registrationName\":null}"))
+                .andExpect(status().isOk());
+        assertThat(productListingRepository.findById(listingId).orElseThrow().getRegistrationName()).isNull();
+    }
+
+    @Test
+    void updateRegistrationName_noToken_returns401_userToken_returns403() throws Exception {
+        mockMvc.perform(patch(PATH + "/" + listingId + "/registration-name")
+                        .contentType("application/json").content("{\"registrationName\":\"x\"}"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(patch(PATH + "/" + listingId + "/registration-name")
+                        .header("Authorization", "Bearer " + userToken)
+                        .contentType("application/json").content("{\"registrationName\":\"x\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void marketSync_noToken_returns401_userToken_returns403_missingCell_returns404() throws Exception {
+        mockMvc.perform(post(PATH + "/" + listingId + "/market-sync"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post(PATH + "/" + listingId + "/market-sync")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post(PATH + "/999999/market-sync")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void marketSync_listingNotOnMarket_returns400() throws Exception {
+        ProductListing listing = productListingRepository.findById(listingId).orElseThrow();
+        productListingRepository.save(listing.toBuilder().platformProductId(null).build());
+
+        mockMvc.perform(post(PATH + "/" + listingId + "/market-sync")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("마켓에 올라가지 않은 판매상품입니다"));
+    }
+
     // ---- shipping override (75): channel-level overrides reflected on the cell (no regenerate/push) ----
 
     @Test

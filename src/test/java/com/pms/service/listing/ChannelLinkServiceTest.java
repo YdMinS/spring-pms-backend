@@ -52,6 +52,7 @@ class ChannelLinkServiceTest {
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private GeneratedProductDataRepository generatedProductDataRepository;
     @Mock private ProductListingTagRevisionRepository productListingTagRevisionRepository;
+    @Mock private com.pms.repository.ListingMarketImageRepository listingMarketImageRepository;
     @InjectMocks private ChannelLinkServiceImpl service;
 
     private static final Long MASTER_ID = 1L;

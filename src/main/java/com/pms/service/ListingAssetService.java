@@ -89,6 +89,13 @@ public interface ListingAssetService {
     void updateDisplayName(Long listingId, String name);
 
     /**
+     * FEATURE_2611_11 / D5: store this cell's own 「등록상품명」 (trimmed) — or clear it with a blank value, which brings
+     * back the automatic name ([자동 이름으로 되돌리기]). 404 if absent. No regeneration and no push here; the value is
+     * sent as Coupang {@code sellerProductName} on the next register / [수정 요청] (D15 · D16).
+     */
+    void updateRegistrationName(Long listingId, String registrationName);
+
+    /**
      * Replace a tenant-scoped cell's channel-level shipping overrides (75; 404 if absent). Key whitelist only
      * (register 72/73 is the final value guard); an empty/null map clears the override. No asset regeneration
      * (shipping is not a thumbnail/detail binding). An 11st cell's selling price does read shipping

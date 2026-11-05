@@ -39,11 +39,29 @@ import java.util.Map;
  *                     🔴 {@code productName} is the 「등록상품명」 — use {@link #displayName()} for our 「노출상품명」.
  * @param marketBundleType FEATURE_2610_36 / D9 · D10: Coupang {@code bundleInfo.bundleType} ({@code SINGLE} ·
  *                     {@code AB}); null when absent or any other value
+ * @param detailHtml   FEATURE_2611_11 / D2 · D23: the market's detail page as one HTML text (photo addresses inside are
+ *                     the market's own, never downloaded); null when absent
+ * @param marketImages FEATURE_2611_11 / D8 · D21 · D37: the photos the market uses as product photos, each with its
+ *                     option and kind, in market order — the copy source of [「마켓 기준으로 맞추기」]. never null, empty
+ *                     when absent or when the photo read failed
+ * @param imageNotice  FEATURE_2611_11 / D35 · D39: why the photos could not be read (the guidance text shown to the
+ *                     user); null when the read did not fail. Only a market that reads photos through a separate call
+ *                     (11st) fills it
  */
 public record ImportedProduct(String productName, String brand, String categoryCode, ListingStatus status,
                               List<String> tags, String noticeGroup, List<String> thumbnailImages,
                               List<String> detailImages, List<Option> options, String statusName,
-                              String displayProductName, String marketBundleType) {
+                              String displayProductName, String marketBundleType, String detailHtml,
+                              List<MarketImage> marketImages, String imageNotice) {
+
+    /** The 12-argument form used before FEATURE_2611_11 — no detail HTML, no structured photos, no notice. */
+    public ImportedProduct(String productName, String brand, String categoryCode, ListingStatus status,
+                           List<String> tags, String noticeGroup, List<String> thumbnailImages,
+                           List<String> detailImages, List<Option> options, String statusName,
+                           String displayProductName, String marketBundleType) {
+        this(productName, brand, categoryCode, status, tags, noticeGroup, thumbnailImages, detailImages,
+                options, statusName, displayProductName, marketBundleType, null, List.of(), null);
+    }
 
     /** The 11-argument form used before FEATURE_2610_36 — {@code marketBundleType = null}. */
     public ImportedProduct(String productName, String brand, String categoryCode, ListingStatus status,
@@ -105,6 +123,22 @@ public record ImportedProduct(String productName, String brand, String categoryC
     public ImportedProduct {
         thumbnailImages = thumbnailImages == null ? List.of() : thumbnailImages;
         detailImages = detailImages == null ? List.of() : detailImages;
+        marketImages = marketImages == null ? List.of() : marketImages;
+    }
+
+    /**
+     * One market photo (FEATURE_2611_11 / D37).
+     *
+     * @param itemIndex       the position of its option in {@code options} (Coupang {@code items[]}); null = a
+     *                        product-level photo (11st · ESM)
+     * @param vendorItemId    that option's Coupang {@code vendorItemId} (null while unapproved or product-level)
+     * @param itemName        that option's market name (null when product-level)
+     * @param representative  the market's main photo of that option / of the product
+     * @param marketImageType the market's own type text (Coupang {@code imageType}); null when the market has none
+     * @param url             the market's address of the photo (absolute)
+     */
+    public record MarketImage(Integer itemIndex, String vendorItemId, String itemName, boolean representative,
+                              String marketImageType, String url) {
     }
 
     /**

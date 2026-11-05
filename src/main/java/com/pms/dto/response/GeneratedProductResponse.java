@@ -10,7 +10,7 @@ import java.util.Map;
 
 /**
  * Auto-generated assets for a channel cell (FEATURE_2608_06 / 3b-2): thumbnail URL, detail HTML, its
- * source (AUTO / MANUAL_OVERRIDE, Step 2-2), and the per-option selling prices computed by the margin
+ * source (AUTO / MANUAL_OVERRIDE, Step 2-2 · MARKET, FEATURE_2611_11 / D23), and the per-option selling prices computed by the margin
  * engine. Returned by regenerate/generated/detail-html endpoints.
  */
 @Getter
@@ -21,7 +21,10 @@ public class GeneratedProductResponse {
     private String thumbnailUrl;
     private String detailHtml;
     private GeneratedContentSource source;
-    /** Origin of the thumbnail (25): AUTO = renderer output, MANUAL_OVERRIDE = user-uploaded image. */
+    /**
+     * Origin of the thumbnail (25): AUTO = renderer output, MANUAL_OVERRIDE = user-uploaded image, MARKET = a market
+     * photo (FEATURE_2611_11 / D7 — the screen shows 「마켓 이미지」).
+     */
     private GeneratedContentSource thumbnailSource;
     /** This cell's channel-level field-value overrides (FEATURE_2608_06 / 12); null override → empty map. */
     private Map<String, String> fieldValues;

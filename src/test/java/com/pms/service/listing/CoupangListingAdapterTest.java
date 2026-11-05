@@ -72,6 +72,7 @@ class CoupangListingAdapterTest {
     @Mock private com.pms.service.OptionCheckSuffixResolver optionCheckSuffixResolver;
     @Mock private MasterProductService masterProductService;
     @Mock private CoupangShippingConfigResolver shippingConfigResolver;
+    @Mock private com.pms.repository.ListingMarketImageRepository marketImageRepository;
     @org.mockito.Spy private ObjectMapper objectMapper = new ObjectMapper();
     @InjectMocks private CoupangListingAdapter adapter;
 
@@ -140,7 +141,7 @@ class CoupangListingAdapterTest {
 
     @Test
     void register_usesPerChannelGeneratedRegistrationNameForSellerProductName() {
-        // 67: sellerProductName is always the auto-generated per-channel name (active options → generator).
+        // 67: with no stored 「등록상품명」 (FEATURE_2611_11 / D4), sellerProductName is the auto-generated per-channel name.
         MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨").build();
         ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .platformProductId("123456789").masterProduct(master).build();
@@ -1826,5 +1827,118 @@ class CoupangListingAdapterTest {
         FetchResult result = adapter.fetchStatus(cell(), acct());
 
         assertThat(result.marketBundleType()).isEqualTo("AB");
+    }
+    /** FEATURE_2611_11 / D4 · D15: the listing's own stored 「등록상품명」 is sent instead of the automatic name. */
+    @Test
+    void register_storedRegistrationName_sentAsSellerProductName() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("내부 라벨").build();
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
+                .platformProductId("123456789").masterProduct(master).registrationName("마켓에서 정한 등록상품명").build();
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("1세트")
+                        .sellingPrice(new BigDecimal("6000")).active(true).build()));
+        given(masterProductOptionRepository.findByMasterProductId(1L)).willReturn(List.of());
+        GeneratedProductData gen = GeneratedProductData.builder()
+                .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
+        lenient().when(registrationNameGenerator.generate(eq(master), anyList(), any())).thenReturn("자동 이름");
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell, gen, acct());
+
+        assertThat(payload.getValue()).contains("\"sellerProductName\":\"마켓에서 정한 등록상품명\"")
+                .doesNotContain("자동 이름");
+    }
+
+    /**
+     * FEATURE_2611_11 / D8 · D21 · D22 · D38: with a market thumbnail every option sends its own main photo and its
+     * additional photos (their own type); an option without market photos sends the listing thumbnail only.
+     */
+    @Test
+    void register_marketThumbnail_eachOptionSendsItsOwnPhotos() throws Exception {
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("1개").sellingPrice(new BigDecimal("6000"))
+                        .active(true).build(),
+                ProductListingOption.builder().id(2L).optionName("2개").sellingPrice(new BigDecimal("9000"))
+                        .active(true).build(),
+                ProductListingOption.builder().id(3L).optionName("새 옵션").sellingPrice(new BigDecimal("9000"))
+                        .active(true).build()));
+        given(marketImageRepository.findByProductListingIdOrderBySortOrderAsc(100L)).willReturn(List.of(
+                com.pms.domain.ListingMarketImage.builder().productListingOptionId(1L).representative(true)
+                        .marketImageType("REPRESENTATION").imageUrl("s3/one-main.jpg").sortOrder(0).build(),
+                com.pms.domain.ListingMarketImage.builder().productListingOptionId(1L).representative(false)
+                        .marketImageType("DETAIL").imageUrl("s3/one-extra.jpg").sortOrder(1).build(),
+                com.pms.domain.ListingMarketImage.builder().productListingOptionId(2L).representative(true)
+                        .marketImageType("REPRESENTATION").imageUrl("s3/two-main.jpg").sortOrder(2).build()));
+        given(masterProductService.isBundle(null)).willReturn(false);
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("s3/one-main.jpg")
+                .thumbnailSource(com.pms.domain.GeneratedContentSource.MARKET).detailHtml("<p>셀</p>").build();
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell(), gen, acct());
+
+        JsonNode items = objectMapper.readTree(payload.getValue()).path("items");
+        assertThat(items.get(0).path("images").toString()).isEqualTo(
+                "[{\"imageOrder\":0,\"imageType\":\"REPRESENTATION\",\"vendorPath\":\"s3/one-main.jpg\"},"
+                        + "{\"imageOrder\":1,\"imageType\":\"DETAIL\",\"vendorPath\":\"s3/one-extra.jpg\"}]");
+        assertThat(items.get(1).path("images").toString()).isEqualTo(
+                "[{\"imageOrder\":0,\"imageType\":\"REPRESENTATION\",\"vendorPath\":\"s3/two-main.jpg\"}]");
+        assertThat(items.get(2).path("images").toString()).isEqualTo(
+                "[{\"imageOrder\":0,\"imageType\":\"REPRESENTATION\",\"vendorPath\":\"s3/one-main.jpg\"}]");
+    }
+
+    /** FEATURE_2611_11 / D22: an uploaded thumbnail replaces every main photo; the additional photos stay. */
+    @Test
+    void register_uploadedThumbnail_replacesMainPhotos_keepsAdditionalPhotos() throws Exception {
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                ProductListingOption.builder().id(1L).optionName("1개").sellingPrice(new BigDecimal("6000"))
+                        .active(true).build()));
+        given(marketImageRepository.findByProductListingIdOrderBySortOrderAsc(100L)).willReturn(List.of(
+                com.pms.domain.ListingMarketImage.builder().productListingOptionId(1L).representative(true)
+                        .marketImageType("REPRESENTATION").imageUrl("s3/one-main.jpg").sortOrder(0).build(),
+                com.pms.domain.ListingMarketImage.builder().productListingOptionId(1L).representative(false)
+                        .marketImageType("DETAIL").imageUrl("s3/one-extra.jpg").sortOrder(1).build()));
+        given(masterProductService.isBundle(null)).willReturn(false);
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
+        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("s3/uploaded.jpg")
+                .thumbnailSource(com.pms.domain.GeneratedContentSource.MANUAL_OVERRIDE).detailHtml("<p>셀</p>").build();
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.post(anyString(), payload.capture(), any())).willReturn("{\"data\":1}");
+
+        adapter.register(cell(), gen, acct());
+
+        assertThat(objectMapper.readTree(payload.getValue()).path("items").get(0).path("images").toString()).isEqualTo(
+                "[{\"imageOrder\":0,\"imageType\":\"REPRESENTATION\",\"vendorPath\":\"s3/uploaded.jpg\"},"
+                        + "{\"imageOrder\":1,\"imageType\":\"DETAIL\",\"vendorPath\":\"s3/one-extra.jpg\"}]");
+    }
+
+    /** FEATURE_2611_11 / D2 · D21 · D37: photos per option with their kind, and the first item's detail as one HTML. */
+    @Test
+    void fetchProduct_marketImagesPerOptionWithKind_andDetailHtml() {
+        given(client.get(anyString(), eq(""), any())).willReturn(
+                "{\"code\":\"SUCCESS\",\"data\":{\"statusName\":\"승인완료\",\"items\":["
+                        + "{\"itemName\":\"6입\",\"vendorItemId\":8123,\"salePrice\":12900,"
+                        + "\"images\":[{\"imageOrder\":0,\"imageType\":\"REPRESENTATION\",\"cdnPath\":\"https://cdn/rep.jpg\"},"
+                        + "{\"imageOrder\":1,\"imageType\":\"DETAIL\",\"cdnPath\":\"https://cdn/sub.jpg\"}],"
+                        + "\"contents\":[{\"contentsType\":\"IMAGE\",\"contentDetails\":["
+                        + "{\"content\":\"https://cdn/detail-1.jpg\",\"detailType\":\"IMAGE\"}]},"
+                        + "{\"contentsType\":\"TEXT\",\"contentDetails\":[{\"content\":\"<p>설명</p>\",\"detailType\":\"TEXT\"}]}]},"
+                        + "{\"itemName\":\"12입\",\"vendorItemId\":8124,\"salePrice\":22900,"
+                        + "\"images\":[{\"imageOrder\":0,\"imageType\":\"REPRESENTATION\",\"cdnPath\":\"https://cdn/rep12.jpg\"}]}]}}");
+
+        ImportedProduct product = adapter.fetchProduct("222333444", acct());
+
+        assertThat(product.marketImages()).extracting(ImportedProduct.MarketImage::itemIndex,
+                        ImportedProduct.MarketImage::vendorItemId, ImportedProduct.MarketImage::representative,
+                        ImportedProduct.MarketImage::marketImageType, ImportedProduct.MarketImage::url)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple(0, "8123", true, "REPRESENTATION", "https://cdn/rep.jpg"),
+                        org.assertj.core.groups.Tuple.tuple(0, "8123", false, "DETAIL", "https://cdn/sub.jpg"),
+                        org.assertj.core.groups.Tuple.tuple(1, "8124", true, "REPRESENTATION", "https://cdn/rep12.jpg"));
+        assertThat(product.detailHtml()).isEqualTo("<img src=\"https://cdn/detail-1.jpg\">\n<p>설명</p>");
+        assertThat(product.imageNotice()).isNull();
     }
 }

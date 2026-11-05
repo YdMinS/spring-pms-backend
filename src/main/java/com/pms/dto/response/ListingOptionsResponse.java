@@ -35,8 +35,8 @@ public class ListingOptionsResponse {
             example = "false")
     private boolean needsResync;
 
-    @Schema(description = "Auto-generated registration name (등록상품명) for this listing's current active options (67)",
-            example = "노브랜드 생수 x 6")
+    @Schema(description = "Registration name (등록상품명): the listing's own stored name, else the automatic name for "
+            + "this listing's current active options (67 · FEATURE_2611_11 / D15)", example = "노브랜드 생수 x 6")
     private String registrationName;
 
     @Schema(description = "Every option of the listing (active + inactive)")

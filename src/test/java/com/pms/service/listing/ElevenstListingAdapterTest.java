@@ -53,6 +53,9 @@ class ElevenstListingAdapterTest {
     @Mock private OptionCheckSuffixResolver optionCheckSuffixResolver;
     @Mock private ElevenstShippingResolver shippingResolver;
     @Mock private ListingTextValueResolver textValueResolver;
+    @Mock private com.pms.repository.ListingMarketImageRepository marketImageRepository;
+    @Mock private com.pms.service.elevenst.ElevenstProductImageClient productImageClient;
+    @Mock private com.pms.service.elevenst.ElevenstPhotoKeyService photoKeyService;
 
     @InjectMocks private ElevenstListingAdapter adapter;
 
@@ -242,5 +245,73 @@ class ElevenstListingAdapterTest {
 
         assertThat(prices.byOptionId()).containsOnlyKeys(11L);
         assertThat(prices.byOptionId().get(11L).price()).isEqualByComparingTo("10900");
+    }
+    /** FEATURE_2611_11 / D19 · D35: 1620 name + detail, public OpenAPI photos with the company key. */
+    @Test
+    void fetchProduct_nameAndDetailFrom1620_photosFromPublicOpenApi() {
+        given(client.get(eq(ElevenstListingAdapter.PRODUCT_READ_PATH + "5551"), any())).willReturn(ElevenstXml.document(
+                "<Product><prdNm>11번가 이름</prdNm><selStatCd>103</selStatCd>"
+                        + "<htmlDetail><![CDATA[<p>11번가 상세</p>]]></htmlDetail></Product>"));
+        given(photoKeyService.currentKey()).willReturn(java.util.Optional.of("KEY32"));
+        given(productImageClient.fetch("5551", "KEY32")).willReturn(new com.pms.service.elevenst
+                .ElevenstProductImageClient.Photos("http://i.011st.com/a_B.jpg", List.of("http://i.011st.com/a_A1.jpg")));
+
+        ImportedProduct product = adapter.fetchProduct("5551", null);
+
+        assertThat(product.productName()).isNull();
+        assertThat(product.displayName()).isEqualTo("11번가 이름");
+        assertThat(product.detailHtml()).isEqualTo("<p>11번가 상세</p>");
+        assertThat(product.status()).isEqualTo(ListingStatus.SELLING);
+        assertThat(product.imageNotice()).isNull();
+        assertThat(product.marketImages()).extracting(ImportedProduct.MarketImage::representative,
+                        ImportedProduct.MarketImage::url)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(true, "http://i.011st.com/a_B.jpg"),
+                        org.assertj.core.groups.Tuple.tuple(false, "http://i.011st.com/a_A1.jpg"));
+    }
+
+    /** FEATURE_2611_11 / D39: no company key → no photo call, the key guidance. */
+    @Test
+    void fetchProduct_noPhotoKey_noPhotoCall_keyGuidance() {
+        given(client.get(eq(ElevenstListingAdapter.PRODUCT_READ_PATH + "5551"), any())).willReturn(ElevenstXml.document(
+                "<Product><prdNm>11번가 이름</prdNm></Product>"));
+        given(photoKeyService.currentKey()).willReturn(java.util.Optional.empty());
+
+        ImportedProduct product = adapter.fetchProduct("5551", null);
+
+        assertThat(product.marketImages()).isEmpty();
+        assertThat(product.imageNotice())
+                .isEqualTo("11번가 사진을 가져오지 못했습니다. [설정]에서 11번가 사진 조회 키를 넣어 주세요");
+        org.mockito.Mockito.verify(productImageClient, org.mockito.Mockito.never()).fetch(anyString(), anyString());
+    }
+
+    /** FEATURE_2611_11 / D35: a failed photo read (e.g. 004 daily limit) → no photos, the plain guidance. */
+    @Test
+    void fetchProduct_photoReadFailed_plainGuidance() {
+        given(client.get(eq(ElevenstListingAdapter.PRODUCT_READ_PATH + "5551"), any())).willReturn(ElevenstXml.document(
+                "<Product><prdNm>11번가 이름</prdNm></Product>"));
+        given(photoKeyService.currentKey()).willReturn(java.util.Optional.of("KEY32"));
+        given(productImageClient.fetch("5551", "KEY32"))
+                .willThrow(new com.pms.service.elevenst.ElevenstPhotoReadException("11st photo read error 004"));
+
+        ImportedProduct product = adapter.fetchProduct("5551", null);
+
+        assertThat(product.marketImages()).isEmpty();
+        assertThat(product.imageNotice()).isEqualTo("11번가 사진을 가져오지 못했습니다");
+    }
+
+    /** FEATURE_2611_11 / D8 · D22: prdImage02 ~ 04 = the product's additional market photos in market order. */
+    @Test
+    void buildPayload_additionalMarketPhotos_prdImage02To04() {
+        options(option(11L, "단품", "10000.00", 3, null));
+        given(marketImageRepository.findByProductListingIdOrderBySortOrderAsc(100L)).willReturn(List.of(
+                com.pms.domain.ListingMarketImage.builder().representative(true).imageUrl("s3/main.jpg").sortOrder(0).build(),
+                com.pms.domain.ListingMarketImage.builder().representative(false).imageUrl("s3/a1.jpg").sortOrder(1).build(),
+                com.pms.domain.ListingMarketImage.builder().representative(false).imageUrl("s3/a2.jpg").sortOrder(2).build()));
+
+        String xml = adapter.buildPayload(cell, gen);
+
+        assertThat(xml).contains("<prdImage01>https://s3/thumb.jpg</prdImage01><prdImage02>s3/a1.jpg</prdImage02>"
+                + "<prdImage03>s3/a2.jpg</prdImage03>");
+        assertThat(xml).doesNotContain("prdImage04", "s3/main.jpg");
     }
 }

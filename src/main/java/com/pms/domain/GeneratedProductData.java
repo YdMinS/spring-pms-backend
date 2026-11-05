@@ -54,7 +54,8 @@ public class GeneratedProductData extends BaseEntity {
 
     /**
      * Origin of {@link #detailHtml} (Step 2-2). {@code AUTO} = generator output (overwritten on
-     * regenerate); {@code MANUAL_OVERRIDE} = user-edited raw HTML (preserved on regenerate). New rows
+     * regenerate); {@code MANUAL_OVERRIDE} = user-edited raw HTML (preserved on regenerate); {@code MARKET} = the
+     * market's detail (FEATURE_2611_11 / D2 · D23, preserved on regenerate). New rows
      * default to {@code AUTO}; changeset 016 backfills existing rows.
      */
     @Enumerated(EnumType.STRING)
@@ -63,7 +64,8 @@ public class GeneratedProductData extends BaseEntity {
 
     /**
      * Origin of {@link #thumbnailUrl} (25). {@code AUTO} = renderer output (overwritten on regenerate);
-     * {@code MANUAL_OVERRIDE} = a user uploaded a thumbnail image (preserved on regenerate). Independent
+     * {@code MANUAL_OVERRIDE} = a user uploaded a thumbnail image (preserved on regenerate); {@code MARKET} = a market
+     * photo copied into our storage (FEATURE_2611_11 / D6 · D7, preserved on regenerate). Independent
      * of {@link #source} (detail HTML) — the two origins are guarded separately. New rows default to
      * {@code AUTO}; changeset 021 backfills existing rows.
      */

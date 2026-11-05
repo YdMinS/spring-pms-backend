@@ -94,6 +94,8 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
     private final ListingChannelResolver resolver;
     private final MasterOptionChannelSync masterOptionChannelSync;
     private final ListingAssetService listingAssetService;
+    /** FEATURE_2611_11: the market values of the imported product (names · photos · detail). */
+    private final ListingMarketSyncService listingMarketSyncService;
 
     /**
      * Self proxy: {@code importListing} 은 트랜잭션 밖에서 {@link #importInTransaction} 을 <b>프록시 경유로</b>
@@ -125,8 +127,9 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
                 .reusesExistingListing(ctx.existing() != null)
                 .channelTags(channelTags(ctx.master(), fetched.tags()))
                 .components(previewComponents(ctx.components()))
-                // 온보딩(2026-09-19): 마켓 이미지 URL 을 그대로 내려준다 — 내려받거나 자산으로 등록하지 않는다.
-                // 썸네일(가공본)과 상세(원본에 가까움)를 절대 한 목록으로 합치지 말 것.
+                // Onboarding (2026-09-19): the preview hands the market image URLs over as they are — nothing is
+                // downloaded here (the commit copies them, FEATURE_2611_11 / D6 · D36). Never merge the thumbnails
+                // (processed) and the detail images (near-original) into one list.
                 .thumbnailImages(fetched.thumbnailImages())
                 .detailImages(fetched.detailImages())
                 .options(fetched.options().stream()
@@ -153,8 +156,12 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
     @Override
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public ChannelAddResponse importListing(Long masterProductId, ListingImportRequest request) {
-        ChannelAddResponse imported = self.importInTransaction(masterProductId, request);   // ← 여기서 커밋된다
+        ImportAndRead done = self.importAndRead(masterProductId, request);   // ← committed here
+        ChannelAddResponse imported = done.response();
         Long listingId = imported.getProductListingId();
+        // FEATURE_2611_11 / D2 · D4 · D6 · D8: the market's own 「등록상품명」 · photos · detail go on the listing BEFORE the
+        // generation — the generation then keeps them (origin MARKET) and only fills what the market did not give.
+        applyMarketValues(listingId, done.fetched());
         return imported.toBuilder()
                 .assetsGenerated(generateAssets(listingId))
                 // 자동생성이 실패해도 404 가 아니다(2609_47/D3) — 썸네일·상세만 null 로 돌아온다.
@@ -170,6 +177,15 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
      */
     @Transactional
     public ChannelAddResponse importInTransaction(Long masterProductId, ListingImportRequest request) {
+        return importAndRead(masterProductId, request).response();
+    }
+
+    /**
+     * {@link #importInTransaction} plus the product it read from the market (FEATURE_2611_11) — so the market values can
+     * be applied after the commit without a second market call. Same transaction rule (public for the proxy).
+     */
+    @Transactional
+    public ImportAndRead importAndRead(Long masterProductId, ListingImportRequest request) {
         // Defence in depth: a direct call may skip the preview entirely, so every preview guard runs again.
         Platform platform = Platform.from(request.getPlatform());
         ImportContext ctx = validate(masterProductId, request.getSellerId(),
@@ -296,11 +312,28 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
 
         // --- 5) 자동생성(썸네일·상세·판매가)은 이 트랜잭션이 커밋된 뒤 importListing 이 돌린다 — 사진 없는
         //        물품이 셀까지 되돌리면 안 되기 때문이다. generated/assetsGenerated 도 거기서 채운다.
-        return ChannelAddResponse.builder()
+        return new ImportAndRead(ChannelAddResponse.builder()
                 .productListingId(cell.getId())
                 .status(cell.getStatus().name())
                 .categoryWarning(categoryWarning(matched, platform, fetched.categoryCode()))
-                .build();
+                .build(), fetched);
+    }
+
+    /**
+     * FEATURE_2611_11: put the market values on the committed listing. Outside the import transaction like the
+     * generation — a failed photo copy or save must not undo the listing. A failure leaves the old behaviour (automatic
+     * values); [「마켓 기준으로 맞추기」] can take them later.
+     */
+    private void applyMarketValues(Long listingId, ImportedProduct fetched) {
+        try {
+            listingMarketSyncService.applyImported(listingId, fetched);
+        } catch (Exception e) {
+            log.warn("Market values were not applied to the imported cell {}: {}", listingId, e.getMessage());
+        }
+    }
+
+    /** What {@link #importAndRead} returns: the import response and the product read from the market. */
+    public record ImportAndRead(ChannelAddResponse response, ImportedProduct fetched) {
     }
 
     /**
