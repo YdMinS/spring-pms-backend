@@ -44,7 +44,7 @@ import static org.mockito.Mockito.verify;
  * 마스터 물리 삭제(FEATURE_2609_72 / 01).
  *
  * <p>틀릴 수 있는 자리는 넷이다: ① 마켓에 등록된 셀이 있는데 지워버린다 ② 자식보다 마스터를 먼저 지워 FK 로
- * 터진다 ③ 사진(S3 파일)을 너무 일찍 지워 롤백 때 파일만 사라진다 ④ 상태가 DRAFT 가 아니라는 이유로 마켓에
+ * 터진다 ③ 사진 줄을 지운 뒤 롤백이 나면 파일만 사라진다(FEATURE_2611_13 D6 이후 파일은 커밋 뒤에 지운다) ④ 상태가 DRAFT 가 아니라는 이유로 마켓에
  * 없는 셀을 못 지워 마스터가 영영 안 지워진다.</p>
  */
 @ExtendWith(MockitoExtension.class)
@@ -80,7 +80,7 @@ class MasterDeleteServiceTest {
         given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master()));
     }
 
-    /** 자식 → 마스터 순서가 곧 FK 순서다. 사진이 자식 중 마지막 = S3 롤백 창 최소화(D6-a). */
+    /** Children before the master = FK order. Photos stay the last child; their files go only after commit (FEATURE_2611_13 D6). */
     @Test
     void deleteMaster_noCells_deletesChildrenThenMaster() {
         givenMaster();
