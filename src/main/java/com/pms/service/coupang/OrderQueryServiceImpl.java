@@ -15,6 +15,7 @@ import com.pms.repository.ProductRepository;
 import com.pms.service.elevenst.ElevenstOrderList;
 import com.pms.service.elevenst.ElevenstRawFields;
 import com.pms.service.stock.OrderLineExpander;
+import com.pms.service.stock.OrderLineExpander.LineExpansion;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,8 +43,9 @@ import java.util.stream.Collectors;
  * <b>once</b> per batch of line ids into a Map (FEATURE_2609_26 / 04 §3-3) — a back reference in core would leak
  * the platform into core and bring N+1 with it.
  *
- * <p>The row thumbnail is the first component product of the line's BOM ({@link OrderLineExpander} is the only
- * place that knows the expansion) — products are read once per batch, not per line.
+ * <p>The row thumbnail is the first component product of the line's BOM and the row's {@code components} are all of
+ * them × {@code purchasableQty} (FEATURE_2611_15 / D16 · D18) — both from one {@link OrderLineExpander} call (the only
+ * place that knows the expansion); products are read once per batch, not per line.
  */
 @Service
 @RequiredArgsConstructor
@@ -69,10 +71,11 @@ public class OrderQueryServiceImpl implements OrderQueryService {
     public List<OrderItemResponse> rows(List<OrderLine> lines) {
         Map<Long, CoupangOrderLine> mirrors = mirrorsByLineId(lines);
         Map<Long, ElevenstOrderLine> elevenstMirrors = elevenstMirrorsByLineId(lines);
-        Map<Long, Product> thumbnails = thumbnailsByLineId(lines);
+        Map<Long, LineExpansion> expansions = orderLineExpander.expand(lines, OrderLine::purchasableQty);
+        Map<Long, Product> thumbnails = thumbnailsByLineId(expansions);
         return lines.stream()
                 .map(line -> toResponse(line, mirrors.get(line.getId()), elevenstMirrors.get(line.getId()),
-                        thumbnails.get(line.getId())))
+                        thumbnails.get(line.getId()), components(expansions.get(line.getId()))))
                 .toList();
     }
 
@@ -130,14 +133,14 @@ public class OrderQueryServiceImpl implements OrderQueryService {
 
     /**
      * Line id → thumbnail product (first BOM component). Lines that fail to expand have no entry — the screen
-     * draws an empty box. The unit count is irrelevant here, so every line counts as 1.
+     * draws an empty box. Only the product is used here, never the quantity.
      */
-    private Map<Long, Product> thumbnailsByLineId(List<OrderLine> lines) {
-        if (lines.isEmpty()) {
+    private Map<Long, Product> thumbnailsByLineId(Map<Long, LineExpansion> expansions) {
+        if (expansions.isEmpty()) {
             return Map.of();
         }
         Map<Long, Long> productIdByLine = new HashMap<>();
-        orderLineExpander.expand(lines, line -> 1).forEach((lineId, expansion) -> {
+        expansions.forEach((lineId, expansion) -> {
             if (!expansion.failed() && !expansion.products().isEmpty()) {
                 productIdByLine.put(lineId, expansion.products().get(0).productId());
             }
@@ -159,8 +162,18 @@ public class OrderQueryServiceImpl implements OrderQueryService {
         return byLine;
     }
 
+    /** Every component × purchasableQty, BOM order (D16 · D18); empty for a line that fails to expand. */
+    private static List<OrderItemResponse.ComponentQuantity> components(LineExpansion expansion) {
+        if (expansion == null || expansion.failed()) {
+            return List.of();
+        }
+        return expansion.products().stream()
+                .map(product -> new OrderItemResponse.ComponentQuantity(product.productName(), product.quantity()))
+                .toList();
+    }
+
     private OrderItemResponse toResponse(OrderLine line, CoupangOrderLine mirror, ElevenstOrderLine elevenstMirror,
-                                         Product thumbnail) {
+                                         Product thumbnail, List<OrderItemResponse.ComponentQuantity> components) {
         var order = line.getOrder();
         // 전량취소는 저장되지 않는 파생값이라 여기서 만들어 낸다(PLAN D26).
         OrderStatus effective = line.effectiveStatus();
@@ -201,6 +214,7 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 .stockConfirmSent(elevenstMirror != null && elevenstMirror.getStockConfirmSentAt() != null)
                 .thumbnailProductId(thumbnail != null ? thumbnail.getId() : null)
                 .thumbnailImageUrl(thumbnail != null ? thumbnail.getImageUrl() : null)
+                .components(components)
                 .build();
     }
 }

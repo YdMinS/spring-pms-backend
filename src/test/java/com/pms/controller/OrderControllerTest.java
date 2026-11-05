@@ -1,7 +1,11 @@
 package com.pms.controller;
 
 import com.pms.common.BaseIntegrationTest;
+import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.MasterProduct;
+import com.pms.domain.MasterProductOption;
+import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.CoupangOrderLine;
 import com.pms.domain.Order;
 import com.pms.domain.OrderLine;
@@ -10,16 +14,23 @@ import com.pms.domain.OrderStatus;
 import com.pms.domain.ParcelStatus;
 import com.pms.domain.Platform;
 import com.pms.domain.Product;
+import com.pms.domain.ProductListing;
+import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
 import com.pms.domain.ShipmentParcel;
 import com.pms.domain.ShipmentParcelItem;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.MasterProductOptionItemRepository;
+import com.pms.repository.MasterProductOptionRepository;
+import com.pms.repository.MasterProductRepository;
 import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.OrderRepository;
 import com.pms.repository.OrderShipmentRepository;
+import com.pms.repository.ProductListingOptionRepository;
+import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.ShipmentParcelItemRepository;
@@ -34,6 +45,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.mock.mockito.SpyBean;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -67,6 +79,11 @@ class OrderControllerTest extends BaseIntegrationTest {
     @Autowired private ProductRepository productRepository;
     @Autowired private ShipmentParcelRepository shipmentParcelRepository;
     @Autowired private ShipmentParcelItemRepository shipmentParcelItemRepository;
+    @Autowired private MasterProductRepository masterProductRepository;
+    @Autowired private MasterProductOptionRepository masterProductOptionRepository;
+    @Autowired private MasterProductOptionItemRepository masterProductOptionItemRepository;
+    @Autowired private ProductListingRepository productListingRepository;
+    @Autowired private ProductListingOptionRepository productListingOptionRepository;
 
     @MockBean private CoupangApiClient coupangApiClient;   // 동기화 시 빈 데이터 반환
 
@@ -360,7 +377,60 @@ class OrderControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.parcels[0].packedAt").value("2026-11-03T10:30:00"))
                 .andExpect(jsonPath("$.data.parcels[0].items[0].productName").value("양말"))
                 .andExpect(jsonPath("$.data.parcels[0].items[0].quantity").value(2))
-                .andExpect(jsonPath("$.data.lines[0].raw").doesNotExist());
+                .andExpect(jsonPath("$.data.lines[0].raw").doesNotExist())
+                // FEATURE_2611_15 / D5 · D20: the seeded line has no listing option → the reason only; USER = not admin.
+                .andExpect(jsonPath("$.data.lineMasters[0].orderLineId").value(line.getId()))
+                .andExpect(jsonPath("$.data.lineMasters[0].unexpandedReason").value("UNMAPPED_OPTION"))
+                .andExpect(jsonPath("$.data.lineMasters[0].masterProductName").doesNotExist())
+                .andExpect(jsonPath("$.data.admin").value(false));
+    }
+
+    /**
+     * FEATURE_2611_15 / D1 · D3 · D18 · D20: an ADMIN reads admin = true; a linked line names its master product and
+     * master option and lists the components with the real quantity (BOM 2 × purchasable 3 = 6).
+     */
+    @Test
+    void getOrderDetail_asAdmin_linkedLineHasMasterOptionComponentsAndAdminTrue() throws Exception {
+        OrderLine seeded = orderLineRepository.findAll().get(0);
+        Product product = productRepository.save(Product.builder().productName("노란 수세미")
+                .imageUrl("products/y.png").active(true).build());
+        MasterProduct master = masterProductRepository.save(
+                MasterProduct.builder().name("수세미 세트").active(true).build());
+        MasterProductOption masterOption = masterProductOptionRepository.save(
+                MasterProductOption.builder().masterProduct(master).name("2개 묶음").build());
+        masterProductOptionItemRepository.save(MasterProductOptionItem.builder()
+                .option(masterOption).product(product).quantity(2).build());
+        ProductListing cell = productListingRepository.save(ProductListing.builder()
+                .platform(Platform.COUPANG).name("셀").status(ListingStatus.SELLING)
+                .seller(seeded.getOrder().getMarketplaceAccount().getSeller()).masterProduct(master).build());
+        ProductListingOption listingOption = productListingOptionRepository.save(ProductListingOption.builder()
+                .productListing(cell).optionName("2개 묶음").sellingPrice(new BigDecimal("6000"))
+                .platformOptionId("vi-sponge")
+                .masterProductOption(masterOption).build());
+        // Ordered 5, cancelled 1, refund-hold 1 → purchasable 3 (D18).
+        OrderLine linked = orderLineRepository.save(OrderLine.builder()
+                .order(seeded.getOrder()).orderShipment(seeded.getOrderShipment())
+                .status(OrderStatus.PAID).itemName("수세미 2개 묶음")
+                .orderQty(5).cancelQty(1).holdQty(1)
+                .productListingOption(listingOption).build());
+
+        mockMvc.perform(get("/api/orders/lines/" + linked.getId() + "/detail")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.admin").value(true))
+                .andExpect(jsonPath("$.data.lineMasters[1].orderLineId").value(linked.getId()))
+                .andExpect(jsonPath("$.data.lineMasters[1].masterProductId").value(master.getId()))
+                .andExpect(jsonPath("$.data.lineMasters[1].masterProductName").value("수세미 세트"))
+                .andExpect(jsonPath("$.data.lineMasters[1].masterOptionName").value("2개 묶음"))
+                .andExpect(jsonPath("$.data.lineMasters[1].products[0].productId").value(product.getId()))
+                .andExpect(jsonPath("$.data.lineMasters[1].products[0].productName").value("노란 수세미"))
+                .andExpect(jsonPath("$.data.lineMasters[1].products[0].imageUrl").value("products/y.png"))
+                .andExpect(jsonPath("$.data.lineMasters[1].products[0].quantity").value(6))
+                .andExpect(jsonPath("$.data.lineMasters[1].unexpandedReason").doesNotExist())
+                // The same line as an order list row (D16): name × real quantity, no master fields (D10).
+                .andExpect(jsonPath("$.data.lines[1].components[0].productName").value("노란 수세미"))
+                .andExpect(jsonPath("$.data.lines[1].components[0].quantity").value(6))
+                .andExpect(jsonPath("$.data.lines[1].masterProductName").doesNotExist());
     }
 
     @Test

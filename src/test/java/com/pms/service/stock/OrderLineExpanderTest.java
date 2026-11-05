@@ -83,6 +83,8 @@ class OrderLineExpanderTest {
             assertThat(p.productName()).isEqualTo("양말A");
             assertThat(p.quantity()).isEqualTo(6);   // BOM 2 × 주문 3
         });
+        // FEATURE_2611_15 / D1 · D3: the order detail names this master option.
+        assertThat(result.masterOptionId()).isEqualTo(MASTER_OPTION_ID);
     }
 
     /** 🔴 미매핑을 조용히 continue 하지 않는다 — 목록 누락으로 드러나야 사람이 고친다(D13). */
@@ -95,6 +97,7 @@ class OrderLineExpanderTest {
         assertThat(result.failed()).isTrue();
         assertThat(result.failure()).isEqualTo(OrderLineExpander.Failure.UNMAPPED_OPTION);
         assertThat(result.products()).isEmpty();
+        assertThat(result.masterOptionId()).isNull();
     }
 
     @Test
@@ -131,6 +134,8 @@ class OrderLineExpanderTest {
         assertThat(result.failed()).isFalse();
         assertThat(result.products()).singleElement()
                 .satisfies(p -> assertThat(p.quantity()).isEqualTo(6));
+        // FEATURE_2611_15 / D9: the order detail reaches the master through the same fallback.
+        assertThat(result.masterOptionId()).isEqualTo(MASTER_OPTION_ID);
     }
 
     /**

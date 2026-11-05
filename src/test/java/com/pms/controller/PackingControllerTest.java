@@ -197,7 +197,8 @@ public class PackingControllerTest extends BaseIntegrationTest {
                 "김주문", "박수취", LocalDateTime.of(2026, 11, 3, 9, 15), List.of(),
                 List.of(new OrderDetailResponse.ParcelView(1L, "123456789012", "롯데택배", 1, ParcelStatus.PACKED,
                         LocalDateTime.of(2026, 11, 3, 10, 30), "3호 상자", 7L,
-                        List.of(new OrderDetailResponse.ParcelItemView(33L, "양말A", "products/33.png", 3))))));
+                        List.of(new OrderDetailResponse.ParcelItemView(33L, "양말A", "products/33.png", 3)))),
+                List.of(), true));
 
         mockMvc.perform(get(ORDER_PATH).header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())

@@ -28,9 +28,12 @@ public interface MasterProductOptionItemRepository extends JpaRepository<MasterP
      * <p>BOM expansion reads the component's NAME for every item, and the parent option's id to group
      * the rows back per option. With {@code open-in-view=false} and a plain LAZY item that is one extra
      * query per component — the join fetch keeps a whole outbound screen at a single statement.
+     *
+     * <p>Item id order — the order list and the order detail show the components in this order and must agree
+     * (FEATURE_2611_15 / D16).
      */
     @Query("select i from MasterProductOptionItem i "
-            + "join fetch i.product join fetch i.option where i.option.id in :optionIds")
+            + "join fetch i.product join fetch i.option where i.option.id in :optionIds order by i.id")
     List<MasterProductOptionItem> findWithProductByOptionIdIn(@Param("optionIds") Collection<Long> optionIds);
 
     /**

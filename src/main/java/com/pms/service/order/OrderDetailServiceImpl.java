@@ -1,6 +1,8 @@
 package com.pms.service.order;
 
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.MasterProduct;
+import com.pms.domain.MasterProductOption;
 import com.pms.domain.Order;
 import com.pms.domain.OrderLine;
 import com.pms.domain.OrderShipment;
@@ -9,21 +11,30 @@ import com.pms.domain.ShipmentParcel;
 import com.pms.domain.ShipmentParcelItem;
 import com.pms.dto.response.OrderDetailResponse;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.OrderShipmentRepository;
 import com.pms.repository.ShipmentParcelItemRepository;
 import com.pms.repository.ShipmentParcelRepository;
 import com.pms.service.coupang.OrderQueryService;
 import com.pms.service.packing.ParcelTimes;
+import com.pms.service.stock.OrderLineExpander;
+import com.pms.service.stock.OrderLineExpander.LineExpansion;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -33,17 +44,24 @@ import java.util.stream.Collectors;
  * <p>🔴 Lookups are queries (tenant filtered), never {@code findById}.
  * <p>🔴 Only a {@code PACKED} parcel carries a box and contents; {@code PENDING} and {@code UNUSED} parcels get an empty
  * box and an empty list (D37). The processed time goes out as KST through {@link ParcelTimes#utcToKst} (D38).
+ * <p>🔴 The master product · master option · components of a line come from {@link OrderLineExpander} — the same
+ * expansion and Coupang fallback as stock out and the purchase list, never a name match (FEATURE_2611_15 / D9).
+ * <p>{@code admin} = the caller holds {@code ROLE_ADMIN} (FEATURE_2611_15 / D20) — one judgement for both reads.
  */
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class OrderDetailServiceImpl implements OrderDetailService {
 
+    private static final String ROLE_ADMIN = "ROLE_ADMIN";
+
     private final OrderLineRepository orderLineRepository;
     private final OrderShipmentRepository orderShipmentRepository;
     private final ShipmentParcelRepository parcelRepository;
     private final ShipmentParcelItemRepository parcelItemRepository;
     private final OrderQueryService orderQueryService;
+    private final OrderLineExpander orderLineExpander;
+    private final MasterProductOptionRepository masterProductOptionRepository;
 
     @Override
     public OrderDetailResponse byOrderLine(Long orderLineId) {
@@ -71,7 +89,61 @@ public class OrderDetailServiceImpl implements OrderDetailService {
                 order.getReceiverName(),
                 order.getOrderedAt(),
                 orderQueryService.rows(lines),
-                parcels(order.getId()));
+                parcels(order.getId()),
+                lineMasters(lines),
+                isAdmin());
+    }
+
+    /** One per line, line order (D1 · D3 · D5). Quantity = per-set quantity × purchasableQty (D4 · D18). */
+    private List<OrderDetailResponse.LineMaster> lineMasters(List<OrderLine> lines) {
+        Map<Long, LineExpansion> expansions = orderLineExpander.expand(lines, OrderLine::purchasableQty);
+        Map<Long, MasterProductOption> masterOptions = masterOptions(expansions.values());
+        List<OrderDetailResponse.LineMaster> result = new ArrayList<>();
+        for (OrderLine line : lines) {
+            LineExpansion expansion = expansions.get(line.getId());
+            if (expansion == null || expansion.failed()) {
+                OrderLineExpander.Failure failure = expansion == null
+                        ? OrderLineExpander.Failure.UNMAPPED_OPTION : expansion.failure();
+                result.add(new OrderDetailResponse.LineMaster(line.getId(), null, null, null, List.of(),
+                        failure.name()));
+                continue;
+            }
+            MasterProductOption option = masterOptions.get(expansion.masterOptionId());
+            MasterProduct master = option == null ? null : option.getMasterProduct();
+            result.add(new OrderDetailResponse.LineMaster(
+                    line.getId(),
+                    master == null ? null : master.getId(),
+                    master == null ? null : master.getName(),
+                    option == null ? null : option.getName(),
+                    expansion.products().stream()
+                            .map(product -> new OrderDetailResponse.LineProduct(product.productId(),
+                                    product.productName(), product.imageUrl(), product.quantity()))
+                            .toList(),
+                    null));
+        }
+        return result;
+    }
+
+    /** Master options of the expanded lines with their master, one query (no lazy load per line). */
+    private Map<Long, MasterProductOption> masterOptions(Collection<LineExpansion> expansions) {
+        List<Long> ids = expansions.stream()
+                .map(LineExpansion::masterOptionId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        return masterProductOptionRepository.findWithMasterProductByIdIn(ids).stream()
+                .collect(Collectors.toMap(MasterProductOption::getId, Function.identity(), (a, b) -> a));
+    }
+
+    /** Same judgement as {@code DashboardLayoutController#isAdmin} — the caller's authorities hold ROLE_ADMIN (D20). */
+    private static boolean isAdmin() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication != null && authentication.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .anyMatch(ROLE_ADMIN::equals);
     }
 
     /** Bundle id order, then parcel sequence, then id (D29). */

@@ -29,6 +29,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.function.ToIntFunction;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -348,5 +349,35 @@ class OrderQueryServiceImplTest {
         assertThat(result.get(0).getThumbnailImageUrl()).isEqualTo("https://img/30.jpg");
         assertThat(result.get(1).getThumbnailProductId()).isNull();
         assertThat(result.get(1).getThumbnailImageUrl()).isNull();
+    }
+
+    /**
+     * FEATURE_2611_15 / D16 · D18: the row lists every component with its real quantity (per set × purchasable, BOM
+     * order); a line that fails to expand has none (the screens write 「-」).
+     */
+    @Test
+    void list_componentsAreEveryBomProductTimesPurchasableQty() {
+        given(coupangProperties.getSyncDays()).willReturn(14);
+        // Ordered 5, cancelled 1, refund-hold 1 → purchasable 3.
+        OrderLine mapped = line(1L, OrderStatus.PAID, 5, 1, 1);
+        OrderLine unmapped = line(2L, OrderStatus.PAID, 1, 0, 0);
+        given(orderRepository.findRecentOrders(any(LocalDateTime.class))).willReturn(List.of(mapped, unmapped));
+        given(orderLineExpander.expand(anyList(), any())).willReturn(Map.of(
+                1L, new OrderLineExpander.LineExpansion(1L, List.of(
+                        new OrderLineExpander.ExpandedProduct(30L, "노란 수세미", 3, null),
+                        new OrderLineExpander.ExpandedProduct(31L, "초록 수세미", 6, null)), null),
+                2L, new OrderLineExpander.LineExpansion(2L, List.of(),
+                        OrderLineExpander.Failure.NO_MASTER_OPTION)));
+
+        List<OrderItemResponse> result = service.list(null, null, null);
+
+        assertThat(result.get(0).getComponents()).containsExactly(
+                new OrderItemResponse.ComponentQuantity("노란 수세미", 3),
+                new OrderItemResponse.ComponentQuantity("초록 수세미", 6));
+        assertThat(result.get(1).getComponents()).isEmpty();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<ToIntFunction<OrderLine>> unitCount = ArgumentCaptor.forClass(ToIntFunction.class);
+        verify(orderLineExpander).expand(eq(List.of(mapped, unmapped)), unitCount.capture());
+        assertThat(unitCount.getValue().applyAsInt(mapped)).isEqualTo(3);
     }
 }
