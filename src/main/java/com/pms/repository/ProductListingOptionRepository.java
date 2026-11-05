@@ -66,6 +66,19 @@ public interface ProductListingOptionRepository extends JpaRepository<ProductLis
                                                            @Param("prdNo") String prdNo);
 
     /**
+     * The active options of the account seller's 11st listings whose 11st product number is {@code prdNo}, all such
+     * listings together (FEATURE_2611_14 / D1). An order line without {@code sellerStockCd} is linked only when this
+     * returns exactly one option (D3) — a single active option is registered without an option block, so 11st sends
+     * no seller stock code for it.
+     */
+    @Query("select o from ProductListingOption o join o.productListing l, MarketplaceAccount a "
+            + "where a.id = :accountId and l.seller = a.seller "
+            + "and l.platform = com.pms.domain.Platform.ELEVENST and l.platformProductId = :prdNo "
+            + "and o.active = true")
+    List<ProductListingOption> findActiveElevenstOptions(@Param("accountId") Long accountId,
+                                                         @Param("prdNo") String prdNo);
+
+    /**
      * Delete all options for a specific product listing.
      *
      * @param productListingId ID of the parent ProductListing

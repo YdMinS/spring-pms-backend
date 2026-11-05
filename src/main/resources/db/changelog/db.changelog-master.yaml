@@ -250,3 +250,5 @@ databaseChangeLog:
       file: db/changelog/changes/124-shipment-parcel-status-log.yaml
   - include:
       file: db/changelog/changes/125-listing-market-values.yaml
+  - include:
+      file: db/changelog/changes/126-elevenst-single-option-link.yaml

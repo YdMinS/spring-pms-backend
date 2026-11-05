@@ -1,0 +1,84 @@
+# Link the 11st order lines of single-option listings to that option (FEATURE_2611_14 / D6 · D10 ~ D15).
+#
+# WHAT THIS CHANGES — exactly one column on one set of rows:
+#     order_line.product_listing_option_id  ->  the only active option of the 11st product, for every 11st
+#     order line (any status, any date) whose option is NULL, whose seller_stock_cd is NULL and whose raw has no
+#     chosen option name (no <slctPrdOptNm> tag, or an empty one) — when the account seller's 11st listings with
+#     that prd_no hold exactly one active option together. Lines with an option are never touched.
+#
+# WHY:
+#   A listing with one active option is registered without an option block, so 11st sends no seller stock code
+#   and ElevenstOrderUpserter.resolveOption left the option empty (unmapped: no thumbnail, no purchase list link).
+#   The upserter now applies this rule on every sync, but only to lines that come back in the
+#   reserved / paid / preparing lists within the 14-day window. This changeset applies the same rule once to
+#   every older line. Stock already past the stock-out step is not restored by it.
+#
+# 🔴 REVERSIBLE ON PURPOSE (D13 · D14). The lines and the option given to each are copied into
+#    elevenst_single_option_link_backup FIRST, and the UPDATE reads that table — so "exactly one active
+#    option" is decided once. The backup table survives the forward run; the application never reads it.
+#
+# ⚠️ Idempotent (D12): only lines whose option is still NULL are picked.
+#
+# COUNT BEFORE DEPLOYING (informational, this changeset is not conditional):
+#   SELECT COUNT(*) FROM order_line ol JOIN elevenst_order_line e ON e.order_line_id = ol.id
+#    WHERE ol.product_listing_option_id IS NULL AND e.seller_stock_cd IS NULL;
+databaseChangeLog:
+
+  - changeSet:
+      id: 126-elevenst-single-option-link
+      author: oclyx
+      comment: "FEATURE_2611_14 D6: link 11st order lines without seller stock code to the single active option; linked lines kept in elevenst_single_option_link_backup for rollback."
+      changes:
+        - createTable:
+            tableName: elevenst_single_option_link_backup
+            remarks: "11st order lines linked by changeset 126. Rollback source; never read by the application."
+            columns:
+              - column:
+                  name: order_line_id
+                  type: BIGINT
+                  constraints: { primaryKey: true, nullable: false }
+              - column: { name: tenant_id, type: BIGINT }
+              - column: { name: product_listing_option_id, type: BIGINT }
+        # Copy first, link second — the UPDATE below reads this table and is only reversible because this ran.
+        # Correlated subqueries, not a JOIN UPDATE: portable across MySQL and H2 (MODE=MySQL).
+        - sql:
+            sql: >-
+              INSERT INTO elevenst_single_option_link_backup (order_line_id, tenant_id, product_listing_option_id)
+              SELECT ol.id, ol.tenant_id,
+                     (SELECT MIN(o.id) FROM product_listing_option o
+                        JOIN product_listing l ON l.id = o.product_listing_id
+                        JOIN marketplace_account a ON a.seller_id = l.seller_id
+                       WHERE a.id = e.marketplace_account_id AND l.platform = 'ELEVENST'
+                         AND l.platform_product_id = e.prd_no AND o.active = TRUE)
+                FROM order_line ol
+                JOIN elevenst_order_line e ON e.order_line_id = ol.id
+               WHERE ol.product_listing_option_id IS NULL
+                 AND e.seller_stock_cd IS NULL
+                 AND (e.raw IS NULL OR e.raw NOT LIKE '%<slctPrdOptNm>%'
+                      OR e.raw LIKE '%<slctPrdOptNm></slctPrdOptNm>%')
+                 AND (SELECT COUNT(*) FROM product_listing_option o
+                        JOIN product_listing l ON l.id = o.product_listing_id
+                        JOIN marketplace_account a ON a.seller_id = l.seller_id
+                       WHERE a.id = e.marketplace_account_id AND l.platform = 'ELEVENST'
+                         AND l.platform_product_id = e.prd_no AND o.active = TRUE) = 1
+        - sql:
+            sql: >-
+              UPDATE order_line SET product_listing_option_id = (
+                SELECT b.product_listing_option_id FROM elevenst_single_option_link_backup b
+                 WHERE b.order_line_id = order_line.id
+              )
+               WHERE product_listing_option_id IS NULL
+                 AND id IN (SELECT order_line_id FROM elevenst_single_option_link_backup)
+      rollback:
+        # D15: only lines still holding the option this changeset gave are emptied — a line someone re-linked
+        # by hand afterwards keeps its option.
+        - sql:
+            sql: >-
+              UPDATE order_line SET product_listing_option_id = NULL
+               WHERE EXISTS (
+                 SELECT 1 FROM elevenst_single_option_link_backup b
+                  WHERE b.order_line_id = order_line.id
+                    AND b.product_listing_option_id = order_line.product_listing_option_id
+               )
+        - dropTable:
+            tableName: elevenst_single_option_link_backup
