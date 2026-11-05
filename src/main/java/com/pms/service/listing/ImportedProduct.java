@@ -142,19 +142,21 @@ public record ImportedProduct(String productName, String brand, String categoryC
     }
 
     /**
-     * One marketplace option (Coupang {@code items[]} entry).
+     * One marketplace option (Coupang {@code items[]} entry · 11st 1009 {@code ProductStock}, FEATURE_2611_12).
      *
      * @param itemName            option name as shown on the marketplace
-     * @param vendorItemId        Coupang vendorItemId — null while the option is not approved yet (D20)
-     * @param sellerProductItemId Coupang option-update id
+     * @param vendorItemId        the market's own option id — Coupang vendorItemId (null while the option is not
+     *                            approved yet, D20) · 11st {@code prdStckNo} (FEATURE_2611_12 / D25)
+     * @param sellerProductItemId Coupang option-update id (11st has none — null)
      * @param salePrice           current selling price
      * @param originalPrice       strike-through price
-     * @param stockQuantity       Coupang {@code maximumBuyCount}; null → the stock policy falls back (부록 A)
-     * @param attributes          2609_45/D4: 마켓에 이미 저장된 카테고리 속성
-     *                            ({@code attributeTypeName → attributeValueName}, 우리 저장 형태와 같은 Map).
-     *                            🔴 <b>옵션마다 다른 값이다</b>(실측 {@code 수량 → "6개"}) — 상품 레벨로 올리지
-     *                            말 것(D4-1). 빈 값은 담기지 않는다. never null, empty when absent
-     * @param notices             2609_45/D4: 마켓에 이미 저장된 고시
+     * @param stockQuantity       Coupang {@code maximumBuyCount} · 11st {@code stckQty}; null → the stock policy falls
+     *                            back (appendix A)
+     * @param attributes          2609_45/D4: the category attributes already stored on the market
+     *                            ({@code attributeTypeName → attributeValueName}, the same Map shape we store).
+     *                            🔴 <b>They differ per option</b> (measured {@code 수량 → "6개"}) — do not lift them to the
+     *                            product level (D4-1). Blank values are left out. never null, empty when absent
+     * @param notices             2609_45/D4: the notices already stored on the market
      *                            ({@code noticeCategoryDetailName → content}). never null, empty when absent
      */
     public record Option(String itemName, String vendorItemId, String sellerProductItemId,

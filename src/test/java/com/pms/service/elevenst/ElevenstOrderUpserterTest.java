@@ -234,6 +234,28 @@ class ElevenstOrderUpserterTest {
         return line.getValue().getProductListingOption();
     }
 
+    /**
+     * FEATURE_2611_12 / D25: an option imported from 11st stores 11st's own option number — the line's
+     * {@code prdStckNo} links it before {@code sellerStockCd} is read (a seller-typed code is not our option id).
+     */
+    @Test
+    void prdStckNoOfAnImportedOption_linksThatOption_beforeSellerStockCd() {
+        ProductListingOption imported = ProductListingOption.builder().id(88L).platformOptionId("STK-1").build();
+        given(productListingOptionRepository.findElevenstOptionsByMarketId(5L, "P100", "STK-1"))
+                .willReturn(List.of(imported));
+        given(orderRepository.findByMarketplaceAccount_IdAndExternalOrderId(any(), any())).willReturn(Optional.empty());
+        given(orderShipmentRepository.findByOrder_IdAndExternalShipmentId(any(), any())).willReturn(Optional.empty());
+        given(elevenstOrderLineRepository.findByMarketplaceAccount_IdAndOrdNoAndOrdPrdSeq(any(), any(), any()))
+                .willReturn(Optional.empty());
+
+        upserter.upsertRows(account, ElevenstOrderList.PAID, List.of(paidRow()));
+
+        ArgumentCaptor<OrderLine> line = ArgumentCaptor.forClass(OrderLine.class);
+        verify(orderLineRepository).save(line.capture());
+        assertThat(line.getValue().getProductListingOption()).isSameAs(imported);
+        verify(productListingOptionRepository, never()).findElevenstOrderOption(any(), any(), any());
+    }
+
     @Test
     void noSellerStockCdNorOptionName_linksTheSingleActiveOption() {
         newLine();

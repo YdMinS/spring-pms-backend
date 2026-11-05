@@ -20,7 +20,8 @@ import com.pms.dto.response.ListingImportPreviewResponse;
  *   <li>⚠️ Prices · stock · option ids are <b>never taken from the request</b>. The commit reads the market once more and
  *       the server decides (changes between preview and commit are taken; client values are not trusted).</li>
  *   <li>⚠️ Supported platforms are a <b>whitelist</b> ({@code MarketProductAccess.SUPPORTED_PLATFORMS}). Every
- *       market can read a product (FEATURE_2611_11 / D17), but importing one is still Coupang-only.</li>
+ *       market can read a product (FEATURE_2611_11 / D17); importing one is Coupang and 11st (FEATURE_2611_12 / D18 ·
+ *       D40).</li>
  * </ul>
  *
  * @see ChannelAddService channel add (master options copied → DRAFT cell) — the sibling path of this service
@@ -28,11 +29,12 @@ import com.pms.dto.response.ListingImportPreviewResponse;
 public interface CoupangListingImportService {
 
     /**
-     * 마켓 상품을 조회해 매핑 판정 + 구성 입력 줄을 돌려준다. <b>쓰기 0회</b>, 마켓 GET 1회.
+     * Reads the market product and returns the mapping verdict + the composition input rows. <b>Writes 0 times</b>; one
+     * market read ({@code fetchProduct} — Coupang 1 GET · 11st 1620 + 1009 + the photo read, FEATURE_2611_12).
      *
-     * @param masterProductId 편입 대상 마스터
-     * @param request         (판매자, 플랫폼, 마켓 상품 id)
-     * @return 미리보기 결과
+     * @param masterProductId the master to import into
+     * @param request         (seller, platform, market product id)
+     * @return the preview
      */
     ListingImportPreviewResponse preview(Long masterProductId, ListingImportPreviewRequest request);
 

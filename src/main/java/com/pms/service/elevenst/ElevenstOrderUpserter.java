@@ -37,7 +37,8 @@ import java.util.Optional;
  *       lines.</li>
  *   <li>D31 — amounts and shipping fees are written on the first insert only.</li>
  *   <li>D17 — the listing option comes from {@code sellerStockCd}; filled only while empty. Without
- *       {@code sellerStockCd} and option name, the single active option of that 11st product (FEATURE_2611_14).</li>
+ *       {@code sellerStockCd} and option name, the single active option of that 11st product (FEATURE_2611_14).
+ *       Before both, 11st's own option number {@code prdStckNo} of an imported product (FEATURE_2611_12 / D25).</li>
  *   <li>D7 · D43 — only orderer / receiver names are kept; {@code raw} = {@link #RAW_FIELDS} only.</li>
  *   <li>hold / cancel quantities are not written here — {@link ElevenstCancelRequestUpserter} re-sums them (D40).</li>
  * </ul>
@@ -195,16 +196,26 @@ public class ElevenstOrderUpserter {
     }
 
     /**
+     * FEATURE_2611_12 / D25: first, the option of the same sales channel's 11st listings for this {@code prdNo} whose
+     * stored market option id is the line's {@code prdStckNo} (an imported product — 11st's own option number).
      * D17: {@code sellerStockCd} read as our listing option id; kept only when it is an 11st option of the same
      * sales channel for this {@code prdNo}. FEATURE_2611_14 / D1 · D7: when both {@code sellerStockCd} and the
      * chosen option name ({@code slctPrdOptNm}) are blank, the line takes the only active option of the seller's
      * 11st listings for this {@code prdNo} (a single option is registered without an option block). Anything else
-     * (not a number, another channel, a product registered outside oclyx, zero or several active options) → null,
-     * and the line shows under the purchase list's unmapped group.
+     * (not a number, another channel, a product registered outside oclyx and not imported, zero or several active
+     * options) → null, and the line shows under the purchase list's unmapped group.
      */
     private ProductListingOption resolveOption(MarketplaceAccount account, Map<String, String> row) {
         String sellerStockCd = text(row, "sellerStockCd");
         String prdNo = text(row, "prdNo");
+        String prdStckNo = text(row, "prdStckNo");
+        if (prdNo != null && prdStckNo != null) {
+            List<ProductListingOption> byMarketId =
+                    productListingOptionRepository.findElevenstOptionsByMarketId(account.getId(), prdNo, prdStckNo);
+            if (!byMarketId.isEmpty()) {
+                return byMarketId.get(0);
+            }
+        }
         if (sellerStockCd == null && prdNo != null && text(row, "slctPrdOptNm") == null) {
             List<ProductListingOption> active =
                     productListingOptionRepository.findActiveElevenstOptions(account.getId(), prdNo);

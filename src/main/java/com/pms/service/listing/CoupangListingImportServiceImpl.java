@@ -117,7 +117,8 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
 
         boolean matched = categoryMatches(ctx.master(), platform, fetched.categoryCode());
         return ListingImportPreviewResponse.builder()
-                .productName(fetched.productName())
+                // FEATURE_2611_12 / D19: a market with one product name (11st) gives it as the display name only.
+                .productName(fetched.productName() != null ? fetched.productName() : fetched.displayName())
                 .status(fetched.status())
                 .categoryCode(fetched.categoryCode())
                 .categoryMatched(matched)
@@ -284,7 +285,8 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
                     .stockQuantity(market.stockQuantity())
                     .platformOptionId(market.vendorItemId())
                     .sellerProductItemId(market.sellerProductItemId())
-                    // D20: an id exists ⇒ Coupang approved it; without one it is still awaiting approval.
+                    // D20: an id exists ⇒ the market approved it (Coupang vendorItemId · 11st prdStckNo, FEATURE_2611_12 /
+                    // D25); without one it is still awaiting approval.
                     .approvalStatus(market.vendorItemId() != null
                             ? OptionApprovalStatus.APPROVED : OptionApprovalStatus.NOT_APPROVED)
                     .active(true)                                          // it is being sold on the market
@@ -617,11 +619,12 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
     // ------------------------------------------------------------------ helpers
 
     /**
-     * D14 판정 = <b>쿠팡의 실제 카테고리가 우리가 앞으로 보낼 카테고리와 같은가</b>. 역조회가 실패한 경우도,
-     * 역조회는 됐지만 다른 카테고리인 경우도 똑같이 {@code false} 다(사용자가 볼 결과가 같다).
+     * D14 verdict = <b>is the market's actual category the one we will send from now on</b> (Coupang · 11st alike,
+     * FEATURE_2611_12). A failed reverse lookup and a reverse lookup that lands on another category are both
+     * {@code false} (the user sees the same result).
      *
-     * <p>어느 쪽이든 막지 않는다 — 등록·수정 payload 는 원래도 마스터 카테고리로 만들어지므로 폴백이 곧
-     * 현행 동작이다.</p>
+     * <p>Neither blocks — the register / update payload is built from the master category anyway, so the fallback is
+     * the current behaviour.</p>
      */
     private boolean categoryMatches(MasterProduct master, Platform platform, String marketCategoryCode) {
         if (marketCategoryCode == null || marketCategoryCode.isBlank()) {

@@ -95,6 +95,13 @@ class ElevenstListingAdapterTest {
         given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(options));
     }
 
+    /** FEATURE_2611_12: the 1009 answer {@code fetchProduct} reads its options from. */
+    private void stocks(String productStocks) {
+        given(client.post(eq(ElevenstListingAdapter.STOCKS_PATH), anyString(), any())).willReturn(ElevenstXml.document(
+                "<ProductStocks><ProductStocks><prdNo>5551</prdNo>" + productStocks
+                        + "</ProductStocks></ProductStocks>"));
+    }
+
     private static ProductListingOption option(long id, String name, String price, Integer stock,
                                                MasterProductOption master) {
         return ProductListingOption.builder().id(id).optionName(name).sellingPrice(new BigDecimal(price))
@@ -252,6 +259,7 @@ class ElevenstListingAdapterTest {
         given(client.get(eq(ElevenstListingAdapter.PRODUCT_READ_PATH + "5551"), any())).willReturn(ElevenstXml.document(
                 "<Product><prdNm>11번가 이름</prdNm><selStatCd>103</selStatCd>"
                         + "<htmlDetail><![CDATA[<p>11번가 상세</p>]]></htmlDetail></Product>"));
+        stocks("");
         given(photoKeyService.currentKey()).willReturn(java.util.Optional.of("KEY32"));
         given(productImageClient.fetch("5551", "KEY32")).willReturn(new com.pms.service.elevenst
                 .ElevenstProductImageClient.Photos("http://i.011st.com/a_B.jpg", List.of("http://i.011st.com/a_A1.jpg")));
@@ -274,6 +282,7 @@ class ElevenstListingAdapterTest {
     void fetchProduct_noPhotoKey_noPhotoCall_keyGuidance() {
         given(client.get(eq(ElevenstListingAdapter.PRODUCT_READ_PATH + "5551"), any())).willReturn(ElevenstXml.document(
                 "<Product><prdNm>11번가 이름</prdNm></Product>"));
+        stocks("");
         given(photoKeyService.currentKey()).willReturn(java.util.Optional.empty());
 
         ImportedProduct product = adapter.fetchProduct("5551", null);
@@ -289,6 +298,7 @@ class ElevenstListingAdapterTest {
     void fetchProduct_photoReadFailed_plainGuidance() {
         given(client.get(eq(ElevenstListingAdapter.PRODUCT_READ_PATH + "5551"), any())).willReturn(ElevenstXml.document(
                 "<Product><prdNm>11번가 이름</prdNm></Product>"));
+        stocks("");
         given(photoKeyService.currentKey()).willReturn(java.util.Optional.of("KEY32"));
         given(productImageClient.fetch("5551", "KEY32"))
                 .willThrow(new com.pms.service.elevenst.ElevenstPhotoReadException("11st photo read error 004"));
@@ -297,6 +307,103 @@ class ElevenstListingAdapterTest {
 
         assertThat(product.marketImages()).isEmpty();
         assertThat(product.imageNotice()).isEqualTo("11번가 사진을 가져오지 못했습니다");
+    }
+
+    /**
+     * FEATURE_2611_12 / D25 · D26: 1620 gives the category and the product price, 1009 the options — id = 11st's own
+     * option number, name = mixDtlOptNm, price = selPrc + addPrc, stock = stckQty.
+     */
+    @Test
+    void fetchProduct_optionsFrom1009_marketIdPrdStckNo_priceSelPrcPlusAddPrc_categoryDispCtgrNo() {
+        given(client.get(eq(ElevenstListingAdapter.PRODUCT_READ_PATH + "5551"), any())).willReturn(ElevenstXml.document(
+                "<Product><prdNm>11번가 양말</prdNm><selStatCd>103</selStatCd><selPrc>9900</selPrc>"
+                        + "<dispCtgrNo>1001</dispCtgrNo></Product>"));
+        stocks("<ProductStock><addPrc>0</addPrc><mixDtlOptNm>검정</mixDtlOptNm><prdStckNo>48053982676</prdStckNo>"
+                + "<stckQty>7</stckQty><sellerStockCd>ABC-1</sellerStockCd></ProductStock>"
+                + "<ProductStock><addPrc>3000</addPrc><mixDtlOptNm> 흰색 </mixDtlOptNm><prdStckNo>48053982677</prdStckNo>"
+                + "<stckQty>0</stckQty></ProductStock>");
+        given(photoKeyService.currentKey()).willReturn(java.util.Optional.empty());
+
+        ImportedProduct product = adapter.fetchProduct("5551", null);
+
+        assertThat(product.categoryCode()).isEqualTo("1001");
+        assertThat(product.productName()).isNull();
+        assertThat(product.options()).extracting(ImportedProduct.Option::itemName, ImportedProduct.Option::vendorItemId,
+                        ImportedProduct.Option::stockQuantity)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("검정", "48053982676", 7),
+                        org.assertj.core.groups.Tuple.tuple("흰색", "48053982677", 0));
+        assertThat(product.options().get(0).salePrice()).isEqualByComparingTo("9900");
+        assertThat(product.options().get(1).salePrice()).isEqualByComparingTo("12900");
+        assertThat(product.options().get(0).sellerProductItemId()).isNull();
+        assertThat(product.options().get(0).originalPrice()).isNull();
+    }
+
+    /** FEATURE_2611_12: a product without an option block — the stock row has no option name → the product name. */
+    @Test
+    void fetchProduct_stockWithoutOptionName_takesTheProductName_andSelPrc() {
+        given(client.get(eq(ElevenstListingAdapter.PRODUCT_READ_PATH + "5551"), any())).willReturn(ElevenstXml.document(
+                "<Product><prdNm>11번가 단품</prdNm><selStatCd>103</selStatCd><selPrc>15000</selPrc></Product>"));
+        stocks("<ProductStock><prdStckNo>48053982680</prdStckNo><stckQty>12</stckQty></ProductStock>");
+        given(photoKeyService.currentKey()).willReturn(java.util.Optional.empty());
+
+        ImportedProduct product = adapter.fetchProduct("5551", null);
+
+        assertThat(product.options()).hasSize(1);
+        assertThat(product.options().get(0).itemName()).isEqualTo("11번가 단품");
+        assertThat(product.options().get(0).salePrice()).isEqualByComparingTo("15000");
+    }
+
+    /** FEATURE_2611_12: an unreadable 1009 answer is an error (502 with 11st's message), not an empty option list. */
+    @Test
+    void fetchProduct_optionReadFailed_throws() {
+        given(client.get(eq(ElevenstListingAdapter.PRODUCT_READ_PATH + "5551"), any())).willReturn(ElevenstXml.document(
+                "<Product><prdNm>11번가 이름</prdNm></Product>"));
+        given(client.post(eq(ElevenstListingAdapter.STOCKS_PATH), anyString(), any()))
+                .willReturn("not xml".getBytes(ElevenstXml.EUC_KR));
+
+        assertThatThrownBy(() -> adapter.fetchProduct("5551", null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageStartingWith("11번가 옵션을 읽지 못했습니다");
+    }
+
+    /** FEATURE_2611_12 / D27: 1007 with prdNm and limit — one page, no next page, no photo · brand · date. */
+    @Test
+    void searchProducts_1007ByName_onePage() {
+        org.mockito.ArgumentCaptor<String> body = org.mockito.ArgumentCaptor.forClass(String.class);
+        given(client.post(eq(ElevenstListingAdapter.STATUS_PATH), body.capture(), any())).willReturn(ElevenstXml.document(
+                "<ns2:products xmlns:ns2=\"http://skt.tmall.business.openapi.spring.service.client.domain/\">"
+                        + "<ns2:product><prdNo>5551</prdNo><prdNm>11번가 양말</prdNm><selStatCd>103</selStatCd></ns2:product>"
+                        + "<ns2:product><prdNo>5552</prdNo><prdNm>11번가 양말 2</prdNm><selStatCd>105</selStatCd></ns2:product>"
+                        + "</ns2:products>"));
+
+        ChannelProductPage page = adapter.searchProducts("양말", null, null);
+
+        assertThat(body.getValue()).isEqualTo("<SearchProduct><prdNm>양말</prdNm><limit>100</limit></SearchProduct>");
+        assertThat(page.nextToken()).isNull();
+        assertThat(page.items()).extracting(ChannelProductSummary::platformProductId, ChannelProductSummary::productName,
+                        ChannelProductSummary::status)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("5551", "11번가 양말", ListingStatus.SELLING),
+                        org.assertj.core.groups.Tuple.tuple("5552", "11번가 양말 2", ListingStatus.SUSPENDED));
+        assertThat(page.items().get(0).brand()).isNull();
+    }
+
+    /** FEATURE_2611_12 / D25: an imported option stores prdStckNo — the price pairs by it, not by sellerStockCd. */
+    @Test
+    void readMarketPrices_importedOption_pairedByPrdStckNo() {
+        options(option(11L, "검정", "9900.00", 5, null).toBuilder().platformOptionId("48053982676").build(),
+                option(12L, "흰색", "12900.00", 5, null).toBuilder().platformOptionId("48053982677").build());
+        given(client.post(eq(ElevenstListingAdapter.STOCKS_PATH), anyString(), any())).willReturn(ElevenstXml.document(
+                "<ProductStocks><ProductStocks><prdNo>5551</prdNo>"
+                        + "<ProductStock><addPrc>0</addPrc><prdStckNo>48053982676</prdStckNo><sellerStockCd>A</sellerStockCd></ProductStock>"
+                        + "<ProductStock><addPrc>4000</addPrc><prdStckNo>48053982677</prdStckNo></ProductStock>"
+                        + "</ProductStocks></ProductStocks>"));
+        FetchResult fetched = new FetchResult(ListingStatus.SELLING, List.of(), "판매중",
+                new FetchResult.Prices(new BigDecimal("9900"), null, Map.of()));
+
+        MarketPrices prices = adapter.readMarketPrices(cell, null, fetched);
+
+        assertThat(prices.byOptionId()).containsOnlyKeys(11L, 12L);
+        assertThat(prices.byOptionId().get(12L).price()).isEqualByComparingTo("13900");
     }
 
     /** FEATURE_2611_11 / D8 · D22: prdImage02 ~ 04 = the product's additional market photos in market order. */

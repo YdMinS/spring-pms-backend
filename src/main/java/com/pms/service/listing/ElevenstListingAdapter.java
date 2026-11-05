@@ -53,9 +53,10 @@ import java.util.stream.Collectors;
  * <p>Register = 1003 {@code POST /rest/prodservices/product} · update = 1619 {@code PUT …/product/{prdNo}} with the
  * same full body (D56) · status = 1007 {@code POST /rest/prodmarketservice/prodmarket} (D96) · stop = 1631
  * {@code PUT /rest/prodstatservice/stat/stopdisplay/{prdNo}} (D96). Bodies are EUC-KR XML ({@link ElevenstXml}).
- * The review-note lookup keeps the interface default (no call, D58); price push and market import stay
- * unsupported (D9 ⑤ · D8). Product read (FEATURE_2611_11 / D12 · D17) = 1620 {@code GET
- * /rest/prodmarketservice/prodmarket/{prdNo}} for the name and the detail + the public OpenAPI photo read (D35).</p>
+ * The review-note lookup keeps the interface default (no call, D58); price push stays unsupported (D9 ⑤). Product
+ * read (FEATURE_2611_11 / D12 · D17) = 1620 {@code GET /rest/prodmarketservice/prodmarket/{prdNo}} for the name, the
+ * category and the detail + 1009 for the options (FEATURE_2611_12 / D25 · D26) + the public OpenAPI photo read (D35).
+ * Name search (FEATURE_2611_12 / D27) = 1007 with {@code prdNm}.</p>
  *
  * <p>Value sources: name D108 · options D55 · D62 · D81 · D90 · D103 · shipping D84~D92 · D106 · notices D89 · D100
  * · D102 · texts D69 · D73 · certification D94 · D113 · fixed codes D63 · D64 · D95 · sale period D131.</p>
@@ -68,10 +69,19 @@ public class ElevenstListingAdapter implements ListingChannel {
     static final String PRODUCT_PATH = "/rest/prodservices/product";
     static final String STATUS_PATH = "/rest/prodmarketservice/prodmarket";
     static final String STOP_PATH = "/rest/prodstatservice/stat/stopdisplay/";
-    /** FEATURE_2610_27 / D16 · D37: 1009 multi-product stock lookup — per option {@code addPrc} + {@code sellerStockCd}. */
+    /**
+     * FEATURE_2610_27 / D16 · D37 · FEATURE_2611_12 / D25: 1009 multi-product stock lookup — per option {@code addPrc},
+     * {@code sellerStockCd} and 11st's own option number {@code prdStckNo}.
+     */
     static final String STOCKS_PATH = "/rest/prodmarketservice/prodmarket/stocks";
-    /** FEATURE_2611_11 / §2-11: 1620 single-product lookup — {@code prdNm} · {@code htmlDetail} (no photo fields). */
+    /**
+     * FEATURE_2611_11 / §2-11 · FEATURE_2611_12 / D26: 1620 single-product lookup — {@code prdNm} · {@code htmlDetail} ·
+     * {@code dispCtgrNo} · {@code selPrc} (no photo fields).
+     */
     static final String PRODUCT_READ_PATH = "/rest/prodmarketservice/prodmarket/";
+
+    /** FEATURE_2611_12 / D27: how many products one 1007 name search asks for (one page, no next page). */
+    static final int SEARCH_LIMIT = 100;
 
     /** FEATURE_2611_11 / D35: the guidance when the photos could not be read (exact wording). */
     static final String PHOTO_READ_FAILED = "11번가 사진을 가져오지 못했습니다";
@@ -224,9 +234,10 @@ public class ElevenstListingAdapter implements ListingChannel {
 
     /**
      * FEATURE_2610_27 / D16 · D30 · D37: one 1009 call. Option price = 1007 {@code selPrc} + the option's {@code addPrc},
-     * paired by {@code sellerStockCd} (= our option id sent as {@code colSellerStockCd}). When no pair is found and the
-     * cell has exactly one active option, that option takes {@code selPrc} (a single option is sent without an option
-     * block — {@link #buildPayload}).
+     * paired by 11st's option number {@code prdStckNo} when one of our options stores it as its market id (an imported
+     * product, FEATURE_2611_12 / D25), else by {@code sellerStockCd} (= our option id sent as {@code colSellerStockCd}).
+     * When no pair is found and the cell has exactly one active option, that option takes {@code selPrc} (a single
+     * option is sent without an option block — {@link #buildPayload}).
      */
     @Override
     public MarketPrices readMarketPrices(ProductListing cell, MarketplaceAccount acct, FetchResult fetched) {
@@ -242,14 +253,24 @@ public class ElevenstListingAdapter implements ListingChannel {
         }
         List<ProductListingOption> options = productListingOptionRepository.findByProductListingId(cell.getId());
         Set<String> ourIds = options.stream().map(o -> String.valueOf(o.getId())).collect(Collectors.toSet());
+        Map<String, Long> idByMarketId = new LinkedHashMap<>();
+        for (ProductListingOption option : options) {
+            if (option.getPlatformOptionId() != null) {
+                idByMarketId.putIfAbsent(option.getPlatformOptionId(), option.getId());
+            }
+        }
         Map<Long, MarketPrices.OptionPrice> byOptionId = new LinkedHashMap<>();
         for (Element stock : ElevenstXml.elements(doc, "ProductStock")) {
-            String id = ElevenstXml.firstText(stock, "sellerStockCd");
-            if (id == null || !ourIds.contains(id)) {
-                continue;
+            Long optionId = idByMarketId.get(ElevenstXml.firstText(stock, "prdStckNo"));
+            if (optionId == null) {
+                String id = ElevenstXml.firstText(stock, "sellerStockCd");
+                if (id == null || !ourIds.contains(id)) {
+                    continue;
+                }
+                optionId = Long.valueOf(id);
             }
             BigDecimal add = decimalOrNull(ElevenstXml.firstText(stock, "addPrc"));
-            byOptionId.put(Long.valueOf(id),
+            byOptionId.put(optionId,
                     new MarketPrices.OptionPrice(base == null || add == null ? null : base.add(add), null));
         }
         if (byOptionId.isEmpty()) {
@@ -271,8 +292,10 @@ public class ElevenstListingAdapter implements ListingChannel {
      * FEATURE_2611_11 / D12 · D19 · D35 · D39: 1620 gives the one product name ({@code prdNm} → our 「노출상품명」, no
      * 「등록상품명」) and the detail ({@code htmlDetail}); the photos come from the public OpenAPI with the company key —
      * main {@code BasicImage} + additional {@code AddImage1} ~ {@code 3}. A failed photo read is not an error: the
-     * product comes back without photos and with the guidance in {@code imageNotice}. Field names are the guide's,
-     * first checked on the production server (D20).
+     * product comes back without photos and with the guidance in {@code imageNotice}. FEATURE_2611_12 / D25 · D26: the
+     * same 1620 answer gives the category ({@code dispCtgrNo}) and the product price ({@code selPrc}); one 1009 call
+     * gives the options ({@link #readOptions}). A failed option read is an error. Field names are the guide's, first
+     * checked on the production server (D20).
      */
     @Override
     public ImportedProduct fetchProduct(String platformProductId, MarketplaceAccount acct) {
@@ -284,6 +307,8 @@ public class ElevenstListingAdapter implements ListingChannel {
                     HttpStatus.BAD_GATEWAY);
         }
         String code = ElevenstXml.firstText(doc, "selStatCd");
+        List<ImportedProduct.Option> options = readOptions(platformProductId, name,
+                decimalOrNull(ElevenstXml.firstText(doc, "selPrc")), acct);
         List<ImportedProduct.MarketImage> images = new ArrayList<>();
         String imageNotice = null;
         Optional<String> key = photoKeyService.currentKey();
@@ -301,9 +326,67 @@ public class ElevenstListingAdapter implements ListingChannel {
                 imageNotice = PHOTO_READ_FAILED;
             }
         }
-        return new ImportedProduct(null, null, null, code == null ? null : STATUS_BY_CODE.get(code), List.of(),
-                null, List.of(), List.of(), List.of(), code == null ? null : STATUS_NAME_BY_CODE.get(code), name,
-                null, ElevenstXml.firstText(doc, "htmlDetail"), images, imageNotice);
+        return new ImportedProduct(null, null, ElevenstXml.firstText(doc, "dispCtgrNo"),
+                code == null ? null : STATUS_BY_CODE.get(code), List.of(), null, List.of(), List.of(), options,
+                code == null ? null : STATUS_NAME_BY_CODE.get(code), name, null,
+                ElevenstXml.firstText(doc, "htmlDetail"), images, imageNotice);
+    }
+
+    /**
+     * FEATURE_2611_12 / D25 · D26: the product's options from one 1009 call, in 11st's order. Option id = 11st's own
+     * option number {@code prdStckNo} · name = {@code mixDtlOptNm} (the product name when 11st gives none — a product
+     * without an option block) · price = {@code selPrc} + {@code addPrc} (no {@code addPrc} = {@code selPrc}) · stock
+     * = {@code stckQty}. 11st has no strike-through price and no option-update id — both null.
+     */
+    private List<ImportedProduct.Option> readOptions(String prdNo, String productName, BigDecimal base,
+                                                     MarketplaceAccount acct) {
+        StringBuilder body = new StringBuilder("<ProductStocks><ProductStock>");
+        ElevenstXml.element(body, "prdNo", prdNo);
+        body.append("</ProductStock></ProductStocks>");
+        byte[] raw = client.post(STOCKS_PATH, body.toString(), acct);
+        Document doc = ElevenstXml.parseOrNull(raw);
+        if (doc == null) {
+            throw new BusinessException("11번가 옵션을 읽지 못했습니다: " + ElevenstXml.messageOf(raw),
+                    HttpStatus.BAD_GATEWAY);
+        }
+        List<ImportedProduct.Option> options = new ArrayList<>();
+        for (Element stock : ElevenstXml.elements(doc, "ProductStock")) {
+            String optionName = ElevenstXml.firstText(stock, "mixDtlOptNm");
+            BigDecimal add = decimalOrNull(ElevenstXml.firstText(stock, "addPrc"));
+            BigDecimal stockQty = decimalOrNull(ElevenstXml.firstText(stock, "stckQty"));
+            options.add(new ImportedProduct.Option(
+                    StringUtils.hasText(optionName) ? optionName.trim() : productName,
+                    ElevenstXml.firstText(stock, "prdStckNo"), null,
+                    base == null ? null : add == null ? base : base.add(add), null,
+                    stockQty == null ? null : stockQty.intValue()));
+        }
+        return options;
+    }
+
+    /**
+     * FEATURE_2611_12 / D27: 1007 with the product name — one page of up to {@link #SEARCH_LIMIT} products, no next
+     * page. The list has no photo, brand or creation date (null). Read only.
+     */
+    @Override
+    public ChannelProductPage searchProducts(String name, String nextToken, MarketplaceAccount acct) {
+        StringBuilder body = new StringBuilder("<SearchProduct>");
+        ElevenstXml.element(body, "prdNm", name);
+        ElevenstXml.element(body, "limit", SEARCH_LIMIT);
+        body.append("</SearchProduct>");
+        byte[] raw = client.post(STATUS_PATH, body.toString(), acct);
+        Document doc = ElevenstXml.parseOrNull(raw);
+        if (doc == null) {
+            throw new BusinessException("11번가 상품을 검색하지 못했습니다: " + ElevenstXml.messageOf(raw),
+                    HttpStatus.BAD_GATEWAY);
+        }
+        List<ChannelProductSummary> items = new ArrayList<>();
+        for (Element product : ElevenstXml.elements(doc, "product")) {
+            String code = ElevenstXml.firstText(product, "selStatCd");
+            items.add(new ChannelProductSummary(ElevenstXml.firstText(product, "prdNo"),
+                    ElevenstXml.firstText(product, "prdNm"), null,
+                    code == null ? null : STATUS_BY_CODE.get(code), null));
+        }
+        return new ChannelProductPage(items, null);
     }
 
     /** The {@code <Product>} body sent by register and update alike (D56). */

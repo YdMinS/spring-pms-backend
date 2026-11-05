@@ -66,10 +66,24 @@ public interface ProductListingOptionRepository extends JpaRepository<ProductLis
                                                            @Param("prdNo") String prdNo);
 
     /**
+     * The option an 11st order line was sold as, by 11st's own option number (FEATURE_2611_12 / D25): an option of an
+     * 11st listing of the same sales channel (the account's seller) whose 11st product number is the order's
+     * {@code prdNo} and whose stored market option id is the order's {@code prdStckNo} — set when the product was
+     * imported from 11st.
+     */
+    @Query("select o from ProductListingOption o join o.productListing l, MarketplaceAccount a "
+            + "where a.id = :accountId and l.seller = a.seller "
+            + "and l.platform = com.pms.domain.Platform.ELEVENST and l.platformProductId = :prdNo "
+            + "and o.platformOptionId = :prdStckNo")
+    List<ProductListingOption> findElevenstOptionsByMarketId(@Param("accountId") Long accountId,
+                                                             @Param("prdNo") String prdNo,
+                                                             @Param("prdStckNo") String prdStckNo);
+
+    /**
      * The active options of the account seller's 11st listings whose 11st product number is {@code prdNo}, all such
-     * listings together (FEATURE_2611_14 / D1). An order line without {@code sellerStockCd} is linked only when this
-     * returns exactly one option (D3) — a single active option is registered without an option block, so 11st sends
-     * no seller stock code for it.
+     * listings together (FEATURE_2611_14 / D1). An order line without {@code sellerStockCd} (and without an imported
+     * option for its {@code prdStckNo}, FEATURE_2611_12 / D25) is linked only when this returns exactly one option (D3)
+     * — a single active option is registered without an option block, so 11st sends no seller stock code for it.
      */
     @Query("select o from ProductListingOption o join o.productListing l, MarketplaceAccount a "
             + "where a.id = :accountId and l.seller = a.seller "
