@@ -124,6 +124,34 @@ class MasterFromChannelServiceTest {
 
     // ---- preview ----
 
+    /**
+     * FEATURE_2611_12 / D18 · D19 · D26: 「마켓 상품으로 시작」 reads an 11st product too — its one product name is the
+     * suggested master name, its option keeps 11st's option number.
+     */
+    @Test
+    void preview_elevenstProduct_isSupported_suggestsTheMarketName() {
+        given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(Seller.builder().id(SELLER_ID).build()));
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(SELLER_ID, Platform.ELEVENST))
+                .willReturn(Optional.of(MarketplaceAccount.builder()
+                        .id(9L).platform(Platform.ELEVENST).isActive(true).build()));
+        given(resolver.resolve(Platform.ELEVENST)).willReturn(channel);
+        given(productListingRepository.findByPlatformProductId("5551")).willReturn(Optional.empty());
+        given(channel.fetchProduct(eq("5551"), any())).willReturn(new ImportedProduct(null, null, "1001",
+                ListingStatus.SELLING, List.of(), null, List.of(), List.of(),
+                List.of(new ImportedProduct.Option("작은", "48053982676", null, new BigDecimal("9900"), null, 5)),
+                "판매중", "11번가 이름"));
+        given(platformCategoryRepository.findByPlatformAndCode(Platform.ELEVENST, "1001")).willReturn(Optional.empty());
+
+        MasterFromChannelPreviewResponse response = service.preview(MasterFromChannelPreviewRequest.builder()
+                .sellerId(SELLER_ID).platform("ELEVENST").platformProductId("5551").build());
+
+        assertThat(response.getProductName()).isEqualTo("11번가 이름");
+        assertThat(response.getSuggestedMasterName()).isEqualTo("11번가 이름");
+        assertThat(response.getOptions()).extracting(MasterFromChannelPreviewResponse.Option::getPlatformOptionId)
+                .containsExactly("48053982676");
+        assertThat(response.isCategoryResolved()).isFalse();
+    }
+
     @Test
     void preview_returnsOptionsAndCategory() {
         givenAccount();

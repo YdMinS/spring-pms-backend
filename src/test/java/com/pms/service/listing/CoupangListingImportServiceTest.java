@@ -726,6 +726,70 @@ class CoupangListingImportServiceTest {
         givenSavesReturnIds();
     }
 
+    /** FEATURE_2611_12: an 11st product read the way the 11st adapter returns it (one name = the display name). */
+    private ImportedProduct elevenstProduct() {
+        return new ImportedProduct(null, null, "1001", ListingStatus.SELLING, List.of(), null, List.of(), List.of(),
+                List.of(new ImportedProduct.Option("작은", "48053982676", null, new BigDecimal("9900"), null, 5)),
+                "판매중", "11번가 이름");
+    }
+
+    private void givenElevenstMarket() {
+        givenMaster();
+        given(categoryMappingRepository.existsByCategoryIdAndPlatform(CATEGORY_ID, Platform.ELEVENST))
+                .willReturn(true);
+        given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(Seller.builder().id(SELLER_ID).build()));
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(SELLER_ID, Platform.ELEVENST))
+                .willReturn(Optional.of(MarketplaceAccount.builder()
+                        .id(9L).platform(Platform.ELEVENST).isActive(true).build()));
+        given(productListingRepository.findByPlatformProductId("5551")).willReturn(Optional.empty());
+        given(resolver.resolve(Platform.ELEVENST)).willReturn(channel);
+        given(channel.fetchProduct(eq("5551"), any())).willReturn(elevenstProduct());
+        given(platformCategoryRepository.findByPlatformAndCode(Platform.ELEVENST, "1001"))
+                .willReturn(Optional.empty());
+    }
+
+    /** FEATURE_2611_12 / D18 · D19 · D40: an 11st product is importable; its one product name is the preview name. */
+    @Test
+    void testPreviewElevenstProduct_isSupported_nameIsTheMarketName() {
+        givenElevenstMarket();
+        given(productRepository.findAllById(List.of(PRODUCT_A, PRODUCT_B)))
+                .willReturn(List.of(product(PRODUCT_A), product(PRODUCT_B)));
+
+        ListingImportPreviewResponse response = service.preview(MASTER_ID, ListingImportPreviewRequest.builder()
+                .sellerId(SELLER_ID).platform("ELEVENST").platformProductId("5551").build());
+
+        assertThat(response.getProductName()).isEqualTo("11번가 이름");
+        assertThat(response.getOptions()).extracting(ListingImportPreviewResponse.Option::getVendorItemId)
+                .containsExactly("48053982676");
+        verifyNothingSaved();
+    }
+
+    /** FEATURE_2611_12 / D25: the imported 11st option keeps 11st's own option number as its market id. */
+    @Test
+    void testImportElevenstProduct_storesPrdStckNoAsMarketId() {
+        MasterProductOption existing = masterOption(10L, "작은");
+        givenElevenstMarket();
+        given(masterProductOptionRepository.findByMasterProductId(MASTER_ID)).willReturn(List.of(existing));
+        given(masterProductOptionItemRepository.findByOptionIdIn(List.of(10L))).willReturn(List.of(
+                MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_A)).quantity(1).build(),
+                MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_B)).quantity(1).build()));
+        givenSavesReturnIds();
+
+        service.importListing(MASTER_ID, ListingImportRequest.builder()
+                .sellerId(SELLER_ID).platform("ELEVENST").platformProductId("5551")
+                .options(List.of(spec("작은", "48053982676", 1, 1))).build());
+
+        ArgumentCaptor<ProductListing> cell = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(cell.capture());
+        assertThat(cell.getValue().getPlatform()).isEqualTo(Platform.ELEVENST);
+        assertThat(cell.getValue().getName()).isEqualTo("11번가 이름");
+        ArgumentCaptor<ProductListingOption> option = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository).save(option.capture());
+        assertThat(option.getValue().getPlatformOptionId()).isEqualTo("48053982676");
+        assertThat(option.getValue().getSellingPrice()).isEqualByComparingTo("9900");
+        assertThat(option.getValue().getStockQuantity()).isEqualTo(5);
+    }
+
     // 2609_39/D19 ④: 편입 옵션의 가격은 마켓에서 <b>읽어온</b> 실가격이라 market_price 와 selling_price 가
     // 같은 값으로 출발한다. 이걸 빼면 온보딩한 셀이 첫날부터 「아직 안 밀림」으로 잘못 쌓인다.
     @Test

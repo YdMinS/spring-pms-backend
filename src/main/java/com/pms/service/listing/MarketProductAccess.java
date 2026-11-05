@@ -24,10 +24,11 @@ import java.util.Set;
 public final class MarketProductAccess {
 
     /**
-     * Platforms whose market products can be imported. Every adapter reads a product (FEATURE_2611_11 / D17), but
-     * importing one (option pairing · category · attributes) is still Coupang-only — other platforms get a 400 here.
+     * Platforms whose market products can be imported. Every adapter reads a product (FEATURE_2611_11 / D17); importing
+     * one (option pairing · category · attributes) is Coupang and 11st (FEATURE_2611_12 / D18 · D40) — other platforms
+     * get a 400 here.
      */
-    public static final Set<Platform> SUPPORTED_PLATFORMS = Set.of(Platform.COUPANG);
+    public static final Set<Platform> SUPPORTED_PLATFORMS = Set.of(Platform.COUPANG, Platform.ELEVENST);
 
     private MarketProductAccess() {
     }

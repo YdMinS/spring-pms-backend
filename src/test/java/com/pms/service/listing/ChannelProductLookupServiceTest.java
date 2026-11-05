@@ -118,6 +118,32 @@ class ChannelProductLookupServiceTest {
         assertThat(response.getNotices()).isEmpty();
     }
 
+    /** FEATURE_2611_12 / D27 · D19: the name search and the detail read 11st too; its one name is the product name. */
+    @Test
+    void elevenstIsSupported_detailNameIsTheMarketName() {
+        given(sellerRepository.findById(SELLER_ID)).willReturn(Optional.of(Seller.builder().id(SELLER_ID).build()));
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(SELLER_ID, Platform.ELEVENST))
+                .willReturn(Optional.of(MarketplaceAccount.builder()
+                        .id(9L).platform(Platform.ELEVENST).isActive(true).build()));
+        given(resolver.resolve(Platform.ELEVENST)).willReturn(adapter);
+        given(adapter.searchProducts(eq("양말"), eq(null), any())).willReturn(new ChannelProductPage(List.of(
+                new ChannelProductSummary("5551", "11번가 양말", null, ListingStatus.SELLING, null)), null));
+        given(adapter.fetchProduct(eq("5551"), any())).willReturn(new ImportedProduct(null, null, "1001",
+                ListingStatus.SELLING, List.of(), null, List.of(), List.of(),
+                List.of(new ImportedProduct.Option("검정", "48053982676", null, new BigDecimal("5000"), null, 3)),
+                "판매중", "11번가 양말"));
+
+        ChannelProductSearchResponse found = service.search(SELLER_ID, "ELEVENST", "양말", null);
+        ChannelProductDetailResponse detail = service.detail(SELLER_ID, "ELEVENST", "5551");
+
+        assertThat(found.getItems()).extracting(ChannelProductSearchResponse.Item::getPlatformProductId)
+                .containsExactly("5551");
+        assertThat(found.getNextToken()).isNull();
+        assertThat(detail.getProductName()).isEqualTo("11번가 양말");
+        assertThat(detail.getOptions()).extracting(ChannelProductDetailResponse.Option::getItemName)
+                .containsExactly("검정");
+    }
+
     @Test
     void inactiveAccountIsRejected() {
         givenAccount(false);

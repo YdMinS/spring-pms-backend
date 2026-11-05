@@ -404,7 +404,8 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
         if (cell.getPlatformProductId() == null) {
             throw new IllegalArgumentException("미등록");
         }
-        // Option linking reads Coupang option ids (vendorItemId); other markets give none (FEATURE_2610_13 / D128) — gate first.
+        // Option linking is Coupang only (FEATURE_2610_13 / D128 — 11st option linking is a separate feature, even though
+        // the 11st read now gives option numbers, FEATURE_2611_12 / D25) — gate first.
         if (cell.getPlatform() != Platform.COUPANG) {
             throw new IllegalArgumentException(cell.getPlatform() + " 옵션 연결 미지원");
         }
