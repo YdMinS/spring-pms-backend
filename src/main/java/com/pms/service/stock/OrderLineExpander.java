@@ -70,8 +70,18 @@ public class OrderLineExpander {
      */
     public record ExpandedProduct(Long productId, String productName, int quantity, String imageUrl) {}
 
-    /** 라인 1건의 전개 결과. {@code failure != null} 이면 {@code products} 는 비어 있다. */
-    public record LineExpansion(Long orderLineId, List<ExpandedProduct> products, Failure failure) {
+    /**
+     * The expansion of one line. {@code failure != null} means {@code products} is empty. {@code masterOptionId} = the
+     * master option the products came from, set only when the expansion succeeded (FEATURE_2611_15 / D1 · D3 — the
+     * order detail names that option and its master), otherwise null.
+     */
+    public record LineExpansion(Long orderLineId, List<ExpandedProduct> products, Failure failure,
+                                Long masterOptionId) {
+
+        /** Without the master option — for callers that never read it. */
+        public LineExpansion(Long orderLineId, List<ExpandedProduct> products, Failure failure) {
+            this(orderLineId, products, failure, null);
+        }
 
         public boolean failed() {
             return failure != null;
@@ -87,8 +97,9 @@ public class OrderLineExpander {
      * failed line is in it too, with its reason.
      *
      * @param lines     lines to expand (a repeated line keeps the last one)
-     * @param unitCount multiplier per line — stock out uses {@code orderQty}, the purchase list
-     *                  {@code purchasableQty()}, an 11st split invoice the quantity it carries (FEATURE_2610_17 / D64)
+     * @param unitCount multiplier per line — stock out uses {@code orderQty}, the purchase list and the order list ·
+     *                  detail {@code purchasableQty()} (FEATURE_2611_15 / D18), an 11st split invoice the quantity it
+     *                  carries (FEATURE_2610_17 / D64)
      */
     public Map<Long, LineExpansion> expand(Collection<OrderLine> lines, ToIntFunction<OrderLine> unitCount) {
         if (lines == null || lines.isEmpty()) {
@@ -124,7 +135,7 @@ public class OrderLineExpander {
                             item.getQuantity() * units,
                             item.getProduct().getImageUrl()))
                     .toList();
-            result.put(line.getId(), new LineExpansion(line.getId(), products, null));
+            result.put(line.getId(), new LineExpansion(line.getId(), products, null, masterOption.getId()));
         }
         return result;
     }

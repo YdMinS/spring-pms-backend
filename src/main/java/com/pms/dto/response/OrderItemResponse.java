@@ -6,6 +6,7 @@ import lombok.Getter;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * Order line response DTO (GET /api/orders).
@@ -61,4 +62,12 @@ public class OrderItemResponse {
     // Both null when the line cannot be expanded (unmapped option · no master option · empty BOM).
     private Long thumbnailProductId;
     private String thumbnailImageUrl;
+    // Real products of the line (FEATURE_2611_15 / D15 · D16 · D18): every component product of the line's master
+    // option, BOM order, quantity = per-set quantity × purchasableQty. Empty when the line cannot be expanded.
+    @Builder.Default
+    private List<ComponentQuantity> components = List.of();
+
+    /** One component product of the line and how many go out (FEATURE_2611_15 / D16 · D18). */
+    public record ComponentQuantity(String productName, int quantity) {
+    }
 }
