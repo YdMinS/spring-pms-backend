@@ -22,6 +22,10 @@ import java.util.List;
  * @param lines           every line of the order, id order, each the same fields as one order list row
  * @param parcels         every parcel of every shipment bundle of the order — bundle id order, then parcel sequence
  *                        (D29); empty when no invoice was issued yet (D26)
+ * @param lineMasters     where each line comes from, one per line in the order of {@code lines} (FEATURE_2611_15 /
+ *                        D1 · D3 · D5)
+ * @param admin           true = the caller has {@code ROLE_ADMIN} (FEATURE_2611_15 / D20) — the screens draw the
+ *                        master product link only then. Always true for the packing read (an ADMIN-only path)
  */
 public record OrderDetailResponse(
         String externalOrderId,
@@ -32,7 +36,9 @@ public record OrderDetailResponse(
         String receiverName,
         LocalDateTime paidAt,
         List<OrderItemResponse> lines,
-        List<ParcelView> parcels) {
+        List<ParcelView> parcels,
+        List<LineMaster> lineMasters,
+        boolean admin) {
 
     /**
      * One parcel (invoice) of the order (D23 · D36 · D37).
@@ -50,5 +56,28 @@ public record OrderDetailResponse(
 
     /** One packed product: its photo ({@code Product.imageUrl} as stored), name and quantity. */
     public record ParcelItemView(Long productId, String productName, String imageUrl, int quantity) {
+    }
+
+    /**
+     * The master product, master option and component products of one order line (FEATURE_2611_15 / D1 · D3 · D5 ·
+     * D9).
+     *
+     * @param orderLineId       the line ({@code lines[].id})
+     * @param masterProductId   the master product — null when {@code unexpandedReason} is set
+     * @param masterProductName the master product name — null when {@code unexpandedReason} is set
+     * @param masterOptionName  the master option name — null when {@code unexpandedReason} is set
+     * @param products          the component products, BOM order — empty when {@code unexpandedReason} is set
+     * @param unexpandedReason  null = linked; otherwise why the link is broken ({@code UNMAPPED_OPTION} ·
+     *                          {@code NO_MASTER_OPTION} · {@code EMPTY_BOM} — the outbound confirm screen's codes)
+     */
+    public record LineMaster(Long orderLineId, Long masterProductId, String masterProductName,
+                             String masterOptionName, List<LineProduct> products, String unexpandedReason) {
+    }
+
+    /**
+     * One component product of a line: its photo ({@code Product.imageUrl} as stored), name and the real quantity =
+     * per-set quantity × the line's purchasable quantity (FEATURE_2611_15 / D4 · D18).
+     */
+    public record LineProduct(Long productId, String productName, String imageUrl, int quantity) {
     }
 }
