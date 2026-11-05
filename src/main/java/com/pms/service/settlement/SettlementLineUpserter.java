@@ -169,8 +169,9 @@ public class SettlementLineUpserter {
      * option, so there is no reason to search the listings again.
      *
      * <p>11st (FEATURE_2610_20 / D6): only the option of the attached 11st order line. The global
-     * {@code findByPlatformOptionId} lookup is never used for an 11st line — 11st listings leave that column empty,
-     * so a match there could only be a Coupang option.
+     * {@code findByPlatformOptionId} lookup is never used for an 11st line — that lookup does not filter by market,
+     * and 11st options now also store a market id there (our option id after an approval refresh, or 11st's
+     * {@code prdStckNo} for an imported product, FEATURE_2611_12), so it could pick the wrong market's option.
      */
     private ProductListingOption matchOption(MarketplaceAccount account, String platformOptionId,
                                              OrderLine orderLine) {
