@@ -203,11 +203,12 @@ public class MergeMasterLinkServiceImpl implements MergeMasterLinkService {
         }
     }
 
-    // ---------------------------------------------------------------- layout (D4 · D5 · D16 · D27)
+    // ---------------------------------------------------------------- layout (D4 · D5 · D16 · D27 · FEATURE_2611_13 D2)
 
     /**
      * Which masters of the discarded product are rewritten and which are deleted. Refuses a master holding both
-     * products (D4) and a master that would equal two or more masters (D27).
+     * products (D4), a master whose option quantities hold the discarded product while its component list does not
+     * (FEATURE_2611_13 D2) and a master that would equal two or more masters (D27) — in that order.
      */
     private Layout layout(Product target, Product source) {
         List<Long> sourceMasterIds = masterIdsOf(source.getId());
@@ -217,6 +218,18 @@ public class MergeMasterLinkServiceImpl implements MergeMasterLinkService {
             throw new BusinessException("남길 물품과 버릴 물품이 함께 들어 있는 마스터 상품이 있습니다: "
                     + labels(scopedMasters(both)) + ". 마스터 구성 편집에서 한쪽을 먼저 빼 주세요.",
                     HttpStatus.CONFLICT);
+        }
+        // FEATURE_2611_13 D2 · D3: the merge rewrites only the masters found through the component list, so an
+        // option quantity row of any other master would keep pointing at the deleted product — refuse first.
+        Set<Long> componentMasterIds = new HashSet<>(sourceMasterIds);
+        List<MasterProduct> drifted = scopedMasters(
+                optionItemRepository.findWithMasterByProductIdIn(List.of(source.getId())).stream()
+                        .map(item -> item.getOption().getMasterProduct().getId())
+                        .filter(id -> !componentMasterIds.contains(id))
+                        .distinct().toList());
+        if (!drifted.isEmpty()) {
+            throw new BusinessException("구성품 목록에는 없고 옵션 수량에만 버릴 물품이 남아 있는 마스터 상품이 있습니다: "
+                    + labels(drifted) + ". 마스터 구성 편집에서 정리해 주세요.", HttpStatus.CONFLICT);
         }
 
         List<MasterProduct> masters = scopedMasters(sourceMasterIds);

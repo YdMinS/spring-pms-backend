@@ -379,6 +379,29 @@ class ProductMergeMasterLinkIntegrationTest extends BaseIntegrationTest {
     }
 
     @Test
+    void testMasterWithSourceOnlyInOptionQuantitiesBlocksMergeAndPreview() throws Exception {
+        // FEATURE_2611_13 D2: B sits in an option's quantities but not in the component list (drifted data saved
+        // past the service guard). No listing option points at it — the merge is refused all the same.
+        MasterProduct drifted = master("어긋난 세트");
+        component(drifted, partner);
+        MasterProductOption driftedOption = option(drifted, "1+1");
+        item(driftedOption, partner, 1);
+        item(driftedOption, source, 1);
+        String message = "구성품 목록에는 없고 옵션 수량에만 버릴 물품이 남아 있는 마스터 상품이 있습니다: "
+                + label(drifted) + ". 마스터 구성 편집에서 정리해 주세요.";
+
+        merge(validChoices())
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(message));
+        mockMvc.perform(post("/api/products/merge/preview")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(previewBody()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(message));
+        assertNothingMoved();
+    }
+
+    @Test
     void testMissingOptionChoiceIs400() throws Exception {
         merge("""
                 [{"sourceOptionId": %d, "targetOptionId": %d}]
