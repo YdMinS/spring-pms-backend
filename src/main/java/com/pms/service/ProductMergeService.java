@@ -46,8 +46,8 @@ import java.util.Set;
  * <p>🔁 <b>Master links move with every merge</b> (FEATURE_2611_09 / D1 — reverses 2609_69 D6-a), through
  * {@link MergeMasterLinkService}: its refusals (a master holding both products, a choice missing) are raised
  * <b>before</b> any row moves (D6) — migrating history first and then failing would make the operator come back.
- * The masters it empties are deleted as the last step before the source's delete (D20): that delete removes
- * edited S3 photos before the commit.</p>
+ * The masters it empties are deleted as the last step before the source's delete (D20); their edited S3 photos
+ * are deleted only after the commit (FEATURE_2611_13 D6), so a rollback keeps them.</p>
  *
  * <p>🔴 <b>No cost recalculation is triggered</b> (PLAN D10). A line's cost is baked in when it ships, so
  * moving purchase history cannot change what already left; future lines using the surviving product's
@@ -169,8 +169,8 @@ public class ProductMergeService {
 
         mergePurchasePlaces(target, sourceId);
 
-        // FEATURE_2611_09 / D20: the emptied masters go right before the source — their photo delete removes S3
-        // files before the commit, so nothing that can still roll back may follow it but the delete below.
+        // FEATURE_2611_09 / D20: the emptied masters go right before the source (order kept). Their edited S3
+        // photos are deleted only after the commit (FEATURE_2611_13 D6), so a rollback below keeps the files.
         mergeMasterLinkService.deleteEmptiedMasters(masterPlan);
 
         // Soft delete last, through the ordinary guarded path (01). If the guard fires here, a link was
