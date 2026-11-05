@@ -1,6 +1,7 @@
 package com.pms.service.listing;
 
 import com.pms.domain.GeneratedProductData;
+import com.pms.domain.ListingMarketImage;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
@@ -9,6 +10,7 @@ import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.exception.BusinessException;
+import com.pms.repository.ListingMarketImageRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.ListingTextValueResolver;
@@ -17,11 +19,15 @@ import com.pms.service.OptionCheckSuffixResolver;
 import com.pms.service.RegistrationNameGenerator;
 import com.pms.service.elevenst.ElevenstApiClient;
 import com.pms.service.elevenst.ElevenstListingRules;
+import com.pms.service.elevenst.ElevenstPhotoKeyService;
+import com.pms.service.elevenst.ElevenstPhotoReadException;
+import com.pms.service.elevenst.ElevenstProductImageClient;
 import com.pms.service.elevenst.ElevenstNoticeConverter;
 import com.pms.service.elevenst.ElevenstXml;
 import com.pms.service.listing.shipping.ElevenstShippingKeys;
 import com.pms.service.listing.shipping.ElevenstShippingResolver;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -36,6 +42,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -47,11 +54,13 @@ import java.util.stream.Collectors;
  * same full body (D56) · status = 1007 {@code POST /rest/prodmarketservice/prodmarket} (D96) · stop = 1631
  * {@code PUT /rest/prodstatservice/stat/stopdisplay/{prdNo}} (D96). Bodies are EUC-KR XML ({@link ElevenstXml}).
  * The review-note lookup keeps the interface default (no call, D58); price push and market import stay
- * unsupported (D9 ⑤ · D8).</p>
+ * unsupported (D9 ⑤ · D8). Product read (FEATURE_2611_11 / D12 · D17) = 1620 {@code GET
+ * /rest/prodmarketservice/prodmarket/{prdNo}} for the name and the detail + the public OpenAPI photo read (D35).</p>
  *
  * <p>Value sources: name D108 · options D55 · D62 · D81 · D90 · D103 · shipping D84~D92 · D106 · notices D89 · D100
  * · D102 · texts D69 · D73 · certification D94 · D113 · fixed codes D63 · D64 · D95 · sale period D131.</p>
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class ElevenstListingAdapter implements ListingChannel {
@@ -61,6 +70,15 @@ public class ElevenstListingAdapter implements ListingChannel {
     static final String STOP_PATH = "/rest/prodstatservice/stat/stopdisplay/";
     /** FEATURE_2610_27 / D16 · D37: 1009 multi-product stock lookup — per option {@code addPrc} + {@code sellerStockCd}. */
     static final String STOCKS_PATH = "/rest/prodmarketservice/prodmarket/stocks";
+    /** FEATURE_2611_11 / §2-11: 1620 single-product lookup — {@code prdNm} · {@code htmlDetail} (no photo fields). */
+    static final String PRODUCT_READ_PATH = "/rest/prodmarketservice/prodmarket/";
+
+    /** FEATURE_2611_11 / D35: the guidance when the photos could not be read (exact wording). */
+    static final String PHOTO_READ_FAILED = "11번가 사진을 가져오지 못했습니다";
+    /** FEATURE_2611_11 / D39: appended when the company has no photo lookup key (exact wording). */
+    static final String PHOTO_KEY_MISSING = PHOTO_READ_FAILED + ". [설정]에서 11번가 사진 조회 키를 넣어 주세요";
+    /** FEATURE_2611_11 / D8 · D35: the additional photo fields of 1003 / 1619 ({@code prdImage02} ~ {@code 04}). */
+    private static final List<String> ADDITIONAL_IMAGE_FIELDS = List.of("prdImage02", "prdImage03", "prdImage04");
 
     static final String MISSING_NOTICE_MESSAGE = "A/S 안내 · 반품/교환 안내를 넣으세요";
     static final String MISSING_BRAND_MESSAGE = "브랜드를 넣으세요";
@@ -114,6 +132,10 @@ public class ElevenstListingAdapter implements ListingChannel {
     private final OptionCheckSuffixResolver optionCheckSuffixResolver;
     private final ElevenstShippingResolver shippingResolver;
     private final ListingTextValueResolver textValueResolver;
+    /** FEATURE_2611_11 / D8: the product-level market photos sent as {@code prdImage02} ~ {@code 04}. */
+    private final ListingMarketImageRepository marketImageRepository;
+    private final ElevenstProductImageClient productImageClient;
+    private final ElevenstPhotoKeyService photoKeyService;
 
     @Override
     public Platform platform() {
@@ -245,6 +267,45 @@ public class ElevenstListingAdapter implements ListingChannel {
         requireSuccess(client.put(STOP_PATH + cell.getPlatformProductId(), null, acct));
     }
 
+    /**
+     * FEATURE_2611_11 / D12 · D19 · D35 · D39: 1620 gives the one product name ({@code prdNm} → our 「노출상품명」, no
+     * 「등록상품명」) and the detail ({@code htmlDetail}); the photos come from the public OpenAPI with the company key —
+     * main {@code BasicImage} + additional {@code AddImage1} ~ {@code 3}. A failed photo read is not an error: the
+     * product comes back without photos and with the guidance in {@code imageNotice}. Field names are the guide's,
+     * first checked on the production server (D20).
+     */
+    @Override
+    public ImportedProduct fetchProduct(String platformProductId, MarketplaceAccount acct) {
+        byte[] raw = client.get(PRODUCT_READ_PATH + platformProductId, acct);
+        Document doc = ElevenstXml.parseOrNull(raw);
+        String name = ElevenstXml.firstText(doc, "prdNm");
+        if (!StringUtils.hasText(name)) {
+            throw new BusinessException("11번가 상품을 읽지 못했습니다: " + ElevenstXml.messageOf(raw),
+                    HttpStatus.BAD_GATEWAY);
+        }
+        String code = ElevenstXml.firstText(doc, "selStatCd");
+        List<ImportedProduct.MarketImage> images = new ArrayList<>();
+        String imageNotice = null;
+        Optional<String> key = photoKeyService.currentKey();
+        if (key.isEmpty()) {
+            imageNotice = PHOTO_KEY_MISSING;
+        } else {
+            try {
+                ElevenstProductImageClient.Photos photos = productImageClient.fetch(platformProductId, key.get());
+                images.add(new ImportedProduct.MarketImage(null, null, null, true, null, photos.basic()));
+                for (String url : photos.additional()) {
+                    images.add(new ImportedProduct.MarketImage(null, null, null, false, null, url));
+                }
+            } catch (ElevenstPhotoReadException e) {
+                log.warn("11st photo read failed for product {}: {}", platformProductId, e.getMessage());
+                imageNotice = PHOTO_READ_FAILED;
+            }
+        }
+        return new ImportedProduct(null, null, null, code == null ? null : STATUS_BY_CODE.get(code), List.of(),
+                null, List.of(), List.of(), List.of(), code == null ? null : STATUS_NAME_BY_CODE.get(code), name,
+                null, ElevenstXml.firstText(doc, "htmlDetail"), images, imageNotice);
+    }
+
     /** The {@code <Product>} body sent by register and update alike (D56). */
     String buildPayload(ProductListing cell, GeneratedProductData gen) {
         Texts texts = requireTexts(cell);
@@ -270,6 +331,15 @@ public class ElevenstListingAdapter implements ListingChannel {
         ElevenstXml.element(xml, "prdStatCd", "01");
         ElevenstXml.element(xml, "minorSelCnYn", "Y");
         ElevenstXml.element(xml, "prdImage01", gen == null ? null : gen.getThumbnailUrl());
+        // FEATURE_2611_11 / D8 · D22: the product's additional market photos in market order, whichever thumbnail is used.
+        List<String> additional = marketImageRepository.findByProductListingIdOrderBySortOrderAsc(cell.getId()).stream()
+                .filter(i -> i.getProductListingOptionId() == null && !Boolean.TRUE.equals(i.getRepresentative()))
+                .map(ListingMarketImage::getImageUrl)
+                .limit(ADDITIONAL_IMAGE_FIELDS.size())
+                .toList();
+        for (int i = 0; i < additional.size(); i++) {
+            ElevenstXml.element(xml, ADDITIONAL_IMAGE_FIELDS.get(i), additional.get(i));
+        }
         ElevenstXml.cdata(xml, "htmlDetail", gen == null ? null : gen.getDetailHtml());
         for (String[] group : CERT_GROUPS) {
             xml.append("<ProductCertGroup>");

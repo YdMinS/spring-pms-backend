@@ -122,23 +122,22 @@ public interface ListingChannel {
     void delete(ProductListing cell, MarketplaceAccount acct);
 
     /**
-     * 마켓에 이미 등록된 상품을 조회한다(2609_22 / D8). <b>읽기 전용</b> — 이 경로에서 등록·수정·가격변경
-     * 호출을 하지 않는다.
+     * Read a product as it currently is on the market (2609_22 / D8). <b>Read only</b> — no register, update or price
+     * call happens on this path.
      *
-     * <p>{@link #fetchStatus} 와 같은 GET 을 쓰지만 읽는 필드가 더 많다(상품명·카테고리·태그·옵션 가격).
-     * 파싱 실패는 예외가 아니라 {@code null} 이다 — 무엇이 치명적인지는 호출하는 서비스가 정한다.</p>
+     * <p>🔴 Required of every market (FEATURE_2611_11 / D17): a market cannot be connected without it — there is no
+     * default. [「마켓 기준으로 맞추기」] (D9 · D12) reads the names, the photos and the detail page through it. A field the
+     * market does not return is {@code null} (or an empty list), never an exception — the calling service decides what
+     * is fatal.</p>
      *
-     * <p>기본 구현은 던진다. ⚠️ 호출부는 이 예외에 의존하지 말고 <b>지원 플랫폼 화이트리스트</b>로 먼저
-     * 막을 것 — {@code GlobalExceptionHandler} 에 {@code UnsupportedOperationException} 핸들러가 없어
-     * 그대로 두면 500 이 된다.</p>
+     * <p>⚠️ Importing a market product is a separate rule: callers of the import path still check the supported
+     * platforms first ({@code MarketProductAccess.SUPPORTED_PLATFORMS}).</p>
      *
-     * @param platformProductId 마켓 상품 id (쿠팡 sellerProductId)
+     * @param platformProductId the market product id (Coupang sellerProductId · 11st prdNo · ESM goodsNo)
      * @param account           the marketplace account (credentials)
-     * @return 마켓에 존재하는 그대로의 상품
+     * @return the product as it exists on the market
      */
-    default ImportedProduct fetchProduct(String platformProductId, MarketplaceAccount account) {
-        throw new UnsupportedOperationException(platform() + " 가져오기 미지원");
-    }
+    ImportedProduct fetchProduct(String platformProductId, MarketplaceAccount account);
 
     /**
      * 상품명으로 마켓 상품을 검색한다(2609_67). 읽기 전용 · 저장 0회.

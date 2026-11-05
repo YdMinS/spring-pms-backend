@@ -3,6 +3,7 @@ package com.pms.service.listing;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import com.pms.domain.GeneratedProductData;
+import com.pms.domain.ListingMarketImage;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
@@ -11,6 +12,7 @@ import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.exception.BusinessException;
+import com.pms.repository.ListingMarketImageRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.MasterChannelConfigService;
@@ -49,10 +51,12 @@ import java.util.stream.Collectors;
  * <p>Register = post 20 {@code POST /item/v1/goods} · update = {@code PUT /item/v1/goods/{goodsNo}} with the same full
  * body plus {@code isSell} (D30) · status = post 21 {@code GET …/sell-status} folded over the two sites (D31) · stop =
  * post 21 {@code PUT …/sell-status} with both {@code isSell} false (D33). The review-note lookup keeps the interface
- * default (no call, D32); price push and market import stay unsupported (D41). Both sites are always targeted (D5).</p>
+ * default (no call, D32); price push and market import stay unsupported (D41). Both sites are always targeted (D5).
+ * Product read (FEATURE_2611_11 / D12 · D17) = post 20 {@code GET /item/v1/goods/{goodsNo}}.</p>
  *
- * <p>Value sources: name D20 · category D13 · notices D16 · D17 · fixed fields D18 · image D22 · detail D21 · options
- * D23 · prices D24 · D54 · stock D27 · D28 · shipping D36 · site discount D39 · managed code D18 · D29.</p>
+ * <p>Value sources: name D20 · category D13 · notices D16 · D17 · fixed fields D18 · image D22 + additional market
+ * photos FEATURE_2611_11 / D8 · detail D21 · options D23 · prices D24 · D54 · stock D27 · D28 · shipping D36 · site
+ * discount D39 · managed code D18 · D29.</p>
  */
 @Component
 @RequiredArgsConstructor
@@ -70,6 +74,8 @@ public class EsmListingAdapter implements ListingChannel {
     private static final BigDecimal RATIO_THRESHOLD = new BigDecimal("10000");
     /** D23 / 11st D103: the option group name when no active option carries a per-option attribute name. */
     private static final String DEFAULT_OPTION_TITLE = "옵션";
+    /** FEATURE_2611_11 / D8: post 20 — 「추가 이미지는 1 ~ 14 까지 설정 가능」. */
+    private static final int MAX_ADDITIONAL_IMAGES = 14;
 
     private final EsmApiClient client;
     private final EsmCategories esmCategories;
@@ -79,6 +85,8 @@ public class EsmListingAdapter implements ListingChannel {
     private final RegistrationNameGenerator registrationNameGenerator;
     private final OptionCheckSuffixResolver optionCheckSuffixResolver;
     private final EsmShippingResolver shippingResolver;
+    /** FEATURE_2611_11 / D8: the product-level market photos sent as the additional photos. */
+    private final ListingMarketImageRepository marketImageRepository;
 
     @Override
     public Platform platform() {
@@ -110,6 +118,38 @@ public class EsmListingAdapter implements ListingChannel {
     @Override
     public boolean isShippingReady(ProductListing cell) {
         return EsmShippingResolver.missingLabels(shippingResolver.resolve(cell)).isEmpty();
+    }
+
+    /**
+     * FEATURE_2611_11 / D12 · D19 · D37: post 20 「상품 조회」 ({@code GET /item/v1/goods/{goodsNo}}) answers with the
+     * registration fields — the one product name {@code itemBasicInfo.goodsName.kor} (→ our 「노출상품명」, no 「등록상품명」),
+     * the main photo {@code itemAddtionalInfo.images.basicImgURL}, the additional photos {@code addtionalImg1URL} ~
+     * {@code addtionalImg14URL} and the detail {@code itemAddtionalInfo.descriptions.kor.html}. Keys are matched ignoring
+     * case (FEATURE_2610_27 / D37); the live answer is first checked on the production server (D20).
+     */
+    @Override
+    public ImportedProduct fetchProduct(String platformProductId, MarketplaceAccount acct) {
+        JsonNode goods = client.get(EsmPaths.GOODS + "/" + platformProductId, EsmCredentials.of(acct));
+        String name = textOrNull(child(child(child(goods, "itemBasicInfo"), "goodsName"), "kor"));
+        if (name == null) {
+            throw new BusinessException("G마켓 · 옥션 상품을 읽지 못했습니다", HttpStatus.BAD_GATEWAY);
+        }
+        JsonNode additional = child(goods, "itemAddtionalInfo");
+        JsonNode images = child(additional, "images");
+        List<ImportedProduct.MarketImage> marketImages = new ArrayList<>();
+        String basic = textOrNull(child(images, "basicImgURL"));
+        if (basic != null) {
+            marketImages.add(new ImportedProduct.MarketImage(null, null, null, true, null, basic));
+        }
+        for (int i = 1; i <= MAX_ADDITIONAL_IMAGES; i++) {
+            String url = textOrNull(child(images, additionalImageField(i)));
+            if (url != null) {
+                marketImages.add(new ImportedProduct.MarketImage(null, null, null, false, null, url));
+            }
+        }
+        String detailHtml = textOrNull(child(child(child(additional, "descriptions"), "kor"), "html"));
+        return new ImportedProduct(null, null, null, null, List.of(), null, List.of(), List.of(), List.of(), null,
+                name, null, detailHtml, marketImages, null);
     }
 
     /** D29: the master goods number is the market product id; a missing one is a failure. */
@@ -253,14 +293,46 @@ public class EsmListingAdapter implements ListingChannel {
         additional.put("officialNotice", officialNotice(master));
         additional.put("isAdultProduct", false);
         additional.put("isVatFree", false);
-        additional.put("images", ordered("basicImgURL", gen == null || gen.getThumbnailUrl() == null ? ""
-                : gen.getThumbnailUrl()));
+        additional.put("images", images(cell, gen));
         additional.put("descriptions", ordered("kor", ordered("type", 2, "html", detailHtml(gen))));
         additional.put("goodsStatus", 1);
         payload.put("itemAddtionalInfo", additional);
 
         payload.put("addtionalInfo", ordered("siteDiscount", sites(true, true)));
         return payload;
+    }
+
+    /**
+     * D22 · FEATURE_2611_11 / D8 · D22: {@code basicImgURL} = the thumbnail, then the product's additional market
+     * photos in market order as {@code addtionalImg1URL} ~ {@code addtionalImg14URL} (post 20) — kept whichever thumbnail
+     * is used.
+     */
+    private Map<String, Object> images(ProductListing cell, GeneratedProductData gen) {
+        Map<String, Object> images = ordered("basicImgURL",
+                gen == null || gen.getThumbnailUrl() == null ? "" : gen.getThumbnailUrl());
+        List<String> photos = marketImageRepository.findByProductListingIdOrderBySortOrderAsc(cell.getId()).stream()
+                .filter(i -> i.getProductListingOptionId() == null && !Boolean.TRUE.equals(i.getRepresentative()))
+                .map(ListingMarketImage::getImageUrl)
+                .limit(MAX_ADDITIONAL_IMAGES)
+                .toList();
+        for (int i = 0; i < photos.size(); i++) {
+            images.put(additionalImageField(i + 1), photos.get(i));
+        }
+        return images;
+    }
+
+    /** Post 20 additional photo field n (1 ~ 14) — the guide's own spelling 「addtional」. */
+    private static String additionalImageField(int n) {
+        return "addtionalImg" + n + "URL";
+    }
+
+    /** Trimmed text of a value node, or null when absent or blank. */
+    private static String textOrNull(JsonNode node) {
+        if (node == null || node.isNull() || node.isMissingNode()) {
+            return null;
+        }
+        String text = node.asText("").trim();
+        return text.isEmpty() ? null : text;
     }
 
     /** D23: one selection group with a value per active option; a single active option goes without options. */

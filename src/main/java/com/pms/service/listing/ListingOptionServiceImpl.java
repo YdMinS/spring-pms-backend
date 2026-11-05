@@ -569,11 +569,14 @@ public class ListingOptionServiceImpl implements ListingOptionService {
     }
 
     /**
-     * The auto-generated registration name (등록상품명, 67) for this listing's current active options — carried in
-     * the response so the front can patch the matrix cell in place after a toggle. master null → the listing's
-     * display name (backfill transition window).
+     * The registration name (「등록상품명」, 67) for this listing's current active options — carried in the response so the
+     * front can patch the matrix cell in place after a toggle. The listing's own stored name wins (FEATURE_2611_11 /
+     * D4 · D15); else the automatic name. master null → the listing's display name (backfill transition window).
      */
     private String registrationName(ProductListing listing, List<ProductListingOption> options) {
+        if (StringUtils.hasText(listing.getRegistrationName())) {
+            return listing.getRegistrationName();
+        }
         MasterProduct master = listing.getMasterProduct();
         if (master == null) {
             return listing.getName();

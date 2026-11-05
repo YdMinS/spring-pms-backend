@@ -9,6 +9,7 @@ import com.pms.exception.ResourceNotFoundException;
 import com.pms.exception.ValidationException;
 import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MasterProductRepository;
+import com.pms.repository.ListingMarketImageRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductListingTagRevisionRepository;
@@ -49,6 +50,7 @@ public class ChannelLinkServiceImpl implements ChannelLinkService {
     private final ProductListingOptionRepository productListingOptionRepository;
     private final GeneratedProductDataRepository generatedProductDataRepository;
     private final ProductListingTagRevisionRepository productListingTagRevisionRepository;
+    private final ListingMarketImageRepository listingMarketImageRepository;
 
     /**
      * 마켓 등록 셀을 마스터에서 떼어낸다: {@code ProductListing.masterProduct} → null,
@@ -113,6 +115,8 @@ public class ChannelLinkServiceImpl implements ChannelLinkService {
 
         productListingOptionRepository.deleteByProductListingId(productListingId);
         generatedProductDataRepository.deleteByProductListingId(productListingId);
+        // FEATURE_2611_11: the market photo rows hang on the listing (FK) — rows only, the files stay (same rule as above).
+        listingMarketImageRepository.deleteByProductListingId(productListingId);
         productListingTagRevisionRepository.deleteByProductListing_Id(productListingId);
         try {
             productListingRepository.delete(listing);

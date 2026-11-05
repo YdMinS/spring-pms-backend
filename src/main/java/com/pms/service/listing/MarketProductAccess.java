@@ -24,15 +24,15 @@ import java.util.Set;
 public final class MarketProductAccess {
 
     /**
-     * {@link ListingChannel#fetchProduct} 를 실제로 구현한 플랫폼. ⚠️ 어댑터 기본 구현의
-     * {@code UnsupportedOperationException} 은 전역 핸들러가 없어 500 이 되므로 여기서 400 으로 막는다.
+     * Platforms whose market products can be imported. Every adapter reads a product (FEATURE_2611_11 / D17), but
+     * importing one (option pairing · category · attributes) is still Coupang-only — other platforms get a 400 here.
      */
     public static final Set<Platform> SUPPORTED_PLATFORMS = Set.of(Platform.COUPANG);
 
     private MarketProductAccess() {
     }
 
-    /** 마켓 상품 읽기를 지원하지 않는 플랫폼이면 400. */
+    /** 400 when market products of this platform cannot be imported. */
     public static void requireSupported(Platform platform) {
         if (!SUPPORTED_PLATFORMS.contains(platform)) {
             throw new IllegalArgumentException(platform + " 가져오기 미지원");

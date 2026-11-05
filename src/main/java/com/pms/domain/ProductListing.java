@@ -100,6 +100,17 @@ public class ProductListing extends BaseEntity {
     private String name;
 
     /**
+     * FEATURE_2611_11 / D4 · D5: this listing's own 「등록상품명」. {@code null} = the automatic name
+     * ({@code RegistrationNameGenerator}) is used — every place that shows or sends the listing's 「등록상품명」 reads
+     * 「this value ?? the automatic name」 (D15). Filled by an import and by [「마켓 기준으로 맞추기」] from the market's
+     * 「등록상품명」, and by a person's edit; [자동 이름으로 되돌리기] clears it. Markets with one product name (11st · ESM)
+     * leave it {@code null} (D19). Pre-existing rows are {@code null} (changeset 125).
+     */
+    @Column(name = "registration_name", length = 255)
+    @Schema(description = "This listing's own registration name (null = the automatic name)", example = "노브랜드 생수 x 6")
+    private String registrationName;
+
+    /**
      * Seller who registered this product listing.
      * Required field - every listing must belong to a seller.
      *

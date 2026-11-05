@@ -57,6 +57,7 @@ class EsmListingAdapterTest {
     @Mock private RegistrationNameGenerator registrationNameGenerator;
     @Mock private OptionCheckSuffixResolver optionCheckSuffixResolver;
     @Mock private EsmShippingResolver shippingResolver;
+    @Mock private com.pms.repository.ListingMarketImageRepository marketImageRepository;
 
     @InjectMocks private EsmListingAdapter adapter;
 
@@ -239,5 +240,47 @@ class EsmListingAdapterTest {
         assertThat(prices.byOptionId()).containsOnlyKeys(7L);
         assertThat(prices.byOptionId().get(7L).price()).isEqualByComparingTo("11000");
         assertThat(prices.byOptionId().get(7L).auctionPrice()).isEqualByComparingTo("11500");
+    }
+    /** FEATURE_2611_11 / D19 · D37: post 20 GET — one name, the main photo, the additional photos and the detail. */
+    @Test
+    void fetchProduct_readsNameMainAndAdditionalPhotosAndDetail() throws Exception {
+        given(client.get(eq("/item/v1/goods/2103374786"), eq(key))).willReturn(JSON.readTree(
+                "{\"itemBasicInfo\":{\"goodsName\":{\"kor\":\"ESM 이름\"}},"
+                        + "\"itemAddtionalInfo\":{\"images\":{\"basicImgURL\":\"https://g/main.jpg\","
+                        + "\"addtionalImg1URL\":\"https://g/1.jpg\",\"addtionalImg2URL\":\"\","
+                        + "\"addtionalImg3URL\":\"https://g/3.jpg\"},"
+                        + "\"descriptions\":{\"kor\":{\"type\":2,\"html\":\"<p>ESM 상세</p>\"}}}}"));
+
+        ImportedProduct product = adapter.fetchProduct("2103374786", account);
+
+        assertThat(product.productName()).isNull();
+        assertThat(product.displayName()).isEqualTo("ESM 이름");
+        assertThat(product.detailHtml()).isEqualTo("<p>ESM 상세</p>");
+        assertThat(product.marketImages()).extracting(ImportedProduct.MarketImage::representative,
+                        ImportedProduct.MarketImage::url)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(true, "https://g/main.jpg"),
+                        org.assertj.core.groups.Tuple.tuple(false, "https://g/1.jpg"),
+                        org.assertj.core.groups.Tuple.tuple(false, "https://g/3.jpg"));
+    }
+
+    /** FEATURE_2611_11 / D8 · D22: the additional market photos go out as addtionalImg1URL … in market order. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void register_sendsAdditionalMarketPhotos() throws Exception {
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
+                option(1, "하나", "10000", "10500", 5)));
+        given(marketImageRepository.findByProductListingIdOrderBySortOrderAsc(100L)).willReturn(List.of(
+                com.pms.domain.ListingMarketImage.builder().representative(true).imageUrl("s3/main.jpg").sortOrder(0).build(),
+                com.pms.domain.ListingMarketImage.builder().representative(false).imageUrl("s3/a1.jpg").sortOrder(1).build()));
+        given(client.post(eq("/item/v1/goods"), any(), eq(key)))
+                .willReturn(JSON.readTree("{\"goodsNo\":2103374786,\"resultCode\":0}"));
+
+        adapter.register(cell, gen, account);
+
+        ArgumentCaptor<Object> body = ArgumentCaptor.forClass(Object.class);
+        verify(client).post(eq("/item/v1/goods"), body.capture(), eq(key));
+        String json = JSON.writeValueAsString(body.getValue());
+        assertThat(json).contains("\"images\":{\"basicImgURL\":\"https://s3/thumb.jpg\",\"addtionalImg1URL\":\"s3/a1.jpg\"}");
+        assertThat(json).doesNotContain("s3/main.jpg");
     }
 }

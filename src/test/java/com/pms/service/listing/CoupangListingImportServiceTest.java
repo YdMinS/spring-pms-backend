@@ -83,6 +83,7 @@ class CoupangListingImportServiceTest {
     @Mock private ListingChannelResolver resolver;
     @Mock private MasterOptionChannelSync masterOptionChannelSync;
     @Mock private ListingAssetService listingAssetService;
+    @Mock private ListingMarketSyncService listingMarketSyncService;
     @Mock private ListingChannel channel;
     @InjectMocks private CoupangListingImportServiceImpl service;
 
@@ -544,6 +545,26 @@ class CoupangListingImportServiceTest {
         verify(listingAssetService).regenerate(50L);
         assertThat(response.getAssetsGenerated()).isTrue();
         assertThat(response.getProductListingId()).isEqualTo(50L);
+    }
+
+    /**
+     * FEATURE_2611_11 / D2 · D4 · D6: the product the import read goes onto the committed listing (names · photos ·
+     * detail) BEFORE the generation — no second market call — so the generation keeps the market values.
+     */
+    @Test
+    void testImportAppliesMarketValuesBeforeGeneration_withTheProductItRead() {
+        MasterProductOption existing = masterOption(10L, "6입");
+        ImportedProduct market = marketProduct(marketOption("6입", "8123", "12900"));
+        givenImportReady(market, List.of(existing),
+                List.of(MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_A)).quantity(6).build(),
+                        MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_B)).quantity(1).build()));
+
+        service.importListing(MASTER_ID, importRequest(spec("6입", "8123", 6, 1)));
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(listingMarketSyncService, listingAssetService);
+        order.verify(listingMarketSyncService).applyImported(50L, market);
+        order.verify(listingAssetService).regenerate(50L);
+        verify(channel, org.mockito.Mockito.times(1)).fetchProduct(any(), any());
     }
 
     /**

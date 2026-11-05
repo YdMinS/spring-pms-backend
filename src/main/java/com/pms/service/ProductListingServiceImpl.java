@@ -16,6 +16,7 @@ import com.pms.repository.CarrierRateRepository;
 import com.pms.repository.CategoryRepository;
 import com.pms.repository.PackageRepository;
 import com.pms.repository.ProductListingRepository;
+import com.pms.repository.ListingMarketImageRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.listing.CellBomResolver;
 import com.pms.repository.SellerRepository;
@@ -60,6 +61,7 @@ public class ProductListingServiceImpl implements ProductListingService {
 
     private final ProductListingRepository productListingRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
+    private final ListingMarketImageRepository listingMarketImageRepository;
     /** 셀 옵션의 구성품을 얻는 유일한 창구(2609_71) — 셀 BOM 테이블은 사라졌다. */
     private final CellBomResolver cellBomResolver;
     private final CategoryRepository categoryRepository;
@@ -240,8 +242,9 @@ public class ProductListingServiceImpl implements ProductListingService {
             throw new IllegalArgumentException("마스터에 연결된 판매상품은 삭제할 수 없습니다");
         }
 
-        // Delete in FK order: options -> listing (2609_71: 셀 구성품 행은 더 이상 없다).
+        // Delete in FK order: options · market photo rows (FEATURE_2611_11) -> listing (2609_71: no cell BOM rows any more).
         productListingOptionRepository.deleteByProductListingId(id);
+        listingMarketImageRepository.deleteByProductListingId(id);
         productListingRepository.delete(listing);
     }
 

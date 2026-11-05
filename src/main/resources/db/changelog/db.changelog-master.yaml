@@ -248,3 +248,5 @@ databaseChangeLog:
       file: db/changelog/changes/123-receipt-later-found-stock.yaml
   - include:
       file: db/changelog/changes/124-shipment-parcel-status-log.yaml
+  - include:
+      file: db/changelog/changes/125-listing-market-values.yaml
