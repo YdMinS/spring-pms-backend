@@ -210,4 +210,106 @@ class ElevenstOrderUpserterTest {
         verify(elevenstOrderLineRepository, times(2)).save(saved.capture());
         assertThat(saved.getAllValues()).extracting(ElevenstOrderLine::getPlatformStatus).containsExactly("202", "202");
     }
+
+    // ---- FEATURE_2611_14 / D1 ~ D5 · D7: no seller stock code → the single active option ----
+
+    /** A single-option 11st order as it arrives: seller stock code and chosen option name both blank. */
+    private Map<String, String> singleOptionRow() {
+        Map<String, String> row = paidRow();
+        row.put("sellerStockCd", "");
+        row.put("slctPrdOptNm", "");
+        return row;
+    }
+
+    private void newLine() {
+        given(orderRepository.findByMarketplaceAccount_IdAndExternalOrderId(any(), any())).willReturn(Optional.empty());
+        given(orderShipmentRepository.findByOrder_IdAndExternalShipmentId(any(), any())).willReturn(Optional.empty());
+        given(elevenstOrderLineRepository.findByMarketplaceAccount_IdAndOrdNoAndOrdPrdSeq(any(), any(), any()))
+                .willReturn(Optional.empty());
+    }
+
+    private ProductListingOption savedOption() {
+        ArgumentCaptor<OrderLine> line = ArgumentCaptor.forClass(OrderLine.class);
+        verify(orderLineRepository).save(line.capture());
+        return line.getValue().getProductListingOption();
+    }
+
+    @Test
+    void noSellerStockCdNorOptionName_linksTheSingleActiveOption() {
+        newLine();
+        ProductListingOption only = ProductListingOption.builder().id(42L).active(true).build();
+        given(productListingOptionRepository.findActiveElevenstOptions(5L, "P100")).willReturn(List.of(only));
+
+        upserter.upsertRows(account, ElevenstOrderList.PAID, List.of(singleOptionRow()));
+
+        assertThat(savedOption()).isSameAs(only);
+        verify(productListingOptionRepository, never()).findElevenstOrderOption(any(), any(), any());
+    }
+
+    @Test
+    void noSellerStockCd_twoActiveOptions_leavesOptionEmpty() {
+        newLine();
+        given(productListingOptionRepository.findActiveElevenstOptions(5L, "P100")).willReturn(List.of(
+                ProductListingOption.builder().id(42L).active(true).build(),
+                ProductListingOption.builder().id(43L).active(true).build()));
+
+        upserter.upsertRows(account, ElevenstOrderList.PAID, List.of(singleOptionRow()));
+
+        assertThat(savedOption()).isNull();
+    }
+
+    @Test
+    void noSellerStockCd_butOptionName_leavesOptionEmpty() {
+        newLine();
+        Map<String, String> row = paidRow();
+        row.put("sellerStockCd", "");
+
+        upserter.upsertRows(account, ElevenstOrderList.PAID, List.of(row));
+
+        assertThat(savedOption()).isNull();
+        verify(productListingOptionRepository, never()).findActiveElevenstOptions(any(), any());
+    }
+
+    @Test
+    void sellerStockCdOfAnotherChannel_leavesOptionEmpty_withoutFallback() {
+        newLine();
+        Map<String, String> row = singleOptionRow();
+        row.put("sellerStockCd", "71");
+        given(productListingOptionRepository.findElevenstOrderOption(71L, 5L, "P100")).willReturn(Optional.empty());
+
+        upserter.upsertRows(account, ElevenstOrderList.PAID, List.of(row));
+
+        assertThat(savedOption()).isNull();
+        verify(productListingOptionRepository, never()).findActiveElevenstOptions(any(), any());
+    }
+
+    @Test
+    void existingLineWithoutOption_isLinkedWhenItComesBackInAPreparingList() {
+        OrderLine paid = OrderLine.builder().id(1L).status(OrderStatus.PAID).orderQty(2).cancelQty(0).holdQty(0)
+                .build();
+        ElevenstOrderLine mirror = ElevenstOrderLine.builder().id(9L).orderLine(paid).platformStatus("202").build();
+        given(elevenstOrderLineRepository.findByMarketplaceAccount_IdAndOrdNoAndOrdPrdSeq(any(), any(), any()))
+                .willReturn(Optional.of(mirror));
+        ProductListingOption only = ProductListingOption.builder().id(42L).active(true).build();
+        given(productListingOptionRepository.findActiveElevenstOptions(5L, "P100")).willReturn(List.of(only));
+
+        upserter.upsertRows(account, ElevenstOrderList.PREPARING, List.of(singleOptionRow()));
+
+        assertThat(savedOption()).isSameAs(only);
+    }
+
+    @Test
+    void existingLineWithOption_keepsIt_withoutLookingForTheSingleOption() {
+        ProductListingOption linked = ProductListingOption.builder().id(70L).build();
+        OrderLine paid = OrderLine.builder().id(1L).status(OrderStatus.PAID).orderQty(2).cancelQty(0).holdQty(0)
+                .productListingOption(linked).build();
+        ElevenstOrderLine mirror = ElevenstOrderLine.builder().id(9L).orderLine(paid).platformStatus("202").build();
+        given(elevenstOrderLineRepository.findByMarketplaceAccount_IdAndOrdNoAndOrdPrdSeq(any(), any(), any()))
+                .willReturn(Optional.of(mirror));
+
+        upserter.upsertRows(account, ElevenstOrderList.PREPARING, List.of(singleOptionRow()));
+
+        assertThat(savedOption()).isSameAs(linked);
+        verify(productListingOptionRepository, never()).findActiveElevenstOptions(any(), any());
+    }
 }
