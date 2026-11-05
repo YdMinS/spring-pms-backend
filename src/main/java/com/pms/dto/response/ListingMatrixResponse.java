@@ -105,8 +105,13 @@ public class ListingMatrixResponse {
                 example = "13000.00")
         private BigDecimal auctionSellingPrice;
 
-        @Schema(description = "Auto-generated registration name from this channel's active options (67)", example = "노브랜드 생수 x 6")
+        @Schema(description = "Registration name: the listing's own stored name, else the automatic name from this "
+                + "channel's active options (67 · FEATURE_2611_11 / D15)", example = "노브랜드 생수 x 6")
         private String registrationName;
+
+        /** FEATURE_2611_11 / D24: true = {@code registrationName} is the automatic name (the screen shows 「자동」). */
+        @Schema(description = "True when registrationName is the automatic name (no stored name)", example = "true")
+        private boolean registrationNameAuto;
 
         /**
          * 이 셀의 실제 등록 상태({@link com.pms.domain.ListingStatus} 이름). 종전에는 필드가 없어서

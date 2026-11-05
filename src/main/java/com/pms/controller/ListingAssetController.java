@@ -6,15 +6,18 @@ import com.pms.dto.request.DetailTemplateSelectRequest;
 import com.pms.dto.request.ListingCategorySourceRequest;
 import com.pms.dto.request.DisplayNameRequest;
 import com.pms.dto.request.FieldValuesRequest;
+import com.pms.dto.request.RegistrationNameRequest;
 import com.pms.dto.request.ShippingOverrideRequest;
 import com.pms.dto.request.TagsRequest;
 import com.pms.dto.response.DetailPreviewResponse;
 import com.pms.dto.response.DetailTemplateResponse;
 import com.pms.dto.response.GeneratedProductResponse;
 import com.pms.dto.response.ListingCategorySourceResponse;
+import com.pms.dto.response.MarketSyncResponse;
 import com.pms.dto.response.ShippingConfigResponse;
 import com.pms.service.ListingAssetService;
 import com.pms.service.listing.ListingCategorySourceService;
+import com.pms.service.listing.ListingMarketSyncService;
 import com.pms.service.listing.shipping.ElevenstShippingRepricer;
 import com.pms.service.listing.shipping.EsmShippingRepricer;
 import io.swagger.v3.oas.annotations.Operation;
@@ -44,6 +47,7 @@ public class ListingAssetController {
     private final ListingCategorySourceService listingCategorySourceService;
     private final ElevenstShippingRepricer elevenstShippingRepricer;
     private final EsmShippingRepricer esmShippingRepricer;
+    private final ListingMarketSyncService listingMarketSyncService;
 
     @PostMapping("/{id}/regenerate")
     @Operation(summary = "Regenerate a cell's thumbnail + detail + option prices (backfill consumer)")
@@ -138,6 +142,22 @@ public class ListingAssetController {
             @PathVariable Long id, @Valid @RequestBody DisplayNameRequest request) {
         listingAssetService.updateDisplayName(id, request.getName());
         return ResponseEntity.ok(ResponseDTO.success(null));
+    }
+
+    @PatchMapping("/{id}/registration-name")
+    @Operation(summary = "Store this cell's own 등록상품명, or clear it with a blank value (FEATURE_2611_11 / D5; no push)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<Void>> updateRegistrationName(
+            @PathVariable Long id, @Valid @RequestBody RegistrationNameRequest request) {
+        listingAssetService.updateRegistrationName(id, request.registrationName());
+        return ResponseEntity.ok(ResponseDTO.success(null));
+    }
+
+    @PostMapping("/{id}/market-sync")
+    @Operation(summary = "마켓 기준으로 맞추기: take the market's names, photos and detail page (FEATURE_2611_11 / D9 · D11)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<MarketSyncResponse>> syncFromMarket(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(listingMarketSyncService.syncFromMarket(id)));
     }
 
     @PatchMapping("/{id}/shipping-override")

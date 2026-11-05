@@ -22,4 +22,11 @@ public class ElevenstProperties {
      * leaves the server. The dev and local profiles set false (D116). The public category download does not use this client.
      */
     private boolean outboundEnabled = true;
+
+    /**
+     * FEATURE_2611_11 / D35: the 11st public OpenAPI address (「상품이미지검색」). The guide writes it with {@code http://};
+     * the key travels in the query string, so it is called over {@code https://} (answered 200, 2026-11-04). The same
+     * {@link #outboundEnabled} switch stops it (D39).
+     */
+    private String openApiUrl = "https://openapi.11st.co.kr/openapi/OpenApiService.tmall";
 }

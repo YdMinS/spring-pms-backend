@@ -3,8 +3,10 @@ package com.pms.service.listing;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.GrandTotalSend;
+import com.pms.domain.ListingMarketImage;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
@@ -13,6 +15,7 @@ import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.repository.ListingMarketImageRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.config.CoupangProperties;
 import com.pms.repository.ProductListingOptionRepository;
@@ -34,6 +37,7 @@ import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientResponseException;
 
@@ -96,6 +100,8 @@ public class CoupangListingAdapter implements ListingChannel {
     // 93: contents[] structure. The docs' only sample is TEXT + an HTML string in `content` (no HTML-type
     // sample exists) → both fixed to TEXT; a live-account 400 here is fixed by changing these two constants.
     private static final String CONTENTS_TYPE = "TEXT";
+    /** FEATURE_2611_11 / D37: Coupang's main-photo type in {@code images[].imageType}. */
+    private static final String IMAGE_TYPE_REPRESENTATION = "REPRESENTATION";
     private static final String CONTENT_DETAIL_TYPE = "TEXT";
     // 93: certifications is required even when no certification applies → a single NOT_REQUIRED sentinel on
     // every item. Parsing the category's real certification types is follow-up (after a live-account error).
@@ -160,6 +166,8 @@ public class CoupangListingAdapter implements ListingChannel {
     // 75: resolves the shipping config field-wise (channel ?? master ?? account default) instead of reading
     // the raw account config directly. The adapter consumes the resolved record only.
     private final CoupangShippingConfigResolver shippingConfigResolver;
+    /** FEATURE_2611_11 / D21: each option's market photos, sent per item. */
+    private final ListingMarketImageRepository marketImageRepository;
 
     @Override
     public Platform platform() {
@@ -417,7 +425,62 @@ public class CoupangListingAdapter implements ListingChannel {
                 options,
                 asTextOrNull(data, "statusName"),
                 asTextOrNull(data, "displayProductName"),
-                marketBundleType(data));
+                marketBundleType(data),
+                detailHtml(data),
+                marketImages(data),
+                null);
+    }
+
+    /**
+     * FEATURE_2611_11 / D21 · D37: every {@code items[].images[]} photo with its option and kind, in response order.
+     * {@code REPRESENTATION} = the option's main photo; any other {@code imageType} is an additional photo and keeps
+     * that type text so a push sends it back as it was. The product-level {@code data.images[]} is not read — Coupang
+     * keeps the photos per option.
+     */
+    private static List<ImportedProduct.MarketImage> marketImages(JsonNode data) {
+        List<ImportedProduct.MarketImage> images = new ArrayList<>();
+        int index = 0;
+        for (JsonNode item : data.path("items")) {
+            String vendorItemId = asTextOrNull(item, "vendorItemId");
+            String itemName = asTextOrNull(item, "itemName");
+            for (JsonNode image : item.path("images")) {
+                String url = asTextOrNull(image, "cdnPath");
+                if (url == null || url.isBlank()) {
+                    url = asTextOrNull(image, "vendorPath");
+                }
+                if (url == null || url.isBlank()) {
+                    continue;
+                }
+                String type = asTextOrNull(image, "imageType");
+                images.add(new ImportedProduct.MarketImage(index, vendorItemId, itemName,
+                        IMAGE_TYPE_REPRESENTATION.equals(type), type, absoluteImageUrl(url.trim())));
+            }
+            index++;
+        }
+        return images;
+    }
+
+    /**
+     * FEATURE_2611_11 / D2 · D23: the first item's {@code contents[]} as one HTML text — every item carries the same
+     * detail. An {@code IMAGE} block becomes {@code <img src="…">} (the market address, not downloaded); a text block
+     * is kept as written. Blocks are joined with a line break. null when there is none.
+     */
+    private static String detailHtml(JsonNode data) {
+        List<String> parts = new ArrayList<>();
+        for (JsonNode contents : data.path("items").path(0).path("contents")) {
+            for (JsonNode detail : contents.path("contentDetails")) {
+                String content = asTextOrNull(detail, "content");
+                if (content == null || content.isBlank()) {
+                    continue;
+                }
+                if ("IMAGE".equalsIgnoreCase(asTextOrNull(detail, "detailType"))) {
+                    parts.add("<img src=\"" + absoluteImageUrl(content.trim()) + "\">");
+                } else {
+                    parts.add(content);
+                }
+            }
+        }
+        return parts.isEmpty() ? null : String.join("\n", parts);
     }
 
     /** FEATURE_2610_36 / D9: {@code data.bundleInfo.bundleType} when it is {@code SINGLE} or {@code AB}, else null. */
@@ -988,13 +1051,16 @@ public class CoupangListingAdapter implements ListingChannel {
         List<ProductListingOption> activeOptions = listingOptions.stream()
                 .filter(o -> Boolean.TRUE.equals(o.getActive()))
                 .toList();
-        // Registration name (67): always auto-generated per channel from this cell's active options (32 rule).
-        // master null fallback = cell.getName() (backfill transition window). 69: the "옵션확인" suffix is resolved
-        // per cell (channel ?? master ?? seller ?? system) — single cell = one account query allowed.
-        payload.put("sellerProductName", limitName(master != null
-                ? registrationNameGenerator.generate(master, activeOptions,
-                        optionCheckSuffixResolver.resolve(cell))
-                : cell.getName()));
+        // Registration name: the listing's own 「등록상품명」 when it stores one (FEATURE_2611_11 / D4 · D15), else
+        // auto-generated per channel from this cell's active options (67 · 32 rule). master null fallback =
+        // cell.getName() (backfill transition window). 69: the "옵션확인" suffix is resolved per cell (channel ?? master
+        // ?? seller ?? system) — single cell = one account query allowed.
+        payload.put("sellerProductName", limitName(StringUtils.hasText(cell.getRegistrationName())
+                ? cell.getRegistrationName()
+                : master != null
+                        ? registrationNameGenerator.generate(master, activeOptions,
+                                optionCheckSuffixResolver.resolve(cell))
+                        : cell.getName()));
         // 108/D2: 노출상품명 (the name shown on the Coupang sales page) — optional, ≤100 chars, same cap as
         // sellerProductName. Reverses 35's "internal only": when omitted Coupang falls back to the
         // registration name, which is exactly the observed symptom. Blank → omit the key (never send "").
@@ -1061,9 +1127,14 @@ public class CoupangListingAdapter implements ListingChannel {
         // excluded from the payload but keep their row). New options carry no vendorItemId yet. attributes/
         // notices are assembled per item = merge(master, option) → Coupang shape (empty maps skipped, harmless).
         // 73: images / searchTags / contents live at the ITEM level (Coupang: searchTags is item-only, images/
-        // contents are used per item). Every active option shares the same representation image, merged tag set
-        // (33) and detail HTML — computed once and reused across items.
-        List<Map<String, Object>> itemImages = List.of(representationImage(gen));
+        // contents are used per item). Every active option shares the same merged tag set (33) and detail HTML —
+        // computed once and reused across items; the photos are per option (FEATURE_2611_11 / D21, itemImages).
+        // FEATURE_2611_11 / D8 · D21 · D22 · D38: each option's own market photos (one query, outside the loop).
+        Map<Long, List<ListingMarketImage>> marketImagesByOption = marketImageRepository
+                .findByProductListingIdOrderBySortOrderAsc(cell.getId()).stream()
+                .filter(i -> i.getProductListingOptionId() != null)
+                .collect(Collectors.groupingBy(ListingMarketImage::getProductListingOptionId,
+                        LinkedHashMap::new, Collectors.toList()));
         List<String> searchTags = tagMergeService.resolveTags(cell);
         String detailHtml = gen != null ? gen.getDetailHtml() : null;
         // 93: contents is required — an empty one comes back as an opaque Coupang error, so fail here where the
@@ -1109,7 +1180,7 @@ public class CoupangListingAdapter implements ListingChannel {
             item.put("overseasPurchased", "NOT_OVERSEAS_PURCHASED");
             item.put("pccNeeded", false);
             item.put("certifications", NOT_REQUIRED_CERTIFICATIONS);
-            item.put("images", itemImages);
+            item.put("images", itemImages(gen, marketImagesByOption.getOrDefault(option.getId(), List.of())));
             item.put("searchTags", searchTags);
             item.put("contents", itemContents);
 
@@ -1188,12 +1259,40 @@ public class CoupangListingAdapter implements ListingChannel {
                 cellOption.getCategoryNotices());
     }
 
-    /** Representation image (imageOrder 0) = the S3 public thumbnail URL Coupang ingests into its CDN. */    /** Representation image (imageOrder 0) = the S3 public thumbnail URL Coupang ingests into its CDN. */
-    private static Map<String, Object> representationImage(GeneratedProductData gen) {
+    /**
+     * One option's {@code images[]} (FEATURE_2611_11 / D8 · D21 · D22 · D38). imageOrder 0 = the representation image:
+     * the option's own market main photo while the thumbnail is the market's ({@code thumbnailSource = MARKET}),
+     * otherwise the listing thumbnail (auto · uploaded, or an option without market photos). Then the option's other
+     * market photos in market order with their own {@code imageType} — kept whichever thumbnail is in use (D22). A
+     * stored photo without a type is not sent (Coupang needs one).
+     */
+    private static List<Map<String, Object>> itemImages(GeneratedProductData gen, List<ListingMarketImage> photos) {
+        boolean marketThumbnail = gen != null && gen.getThumbnailSource() == GeneratedContentSource.MARKET;
+        String representation = gen != null ? gen.getThumbnailUrl() : null;
+        if (marketThumbnail) {
+            for (ListingMarketImage photo : photos) {
+                if (Boolean.TRUE.equals(photo.getRepresentative())) {
+                    representation = photo.getImageUrl();
+                    break;
+                }
+            }
+        }
+        List<Map<String, Object>> images = new ArrayList<>();
+        images.add(image(0, IMAGE_TYPE_REPRESENTATION, representation));
+        for (ListingMarketImage photo : photos) {
+            if (!Boolean.TRUE.equals(photo.getRepresentative()) && photo.getMarketImageType() != null) {
+                images.add(image(images.size(), photo.getMarketImageType(), photo.getImageUrl()));
+            }
+        }
+        return images;
+    }
+
+    /** One {@code images[]} entry — the url is ours (S3), Coupang ingests it into its CDN. */
+    private static Map<String, Object> image(int order, String type, String url) {
         Map<String, Object> image = new LinkedHashMap<>();
-        image.put("imageOrder", 0);
-        image.put("imageType", "REPRESENTATION");
-        image.put("vendorPath", gen != null ? gen.getThumbnailUrl() : null);
+        image.put("imageOrder", order);
+        image.put("imageType", type);
+        image.put("vendorPath", url);
         return image;
     }
 

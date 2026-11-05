@@ -299,6 +299,37 @@ class MasterProductServiceTest {
         verify(optionRepository, never()).findByMasterProductId(1L);
     }
 
+    /** FEATURE_2611_11 / D15 · D24: a stored 「등록상품명」 wins and is marked not automatic; an empty one is automatic. */
+    @Test
+    void getMatrix_storedRegistrationNameWins_autoFlagFollowsIt() {
+        Seller seller1 = seller(1L, "판매자1");
+        Seller seller2 = seller(2L, "판매자2");
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
+        MarketplaceAccount acc1 = account(10L, seller1, Platform.COUPANG, "메인");
+        MarketplaceAccount acc2 = account(12L, seller2, Platform.COUPANG, "서브");
+        ProductListing stored = ProductListing.builder().id(100L).seller(seller1).platform(Platform.COUPANG)
+                .platformProductId("X").name("리스팅1").registrationName("마켓 등록상품명").build();
+        ProductListing automatic = ProductListing.builder().id(101L).seller(seller2).platform(Platform.COUPANG)
+                .platformProductId("Y").name("리스팅2").build();
+        ProductListingOption a1 = ProductListingOption.builder().id(1L).productListing(stored)
+                .optionName("1세트").sellingPrice(new BigDecimal("6000")).active(true).build();
+        ProductListingOption b1 = ProductListingOption.builder().id(2L).productListing(automatic)
+                .optionName("1세트").sellingPrice(new BigDecimal("6000")).active(true).build();
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(marketplaceAccountRepository.findAll()).willReturn(List.of(acc1, acc2));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(stored, automatic));
+        given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of(a1, b1));
+        given(sellerRepository.findAllById(any())).willReturn(List.of(seller1, seller2));
+        given(registrationNameGenerator.generate(eq(master), eq(List.of(b1)), any())).willReturn("자동 이름");
+
+        ListingMatrixResponse matrix = service.getMatrix(1L);
+
+        assertThat(matrix.getRows().get(0).getCell().getRegistrationName()).isEqualTo("마켓 등록상품명");
+        assertThat(matrix.getRows().get(0).getCell().isRegistrationNameAuto()).isFalse();
+        assertThat(matrix.getRows().get(1).getCell().getRegistrationName()).isEqualTo("자동 이름");
+        assertThat(matrix.getRows().get(1).getCell().isRegistrationNameAuto()).isTrue();
+    }
+
     @Test
     void getMatrix_missingMaster_throws404() {
         given(masterProductRepository.findScopedById(99L)).willReturn(Optional.empty());

@@ -21,6 +21,7 @@ import com.pms.exception.ResourceNotFoundException;
 import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.repository.DetailTemplateRepository;
 import com.pms.repository.GeneratedProductDataRepository;
+import com.pms.repository.ListingMarketImageRepository;
 import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -89,6 +90,8 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     private final MasterProductOptionRepository masterProductOptionRepository;
     private final MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     private final GeneratedProductDataRepository generatedProductDataRepository;
+    /** FEATURE_2611_11 / D22: the market photos a replaced thumbnail may share its storage object with. */
+    private final ListingMarketImageRepository marketImageRepository;
     private final DetailTemplateRepository detailTemplateRepository;
     private final ChannelTemplateResolver channelTemplateResolver;
     private final ProductImageUrlResolver productImageUrlResolver;
@@ -156,7 +159,7 @@ public class ListingAssetServiceImpl implements ListingAssetService {
     /**
      * Pin a detail template to this cell and regenerate (2609_20/D5·D6·D7).
      *
-     * <p>⚠️ D7 — dropping a MANUAL_OVERRIDE detail HTML is an exception <b>of this method only</b>: picking a
+     * <p>⚠️ D7 — dropping a MANUAL_OVERRIDE (or MARKET) detail HTML is an exception <b>of this method only</b>: picking a
      * template must produce what the preview showed. {@code regenerateAssets}' own override guard is
      * unchanged (D9), so every other regeneration path still preserves a hand-edited detail HTML.</p>
      */
@@ -175,8 +178,9 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                 cell.toBuilder().detailTemplate(template).build());
         // Thumbnail + option prices are refreshed too; the override guard inside is untouched (D9).
         GeneratedProductData data = regenerateAssets(updated);
-        // D7: only here do we drop a hand-edited detail HTML — the preview and the saved result must match.
-        if (data.getSource() == GeneratedContentSource.MANUAL_OVERRIDE) {
+        // D7: only here do we drop a hand-edited (or market, FEATURE_2611_11 / D23) detail HTML — the preview and the
+        // saved result must match.
+        if (preserved(data.getSource())) {
             data = generatedProductDataRepository.save(data.toBuilder()
                     .detailHtml(detailContentGenerator.generate(updated))
                     .source(GeneratedContentSource.AUTO)
@@ -245,6 +249,17 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         ProductListing cell = requireScopedCell(listingId);
         // Internal-only rename: name is not a thumbnail/detail binding key, so no regenerateAssets here.
         productListingRepository.save(cell.toBuilder().name(name.trim()).build());
+    }
+
+    @Override
+    @Transactional
+    public void updateRegistrationName(Long listingId, String registrationName) {
+        ProductListing cell = requireScopedCell(listingId);
+        // FEATURE_2611_11 / D5: a typed name is stored for this listing; blank = back to the automatic name (null).
+        // Like the display name, no regenerate — the 「등록상품명」 is not a thumbnail/detail binding.
+        productListingRepository.save(cell.toBuilder()
+                .registrationName(StringUtils.hasText(registrationName) ? registrationName.trim() : null)
+                .build());
     }
 
     @Override
@@ -338,8 +353,9 @@ public class ListingAssetServiceImpl implements ListingAssetService {
                 .thumbnailSource(GeneratedContentSource.MANUAL_OVERRIDE)
                 .generatedAt(LocalDateTime.now())
                 .build());
-        // Best-effort drop the superseded storage object after a successful upsert (detail HTML untouched).
-        if (oldUrl != null && !oldUrl.equals(url)) {
+        // Best-effort drop the superseded storage object after a successful upsert (detail HTML untouched) — unless it
+        // is a stored market photo (FEATURE_2611_11 / D22: the photo set stays and is still sent).
+        if (oldUrl != null && !oldUrl.equals(url) && !isMarketPhoto(cell, oldUrl)) {
             bestEffortDeleteStorage(oldUrl);
         }
         return toResponse(cell, saved);
@@ -358,8 +374,9 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         generatedProductDataRepository.save(existing.toBuilder()
                 .thumbnailSource(GeneratedContentSource.AUTO).build());
         GeneratedProductData data = regenerateAssets(cell);
-        // Best-effort drop the superseded override image after the AUTO re-render produced a new url.
-        if (oldUrl != null && !oldUrl.equals(data.getThumbnailUrl())) {
+        // Best-effort drop the superseded override image after the AUTO re-render produced a new url — a stored market
+        // photo is kept (FEATURE_2611_11 / D7 · D22: [자동 생성으로 되돌리기] from a market thumbnail).
+        if (oldUrl != null && !oldUrl.equals(data.getThumbnailUrl()) && !isMarketPhoto(cell, oldUrl)) {
             bestEffortDeleteStorage(oldUrl);
         }
         return toResponse(cell, data);
@@ -376,17 +393,16 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         GeneratedProductData existing = generatedProductDataRepository
                 .findByProductListingId(cell.getId()).orElse(null);
 
-        // 1. Thumbnail — override guard (25): a MANUAL_OVERRIDE cell keeps its uploaded thumbnail (nothing
-        //    is re-rendered or re-uploaded); otherwise (new / AUTO) the renderer produces it. This mirrors
-        //    the detail-HTML guard below and is fully independent of it.
-        boolean thumbOverride = existing != null
-                && existing.getThumbnailSource() == GeneratedContentSource.MANUAL_OVERRIDE;
+        // 1. Thumbnail — override guard (25): a MANUAL_OVERRIDE cell keeps its uploaded thumbnail and a MARKET cell its
+        //    market photo (FEATURE_2611_11 / D6 · D7) — nothing is re-rendered or re-uploaded; otherwise (new / AUTO)
+        //    the renderer produces it. This mirrors the detail-HTML guard below and is fully independent of it.
+        boolean thumbOverride = existing != null && preserved(existing.getThumbnailSource());
         String thumbnailUrl;
         GeneratedContentSource thumbSource;
         Long templateId = existing != null ? existing.getTemplateId() : null;
         if (thumbOverride) {
             thumbnailUrl = existing.getThumbnailUrl();               // preserved, not re-rendered/uploaded
-            thumbSource = GeneratedContentSource.MANUAL_OVERRIDE;
+            thumbSource = existing.getThumbnailSource();
         } else {
             // FEATURE_2610_21 D8 · D37: a collage resolved for this cell (listing ?? seller ?? master stage)
             // replaces the single photo, the template image group and the master cover-photo mapping included
@@ -418,11 +434,12 @@ public class ListingAssetServiceImpl implements ListingAssetService {
             templateId = template.getId();
         }
 
-        // 2. Detail HTML — override guard: a MANUAL_OVERRIDE cell keeps its edited detailHtml (thumbnail
-        //    and option prices are still regenerated); otherwise (new / AUTO) the generator produces it.
-        boolean override = existing != null && existing.getSource() == GeneratedContentSource.MANUAL_OVERRIDE;
+        // 2. Detail HTML — override guard: a MANUAL_OVERRIDE cell keeps its edited detailHtml and a MARKET cell the
+        //    market's (FEATURE_2611_11 / D2) — thumbnail and option prices are still regenerated; otherwise (new / AUTO)
+        //    the generator produces it.
+        boolean override = existing != null && preserved(existing.getSource());
         String detailHtml = override ? existing.getDetailHtml() : detailContentGenerator.generate(cell);
-        GeneratedContentSource source = override ? GeneratedContentSource.MANUAL_OVERRIDE : GeneratedContentSource.AUTO;
+        GeneratedContentSource source = override ? existing.getSource() : GeneratedContentSource.AUTO;
 
         // 3. Per-option selling price (margin reverse-calc) — the narrow seam shared with the option-edit
         //    re-sync (84). Same transaction, same result as the inline version it replaces.
@@ -576,6 +593,16 @@ public class ListingAssetServiceImpl implements ListingAssetService {
         } catch (Exception e) {
             log.warn("Best-effort listing thumbnail storage delete failed: {}", url, e);
         }
+    }
+
+    /** A value a regeneration keeps: typed or uploaded by a person, or taken from the market (FEATURE_2611_11 / D7). */
+    private static boolean preserved(GeneratedContentSource source) {
+        return source == GeneratedContentSource.MANUAL_OVERRIDE || source == GeneratedContentSource.MARKET;
+    }
+
+    /** FEATURE_2611_11 / D22: this url is one of the listing's stored market photos (shared with the thumbnail). */
+    private boolean isMarketPhoto(ProductListing cell, String url) {
+        return marketImageRepository.existsByProductListingIdAndImageUrl(cell.getId(), url);
     }
 
     /**
