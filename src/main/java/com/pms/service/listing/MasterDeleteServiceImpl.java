@@ -44,8 +44,9 @@ import java.util.List;
  * no longer this master's cell and keeps selling after the master is deleted.</p>
  *
  * <p>⚠️ Photos are deleted by {@link MasterProductImageService#removeFromPool}, which <b>really deletes the
- * edited S3 files</b>. If the generated detail of an already-detached cell points at such a URL, the market detail
- * image can break (PLAN 「알려진 대가」). The guard cannot catch this — a detached cell is not this master's cell.
+ * edited S3 files</b> once the transaction commits (FEATURE_2611_13 D6). If the generated detail of an
+ * already-detached cell points at such a URL, the market detail image can break (PLAN 「알려진 대가」). The guard
+ * cannot catch this — a detached cell is not this master's cell.
  * If it really happens, making {@code removeFromPool} delete only the rows instead is a one-line change.</p>
  */
 @Service
@@ -103,9 +104,9 @@ public class MasterDeleteServiceImpl implements MasterDeleteService {
         masterPlatformCategoryRepository.deleteByMasterProductId(masterId);
         componentRepository.flush();     // 🔴 마스터 DELETE 보다 자식 DELETE 가 먼저 DB 에 닿게 한다
 
-        // 5) 사진 — zone 매핑 → 행 → S3(편집본만, 실패는 로그) (D6)
-        // 🔴 자식 중 **맨 마지막**이다. removeFromPool 은 커밋 전에 S3 파일을 지우므로, 뒤에서 롤백이 나면
-        //    DB 는 되살아나고 파일만 영구히 사라진다. 뒤에 남는 것을 마스터 DELETE 한 줄로 줄인다.
+        // 5) Photos — zone mappings → rows → S3 (edited ones only, a failure is logged) (D6)
+        // 🔴 Still the **last** child (order kept). removeFromPool deletes the S3 files only after the commit
+        //    (FEATURE_2611_13 D6), so a rollback anywhere in this transaction keeps the files.
         List<MasterProductImage> images =
                 imageRepository.findByMasterProductIdOrderBySortOrderAsc(masterId);
         for (MasterProductImage image : images) {

@@ -48,6 +48,9 @@ public interface MasterProductImageService {
     /** Set the cover photo to {@code imageId} (single mapping), or clear it when {@code imageId} is null. */
     MasterProductImageResponse setSourceImage(Long masterId, Long imageId);
 
-    /** Remove a pool image: clear its mappings, delete the row, then best-effort delete storage. */
+    /**
+     * Remove a pool image: clear its mappings and delete the row, then best-effort delete storage once the
+     * transaction commits — a rollback keeps the file (FEATURE_2611_13 D6).
+     */
     void removeFromPool(Long masterId, Long imageId);
 }

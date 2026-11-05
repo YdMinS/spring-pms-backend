@@ -17,6 +17,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -212,18 +214,33 @@ public class MasterProductImageServiceImpl implements MasterProductImageService 
         MasterProductImage image = imageRepository.findById(imageId)
                 .filter(img -> img.getMasterProduct().getId().equals(masterId))
                 .orElseThrow(() -> new ResourceNotFoundException("MasterProductImage", imageId));
-        // Order: (1) clear mappings, (2) delete the DB row — both committed with the transaction; (3) S3 delete
-        // is best-effort (failure is swallowed/logged, DB cleanup still commits).
+        // Order: (1) clear mappings, (2) delete the DB row — both committed with the transaction; (3) the storage
+        // file is deleted only after that commit, so a rollback keeps it (FEATURE_2611_13 D6 · D7). Without an
+        // active transaction synchronization it is deleted right away. A storage failure is logged only (D8).
         assignmentRepository.deleteByImageId(imageId);
         imageRepository.delete(image);
-        try {
-            imageStorageService.deleteImage(image.getImageUrl());
-        } catch (Exception e) {
-            log.warn("Failed to delete master pool image from storage (id={}): {}", imageId, e.getMessage());
+        String imageUrl = image.getImageUrl();
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    deleteStorageQuietly(imageId, imageUrl);
+                }
+            });
+        } else {
+            deleteStorageQuietly(imageId, imageUrl);
         }
     }
 
     // ---------------------------------------------------------------- helpers
+
+    private void deleteStorageQuietly(Long imageId, String imageUrl) {
+        try {
+            imageStorageService.deleteImage(imageUrl);
+        } catch (Exception e) {
+            log.warn("Failed to delete master pool image from storage (id={}): {}", imageId, e.getMessage());
+        }
+    }
 
     /** Tenant-scoped fetch; a cross-tenant/absent id yields 404 (findScopedById is @TenantId-filtered). */
     private MasterProduct requireScopedMaster(Long masterId) {

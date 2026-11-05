@@ -22,9 +22,9 @@ import java.util.Map;
  *       deleted through {@code MasterDeleteService} (D20).</li>
  * </ul>
  *
- * <p>🔴 Every refusal (D4 · D27 · D28 · D24 ⑤) is raised by {@link #plan}, before the merge moves anything (D6).
- * {@link #deleteEmptiedMasters} must be the merge's last step before the product delete: the master delete
- * removes edited S3 photos before the commit, so a later rollback would lose only the files.</p>
+ * <p>🔴 Every refusal (D4 · FEATURE_2611_13 D2 · D27 · D28 · D24 ⑤) is raised by {@link #plan}, before the merge
+ * moves anything (D6). {@link #deleteEmptiedMasters} stays the merge's last step before the product delete (D20);
+ * the edited S3 photos it removes are deleted only after the commit (FEATURE_2611_13 D6), so a rollback keeps them.</p>
  */
 public interface MergeMasterLinkService {
 
@@ -32,7 +32,8 @@ public interface MergeMasterLinkService {
      * Read-only preview for the merge screen (D28). Same refusals as {@link #plan} except the option choices.
      *
      * @throws com.pms.exception.ResourceNotFoundException either product is not found (404)
-     * @throws com.pms.exception.BusinessException         409 for D4 / D27, 400 for the same product twice
+     * @throws com.pms.exception.BusinessException         409 for D4 / FEATURE_2611_13 D2 / D27, 400 for the same
+     *                                                     product twice
      */
     MergePreviewResponse preview(Long targetProductId, Long sourceProductId);
 
@@ -40,7 +41,8 @@ public interface MergeMasterLinkService {
      * Decide what the merge does to the masters and validate the operator's choices. Writes nothing.
      *
      * @param choices the request's {@code masterOptionChoices} (null = empty)
-     * @throws com.pms.exception.BusinessException 409 for D4 / D27, 400 for a missing or foreign choice (D28) and
+     * @throws com.pms.exception.BusinessException 409 for D4 / FEATURE_2611_13 D2 / D27, 400 for a missing or
+     *                                             foreign choice (D28) and
      *                                             for a new option name already taken (D24 ⑤)
      */
     Plan plan(Product target, Product source, List<MergeProductsRequest.MasterOptionChoice> choices);

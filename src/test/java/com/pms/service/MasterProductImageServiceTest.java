@@ -22,12 +22,15 @@ import org.mockito.InjectMocks;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -35,6 +38,7 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
@@ -371,6 +375,72 @@ class MasterProductImageServiceTest {
 
         assertThatThrownBy(() -> service.removeFromPool(MASTER_ID, 9L))
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    // FEATURE_2611_13 D6 · D7: inside a transaction the storage file goes only after the commit. The callbacks are
+    // driven by hand in Spring's commit order (beforeCommit → beforeCompletion → afterCommit → afterCompletion).
+
+    @Test
+    void removeFromPool_inTransaction_deletesStorageOnlyAfterCommit() {
+        given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master()));
+        MasterProductImage img = image(5L, 0);
+        given(imageRepository.findById(5L)).willReturn(Optional.of(img));
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            service.removeFromPool(MASTER_ID, 5L);
+
+            verify(assignmentRepository).deleteByImageId(5L);
+            verify(imageRepository).delete(img);
+            List<TransactionSynchronization> registered = TransactionSynchronizationManager.getSynchronizations();
+            registered.forEach(sync -> sync.beforeCommit(false));
+            registered.forEach(TransactionSynchronization::beforeCompletion);
+            verify(imageStorageService, never()).deleteImage(anyString());
+
+            registered.forEach(TransactionSynchronization::afterCommit);
+            verify(imageStorageService, times(1)).deleteImage("u5");
+
+            registered.forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_COMMITTED));
+            verify(imageStorageService, times(1)).deleteImage(anyString());
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void removeFromPool_rolledBack_keepsStorageFile() {
+        given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master()));
+        MasterProductImage img = image(5L, 0);
+        given(imageRepository.findById(5L)).willReturn(Optional.of(img));
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            service.removeFromPool(MASTER_ID, 5L);
+
+            List<TransactionSynchronization> registered = TransactionSynchronizationManager.getSynchronizations();
+            registered.forEach(TransactionSynchronization::beforeCompletion);
+            registered.forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+            verify(imageStorageService, never()).deleteImage(anyString());
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void removeFromPool_storageFailureAfterCommit_isSwallowed() {
+        given(masterProductRepository.findScopedById(MASTER_ID)).willReturn(Optional.of(master()));
+        MasterProductImage img = image(5L, 0);
+        given(imageRepository.findById(5L)).willReturn(Optional.of(img));
+        willThrow(new RuntimeException("s3 down")).given(imageStorageService).deleteImage("u5");
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            service.removeFromPool(MASTER_ID, 5L);
+
+            List<TransactionSynchronization> registered = TransactionSynchronizationManager.getSynchronizations();
+            assertThatCode(() -> registered.forEach(TransactionSynchronization::afterCommit))
+                    .doesNotThrowAnyException();
+            verify(imageStorageService).deleteImage("u5");
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     // ------------------------------------------------------------------ reuse (core)
