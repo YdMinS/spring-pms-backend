@@ -57,7 +57,8 @@ public class MasterFromChannelServiceImpl implements MasterFromChannelService {
         Map<String, String> common = commonAttributes(fetched.options());
         Optional<CategoryMapping> mapping = reverseLookup(platform, fetched.categoryCode());
 
-        String productName = fetched.productName();
+        // FEATURE_2611_12 / D19: a market with one product name (11st) gives it as the display name only.
+        String productName = fetched.productName() != null ? fetched.productName() : fetched.displayName();
         return MasterFromChannelPreviewResponse.builder()
                 .productName(productName)
                 // 비었으면 null — 프론트가 마스터 이름 입력을 강제한다.

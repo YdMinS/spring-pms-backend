@@ -37,7 +37,7 @@ public class ChannelProductLookupServiceImpl implements ChannelProductLookupServ
      * 읽기 경로를 실제로 구현한 플랫폼. ⚠️ 어댑터 기본 구현의 {@code UnsupportedOperationException} 은
      * 전역 핸들러가 없어 500 이 되므로 여기서 400 으로 막는다. 🔴 네이버가 붙는 날 바뀌는 것은 이 한 줄이어야 한다.
      */
-    private static final Set<Platform> SUPPORTED_PLATFORMS = Set.of(Platform.COUPANG);
+    private static final Set<Platform> SUPPORTED_PLATFORMS = Set.of(Platform.COUPANG, Platform.ELEVENST);
 
     private final SellerRepository sellerRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
@@ -76,7 +76,8 @@ public class ChannelProductLookupServiceImpl implements ChannelProductLookupServ
 
         return ChannelProductDetailResponse.builder()
                 .platformProductId(platformProductId)
-                .productName(fetched.productName())
+                // FEATURE_2611_12 / D19: a market with one product name (11st) gives it as the display name only.
+                .productName(fetched.productName() != null ? fetched.productName() : fetched.displayName())
                 .brand(fetched.brand())
                 .status(fetched.status())
                 .categoryCode(fetched.categoryCode())
