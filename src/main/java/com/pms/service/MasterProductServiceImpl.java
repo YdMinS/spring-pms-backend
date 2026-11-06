@@ -63,6 +63,7 @@ import com.pms.service.listing.OptionCheckSuffix;
 import com.pms.service.listing.TagMergeService;
 import com.pms.service.listing.shipping.ElevenstShippingKeys;
 import com.pms.service.listing.shipping.EsmShippingKeys;
+import com.pms.service.listing.shipping.LotteonShippingKeys;
 import com.pms.service.listing.shipping.ShippingOverrideKeys;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -1061,8 +1062,8 @@ public class MasterProductServiceImpl implements MasterProductService {
         MasterProduct master = requireScopedMaster(id);
         // 79: the master's settings are WRITTEN ONTO each selected cell (overwrite), not just cleared —
         // afterwards the cell's shipping settings are exactly the master's for the cell's platform, and the cell
-        // owns them. An ESM cell is the exception: the master has no ESM key, so its own esm.* keys are left as
-        // they are (FEATURE_2610_26 / D36).
+        // owns them. An ESM or LotteON cell is the exception: the master has no ESM or LotteON key, so its own
+        // esm.* / lotteon.* keys are left as they are (FEATURE_2610_26 / D36 · FEATURE_2610_24 / D42).
         // Master-level keys the master leaves empty are removed from the cell (so the cell matches the master
         // and those fields fall through to the account default). Place keys (outbound / return center) are the
         // account's own registered centers — never touched.
@@ -1073,10 +1074,14 @@ public class MasterProductServiceImpl implements MasterProductService {
         for (ProductListing cell : targets) {
             // FEATURE_2610_13 / D104: copy only the keys of THIS cell's platform — an 11st cell gets the
             // elevenst.* keys, an ESM cell nothing (no master ESM key — it keeps all its own esm.* keys,
-            // FEATURE_2610_26 / D36 · D40), every other cell the Coupang keys. Its own address keys stay.
+            // FEATURE_2610_26 / D36 · D40), a LotteON cell nothing as well (FEATURE_2610_24 / D42), every other
+            // cell the Coupang keys. Its own address keys stay.
             Set<String> placeKeys;
             Set<String> platformKeys;
-            if (cell.getPlatform() == Platform.ELEVENST) {
+            if (cell.getPlatform() == Platform.LOTTEON) {
+                placeKeys = LotteonShippingKeys.ALL_KEYS;
+                platformKeys = Set.of();
+            } else if (cell.getPlatform() == Platform.ELEVENST) {
                 placeKeys = ElevenstShippingKeys.PLACE_KEYS;
                 platformKeys = ElevenstShippingKeys.MASTER_KEYS;
             } else if (cell.getPlatform() == Platform.ESM) {

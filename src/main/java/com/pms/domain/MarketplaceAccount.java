@@ -67,6 +67,11 @@ public class MarketplaceAccount extends BaseEntity {
     @OneToOne(mappedBy = "marketplaceAccount", fetch = FetchType.EAGER, optional = true)
     private EsmAccountCredential esmCredential;
 
+    // FEATURE_2610_24 / D4: the LotteON key, same inverse-EAGER shape as coupangCredential (same reasons).
+    // Read via LotteonCredentials.of(account) — no convenience getters here.
+    @OneToOne(mappedBy = "marketplaceAccount", fetch = FetchType.EAGER, optional = true)
+    private LotteonAccountCredential lotteonCredential;
+
     @Column(name = "is_active", nullable = false)
     private Boolean isActive;
 

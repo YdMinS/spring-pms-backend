@@ -44,6 +44,9 @@ public class MarketplaceAccountResponse {
     private String esmMasterId;
     private String gmarketSellerId;
     private String auctionSellerId;
+    // FEATURE_2610_24 / D6 · D57: LotteON only (null for other platforms). The key itself is never exposed.
+    private LocalDateTime lotteonKeySavedAt;
+    private Boolean lotteonKeyRenewalNeeded;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     // secretKey: 응답에 절대 포함하지 않음

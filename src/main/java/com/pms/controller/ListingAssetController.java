@@ -20,6 +20,7 @@ import com.pms.service.listing.ListingCategorySourceService;
 import com.pms.service.listing.ListingMarketSyncService;
 import com.pms.service.listing.shipping.ElevenstShippingRepricer;
 import com.pms.service.listing.shipping.EsmShippingRepricer;
+import com.pms.service.listing.shipping.LotteonShippingRepricer;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -47,6 +48,7 @@ public class ListingAssetController {
     private final ListingCategorySourceService listingCategorySourceService;
     private final ElevenstShippingRepricer elevenstShippingRepricer;
     private final EsmShippingRepricer esmShippingRepricer;
+    private final LotteonShippingRepricer lotteonShippingRepricer;
     private final ListingMarketSyncService listingMarketSyncService;
 
     @PostMapping("/{id}/regenerate")
@@ -167,11 +169,12 @@ public class ListingAssetController {
             @PathVariable Long id, @RequestBody ShippingOverrideRequest request) {
         listingAssetService.updateShippingOverride(id, request.getOverride());
         // FEATURE_2610_13 / D117 · D123: an 11st cell is re-priced AFTER the save has committed (a Coupang cell is
-        // skipped) — and so is an ESM cell (FEATURE_2610_26 / D65; each repricer skips the other platforms). A
-        // failed re-price keeps the saved shipping and is only counted (D120). Re-read so the body carries the new
-        // prices.
+        // skipped) — and so is an ESM cell (FEATURE_2610_26 / D65) and a LotteON cell (FEATURE_2610_24 / D66; each
+        // repricer skips the other platforms). A failed re-price keeps the saved shipping and is only counted (D120).
+        // Re-read so the body carries the new prices.
         int failed = elevenstShippingRepricer.repriceListings(List.of(id))
-                + esmShippingRepricer.repriceListings(List.of(id));
+                + esmShippingRepricer.repriceListings(List.of(id))
+                + lotteonShippingRepricer.repriceListings(List.of(id));
         GeneratedProductResponse body = listingAssetService.getGenerated(id);
         return ResponseEntity.ok(ResponseDTO.success(body.toBuilder().priceRecalcFailedCount(failed).build()));
     }
@@ -195,6 +198,13 @@ public class ListingAssetController {
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<Map<String, String>>> resolveInheritedEsmShipping(@PathVariable Long id) {
         return ResponseEntity.ok(ResponseDTO.success(listingAssetService.resolveInheritedEsmShipping(id)));
+    }
+
+    @GetMapping("/{id}/lotteon-shipping-inherited")
+    @Operation(summary = "A LotteON cell's inherited shipping baseline (FEATURE_2610_24 / D42; lotteon.* keys, channel layer)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<Map<String, String>>> resolveInheritedLotteonShipping(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(listingAssetService.resolveInheritedLotteonShipping(id)));
     }
 
     @PatchMapping("/{id}/category-source")

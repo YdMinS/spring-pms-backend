@@ -4,6 +4,8 @@ import com.pms.dto.request.ShippingConfigRequest;
 import com.pms.dto.response.ElevenstShippingConfigResponse;
 import com.pms.dto.response.EsmChoiceResponse;
 import com.pms.dto.response.EsmShippingConfigResponse;
+import com.pms.dto.response.LotteonChoiceResponse;
+import com.pms.dto.response.LotteonShippingConfigResponse;
 import com.pms.dto.response.ShippingConfigResponse;
 import com.pms.service.listing.shipping.OutboundPlace;
 import com.pms.service.listing.shipping.ReturnCenter;
@@ -17,7 +19,8 @@ import java.util.Map;
  * shipping config. Lookup-picked values and manually-entered values take the same save path.
  *
  * <p>Scope = outbound/return lookup seam + config persistence — and, for an ESM sales channel, the lookups of the
- * ESM choices (bundle-fee policies of a place, dispatch policies, couriers; FEATURE_2610_26 / D37). Consumed by
+ * ESM choices (bundle-fee policies of a place, dispatch policies, couriers; FEATURE_2610_26 / D37), for a LotteON sales
+ * channel the shipping fee policy list (FEATURE_2610_24 / D43). Consumed by
  * register (73), which is the final guard for missing required values.</p>
  */
 public interface ShippingConfigService {
@@ -94,4 +97,22 @@ public interface ShippingConfigService {
 
     /** FEATURE_2610_26 / D37: the couriers ESM accepts. */
     List<EsmChoiceResponse> listEsmDeliveryCompanies(Long accountId);
+
+    /**
+     * FEATURE_2610_24 / D42: the LotteON shipping settings of a LotteON sales channel (empty map when none yet).
+     *
+     * @throws IllegalArgumentException (→ 400) when the account is not on LotteON
+     */
+    LotteonShippingConfigResponse getLotteonConfig(Long accountId);
+
+    /**
+     * FEATURE_2610_24 / D42 · D65: replace the LotteON shipping settings — the three input keys kept, the chosen
+     * shipping fee policy looked up on LotteON and its fee facts stored with it.
+     *
+     * @throws IllegalArgumentException (→ 400) when the account is not on LotteON or the policy is not on LotteON
+     */
+    LotteonShippingConfigResponse upsertLotteonConfig(Long accountId, Map<String, String> settings);
+
+    /** FEATURE_2610_24 / D43: the shipping fee policies of a LotteON sales channel. */
+    List<LotteonChoiceResponse> listLotteonFeePolicies(Long accountId);
 }

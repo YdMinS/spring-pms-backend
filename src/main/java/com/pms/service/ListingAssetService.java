@@ -125,6 +125,12 @@ public interface ListingAssetService {
     Map<String, String> resolveInheritedEsmShipping(Long listingId);
 
     /**
+     * FEATURE_2610_24 / D42: a LotteON cell's inherited shipping baseline (the channel layer, its own override
+     * excluded) as {@code lotteon.*} key → value. 400 when the cell is not on LotteON.
+     */
+    Map<String, String> resolveInheritedLotteonShipping(Long listingId);
+
+    /**
      * Override the cell's thumbnail with an uploaded image (thumbnailSource=MANUAL_OVERRIDE) for a
      * tenant-scoped cell. 404 if the cell or its generated assets are absent (the cell must be generated
      * first via the matrix). Detail HTML and its source are untouched (the two origins are independent).

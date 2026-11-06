@@ -1,11 +1,14 @@
 package com.pms.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.pms.config.EsmProperties;
+import com.pms.config.LotteonProperties;
 import com.pms.domain.CoupangAccountCredential;
 import com.pms.domain.DetailTemplate;
 import com.pms.domain.ElevenstAccountCredential;
 import com.pms.domain.ElevenstChannelDefault;
 import com.pms.domain.EsmAccountCredential;
+import com.pms.domain.LotteonAccountCredential;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.domain.Seller;
@@ -21,6 +24,7 @@ import com.pms.repository.DetailTemplateRepository;
 import com.pms.repository.ElevenstAccountCredentialRepository;
 import com.pms.repository.ElevenstChannelDefaultRepository;
 import com.pms.repository.EsmAccountCredentialRepository;
+import com.pms.repository.LotteonAccountCredentialRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.ThumbnailTemplateRepository;
@@ -28,6 +32,10 @@ import com.pms.service.elevenst.ElevenstCredentials;
 import com.pms.service.esm.EsmApiClient;
 import com.pms.service.esm.EsmKey;
 import com.pms.service.esm.EsmPaths;
+import com.pms.service.lotteon.LotteonApiClient;
+import com.pms.service.lotteon.LotteonCredentials;
+import com.pms.service.lotteon.LotteonKey;
+import com.pms.service.lotteon.LotteonPaths;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,17 +46,20 @@ import java.util.List;
 
 /**
  * {@link MarketplaceAccountService} implementation. JPA persistence + the conditional key replacement (secretKey,
- * since FEATURE_2610_13 the 11st apiKey, and since FEATURE_2610_26 the ESM esmSecretKey).
+ * since FEATURE_2610_13 the 11st apiKey, since FEATURE_2610_26 the ESM esmSecretKey, and since FEATURE_2610_24 the
+ * LotteON apiKey).
  *
  * Transaction boundary: class readOnly=true, @Transactional on the write methods.
  *
  * <p>🔴 The account (core) and its platform credential — Coupang ({@link CoupangAccountCredential}), 11st
- * ({@link ElevenstAccountCredential}, FEATURE_2610_13 / D2) or ESM ({@link EsmAccountCredential}, FEATURE_2610_26 /
- * D4) — are saved separately in <b>one transaction</b> (FEATURE_2609_26 / PLAN D15). The request/response DTOs stay
- * flat (vendorId/accessKey/secretKey + apiKey + esmMasterId/esmSecretKey/gmarketSellerId/auctionSellerId).
+ * ({@link ElevenstAccountCredential}, FEATURE_2610_13 / D2), ESM ({@link EsmAccountCredential}, FEATURE_2610_26 /
+ * D4) or LotteON ({@link LotteonAccountCredential}, FEATURE_2610_24 / D4) — are saved separately in <b>one
+ * transaction</b> (FEATURE_2609_26 / PLAN D15). The request/response DTOs stay flat
+ * (vendorId/accessKey/secretKey + apiKey + esmMasterId/esmSecretKey/gmarketSellerId/auctionSellerId).
  *
  * <p>⚠️ An update refreshes the existing credential row with {@code toBuilder()} — saving a new instance violates
- * {@code uq_coupang_cred_account} / {@code uq_elevenst_cred_account} / {@code uq_esm_cred_account}.
+ * {@code uq_coupang_cred_account} / {@code uq_elevenst_cred_account} / {@code uq_esm_cred_account} /
+ * {@code uq_lotteon_cred_account}.
  *
  * @see MarketplaceAccountService
  * @see com.pms.security.crypto.AesAttributeConverter
@@ -68,11 +79,16 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
     private final EsmAccountCredentialRepository esmCredentialRepository;
     private final EsmApiClient esmApiClient;
     private final EsmProperties esmProperties;
+    private final LotteonAccountCredentialRepository lotteonCredentialRepository;
+    private final LotteonApiClient lotteonApiClient;
+    private final LotteonProperties lotteonProperties;
 
     /** FEATURE_2610_26 / D4 · D5: the four ESM fields of the sales-channel form. */
     static final String ESM_MASTER_ID_REQUIRED = "ESM+ 마스터 ID 를 입력하세요.";
     static final String ESM_SECRET_KEY_REQUIRED = "비밀키를 입력하세요.";
     static final String ESM_SELLER_IDS_REQUIRED = "G마켓 판매자 ID 와 옥션 판매자 ID 를 모두 입력하세요";
+    /** FEATURE_2610_24 / D57: the one LotteON field of the sales-channel form. */
+    static final String LOTTEON_KEY_REQUIRED = "롯데ON 인증키를 입력하세요.";
 
     @Override
     @Transactional
@@ -88,12 +104,18 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
             if (!StringUtils.hasText(req.getApiKey())) {
                 throw new IllegalArgumentException("11번가 API 키를 입력하세요.");
             }
+        } else if (platform == Platform.LOTTEON) {
+            if (!StringUtils.hasText(req.getApiKey())) {
+                throw new IllegalArgumentException(LOTTEON_KEY_REQUIRED);
+            }
         }
         // FEATURE_2610_26 / D5 · D7: all four ESM values, checked against ESM before anything is saved.
         EsmKey esmKey = platform == Platform.ESM ? requireEsmKey(req, null) : null;
         if (esmKey != null) {
             verifyEsmKey(esmKey);
         }
+        // FEATURE_2610_24 / D5: the key is checked on LotteON (Identity) before anything is saved.
+        LotteonKey lotteonKey = platform == Platform.LOTTEON ? identifyLotteonKey(req.getApiKey().trim()) : null;
 
         Seller seller = sellerRepository.findById(req.getSellerId())
                 .orElseThrow(() -> new ResourceNotFoundException("Seller", req.getSellerId()));
@@ -117,7 +139,7 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                     .apiKey(req.getApiKey().trim())
                     .keyLastUsedAt(LocalDateTime.now())
                     .build());
-            return mapToResponse(saved, null, elevenst, null);
+            return mapToResponse(saved, null, elevenst, null, null);
         }
         if (platform == Platform.ESM) {
             EsmAccountCredential esm = esmCredentialRepository.save(EsmAccountCredential.builder()
@@ -127,7 +149,18 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                     .gmarketSellerId(esmKey.gmarketSellerId())
                     .auctionSellerId(esmKey.auctionSellerId())
                     .build());
-            return mapToResponse(saved, null, null, esm);
+            return mapToResponse(saved, null, null, esm, null);
+        }
+        if (platform == Platform.LOTTEON) {
+            // D6: a freshly entered key starts its renewal clock now.
+            LotteonAccountCredential lotteon = lotteonCredentialRepository.save(LotteonAccountCredential.builder()
+                    .marketplaceAccount(saved)
+                    .apiKey(lotteonKey.apiKey())
+                    .trGrpCd(lotteonKey.trGrpCd())
+                    .trNo(lotteonKey.trNo())
+                    .keySavedAt(LocalDateTime.now())
+                    .build());
+            return mapToResponse(saved, null, null, null, lotteon);
         }
 
         // ⚠️ tenantId 는 넣지 않는다 — Hibernate 가 INSERT 시 스탬프한다(직접 세팅하면 assigned != current).
@@ -141,14 +174,14 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
 
         // 🔴 saved.getCoupangCredential() 은 읽기전용 역방향(mappedBy)이라 이 시점에도 null 이다 —
         //    방금 만든 인스턴스를 그대로 넘긴다(refresh 우회 금지).
-        return mapToResponse(saved, credential, null, null);
+        return mapToResponse(saved, credential, null, null, null);
     }
 
     @Override
     public MarketplaceAccountResponse get(Long id) {
         MarketplaceAccount account = findOrThrow(id);
         return mapToResponse(account, account.getCoupangCredential(), account.getElevenstCredential(),
-                account.getEsmCredential());
+                account.getEsmCredential(), account.getLotteonCredential());
     }
 
     @Override
@@ -159,7 +192,7 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
         return accounts.stream()
                 // EAGER 라 자격증명은 이미 로딩돼 있다(FetchType.EAGER, 2609_26).
                 .map(a -> mapToResponse(a, a.getCoupangCredential(), a.getElevenstCredential(),
-                        a.getEsmCredential()))
+                        a.getEsmCredential(), a.getLotteonCredential()))
                 .toList();
     }
 
@@ -196,6 +229,9 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                 verifyEsmKey(esmKey);
             }
         }
+        // FEATURE_2610_24 / D5 · D57: a blank or unchanged key keeps the stored row; a new key is checked first.
+        LotteonKey lotteonKey = platform == Platform.LOTTEON
+                ? newLotteonKey(req, existing.getLotteonCredential()) : null;
 
         // Template override: null keeps existing (secretKey convention), a value re-validates (404) and replaces.
         ThumbnailTemplate thumbnailTemplate = req.getThumbnailTemplateId() != null
@@ -216,10 +252,15 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
         MarketplaceAccount saved = repository.save(updated);
 
         if (platform == Platform.ELEVENST) {
-            return mapToResponse(saved, null, upsertElevenstKey(saved, existing.getElevenstCredential(), req), null);
+            return mapToResponse(saved, null, upsertElevenstKey(saved, existing.getElevenstCredential(), req), null,
+                    null);
         }
         if (platform == Platform.ESM) {
-            return mapToResponse(saved, null, null, upsertEsmKey(saved, existing.getEsmCredential(), esmKey));
+            return mapToResponse(saved, null, null, upsertEsmKey(saved, existing.getEsmCredential(), esmKey), null);
+        }
+        if (platform == Platform.LOTTEON) {
+            return mapToResponse(saved, null, null, null,
+                    upsertLotteonKey(saved, existing.getLotteonCredential(), lotteonKey));
         }
 
         // 🔴 기존 행을 toBuilder() 로 갱신한다(id 유지 → UPDATE). 새 인스턴스면 uq_coupang_cred_account 위반.
@@ -235,7 +276,7 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                 .secretKey(secretKey)
                 .build();
 
-        return mapToResponse(saved, credentialRepository.save(credential), null, null);
+        return mapToResponse(saved, credentialRepository.save(credential), null, null, null);
     }
 
     /**
@@ -317,6 +358,60 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                 .build());
     }
 
+    /**
+     * FEATURE_2610_24 / D5 · D57: the LotteON key of an update request — null keeps the stored row (blank key, or the
+     * same key as stored); a new key is checked on LotteON first. No stored row and a blank key → 400.
+     */
+    private LotteonKey newLotteonKey(MarketplaceAccountRequest req, LotteonAccountCredential existing) {
+        if (!StringUtils.hasText(req.getApiKey())) {
+            if (existing == null) {
+                throw new IllegalArgumentException(LOTTEON_KEY_REQUIRED);
+            }
+            return null;
+        }
+        String apiKey = req.getApiKey().trim();
+        if (existing != null && apiKey.equals(existing.getApiKey())) {
+            return null;
+        }
+        return identifyLotteonKey(apiKey);
+    }
+
+    /**
+     * D5: one Identity call (207) with the key about to be saved — it returns the seller group code and seller number
+     * every later LotteON call needs. A LotteON refusal becomes a 400 carrying LotteON's text and nothing is saved. A
+     * server that does not call LotteON (D8) saves the key alone (both numbers null).
+     */
+    private LotteonKey identifyLotteonKey(String apiKey) {
+        if (!lotteonProperties.isOutboundEnabled()) {
+            return new LotteonKey(apiKey, null, null);
+        }
+        JsonNode body;
+        try {
+            body = lotteonApiClient.get(LotteonPaths.IDENTITY, apiKey);
+        } catch (BusinessException e) {
+            throw new IllegalArgumentException(e.getMessage());
+        }
+        JsonNode data = body.path("data");
+        return new LotteonKey(apiKey, data.path("trGrpCd").asText(null), data.path("trNo").asText(null));
+    }
+
+    /** D4 · D6: refresh the existing LotteON row ({@code toBuilder} keeps its id) with a new key, or keep it as is. */
+    private LotteonAccountCredential upsertLotteonKey(MarketplaceAccount saved, LotteonAccountCredential existing,
+                                                      LotteonKey key) {
+        if (key == null) {
+            return existing;
+        }
+        LotteonAccountCredential.LotteonAccountCredentialBuilder builder = existing != null
+                ? existing.toBuilder()
+                : LotteonAccountCredential.builder().marketplaceAccount(saved);
+        return lotteonCredentialRepository.save(builder
+                .apiKey(key.apiKey())
+                .trGrpCd(key.trGrpCd())
+                .trNo(key.trNo())
+                .keySavedAt(LocalDateTime.now())
+                .build());
+    }
+
     @Override
     @Transactional
     public MarketplaceAccountResponse updateRegistrationNameSuffix(Long id, OptionCheckSuffixRequest req) {
@@ -326,7 +421,7 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                 .optionCheckSuffix(normalizeSuffix(req.getSuffix()))
                 .build();
         return mapToResponse(repository.save(updated), existing.getCoupangCredential(),
-                existing.getElevenstCredential(), existing.getEsmCredential());
+                existing.getElevenstCredential(), existing.getEsmCredential(), existing.getLotteonCredential());
     }
 
     @Override
@@ -360,15 +455,16 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
     }
 
     /**
-     * Platform parsing + supported set: COUPANG, since FEATURE_2610_13 (D5) ELEVENST, and since FEATURE_2610_26 (D4)
-     * ESM.
+     * Platform parsing + supported set: COUPANG, since FEATURE_2610_13 (D5) ELEVENST, since FEATURE_2610_26 (D4)
+     * ESM, and since FEATURE_2610_24 (D57) LOTTEON.
      *
      * <p>NAVER still has no credential table (expiring OAuth token), so creating one would leave an account
      * without credentials — refuse it with 400 instead.</p>
      */
     private static Platform requireSupported(String rawPlatform) {
         Platform platform = Platform.from(rawPlatform);
-        if (platform != Platform.COUPANG && platform != Platform.ELEVENST && platform != Platform.ESM) {
+        if (platform != Platform.COUPANG && platform != Platform.ELEVENST && platform != Platform.ESM
+                && platform != Platform.LOTTEON) {
             throw new IllegalArgumentException("네이버 계정은 아직 지원하지 않습니다");
         }
         return platform;
@@ -423,7 +519,8 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
      * cred 가 null 이면(자격증명 없는 계정) 세 필드는 null 로 내려간다.
      */
     private MarketplaceAccountResponse mapToResponse(MarketplaceAccount a, CoupangAccountCredential cred,
-                                                     ElevenstAccountCredential elevenst, EsmAccountCredential esm) {
+                                                     ElevenstAccountCredential elevenst, EsmAccountCredential esm,
+                                                     LotteonAccountCredential lotteon) {
         // FEATURE_2610_16 / D7: only an 11st channel carries notice defaults — no lookup for other platforms.
         ElevenstChannelDefault notices = a.getPlatform() == Platform.ELEVENST
                 ? elevenstChannelDefaultRepository.findByMarketplaceAccountId(a.getId()).orElse(null)
@@ -453,6 +550,10 @@ public class MarketplaceAccountServiceImpl implements MarketplaceAccountService 
                 .esmMasterId(esm != null ? esm.getMasterId() : null)
                 .gmarketSellerId(esm != null ? esm.getGmarketSellerId() : null)
                 .auctionSellerId(esm != null ? esm.getAuctionSellerId() : null)
+                // FEATURE_2610_24 / D6 · D57: LotteON key age — the key value itself is never mapped.
+                .lotteonKeySavedAt(lotteon != null ? lotteon.getKeySavedAt() : null)
+                .lotteonKeyRenewalNeeded(lotteon != null
+                        ? LotteonCredentials.renewalNeeded(lotteon, LocalDateTime.now()) : null)
                 .createdAt(a.getCreatedAt())
                 .updatedAt(a.getUpdatedAt())
                 .build();

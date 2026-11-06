@@ -3,6 +3,7 @@ package com.pms.fixture;
 import com.pms.domain.CoupangAccountCredential;
 import com.pms.domain.ElevenstAccountCredential;
 import com.pms.domain.EsmAccountCredential;
+import com.pms.domain.LotteonAccountCredential;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.domain.Seller;
@@ -124,6 +125,19 @@ public final class MarketplaceAccountFixture {
                         .secretKey(secretKey)
                         .gmarketSellerId(gmarketSellerId)
                         .auctionSellerId(auctionSellerId)
+                        .build());
+    }
+
+    /** FEATURE_2610_24 / D34: an active LotteON account stub with its key and seller numbers attached (pure unit tests). */
+    public static MarketplaceAccount.MarketplaceAccountBuilder lotteonStubBuilder(String apiKey, String trGrpCd,
+                                                                               String trNo) {
+        return MarketplaceAccount.builder()
+                .platform(Platform.LOTTEON)
+                .isActive(true)
+                .lotteonCredential(LotteonAccountCredential.builder()
+                        .apiKey(apiKey)
+                        .trGrpCd(trGrpCd)
+                        .trNo(trNo)
                         .build());
     }
 
