@@ -67,6 +67,9 @@ oklyx:
   esm:
     # FEATURE_2610_26 / D10 — dev never calls Gmarket · Auction (category lookups included; no ESM mock).
     outbound-enabled: false
+  lotteon:
+    # FEATURE_2610_24 / D8 — dev never calls LotteON (category lookups included; no LotteON mock).
+    outbound-enabled: false
 
 oclyx:
   order-sync:

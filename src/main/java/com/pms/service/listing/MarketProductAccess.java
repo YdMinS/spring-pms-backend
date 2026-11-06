@@ -25,10 +25,11 @@ public final class MarketProductAccess {
 
     /**
      * Platforms whose market products can be imported. Every adapter reads a product (FEATURE_2611_11 / D17); importing
-     * one (option pairing · category · attributes) is Coupang and 11st (FEATURE_2611_12 / D18 · D40) — other platforms
-     * get a 400 here.
+     * one (option pairing · category · attributes) is Coupang, 11st (FEATURE_2611_12 / D18 · D40) and LotteON
+     * (FEATURE_2610_24 / D45 · D49) — other platforms get a 400 here.
      */
-    public static final Set<Platform> SUPPORTED_PLATFORMS = Set.of(Platform.COUPANG, Platform.ELEVENST);
+    public static final Set<Platform> SUPPORTED_PLATFORMS =
+            Set.of(Platform.COUPANG, Platform.ELEVENST, Platform.LOTTEON);
 
     private MarketProductAccess() {
     }

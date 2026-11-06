@@ -252,3 +252,7 @@ databaseChangeLog:
       file: db/changelog/changes/125-listing-market-values.yaml
   - include:
       file: db/changelog/changes/126-elevenst-single-option-link.yaml
+  - include:
+      file: db/changelog/changes/127-lotteon-account.yaml
+  - include:
+      file: db/changelog/changes/128-lotteon-shipping-config.yaml

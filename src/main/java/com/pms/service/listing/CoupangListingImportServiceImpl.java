@@ -31,6 +31,7 @@ import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.service.ListingAssetService;
 import com.pms.service.coupang.SyncWindow;
+import com.pms.service.lotteon.LotteonNoticeConverter;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -117,7 +118,8 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
 
         boolean matched = categoryMatches(ctx.master(), platform, fetched.categoryCode());
         return ListingImportPreviewResponse.builder()
-                // FEATURE_2611_12 / D19: a market with one product name (11st) gives it as the display name only.
+                // FEATURE_2611_12 / D19: a market with one product name (11st · LotteON) gives it as the display name
+                // only.
                 .productName(fetched.productName() != null ? fetched.productName() : fetched.displayName())
                 .status(fetched.status())
                 .categoryCode(fetched.categoryCode())
@@ -255,6 +257,11 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
                 .tags(channelTags.isEmpty() ? null : channelTags)
                 .build());
 
+        // FEATURE_2610_24 / D64: a LotteON import fills the master's missing notice values — same transaction.
+        if (platform == Platform.LOTTEON) {
+            fillMasterNotices(ctx.master(), fetched);
+        }
+
         // --- 3) cell options (구성품은 연결된 마스터 옵션이 갖는다 — 2609_71)
         // 2609_63/D6: 재사용 셀이면 기존 옵션 행도 다시 쓴다. 매칭 축은 matchOptions 와 같다(vendorItemId → 이름).
         List<ProductListingOption> existingOptions = ctx.existing() == null ? List.of()
@@ -286,7 +293,7 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
                     .platformOptionId(market.vendorItemId())
                     .sellerProductItemId(market.sellerProductItemId())
                     // D20: an id exists ⇒ the market approved it (Coupang vendorItemId · 11st prdStckNo, FEATURE_2611_12 /
-                    // D25); without one it is still awaiting approval.
+                    // D25 · LotteON sitmNo, FEATURE_2610_24 / D60); without one it is still awaiting approval.
                     .approvalStatus(market.vendorItemId() != null
                             ? OptionApprovalStatus.APPROVED : OptionApprovalStatus.NOT_APPROVED)
                     .active(true)                                          // it is being sold on the market
@@ -331,6 +338,28 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
             listingMarketSyncService.applyImported(listingId, fetched);
         } catch (Exception e) {
             log.warn("Market values were not applied to the imported cell {}: {}", listingId, e.getMessage());
+        }
+    }
+
+    /**
+     * FEATURE_2610_24 / D64: the LotteON notice values read on this import fill only what the master is missing (the
+     * Coupang group and items when the group is empty or the same, the LotteON-only keys of the master's own LotteON
+     * item group). LotteON's notice is product-level, so one option's map is the product's (every option carries the
+     * same map, D58). Nothing else on the master moves and no other listing is marked pending (⑥).
+     */
+    private void fillMasterNotices(MasterProduct master, ImportedProduct fetched) {
+        Map<String, String> imported = fetched.options().stream()
+                .map(ImportedProduct.Option::notices)
+                .filter(n -> !n.isEmpty())
+                .findFirst().orElse(Map.of());
+        LotteonNoticeConverter.Filled filled = LotteonNoticeConverter.fillMissing(
+                master.getCategoryNoticeGroup(), master.getCategoryNotices(),
+                new LotteonNoticeConverter.Imported(fetched.noticeGroup(), imported));
+        if (filled.changed()) {
+            masterProductRepository.save(master.toBuilder()
+                    .categoryNoticeGroup(filled.group())
+                    .categoryNotices(filled.notices())
+                    .build());
         }
     }
 
@@ -619,8 +648,8 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
     // ------------------------------------------------------------------ helpers
 
     /**
-     * D14 verdict = <b>is the market's actual category the one we will send from now on</b> (Coupang · 11st alike,
-     * FEATURE_2611_12). A failed reverse lookup and a reverse lookup that lands on another category are both
+     * D14 verdict = <b>is the market's actual category the one we will send from now on</b> (Coupang · 11st · LotteON
+     * alike, FEATURE_2611_12 · FEATURE_2610_24 / D51). A failed reverse lookup and a reverse lookup that lands on another category are both
      * {@code false} (the user sees the same result).
      *
      * <p>Neither blocks — the register / update payload is built from the master category anyway, so the fallback is

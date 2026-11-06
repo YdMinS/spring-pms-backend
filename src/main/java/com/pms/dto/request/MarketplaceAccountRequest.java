@@ -46,8 +46,8 @@ public class MarketplaceAccountRequest {
     @Schema(description = "Coupang secret key (write-only, stored encrypted). Required on create; blank on update keeps existing.")
     private String secretKey;
 
-    @Schema(description = "11st Open API key (ELEVENST only, write-only, stored encrypted). Required on create; "
-            + "blank on update keeps existing.")
+    @Schema(description = "11st Open API key (ELEVENST) or LotteON 「인증키」 (LOTTEON, FEATURE_2610_24 / D57) — "
+            + "write-only, stored encrypted. Required on create; blank on update keeps existing.")
     private String apiKey;
 
     // FEATURE_2610_26 / D4 · D5: ESM only — all four required (the secret may be blank on update = keep).

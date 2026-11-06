@@ -41,9 +41,9 @@ public class MasterApprovalRefreshServiceImpl implements MasterApprovalRefreshSe
     /** D3: the statuses whose row menu shows [승인 새로고침]. */
     private static final Set<ListingStatus> REFRESHABLE_STATUSES =
             Set.of(ListingStatus.SUBMITTED, ListingStatus.SELLING, ListingStatus.REJECTED);
-    /** D6: the markets with a listing adapter (Coupang · 11st · ESM); any other market is skipped. */
+    /** D6: the markets with a listing adapter (Coupang · 11st · ESM · LotteON, 2610_24 / D59); any other is skipped. */
     private static final Set<Platform> REFRESHABLE_PLATFORMS =
-            Set.of(Platform.COUPANG, Platform.ELEVENST, Platform.ESM);
+            Set.of(Platform.COUPANG, Platform.ELEVENST, Platform.ESM, Platform.LOTTEON);
 
     static final String NOT_REFRESHABLE_STATUS = "새로고침 대상 상태가 아님";
     static final String UNSUPPORTED_MARKET = "새로고침을 지원하지 않는 마켓";

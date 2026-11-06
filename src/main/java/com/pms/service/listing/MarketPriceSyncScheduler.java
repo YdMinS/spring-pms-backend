@@ -18,8 +18,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Market price batch — every day 02:05 KST, every Coupang · 11st · ESM listing on a market (FEATURE_2610_27 / D13 ② ·
- * D22~D27 · D34).
+ * Market price batch — every day 02:05 KST, every Coupang · 11st · ESM · LotteON listing on a market
+ * (FEATURE_2610_27 / D13 ② · D22~D27 · D34 · FEATURE_2610_24 / D59).
  *
  * <p>🔴 <b>Own thread (D22).</b> The scheduler has ONE thread ({@code OrderSyncScheduler}): running the whole read
  * there would delay the 1-minute reserved shipment run and the 15-minute order sync. {@link #schedule} only hands
@@ -27,7 +27,7 @@ import java.util.concurrent.Executors;
  * a second {@code ExecutorService} bean next to {@code coupangSyncExecutor}.</p>
  *
  * <p>🔴 <b>Cron is a property</b> ({@code oclyx.listing.market-price-sync-cron}, D27) — dev sets {@code "-"} (D25: dev
- * and prod share the Coupang vendor; 11st · ESM calls are off on dev anyway). Interpreted in Asia/Seoul.</p>
+ * and prod share the Coupang vendor; 11st · ESM · LotteON calls are off on dev anyway). Interpreted in Asia/Seoul.</p>
  *
  * <p>Failures (D24): each listing is its own transaction ({@link MarketPriceSyncService#syncOne}); a failed listing
  * keeps its previous values. One tenant or one account failing never stops the rest. A Coupang 429

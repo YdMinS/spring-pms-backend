@@ -4,20 +4,26 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.CoupangShippingConfig;
 import com.pms.domain.ElevenstShippingConfig;
 import com.pms.domain.EsmShippingConfig;
+import com.pms.domain.LotteonShippingConfig;
 import com.pms.domain.Platform;
 import com.pms.dto.request.ShippingConfigRequest;
 import com.pms.dto.response.ElevenstShippingConfigResponse;
 import com.pms.dto.response.EsmChoiceResponse;
 import com.pms.dto.response.EsmShippingConfigResponse;
+import com.pms.dto.response.LotteonChoiceResponse;
+import com.pms.dto.response.LotteonShippingConfigResponse;
 import com.pms.dto.response.ShippingConfigResponse;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.CoupangShippingConfigRepository;
 import com.pms.repository.ElevenstShippingConfigRepository;
 import com.pms.repository.EsmShippingConfigRepository;
+import com.pms.repository.LotteonShippingConfigRepository;
 import com.pms.service.esm.EsmShippingLookups;
 import com.pms.service.listing.shipping.ElevenstShippingKeys;
 import com.pms.service.listing.shipping.EsmShippingPolicies;
+import com.pms.service.listing.shipping.LotteonShippingLookups;
+import com.pms.service.listing.shipping.LotteonShippingPolicies;
 import com.pms.service.listing.shipping.OutboundPlace;
 import com.pms.service.listing.shipping.ReturnCenter;
 import com.pms.service.listing.shipping.ShippingPlaceProvider;
@@ -55,6 +61,9 @@ public class ShippingConfigServiceImpl implements ShippingConfigService {
     private final EsmShippingConfigRepository esmShippingConfigRepository;
     private final EsmShippingPolicies esmShippingPolicies;
     private final EsmShippingLookups esmShippingLookups;
+    private final LotteonShippingConfigRepository lotteonShippingConfigRepository;
+    private final LotteonShippingPolicies lotteonShippingPolicies;
+    private final LotteonShippingLookups lotteonShippingLookups;
 
     @Override
     public List<OutboundPlace> listOutbound(Long accountId) {
@@ -197,6 +206,51 @@ public class ShippingConfigServiceImpl implements ShippingConfigService {
         return esmShippingLookups.deliveryCompanies(account).stream()
                 .map(choice -> new EsmChoiceResponse(choice.code(), choice.name()))
                 .toList();
+    }
+
+    @Override
+    public LotteonShippingConfigResponse getLotteonConfig(Long accountId) {
+        requireLotteon(findAccount(accountId));
+        Map<String, String> settings = lotteonShippingConfigRepository.findByMarketplaceAccountId(accountId)
+                .map(LotteonShippingConfig::getSettings)
+                .orElse(null);
+        return LotteonShippingConfigResponse.builder()
+                .marketplaceAccountId(accountId)
+                .settings(settings != null ? settings : Map.of())
+                .build();
+    }
+
+    @Override
+    @Transactional
+    public LotteonShippingConfigResponse upsertLotteonConfig(Long accountId, Map<String, String> settings) {
+        MarketplaceAccount account = requireLotteon(findAccount(accountId));
+        // FEATURE_2610_24 / D65: input keys only, the shipping fee policy looked up on LotteON and its facts written by us.
+        Map<String, String> checked = lotteonShippingPolicies.forChannel(account, settings);
+        // toBuilder from the existing row keeps its id (UNIQUE per account); a new one starts fresh.
+        LotteonShippingConfig.LotteonShippingConfigBuilder builder = lotteonShippingConfigRepository
+                .findByMarketplaceAccountId(accountId)
+                .map(LotteonShippingConfig::toBuilder)
+                .orElseGet(() -> LotteonShippingConfig.builder().marketplaceAccount(account));
+        LotteonShippingConfig saved = lotteonShippingConfigRepository.save(builder.settings(checked).build());
+        return LotteonShippingConfigResponse.builder()
+                .marketplaceAccountId(accountId)
+                .settings(saved.getSettings() != null ? saved.getSettings() : Map.of())
+                .build();
+    }
+
+    @Override
+    public List<LotteonChoiceResponse> listLotteonFeePolicies(Long accountId) {
+        MarketplaceAccount account = requireLotteon(findAccount(accountId));
+        return lotteonShippingLookups.feePolicies(account).stream()
+                .map(policy -> new LotteonChoiceResponse(policy.policyNo(), policy.name()))
+                .toList();
+    }
+
+    private static MarketplaceAccount requireLotteon(MarketplaceAccount account) {
+        if (account.getPlatform() != Platform.LOTTEON) {
+            throw new IllegalArgumentException("롯데ON 판매채널이 아닙니다.");
+        }
+        return account;
     }
 
     private static MarketplaceAccount requireEsm(MarketplaceAccount account) {
