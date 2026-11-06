@@ -21,9 +21,10 @@ import java.util.Map;
  * order is cancelled, or settlement breaks.
  *
  * <p>Purchased quantity on the purchase list = SUM(quantity) per (product × seller) (FEATURE_2610_09 D2 · D22).
- * A partial purchase is split into several rows; a wrong quantity or amount is corrected with a negative row. A
- * receipt header edit rewrites rows: every line of that receipt takes the new seller and purchase day
- * (FEATURE_2610_18 D100).
+ * A partial purchase is split into several rows; a wrong quantity is corrected with a negative row. A receipt header
+ * edit rewrites rows: every line of that receipt takes the new seller and purchase day (FEATURE_2610_18 D100). The
+ * amount of a decided purchase is retyped in place on the debt screen (FEATURE_2610_19 D141) and by
+ * 「일별 입출고 내역」 [매입가 넣기] (FEATURE_2611_16 D1 · D6 · D17) — quantity, seller and purchase day stay.
  *
  * <p>⚠️ The physical-side ledger is {@link StockMovement} (D1). One [입고] writes both ledgers in one transaction
  * while the stock link setting is on (FEATURE_2610_09 D65) — {@link #stockLinked} records which mode applied.
@@ -100,7 +101,8 @@ public class PurchaseRecord extends BaseEntity {
     /**
      * The receipt this purchase came in with (FEATURE_2610_18 D28 · D93 ①). Null = no receipt — the per-product
      * check-in (D75) or a 「영수증 없음」 assignment (FEATURE_2611_01 D4). A 「영수증 나중에」 assignment points at a
-     * receipt that has no photo yet.
+     * receipt that has no photo yet. 「매입가 넣기」 with a photo sets it later on a purchase without one
+     * (FEATURE_2611_16 D2).
      */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "receipt_id")
@@ -122,7 +124,8 @@ public class PurchaseRecord extends BaseEntity {
     /**
      * Set = a 「영수증 없음(발견 재고)」 assignment (FEATURE_2611_01 D12): it counts as purchased quantity (D9) and its
      * amount feeds cost and debts (D5), but a purchase amount total must leave it out. It stays when the seller is
-     * changed later (D7).
+     * changed later (D7) and goes when 「매입가 넣기」 binds the purchase to a receipt with its photo (FEATURE_2611_16
+     * D2).
      */
     @Column(name = "found_stock_at")
     private LocalDateTime foundStockAt;
@@ -156,8 +159,9 @@ public class PurchaseRecord extends BaseEntity {
     /**
      * The purchase amount rules live in this class only (PLAN 2609_28 D1·D2): this factory, plus
      * {@link #assignedParts} and {@link #assignmentMinus} for a receipt assignment (FEATURE_2610_19 D135 ① round 32),
-     * and {@link #withTypedUnitPrice} · {@link #typedUnit} · {@link #registeredPriceOf} for a unit price typed later on
-     * the debt screen (D141 ② · D145 · D146).
+     * {@link #withTypedUnitPrice} · {@link #typedUnit} · {@link #registeredPriceOf} for a unit price typed later on
+     * the debt screen (D141 ② · D145 · D146), and {@link #withRetypedAmount} · {@link #totalOf} for 「매입가 넣기」 and
+     * the daily view's amounts (FEATURE_2611_16 D6 · D8).
      * Web, mobile and any future bulk input must go through these methods so nobody rounds differently.
      *
      * <p>Amount input is either total OR unit price, never both — otherwise it is ambiguous which one
@@ -306,6 +310,80 @@ public class PurchaseRecord extends BaseEntity {
      */
     public boolean isNoReceiptShare() {
         return sourceMovement != null && receipt == null && seller != null && quantity != null && quantity > 0;
+    }
+
+    /**
+     * Which receipt this purchase is a line of (FEATURE_2611_16 D8 · D13 · D18): none · a 「영수증 나중에」 receipt that
+     * has no photo yet · a receipt with its photo.
+     */
+    public enum ReceiptKind { NO_RECEIPT, RECEIPT_LATER, RECEIPT }
+
+    /** This purchase's {@link ReceiptKind}. */
+    public ReceiptKind receiptKind() {
+        if (receipt == null) {
+            return ReceiptKind.NO_RECEIPT;
+        }
+        return receipt.getPhotoUrl() == null ? ReceiptKind.RECEIPT_LATER : ReceiptKind.RECEIPT;
+    }
+
+    /**
+     * A purchase whose amount 「매입가 넣기」 may retype (FEATURE_2611_16 D1 · D17): a decided purchase that came into
+     * stock — a check-in with its stock row or an assignment from an undecided intake row, with or without a receipt.
+     * An undecided purchase (no seller), a minus row and a purchase saved with the stock link off are not.
+     */
+    public boolean isPriceRetypable() {
+        return seller != null && quantity != null && quantity > 0 && Boolean.TRUE.equals(stockLinked);
+    }
+
+    /**
+     * The amount retyped by 「매입가 넣기」 (FEATURE_2611_16 D6 · D7): total given → unit = total / quantity (scale 4,
+     * HALF_UP), total at scale 2 · unit given → total = unit × quantity (scale 2, HALF_UP). Quantity, seller, purchase
+     * day, receipt and the debt screen mark stay.
+     *
+     * @throws IllegalArgumentException both amounts or neither given (→ 400 via GlobalExceptionHandler)
+     */
+    public PurchaseRecord withRetypedAmount(BigDecimal total, BigDecimal unit, boolean reflect) {
+        if (total != null && unit != null) {
+            throw new IllegalArgumentException("총액과 단가 중 하나만 입력하세요");
+        }
+        if (total == null && unit == null) {
+            throw new IllegalArgumentException("총액 또는 단가를 입력하세요");
+        }
+        BigDecimal resolvedUnit = total != null
+                ? total.divide(BigDecimal.valueOf(quantity), UNIT_SCALE, RoundingMode.HALF_UP)
+                : unit.setScale(UNIT_SCALE, RoundingMode.HALF_UP);
+        BigDecimal resolvedTotal = total != null
+                ? total.setScale(TOTAL_SCALE, RoundingMode.HALF_UP)
+                : totalOf(unit, quantity);
+        return toBuilder().unitPrice(resolvedUnit).totalAmount(resolvedTotal).reflectToBasePrice(reflect).build();
+    }
+
+    /**
+     * This purchase as a line of {@code lineReceipt} (FEATURE_2611_16 D2): the 「발견 재고」 mark goes — a line of a
+     * receipt with its photo counts as a purchase.
+     */
+    public PurchaseRecord asReceiptLine(PurchaseReceipt lineReceipt) {
+        return toBuilder().receipt(lineReceipt).foundStockAt(null).build();
+    }
+
+    /**
+     * FEATURE_2610_19 D144 ①: no other purchase in {@code movers} (the product's purchases that move the registered
+     * price) is later than {@code record} — purchase day, then record order. The seller does not matter.
+     */
+    public static boolean isLatestMover(PurchaseRecord record, List<PurchaseRecord> movers) {
+        for (PurchaseRecord other : movers) {
+            if (other.getId().equals(record.getId())) continue;
+            int byDay = other.getPurchasedOn().compareTo(record.getPurchasedOn());
+            if (byDay > 0 || (byDay == 0 && other.getId() > record.getId())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** unit × quantity at the total scale (2, HALF_UP) — the daily view's undecided amount uses it too (D8). */
+    public static BigDecimal totalOf(BigDecimal unit, int quantity) {
+        return unit.multiply(BigDecimal.valueOf(quantity)).setScale(TOTAL_SCALE, RoundingMode.HALF_UP);
     }
 
     /** A typed unit price at the stored scale (4, HALF_UP) — the lot rows without a purchase record use it too (D141 ①). */

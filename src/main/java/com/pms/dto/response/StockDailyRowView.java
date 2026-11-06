@@ -1,5 +1,6 @@
 package com.pms.dto.response;
 
+import com.pms.domain.PurchaseRecord;
 import com.pms.domain.StockMovementType;
 import com.pms.domain.StockReason;
 
@@ -11,14 +12,20 @@ import java.util.List;
  *
  * @param imageUrl      the product's representative photo ({@code product.image_url}) as stored; null = none
  *                      (FEATURE_2611_02 D8)
+ * @param sellerId      the seller of {@code sellerName}; null when {@code sellerName} is null (FEATURE_2611_16 D11)
  * @param sellerName    outbound = the order seller (D124); undecided intake = null; other rows = the row's seller
  * @param owners        undecided intake only: the assigned owners as 「{seller} {qty}」 (D130)
  * @param undecidedLeft undecided intake only: what no receipt took yet (D121 ⑤); null for other rows
  * @param orderNumber   outbound only
  * @param tags          outbound only: 「{seller} 재고 사용」 · 「영수증 미등록 재고 사용」 (D124 · D128)
- * @param amount        purchase-price amount (D123); null = 「미기입」. Never a selling price (D122)
+ * @param amount        purchase-price amount (D123); undecided intake = its shares' amounts + what is left × the
+ *                      undecided unit price (FEATURE_2611_16 D8); null = 「미기입」. Never a selling price (D122)
  * @param sellerChangeable a decided incoming row without a receipt — 「판매자 바꾸기」 may move it (FEATURE_2611_01 D15)
- * @param noReceiptShares  undecided intake only: its 「영수증 없음」 shares, each one 「판매자 바꾸기」 target (D15)
+ * @param recordId      the purchase record 「매입가 넣기」 retypes (FEATURE_2611_16 D1 · D17); null = not a target
+ * @param receiptKind   that record's receipt kind; null when {@code recordId} is null (D13 · D18)
+ * @param receiptId     that record's receipt; null = none (D13)
+ * @param shares        undecided intake only: every assigned share, record order — each one is a 「매입가 넣기」
+ *                      target and the 「영수증 없음」 ones are 「판매자 바꾸기」 targets (D8 · FEATURE_2611_01 D15)
  */
 public record StockDailyRowView(
         Long movementId,
@@ -28,6 +35,7 @@ public record StockDailyRowView(
         String productName,
         String imageUrl,
         int quantity,
+        Long sellerId,
         String sellerName,
         List<String> owners,
         Integer undecidedLeft,
@@ -35,8 +43,15 @@ public record StockDailyRowView(
         List<String> tags,
         BigDecimal amount,
         boolean sellerChangeable,
-        List<NoReceiptShare> noReceiptShares
+        Long recordId,
+        PurchaseRecord.ReceiptKind receiptKind,
+        Long receiptId,
+        List<Share> shares
 ) {
-    /** One 「영수증 없음」 share: its purchase record, owner and quantity. */
-    public record NoReceiptShare(Long recordId, String sellerName, int quantity) {}
+    /**
+     * One share of an undecided intake row (FEATURE_2611_16 D8): its purchase record, owner, quantity, amount (the
+     * record's total; null = 「미기입」) and receipt kind.
+     */
+    public record Share(Long recordId, Long sellerId, String sellerName, int quantity, BigDecimal amount,
+                        PurchaseRecord.ReceiptKind receiptKind, Long receiptId, boolean sellerChangeable) {}
 }
