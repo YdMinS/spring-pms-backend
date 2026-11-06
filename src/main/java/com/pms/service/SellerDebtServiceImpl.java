@@ -207,14 +207,9 @@ public class SellerDebtServiceImpl implements SellerDebtService {
      * order). The seller does not matter.
      */
     private boolean isLatestMover(PurchaseRecord record) {
-        for (PurchaseRecord other : purchaseRecordRepository.findBasePriceMovers(record.getProduct().getId())) {
-            if (other.getId().equals(record.getId())) continue;
-            int byDay = other.getPurchasedOn().compareTo(record.getPurchasedOn());
-            if (byDay > 0 || (byDay == 0 && other.getId() > record.getId())) {
-                return false;
-            }
-        }
-        return true;
+        // The rule lives in PurchaseRecord — 「매입가 넣기」 uses the same one (FEATURE_2611_16 D3).
+        return PurchaseRecord.isLatestMover(record,
+                purchaseRecordRepository.findBasePriceMovers(record.getProduct().getId()));
     }
 
     /** D141 ①: the lot behind a debt — the share's record, the lot's record, or the lot itself. */

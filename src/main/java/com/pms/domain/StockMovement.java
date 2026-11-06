@@ -169,4 +169,15 @@ public class StockMovement extends BaseEntity {
         return incoming && quantity != null && quantity > 0 && sourceMovement == null && seller != null
                 && (purchaseRecord == null || purchaseRecord.getReceipt() == null);
     }
+
+    /**
+     * An incoming row whose purchase 「매입가 넣기」 may retype (FEATURE_2611_16 D1 · D17): a stock-in with a decided
+     * seller that fulfils a purchase record — with or without a receipt. An undecided row, opening stock, free or
+     * etc. intake, an adjust +, a return and an outgoing row are not.
+     */
+    public boolean isPriceRetypable() {
+        return movementType == StockMovementType.STOCK_IN && quantity != null && quantity > 0
+                && sourceMovement == null && seller != null
+                && purchaseRecord != null && purchaseRecord.isPriceRetypable();
+    }
 }

@@ -72,33 +72,42 @@ public class StockDailyServiceImpl implements StockDailyService {
             boolean undecided = LotLedgerServiceImpl.isLot(m) && LotLedgerServiceImpl.isUndecided(m);
             List<String> owners = List.of();
             Integer undecidedLeft = null;
-            List<StockDailyRowView.NoReceiptShare> noReceiptShares = List.of();
+            List<StockDailyRowView.Share> shareViews = List.of();
+            BigDecimal amount = amount(m, outAmounts);
             if (undecided) {
                 List<PurchaseRecord> shares = sharesByLot.getOrDefault(m.getId(), List.of());
                 Map<String, Integer> byOwner = new LinkedHashMap<>();
                 shares.forEach(s -> byOwner.merge(s.getSeller().getSellerName(), s.getQuantity(), Integer::sum));
                 owners = byOwner.entrySet().stream().map(e -> e.getKey() + " " + e.getValue()).toList();
                 undecidedLeft = m.getQuantity() - shares.stream().mapToInt(PurchaseRecord::getQuantity).sum();
-                // FEATURE_2611_01 D15: each 「영수증 없음」 share is its own 「판매자 바꾸기」 target.
-                noReceiptShares = shares.stream().filter(PurchaseRecord::isNoReceiptShare)
-                        .map(s -> new StockDailyRowView.NoReceiptShare(s.getId(), s.getSeller().getSellerName(),
-                                s.getQuantity()))
+                // FEATURE_2611_16 D8: every share is a line of its own (a 「매입가 넣기」 target); the 「영수증 없음」 ones
+                // are also 「판매자 바꾸기」 targets (FEATURE_2611_01 D15).
+                shareViews = shares.stream()
+                        .map(s -> new StockDailyRowView.Share(s.getId(), s.getSeller().getId(),
+                                s.getSeller().getSellerName(), s.getQuantity(), s.getTotalAmount(), s.receiptKind(),
+                                s.getReceipt() == null ? null : s.getReceipt().getId(), s.isNoReceiptShare()))
                         .toList();
+                amount = undecidedAmount(m, shares, undecidedLeft);
             }
             String orderNumber = null;
             List<String> tags = List.of();
-            String sellerName = m.getSeller() == null ? null : m.getSeller().getSellerName();
+            Seller rowSeller = m.getSeller();
             if (m.getMovementType() == StockMovementType.STOCK_OUT && m.getOrderLine() != null) {
                 Seller orderSeller = m.getOrderLine().getOrder().getMarketplaceAccount().getSeller();
-                sellerName = orderSeller.getSellerName();                                    // D124
+                rowSeller = orderSeller;                                                     // D124
                 orderNumber = m.getOrderLine().getOrder().getExternalOrderId();
                 tags = tags(m, orderSeller, usagesByOut.getOrDefault(m.getId(), List.of()));
             }
+            // FEATURE_2611_16 D1 · D17: a decided purchase row is a 「매입가 넣기」 target through its record.
+            PurchaseRecord priced = m.isPriceRetypable() ? m.getPurchaseRecord() : null;
             views.add(new StockDailyRowView(m.getId(), m.getMovementType(), m.getReason(),
                     m.getProduct().getId(), m.getProduct().getProductName(), m.getProduct().getImageUrl(),
-                    m.getQuantity(), sellerName, owners,
-                    undecidedLeft, orderNumber, tags, amount(m, outAmounts), m.isSellerChangeableWithoutReceipt(),
-                    noReceiptShares));
+                    m.getQuantity(), rowSeller == null ? null : rowSeller.getId(),
+                    rowSeller == null ? null : rowSeller.getSellerName(), owners,
+                    undecidedLeft, orderNumber, tags, amount, m.isSellerChangeableWithoutReceipt(),
+                    priced == null ? null : priced.getId(), priced == null ? null : priced.receiptKind(),
+                    priced == null || priced.getReceipt() == null ? null : priced.getReceipt().getId(),
+                    shareViews));
         }
 
         // D147: products with an undecided quantity left among that day's purchases.
@@ -152,8 +161,23 @@ public class StockDailyServiceImpl implements StockDailyService {
     }
 
     /**
+     * FEATURE_2611_16 D8: an undecided intake row = its shares' totals + what is left × the undecided unit price. A part
+     * without an amount is left out; every part without one → null (「미기입」), as the receipt list sums its lines
+     * (FEATURE_2610_18 D94).
+     */
+    private static BigDecimal undecidedAmount(StockMovement lot, List<PurchaseRecord> shares, int left) {
+        List<BigDecimal> parts = new ArrayList<>();
+        shares.stream().map(PurchaseRecord::getTotalAmount).filter(Objects::nonNull).forEach(parts::add);
+        if (left > 0 && lot.getUnitPrice() != null) {
+            parts.add(PurchaseRecord.totalOf(lot.getUnitPrice(), left));
+        }
+        return parts.isEmpty() ? null : parts.stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    /**
      * D123: incoming = the row's unit price × quantity; a return into a lot = that lot's unit price × quantity;
-     * outgoing = {@link LotLedgerService#outgoingAmounts}. null = 「미기입」.
+     * outgoing = {@link LotLedgerService#outgoingAmounts}. null = 「미기입」. An undecided intake row is
+     * {@link #undecidedAmount} instead (FEATURE_2611_16 D8).
      */
     private BigDecimal amount(StockMovement m, Map<Long, BigDecimal> outAmounts) {
         if (m.getQuantity() < 0) {
