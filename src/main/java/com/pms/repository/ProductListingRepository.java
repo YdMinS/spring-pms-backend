@@ -243,13 +243,14 @@ public interface ProductListingRepository extends JpaRepository<ProductListing, 
 
     /**
      * FEATURE_2610_27 / D23: the cells the 02:05 market price batch reads — on a market (has a market product id) on
-     * Coupang · 11st · ESM, every status. JPQL, so tenant-filtered by {@code @TenantId} (the batch sets the tenant).
+     * Coupang · 11st · ESM · LotteON (FEATURE_2610_24 / D59), every status. JPQL, so tenant-filtered by
+     * {@code @TenantId} (the batch sets the tenant).
      * The seller is fetched with the cell: the batch groups cells by account outside any transaction.
      */
     @Query("select l from ProductListing l join fetch l.seller "
             + "where l.platformProductId is not null "
             + "and l.platform in (com.pms.domain.Platform.COUPANG, com.pms.domain.Platform.ELEVENST, "
-            + "com.pms.domain.Platform.ESM) "
+            + "com.pms.domain.Platform.ESM, com.pms.domain.Platform.LOTTEON) "
             + "order by l.id")
     List<ProductListing> findMarketPriceTargets();
 }

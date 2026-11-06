@@ -3,16 +3,20 @@ package com.pms.controller;
 import com.pms.dto.common.ResponseDTO;
 import com.pms.dto.request.ElevenstShippingConfigRequest;
 import com.pms.dto.request.EsmShippingConfigRequest;
+import com.pms.dto.request.LotteonShippingConfigRequest;
 import com.pms.dto.request.ShippingConfigRequest;
 import com.pms.dto.response.ElevenstShippingConfigResponse;
 import com.pms.dto.response.EsmChoiceResponse;
 import com.pms.dto.response.EsmShippingConfigResponse;
+import com.pms.dto.response.LotteonChoiceResponse;
+import com.pms.dto.response.LotteonShippingConfigResponse;
 import com.pms.dto.response.OutboundPlaceResponse;
 import com.pms.dto.response.ReturnCenterResponse;
 import com.pms.dto.response.ShippingConfigResponse;
 import com.pms.service.ShippingConfigService;
 import com.pms.service.listing.shipping.ElevenstShippingRepricer;
 import com.pms.service.listing.shipping.EsmShippingRepricer;
+import com.pms.service.listing.shipping.LotteonShippingRepricer;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -25,7 +29,8 @@ import java.util.List;
 
 /**
  * Shipping management endpoints for a marketplace account (FEATURE_2608_06 / 72): lookup-first outbound places /
- * return centers + the per-account shipping config (+ the ESM choice lookups, FEATURE_2610_26 / D37). All under {@code /api/admin/marketplace-account/{id}} so the
+ * return centers + the per-account shipping config (+ the ESM choice lookups, FEATURE_2610_26 / D37, and the LotteON
+ * shipping fee policy lookup, FEATURE_2610_24 / D43). All under {@code /api/admin/marketplace-account/{id}} so the
  * global {@code /api/admin/**} ADMIN rule (SecurityConfig; PUT added in 015) applies — no per-method
  * {@code @PreAuthorize}. Kept separate from {@code MarketplaceAccountController} (which carries a class-level
  * {@code @PreAuthorize}) to lean on the global rule, like {@code CategoryLookupController}.
@@ -39,6 +44,7 @@ public class ShippingConfigController {
     private final ShippingConfigService shippingConfigService;
     private final ElevenstShippingRepricer elevenstShippingRepricer;
     private final EsmShippingRepricer esmShippingRepricer;
+    private final LotteonShippingRepricer lotteonShippingRepricer;
 
     @GetMapping("/shipping-places/outbound")
     @Operation(summary = "List outbound shipping places (platform lookup; empty = manual entry)")
@@ -136,5 +142,32 @@ public class ShippingConfigController {
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<List<EsmChoiceResponse>>> esmDeliveryCompanies(@PathVariable Long id) {
         return ResponseEntity.ok(ResponseDTO.success(shippingConfigService.listEsmDeliveryCompanies(id)));
+    }
+
+    @GetMapping("/lotteon-shipping-config")
+    @Operation(summary = "Get the LotteON shipping settings of a LotteON sales channel (FEATURE_2610_24; empty map = unset)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<LotteonShippingConfigResponse>> getLotteonConfig(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(shippingConfigService.getLotteonConfig(id)));
+    }
+
+    @PutMapping("/lotteon-shipping-config")
+    @Operation(summary = "Replace the LotteON shipping settings of a LotteON sales channel (FEATURE_2610_24)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<LotteonShippingConfigResponse>> upsertLotteonConfig(
+            @PathVariable Long id,
+            @Valid @RequestBody LotteonShippingConfigRequest request) {
+        LotteonShippingConfigResponse saved = shippingConfigService.upsertLotteonConfig(id, request.getSettings());
+        // D66: re-price this channel's LotteON cells AFTER the save has committed, one transaction per cell. A failed
+        // cell keeps its old prices and is only counted — the saved settings stay.
+        int failed = lotteonShippingRepricer.repriceAccount(id);
+        return ResponseEntity.ok(ResponseDTO.success(saved.toBuilder().priceRecalcFailedCount(failed).build()));
+    }
+
+    @GetMapping("/lotteon-shipping/fee-policies")
+    @Operation(summary = "List the shipping fee policies of a LotteON sales channel (FEATURE_2610_24 / D43)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<List<LotteonChoiceResponse>>> lotteonFeePolicies(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(shippingConfigService.listLotteonFeePolicies(id)));
     }
 }

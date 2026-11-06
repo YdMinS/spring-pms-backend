@@ -129,12 +129,14 @@ public record ImportedProduct(String productName, String brand, String categoryC
     /**
      * One market photo (FEATURE_2611_11 / D37).
      *
-     * @param itemIndex       the position of its option in {@code options} (Coupang {@code items[]}); null = a
-     *                        product-level photo (11st · ESM)
-     * @param vendorItemId    that option's Coupang {@code vendorItemId} (null while unapproved or product-level)
+     * @param itemIndex       the position of its option in {@code options} (Coupang {@code items[]} · LotteON
+     *                        {@code itmLst}, FEATURE_2610_24 / D51); null = a product-level photo (11st · ESM)
+     * @param vendorItemId    that option's market option id — Coupang {@code vendorItemId} · LotteON {@code sitmNo}
+     *                        (null while unapproved or product-level)
      * @param itemName        that option's market name (null when product-level)
      * @param representative  the market's main photo of that option / of the product
-     * @param marketImageType the market's own type text (Coupang {@code imageType}); null when the market has none
+     * @param marketImageType the market's own type text (Coupang {@code imageType} · LotteON {@code epsrTypDtlCd}); null
+     *                        when the market has none
      * @param url             the market's address of the photo (absolute)
      */
     public record MarketImage(Integer itemIndex, String vendorItemId, String itemName, boolean representative,
@@ -142,22 +144,26 @@ public record ImportedProduct(String productName, String brand, String categoryC
     }
 
     /**
-     * One marketplace option (Coupang {@code items[]} entry · 11st 1009 {@code ProductStock}, FEATURE_2611_12).
+     * One marketplace option (Coupang {@code items[]} entry · 11st 1009 {@code ProductStock}, FEATURE_2611_12 ·
+     * LotteON 94 {@code itmLst} entry, FEATURE_2610_24 / D51).
      *
      * @param itemName            option name as shown on the marketplace
      * @param vendorItemId        the market's own option id — Coupang vendorItemId (null while the option is not
-     *                            approved yet, D20) · 11st {@code prdStckNo} (FEATURE_2611_12 / D25)
-     * @param sellerProductItemId Coupang option-update id (11st has none — null)
+     *                            approved yet, D20) · 11st {@code prdStckNo} (FEATURE_2611_12 / D25) · LotteON
+     *                            {@code sitmNo} (FEATURE_2610_24 / D60)
+     * @param sellerProductItemId Coupang option-update id (11st and LotteON have none — null)
      * @param salePrice           current selling price
      * @param originalPrice       strike-through price
-     * @param stockQuantity       Coupang {@code maximumBuyCount} · 11st {@code stckQty}; null → the stock policy falls
-     *                            back (appendix A)
+     * @param stockQuantity       Coupang {@code maximumBuyCount} · 11st {@code stckQty} · LotteON {@code stkQty}; null
+     *                            → the stock policy falls back (appendix A)
      * @param attributes          2609_45/D4: the category attributes already stored on the market
      *                            ({@code attributeTypeName → attributeValueName}, the same Map shape we store).
      *                            🔴 <b>They differ per option</b> (measured {@code 수량 → "6개"}) — do not lift them to the
      *                            product level (D4-1). Blank values are left out. never null, empty when absent
      * @param notices             2609_45/D4: the notices already stored on the market
-     *                            ({@code noticeCategoryDetailName → content}). never null, empty when absent
+     *                            ({@code noticeCategoryDetailName → content}; LotteON = its product notice read into
+     *                            the Coupang item names plus {@code LOTTEON:*} keys, FEATURE_2610_24 / D58 · D63). never
+     *                            null, empty when absent
      */
     public record Option(String itemName, String vendorItemId, String sellerProductItemId,
                          BigDecimal salePrice, BigDecimal originalPrice, Integer stockQuantity,

@@ -1,0 +1,44 @@
+# LotteON account credential (FEATURE_2610_24 / D4 · D5 · D6).
+#   lotteon_account_credential = the seller's own 「인증키」, the seller group code / seller number LotteON returned for
+#   it (Identity, D5) and the time the key was saved (D6), 1:1 with marketplace_account (UNIQUE), next to
+#   coupang_account_credential / elevenst_account_credential / esm_account_credential.
+# ⚠️ api_key is VARCHAR(512): the value is AES-GCM CIPHERTEXT (AesAttributeConverter, D4).
+# ⚠️ tr_grp_cd / tr_no are nullable: a server that does not call LotteON saves the key only (D5 · D8).
+# ⚠️ No boolean column -> the 006 BIT follow-up is not needed.
+databaseChangeLog:
+
+  - changeSet:
+      id: 127-lotteon-account-credential
+      author: oclyx
+      comment: "FEATURE_2610_24: lotteon_account_credential (1:1 with marketplace_account, UNIQUE)."
+      changes:
+        - createTable:
+            tableName: lotteon_account_credential
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: marketplace_account_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: api_key, type: VARCHAR(512), constraints: { nullable: false } }
+              - column: { name: tr_grp_cd, type: VARCHAR(50) }
+              - column: { name: tr_no, type: VARCHAR(200) }
+              - column: { name: key_saved_at, type: TIMESTAMP }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint:
+            constraintName: fk_lotteon_cred_tenant
+            baseTableName: lotteon_account_credential
+            baseColumnNames: tenant_id
+            referencedTableName: tenant
+            referencedColumnNames: id
+        - addForeignKeyConstraint:
+            constraintName: fk_lotteon_cred_account
+            baseTableName: lotteon_account_credential
+            baseColumnNames: marketplace_account_id
+            referencedTableName: marketplace_account
+            referencedColumnNames: id
+        - addUniqueConstraint:
+            constraintName: uq_lotteon_cred_account
+            tableName: lotteon_account_credential
+            columnNames: marketplace_account_id
+      rollback:
+        - dropTable: { tableName: lotteon_account_credential }

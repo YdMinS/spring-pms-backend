@@ -20,8 +20,8 @@ import com.pms.dto.response.ListingImportPreviewResponse;
  *   <li>⚠️ Prices · stock · option ids are <b>never taken from the request</b>. The commit reads the market once more and
  *       the server decides (changes between preview and commit are taken; client values are not trusted).</li>
  *   <li>⚠️ Supported platforms are a <b>whitelist</b> ({@code MarketProductAccess.SUPPORTED_PLATFORMS}). Every
- *       market can read a product (FEATURE_2611_11 / D17); importing one is Coupang and 11st (FEATURE_2611_12 / D18 ·
- *       D40).</li>
+ *       market can read a product (FEATURE_2611_11 / D17); importing one is Coupang, 11st (FEATURE_2611_12 / D18 ·
+ *       D40) and LotteON (FEATURE_2610_24 / D45 · D49).</li>
  * </ul>
  *
  * @see ChannelAddService channel add (master options copied → DRAFT cell) — the sibling path of this service
@@ -30,7 +30,8 @@ public interface CoupangListingImportService {
 
     /**
      * Reads the market product and returns the mapping verdict + the composition input rows. <b>Writes 0 times</b>; one
-     * market read ({@code fetchProduct} — Coupang 1 GET · 11st 1620 + 1009 + the photo read, FEATURE_2611_12).
+     * market read ({@code fetchProduct} — Coupang 1 GET · 11st 1620 + 1009 + the photo read, FEATURE_2611_12 · LotteON
+     * one 94 call, FEATURE_2610_24 / D51).
      *
      * @param masterProductId the master to import into
      * @param request         (seller, platform, market product id)

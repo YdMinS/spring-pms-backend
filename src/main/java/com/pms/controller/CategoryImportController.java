@@ -6,9 +6,12 @@ import com.pms.dto.response.ElevenstCategoryImportResult;
 import com.pms.dto.response.ElevenstFeeImportResult;
 import com.pms.dto.response.EsmCategoryImportResult;
 import com.pms.dto.response.EsmFeeImportResult;
+import com.pms.dto.response.LotteonCategoryImportResult;
+import com.pms.dto.response.LotteonFeeImportResult;
 import com.pms.service.category.CategoryImportService;
 import com.pms.service.category.ElevenstCategoryImportService;
 import com.pms.service.category.EsmCategoryImportService;
+import com.pms.service.category.LotteonCategoryImportService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -26,7 +29,8 @@ import java.io.UncheckedIOException;
 /**
  * Marketplace category bulk-import — admin only. Coupang xlsx (FEATURE_2608_06 / 53) · 11st public tree and
  * 11st fee notice page (FEATURE_2610_10 / D21 ① · D22) · ESM tree and ESM fee table file, both read with one ESM
- * sales channel's key (FEATURE_2610_26 / D12 · D14 · D63).
+ * sales channel's key (FEATURE_2610_26 / D12 · D14 · D63) · LotteON standard category tree read with one LotteON sales
+ * channel's key and the LotteON commission CSV (FEATURE_2610_24 / D10 · D46).
  *
  * <p>ADMIN-only via the global {@code POST /api/admin/**} rule (SecurityConfig) — no per-method
  * {@code @PreAuthorize}. Idempotent upsert (not a destructive re-seed); a confirm gate belongs to the
@@ -41,6 +45,7 @@ public class CategoryImportController {
     private final CategoryImportService categoryImportService;
     private final ElevenstCategoryImportService elevenstCategoryImportService;
     private final EsmCategoryImportService esmCategoryImportService;
+    private final LotteonCategoryImportService lotteonCategoryImportService;
 
     @PostMapping(value = "/coupang", consumes = "multipart/form-data")
     @Operation(summary = "Import a Coupang category xlsx (PlatformCategory tree + oclyx mirror + mappings)")
@@ -89,6 +94,26 @@ public class CategoryImportController {
         try {
             return ResponseEntity.ok(ResponseDTO.success(esmCategoryImportService.importFees(accountId,
                     file.getBytes())));
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to read uploaded category file", e);
+        }
+    }
+
+    @PostMapping("/lotteon")
+    @Operation(summary = "Import the LotteON standard category tree with one LotteON sales channel's key (FEATURE_2610_24)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<LotteonCategoryImportResult>> importLotteon(
+            @RequestParam("accountId") Long accountId) {
+        return ResponseEntity.ok(ResponseDTO.success(lotteonCategoryImportService.importTree(accountId)));
+    }
+
+    @PostMapping(value = "/lotteon-fee", consumes = "multipart/form-data")
+    @Operation(summary = "Import LotteON leaf commissions from the seller-center commission CSV (FEATURE_2610_24)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<LotteonFeeImportResult>> importLotteonFee(
+            @RequestParam("file") MultipartFile file) {
+        try {
+            return ResponseEntity.ok(ResponseDTO.success(lotteonCategoryImportService.importFees(file.getBytes())));
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to read uploaded category file", e);
         }

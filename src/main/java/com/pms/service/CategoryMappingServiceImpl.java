@@ -53,8 +53,8 @@ public class CategoryMappingServiceImpl implements CategoryMappingService {
         // FEATURE_2610_05 / D38: a new and an updated mapping both link the platform_category row of
         // (platform, code) — price, category meta and settlement resolve the marketplace category through that FK.
         // A code missing from the list → 400 before anything is saved; saving an old FK-less mapping again fills it.
-        // FEATURE_2610_10 / D21 ④ · FEATURE_2610_26 / D40: the rejection names the platform — 11st and ESM have their
-        // own text, every other platform keeps the Coupang text.
+        // FEATURE_2610_10 / D21 ④ · FEATURE_2610_26 / D40 · FEATURE_2610_24 / D31: the rejection names the platform —
+        // 11st, ESM and LotteON have their own text, every other platform keeps the Coupang text.
         PlatformCategory platformCategory = platformCategoryRepository
                 .findByPlatformAndCode(platform, request.getPlatformCategoryId())
                 .orElseThrow(() -> new IllegalArgumentException(unknownCodeMessage(platform)));
@@ -114,7 +114,7 @@ public class CategoryMappingServiceImpl implements CategoryMappingService {
     }
 
     /**
-     * FEATURE_2610_10 / D21 ④ · FEATURE_2610_26 / D40: the 400 text for a code missing from the platform's list,
+     * FEATURE_2610_10 / D21 ④ · FEATURE_2610_26 / D40 · FEATURE_2610_24 / D31: the 400 text for a code missing from the platform's list,
      * naming the marketplace. Also used by {@code MasterPlatformCategoryServiceImpl} (same rule, same texts).
      */
     static String unknownCodeMessage(Platform platform) {
@@ -123,6 +123,9 @@ public class CategoryMappingServiceImpl implements CategoryMappingService {
         }
         if (platform == Platform.ESM) {
             return "G마켓 · 옥션 카테고리 목록에 없는 코드입니다.";
+        }
+        if (platform == Platform.LOTTEON) {
+            return "롯데ON 카테고리 목록에 없는 코드입니다.";
         }
         return "쿠팡 카테고리 목록에 없는 코드입니다.";
     }
