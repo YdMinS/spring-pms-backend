@@ -79,7 +79,9 @@ public class StockDailyServiceImpl implements StockDailyService {
                 List<PurchaseRecord> shares = sharesByLot.getOrDefault(m.getId(), List.of());
                 Map<String, Integer> byOwner = new LinkedHashMap<>();
                 shares.forEach(s -> byOwner.merge(s.getSeller().getSellerName(), s.getQuantity(), Integer::sum));
-                owners = byOwner.entrySet().stream().map(e -> e.getKey() + " " + e.getValue()).toList();
+                // FEATURE_2611_18 D1 · D3: the seller cell shows each owner's name once, first-share order, with no
+                // count — every share line below already reads 「└ {seller} {N}개 · …」.
+                owners = List.copyOf(byOwner.keySet());
                 undecidedLeft = m.getQuantity() - shares.stream().mapToInt(PurchaseRecord::getQuantity).sum();
                 // FEATURE_2611_16 D8: every share is a line of its own (a 「매입가 넣기」 target); the 「영수증 없음」 ones
                 // are also 「판매자 바꾸기」 targets (FEATURE_2611_01 D15).
