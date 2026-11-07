@@ -45,6 +45,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * assignment without a receipt (D2 · D4 · D12), the later receipt photo (D4) and 「판매자 바꾸기」 (D7 · D15).
  * FEATURE_2611_16: 「매입가 넣기」 — amounts and the registered price (D3 · D6 · D7), the share lines (D8), the photo as
  * a new receipt or on a 「영수증 나중에」 receipt (D2 · D11 ~ D13 · D15 · D16) and receipt lines (D17 · D18).
+ * FEATURE_2611_18: the owners of an undecided row are names only, each seller once (D1 · D3).
  */
 class StockDailyControllerTest extends BaseIntegrationTest {
 
@@ -164,7 +165,7 @@ class StockDailyControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.unregisteredProductCount").value(1))
                 .andExpect(jsonPath("$.data.unregistered[0].remainingQty").value(1))
-                .andExpect(jsonPath("$.data.rows[0].owners[0]").value("A상사 2"))
+                .andExpect(jsonPath("$.data.rows[0].owners[0]").value("A상사"))      // FEATURE_2611_18 D1
                 .andExpect(jsonPath("$.data.rows[0].undecidedLeft").value(1));
         assertThat(stockMovementRepository.findAll()).hasSize(1);          // D125: no stock row added
     }
@@ -237,7 +238,10 @@ class StockDailyControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.rows[2].sellerChangeable").value(false));
     }
 
-    /** D2 · D4 · D12 · D15 · D7: later receipt + found stock, the photo added later, then a share and a row move. */
+    /**
+     * D2 · D4 · D12 · D15 · D7: later receipt + found stock, the photo added later, then a share and a row move.
+     * FEATURE_2611_18 D1 · D3: the owners read 「A상사」 · 「B상사」, then 「A상사」 once after the move.
+     */
     @Test
     void testAssignWithoutReceiptThenChangeSeller() throws Exception {
         stockLinkOn();
@@ -265,6 +269,9 @@ class StockDailyControllerTest extends BaseIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.rows[0].undecidedLeft").value(1))
+                .andExpect(jsonPath("$.data.rows[0].owners.length()").value(2))
+                .andExpect(jsonPath("$.data.rows[0].owners[0]").value("A상사"))
+                .andExpect(jsonPath("$.data.rows[0].owners[1]").value("B상사"))
                 .andExpect(jsonPath("$.data.rows[0].shares.length()").value(2))
                 .andExpect(jsonPath("$.data.rows[0].shares[0].sellerChangeable").value(false))
                 .andExpect(jsonPath("$.data.rows[0].shares[1].sellerName").value("B상사"))
@@ -295,6 +302,12 @@ class StockDailyControllerTest extends BaseIntegrationTest {
             assertThat(r.getSeller().getId()).isEqualTo(sellerAId);
             assertThat(r.getFoundStockAt()).isNotNull();                     // D12: the mark stays
         });
+        mockMvc.perform(get("/api/admin/stock/daily").param("date", DAY.toString())
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rows[0].owners.length()").value(1))
+                .andExpect(jsonPath("$.data.rows[0].owners[0]").value("A상사"))
+                .andExpect(jsonPath("$.data.rows[0].shares.length()").value(2));
         mockMvc.perform(get("/api/admin/purchase-list/purchases").param("productId", String.valueOf(productId))
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
