@@ -209,7 +209,7 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
 
     /** One day of the ledger for the daily in/out view (FEATURE_2610_19 D119 · D123), record order. */
     @EntityGraph(attributePaths = {"product", "seller", "sourceMovement", "sourceMovement.seller", "purchaseRecord",
-            "orderLine", "orderLine.order", "orderLine.order.marketplaceAccount",
+            "purchaseRecord.receipt", "orderLine", "orderLine.order", "orderLine.order.marketplaceAccount",
             "orderLine.order.marketplaceAccount.seller"})
     List<StockMovement> findByMovedOnOrderByIdAsc(LocalDate movedOn);
 

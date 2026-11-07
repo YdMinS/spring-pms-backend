@@ -35,7 +35,8 @@ import java.util.Map;
  * no debt arises.
  *
  * <p>❌ Never edit a ledger row's quantity or source (D125). The only columns that change later are the seller
- * ({@link #moveOwner}, D149) and a unit price typed on the debt screen (D141 · D143).
+ * ({@link #moveOwner}, D149) and the unit price, which is typed in two places: on the debt screen (D141 · D143)
+ * and again by 「일별 입출고 내역」 [매입가 넣기] (FEATURE_2611_16 D6).
  */
 public interface LotLedgerService {
 

@@ -6,6 +6,7 @@ import com.pms.domain.PurchaseRecord;
 import com.pms.domain.Seller;
 import com.pms.domain.SellerCard;
 import com.pms.domain.StockMovement;
+import com.pms.dto.request.PurchasePriceRequest;
 import com.pms.dto.request.PurchaseRecordRequest;
 import com.pms.dto.request.ReceiptCreateRequest;
 import com.pms.dto.request.ReceiptLineRequest;
@@ -37,10 +38,12 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -309,6 +312,128 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
         movedRecords.addAll(movedShares);
         purchaseRecordRepository.saveAll(movedRecords);
         lotLedgerService.moveOwner(lots.values(), movedShares, seller);
+    }
+
+    /**
+     * 「매입가 넣기」 (FEATURE_2611_16): every check first, then the amounts (D3 · D6), then the photo (D2 · D13), then the
+     * shares' lots and the debts (D6) — the photo is stored last so a refused request leaves no file behind.
+     */
+    @Override
+    @Transactional
+    public ReceiptCreateResult retypePrices(LocalDate movedOn, PurchasePriceRequest request, MultipartFile photo) {
+        if (request == null || movedOn == null) {
+            throw new IllegalArgumentException("영수증 내용을 보내세요.");
+        }
+        List<Long> ids = request.lines().stream().map(PurchasePriceRequest.Line::recordId).toList();
+        if (new LinkedHashSet<>(ids).size() != ids.size()) {
+            throw new IllegalArgumentException("같은 줄을 두 번 넣었습니다.");
+        }
+        Map<Long, PurchaseRecord> found = purchaseRecordRepository.findByIdIn(ids).stream()
+                .collect(Collectors.toMap(PurchaseRecord::getId, r -> r));
+        List<PurchaseRecord> records = new ArrayList<>();
+        for (Long id : ids) {
+            PurchaseRecord record = found.get(id);
+            if (record == null) {
+                throw new ResourceNotFoundException("PurchaseRecord", id);
+            }
+            if (!record.isPriceRetypable()) {
+                throw new IllegalArgumentException("매입가를 넣을 수 없는 줄입니다.");
+            }
+            records.add(record);
+        }
+        boolean withPhoto = photo != null && !photo.isEmpty();
+        boolean anyAmount = request.lines().stream().anyMatch(l -> l.totalAmount() != null || l.unitPrice() != null);
+        if (!withPhoto && !anyAmount) {
+            throw new IllegalArgumentException("바꿀 금액을 넣거나 영수증 사진을 올리세요.");
+        }
+
+        // D13 · D18 · D11 · D12 · D15: which receipt the photo goes to — decided before anything is written.
+        PurchaseReceipt laterReceipt = null;
+        Seller payer = null;
+        SellerCard card = null;
+        if (withPhoto) {
+            Set<PurchaseRecord.ReceiptKind> kinds = records.stream().map(PurchaseRecord::receiptKind)
+                    .collect(Collectors.toSet());
+            if (kinds.contains(PurchaseRecord.ReceiptKind.RECEIPT)) {
+                throw new IllegalArgumentException("사진 있는 영수증 입고가 있어 사진을 올릴 수 없습니다.");
+            }
+            if (kinds.contains(PurchaseRecord.ReceiptKind.RECEIPT_LATER)) {
+                Set<Long> receiptIds = records.stream().filter(r -> r.getReceipt() != null)
+                        .map(r -> r.getReceipt().getId()).collect(Collectors.toSet());
+                if (kinds.size() > 1 || receiptIds.size() > 1) {
+                    throw new IllegalArgumentException(
+                            "사진은 같은 영수증의 「영수증 나중에」 입고만 체크했을 때 올릴 수 있습니다.");
+                }
+                laterReceipt = records.get(0).getReceipt();
+            } else {
+                Set<Long> sellerIds = records.stream().map(r -> r.getSeller().getId()).collect(Collectors.toSet());
+                if (sellerIds.size() > 1) {
+                    throw new IllegalArgumentException("사진을 넣으면 같은 판매자 입고만 묶을 수 있습니다.");
+                }
+                payer = records.get(0).getSeller();
+                if (request.cardId() != null) {
+                    card = sellerCardService.requireVisible(request.cardId());
+                    if (!card.getSeller().getId().equals(payer.getId())) {
+                        throw new IllegalArgumentException("이 입고 판매자의 카드가 아닙니다.");
+                    }
+                }
+                if (records.stream().anyMatch(r -> !movedOn.equals(r.getPurchasedOn()))) {
+                    throw new IllegalArgumentException("구매일이 화면 날짜와 다른 입고는 사진으로 묶을 수 없습니다.");
+                }
+            }
+            imageValidator.validate(photo);
+        }
+
+        // D3 · D6 · D19: retype each line with an amount, in the order sent. The amounts are computed by
+        // PurchaseRecord only (D135 ① round 32).
+        Set<Long> productIds = new LinkedHashSet<>();
+        Map<Long, StockMovement> lots = new LinkedHashMap<>();
+        for (int index = 0; index < records.size(); index++) {
+            PurchaseRecord record = records.get(index);
+            PurchasePriceRequest.Line line = request.lines().get(index);
+            if (line.totalAmount() == null && line.unitPrice() == null) {
+                continue;                                                    // D7: a blank line keeps its amount
+            }
+            boolean reflect = line.reflectToBasePrice() == null || line.reflectToBasePrice();
+            boolean latest = reflect && PurchaseRecord.isLatestMover(record,
+                    purchaseRecordRepository.findBasePriceMovers(record.getProduct().getId()));
+            PurchaseRecord saved = purchaseRecordRepository.save(
+                    record.withRetypedAmount(line.totalAmount(), line.unitPrice(), latest));
+            List<StockMovement> rows = stockMovementRepository.findByPurchaseRecordIdIn(List.of(record.getId()));
+            stockMovementRepository.saveAll(rows.stream()
+                    .map(m -> m.toBuilder().unitPrice(saved.getUnitPrice()).build()).toList());
+            if (latest) {
+                costPropagationService.updateBasePrice(saved);           // D3 — history PURCHASE_UPDATE
+            }
+            records.set(index, saved);
+            productIds.add(record.getProduct().getId());
+            if (record.getSourceMovement() != null) {
+                lots.putIfAbsent(record.getSourceMovement().getId(), record.getSourceMovement());
+            }
+        }
+
+        Long receiptId = null;
+        if (laterReceipt != null) {
+            receiptId = attachPhoto(laterReceipt.getId(), photo).id();      // D13: the whole receipt gets the photo
+        } else if (withPhoto) {
+            // D2 · D12 · D15: a new receipt of that seller on the screen day; the lines leave found stock.
+            PurchaseReceipt receipt = purchaseReceiptRepository.save(PurchaseReceipt.builder()
+                    .purchasedOn(movedOn)
+                    .payerSeller(payer)
+                    .card(card)
+                    .photoUrl(storePhoto(photo))
+                    .createdBy(currentUsername())
+                    .build());
+            purchaseRecordRepository.saveAll(records.stream().map(r -> r.asReceiptLine(receipt)).toList());
+            receiptId = receipt.getId();
+        }
+
+        purchaseRecordRepository.flush();
+        stockMovementRepository.flush();
+        // D6: a retyped share re-splits its undecided lot, then the touched products' debts are rewritten.
+        lots.values().forEach(lotLedgerService::resplit);
+        productIds.forEach(lotLedgerService::rebuildDebts);
+        return new ReceiptCreateResult(receiptId);
     }
 
     /** What of one undecided intake row no receipt took yet (D121 ①): its record minus the assigned records. */

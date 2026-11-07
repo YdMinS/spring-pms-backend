@@ -1,9 +1,11 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.PurchasePriceRequest;
 import com.pms.dto.request.SellerChangeRequest;
 import com.pms.dto.request.StockIntakeRequest;
 import com.pms.dto.response.IntakeBarcodeView;
+import com.pms.dto.response.ReceiptCreateResult;
 import com.pms.dto.response.StockDailyView;
 import com.pms.service.PurchaseListService;
 import com.pms.service.PurchaseReceiptService;
@@ -11,6 +13,7 @@ import com.pms.service.stock.StockDailyService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,7 +21,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDate;
 
@@ -26,6 +31,9 @@ import java.time.LocalDate;
  * 「입고 작업」 and 「그날 입출고 내역」 (FEATURE_2610_19 D117 · D119). ADMIN only, like every {@code /api/admin/**}
  * path. The receipt assignment of the daily view is {@code POST /api/admin/purchase-receipts/assign}, the assignment
  * without a receipt {@code POST /api/admin/purchase-receipts/assign-without-receipt} (FEATURE_2611_01 D2).
+ *
+ * <p>⚠️ Both multipart parts of {@code /daily/purchase-price} are {@code required = false} on purpose, as in
+ * {@code PurchaseReceiptController}: the photo is optional and a missing JSON part gets the service's 400 message.</p>
  */
 @RestController
 @RequestMapping("/api/admin/stock")
@@ -62,5 +70,18 @@ public class StockDailyController {
     public ResponseEntity<ResponseDTO<Void>> changeSeller(@RequestBody SellerChangeRequest request) {
         purchaseReceiptService.changeSeller(request);
         return ResponseEntity.ok(ResponseDTO.success(null));
+    }
+
+    /**
+     * 「매입가 넣기」 of the daily view (FEATURE_2611_16 D2 · D7): {@code photo} part (optional, jpeg/png) +
+     * {@code request} part (application/json), {@code movedOn} = the day on the screen. receiptId = the receipt the
+     * photo went to, null without a photo.
+     */
+    @PostMapping(value = "/daily/purchase-price", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ResponseDTO<ReceiptCreateResult>> retypePrices(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate movedOn,
+            @RequestPart(value = "photo", required = false) MultipartFile photo,
+            @Valid @RequestPart(value = "request", required = false) PurchasePriceRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(purchaseReceiptService.retypePrices(movedOn, request, photo)));
     }
 }

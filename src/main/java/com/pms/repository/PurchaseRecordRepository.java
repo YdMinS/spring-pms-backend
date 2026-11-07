@@ -128,9 +128,16 @@ public interface PurchaseRecordRepository extends JpaRepository<PurchaseRecord, 
     @Query("select coalesce(sum(r.quantity), 0) from PurchaseRecord r where r.sourceMovement.id = :movementId")
     int sumAssignedFrom(@Param("movementId") Long movementId);
 
-    /** Receipt assignments taken from the given undecided intake rows (FEATURE_2610_19 D130), record order. */
-    @EntityGraph(attributePaths = {"seller", "sourceMovement"})
+    /**
+     * Receipt assignments taken from the given undecided intake rows (FEATURE_2610_19 D130), record order — with the
+     * receipt, for the daily view's share kinds (FEATURE_2611_16 D8).
+     */
+    @EntityGraph(attributePaths = {"seller", "sourceMovement", "receipt"})
     List<PurchaseRecord> findBySourceMovementIdIn(Collection<Long> movementIds);
+
+    /** The purchases 「매입가 넣기」 picked, with what its checks read (FEATURE_2611_16 D1 · D11 · D13 · D18). */
+    @EntityGraph(attributePaths = {"product", "seller", "receipt", "sourceMovement"})
+    List<PurchaseRecord> findByIdIn(Collection<Long> ids);
 
     /** Every receipt assignment with a positive quantity (FEATURE_2610_19 D131 — the stock balance shares). */
     @EntityGraph(attributePaths = {"seller", "sourceMovement", "product"})
