@@ -5,6 +5,8 @@ import com.pms.domain.StockMovementType;
 import com.pms.domain.StockReason;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -26,6 +28,12 @@ import java.util.List;
  * @param receiptId     that record's receipt; null = none (D13)
  * @param shares        undecided intake only: every assigned share, record order — each one is a 「매입가 넣기」
  *                      target and the 「영수증 없음」 ones are 「판매자 바꾸기」 targets (D8 · FEATURE_2611_01 D15)
+ * @param unitPrices    the unit prices behind {@code amount}, one per price with its count, first appearance order
+ *                      (FEATURE_2611_17 D1 · D16): exactly the parts {@code amount} adds up; null when {@code amount}
+ *                      is null (「미기입」)
+ * @param priceFromBase a part of {@code amount} has a unit price filled from the registered price — the screen shows
+ *                      「미기입」 next to the value (FEATURE_2611_17 D22)
+ * @param openingPriceEditable an opening-stock row the row popup may price (FEATURE_2611_17 D5 · D17)
  */
 public record StockDailyRowView(
         Long movementId,
@@ -46,12 +54,48 @@ public record StockDailyRowView(
         Long recordId,
         PurchaseRecord.ReceiptKind receiptKind,
         Long receiptId,
-        List<Share> shares
+        List<Share> shares,
+        List<UnitCount> unitPrices,
+        boolean priceFromBase,
+        boolean openingPriceEditable
 ) {
     /**
      * One share of an undecided intake row (FEATURE_2611_16 D8): its purchase record, owner, quantity, amount (the
-     * record's total; null = 「미기입」) and receipt kind.
+     * record's total; null = 「미기입」) and receipt kind, plus its unit price (null = 「미기입」) and the 「미기입」 mark of
+     * a unit price filled from the registered price (FEATURE_2611_17 D2 · D22).
      */
     public record Share(Long recordId, Long sellerId, String sellerName, int quantity, BigDecimal amount,
-                        PurchaseRecord.ReceiptKind receiptKind, Long receiptId, boolean sellerChangeable) {}
+                        PurchaseRecord.ReceiptKind receiptKind, Long receiptId, boolean sellerChangeable,
+                        BigDecimal unitPrice, boolean priceFromBase) {}
+
+    /** One unit price and how many pieces of the row carry it (FEATURE_2611_17 D16). */
+    public record UnitCount(BigDecimal unitPrice, int quantity) {
+
+        /** D16: the same unit price (compared by value, not scale) adds up its counts; first appearance order stays. */
+        public static List<UnitCount> merge(List<UnitCount> parts) {
+            List<UnitCount> merged = new ArrayList<>();
+            for (UnitCount part : parts) {
+                int index = -1;
+                for (int i = 0; i < merged.size(); i++) {
+                    if (merged.get(i).unitPrice().compareTo(part.unitPrice()) == 0) {
+                        index = i;
+                        break;
+                    }
+                }
+                if (index < 0) {
+                    merged.add(part);
+                } else {
+                    UnitCount same = merged.get(index);
+                    merged.set(index, new UnitCount(same.unitPrice(), same.quantity() + part.quantity()));
+                }
+            }
+            return List.copyOf(merged);
+        }
+
+        /** Σ unit × count, rounded once to 2 decimals (HALF_UP) — an outgoing row's amount (D123 ② · D136 ③). */
+        public static BigDecimal amountOf(List<UnitCount> parts) {
+            return parts.stream().map(p -> p.unitPrice().multiply(BigDecimal.valueOf(p.quantity())))
+                    .reduce(BigDecimal.ZERO, BigDecimal::add).setScale(2, RoundingMode.HALF_UP);
+        }
+    }
 }

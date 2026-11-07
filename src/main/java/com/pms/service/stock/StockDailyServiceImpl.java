@@ -18,7 +18,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -60,12 +59,13 @@ public class StockDailyServiceImpl implements StockDailyService {
         Map<Long, List<LotShareUsage>> usagesByOut = outIds.isEmpty() ? Map.of()
                 : lotShareUsageRepository.findByOutMovementIdIn(outIds).stream()
                 .collect(Collectors.groupingBy(u -> u.getOutMovement().getId()));
-        // D123 ② · D136 ③: purchase-price amounts of the outgoing rows, per product.
-        Map<Long, BigDecimal> outAmounts = new HashMap<>();
+        // D123 ② · D136 ③: purchase-price amounts of the outgoing rows, per product, with their unit prices
+        // (FEATURE_2611_17 D16 · D22).
+        Map<Long, LotLedgerService.OutgoingPrice> outPrices = new HashMap<>();
         rows.stream().filter(m -> m.getQuantity() < 0)
                 .collect(Collectors.groupingBy(m -> m.getProduct().getId(), LinkedHashMap::new,
                         Collectors.mapping(StockMovement::getId, Collectors.toList())))
-                .forEach((productId, ids) -> outAmounts.putAll(lotLedgerService.outgoingAmounts(productId, ids)));
+                .forEach((productId, ids) -> outPrices.putAll(lotLedgerService.outgoingPrices(productId, ids)));
 
         List<StockDailyRowView> views = new ArrayList<>();
         for (StockMovement m : rows) {
@@ -73,7 +73,8 @@ public class StockDailyServiceImpl implements StockDailyService {
             List<String> owners = List.of();
             Integer undecidedLeft = null;
             List<StockDailyRowView.Share> shareViews = List.of();
-            BigDecimal amount = amount(m, outAmounts);
+            Priced priced = priced(m, outPrices);
+            BigDecimal amount = priced.amount();
             if (undecided) {
                 List<PurchaseRecord> shares = sharesByLot.getOrDefault(m.getId(), List.of());
                 Map<String, Integer> byOwner = new LinkedHashMap<>();
@@ -85,9 +86,11 @@ public class StockDailyServiceImpl implements StockDailyService {
                 shareViews = shares.stream()
                         .map(s -> new StockDailyRowView.Share(s.getId(), s.getSeller().getId(),
                                 s.getSeller().getSellerName(), s.getQuantity(), s.getTotalAmount(), s.receiptKind(),
-                                s.getReceipt() == null ? null : s.getReceipt().getId(), s.isNoReceiptShare()))
+                                s.getReceipt() == null ? null : s.getReceipt().getId(), s.isNoReceiptShare(),
+                                s.getUnitPrice(), s.getUnitPrice() != null && s.isPriceFromBase()))
                         .toList();
                 amount = undecidedAmount(m, shares, undecidedLeft);
+                priced = undecidedPriced(m, shares, undecidedLeft, amount);
             }
             String orderNumber = null;
             List<String> tags = List.of();
@@ -99,15 +102,15 @@ public class StockDailyServiceImpl implements StockDailyService {
                 tags = tags(m, orderSeller, usagesByOut.getOrDefault(m.getId(), List.of()));
             }
             // FEATURE_2611_16 D1 · D17: a decided purchase row is a 「매입가 넣기」 target through its record.
-            PurchaseRecord priced = m.isPriceRetypable() ? m.getPurchaseRecord() : null;
+            PurchaseRecord record = m.isPriceRetypable() ? m.getPurchaseRecord() : null;
             views.add(new StockDailyRowView(m.getId(), m.getMovementType(), m.getReason(),
                     m.getProduct().getId(), m.getProduct().getProductName(), m.getProduct().getImageUrl(),
                     m.getQuantity(), rowSeller == null ? null : rowSeller.getId(),
                     rowSeller == null ? null : rowSeller.getSellerName(), owners,
                     undecidedLeft, orderNumber, tags, amount, m.isSellerChangeableWithoutReceipt(),
-                    priced == null ? null : priced.getId(), priced == null ? null : priced.receiptKind(),
-                    priced == null || priced.getReceipt() == null ? null : priced.getReceipt().getId(),
-                    shareViews));
+                    record == null ? null : record.getId(), record == null ? null : record.receiptKind(),
+                    record == null || record.getReceipt() == null ? null : record.getReceipt().getId(),
+                    shareViews, priced.unitPrices(), priced.priceFromBase(), m.isOpeningPriceEditable()));
         }
 
         // D147: products with an undecided quantity left among that day's purchases.
@@ -175,16 +178,50 @@ public class StockDailyServiceImpl implements StockDailyService {
     }
 
     /**
-     * D123: incoming = the row's unit price × quantity; a return into a lot = that lot's unit price × quantity;
-     * outgoing = {@link LotLedgerService#outgoingAmounts}. null = 「미기입」. An undecided intake row is
-     * {@link #undecidedAmount} instead (FEATURE_2611_16 D8).
+     * FEATURE_2611_17 D16 · D22: the unit prices behind an undecided intake row's amount — the shares with an amount,
+     * then what is left × the undecided unit price — exactly the parts {@link #undecidedAmount} adds up.
      */
-    private BigDecimal amount(StockMovement m, Map<Long, BigDecimal> outAmounts) {
-        if (m.getQuantity() < 0) {
-            return outAmounts.get(m.getId());
+    private static Priced undecidedPriced(StockMovement lot, List<PurchaseRecord> shares, int left, BigDecimal amount) {
+        if (amount == null) {
+            return Priced.UNKNOWN;
         }
-        BigDecimal unit = m.getSourceMovement() != null ? m.getSourceMovement().getUnitPrice() : m.getUnitPrice();
-        return unit == null ? null
-                : unit.multiply(BigDecimal.valueOf(m.getQuantity())).setScale(2, RoundingMode.HALF_UP);
+        List<StockDailyRowView.UnitCount> parts = new ArrayList<>();
+        boolean fromBase = false;
+        for (PurchaseRecord share : shares) {
+            if (share.getTotalAmount() == null || share.getUnitPrice() == null) continue;
+            parts.add(new StockDailyRowView.UnitCount(share.getUnitPrice(), share.getQuantity()));
+            fromBase |= share.isPriceFromBase();
+        }
+        if (left > 0 && lot.getUnitPrice() != null) {
+            parts.add(new StockDailyRowView.UnitCount(lot.getUnitPrice(), left));
+            fromBase |= lot.isPriceFromBase();
+        }
+        return new Priced(amount, StockDailyRowView.UnitCount.merge(parts), fromBase);
+    }
+
+    /**
+     * D123: incoming = the row's unit price × quantity; a return into a lot = that lot's unit price × quantity;
+     * outgoing = {@link LotLedgerService#outgoingPrices}. null = 「미기입」. An undecided intake row is
+     * {@link #undecidedAmount} instead (FEATURE_2611_16 D8). FEATURE_2611_17 D16 · D22: with the unit prices behind
+     * the amount and the 「미기입」 mark of a price filled from the registered price.
+     */
+    private Priced priced(StockMovement m, Map<Long, LotLedgerService.OutgoingPrice> outPrices) {
+        if (m.getQuantity() < 0) {
+            LotLedgerService.OutgoingPrice out = outPrices.getOrDefault(m.getId(), LotLedgerService.OutgoingPrice.UNKNOWN);
+            return new Priced(out.amount(), out.unitPrices(), out.priceFromBase());
+        }
+        StockMovement lot = m.getSourceMovement() != null ? m.getSourceMovement() : m;
+        BigDecimal unit = lot.getUnitPrice();
+        if (unit == null) {
+            return Priced.UNKNOWN;
+        }
+        return new Priced(PurchaseRecord.totalOf(unit, m.getQuantity()),
+                List.of(new StockDailyRowView.UnitCount(unit, m.getQuantity())),
+                lot.isPriceFromBase());
+    }
+
+    /** One row's amount, the unit prices behind it (null with a null amount) and its 「미기입」 mark. */
+    private record Priced(BigDecimal amount, List<StockDailyRowView.UnitCount> unitPrices, boolean priceFromBase) {
+        static final Priced UNKNOWN = new Priced(null, null, false);
     }
 }

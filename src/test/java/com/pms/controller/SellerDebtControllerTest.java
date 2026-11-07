@@ -32,6 +32,7 @@ import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -39,7 +40,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * 「사업자 간 채무」 (FEATURE_2610_19 D51 · D90 · D99 ① · D137 · D141 · D143 · D145 · D146) on the real schema, plus
- * ADMIN authority (401/403).
+ * ADMIN authority (401/403). FEATURE_2611_17 D22: a price filled from the registered price is still typed here.
  */
 class SellerDebtControllerTest extends BaseIntegrationTest {
 
@@ -156,5 +157,59 @@ class SellerDebtControllerTest extends BaseIntegrationTest {
         mockMvc.perform(get(PATH).header("Authorization", "Bearer " + adminToken))
                 .andExpect(jsonPath("$.data[0].debtorId").value(sellerA.getId()))
                 .andExpect(jsonPath("$.data[0].balance").value(1300));
+    }
+
+    /**
+     * FEATURE_2611_17 D22: the registered price appears (「상품 수정」) → the empty lot takes it with the 「미기입」 mark and
+     * the debt follows; [단가 입력] stays open and a typed price drops the mark.
+     */
+    @Test
+    void testRegisteredPriceFillsEmptyLotAndStaysTypeable() throws Exception {
+        Product product = productRepository.save(Product.builder().productName("나중가양말").active(true).build());
+        StockMovement lot = stockMovementRepository.save(StockMovement.builder()
+                .product(product).seller(sellerB).movementType(StockMovementType.STOCK_IN).quantity(2)
+                .location(StockLocation.OWN).reason(StockReason.OPENING).movedOn(DAY).createdBy("admin@test.com")
+                .build());
+        MarketplaceAccount account = marketplaceAccountRepository.save(
+                MarketplaceAccountFixture.coupangCoreBuilder().seller(sellerA).build());
+        Order order = orderRepository.save(Order.builder().marketplaceAccount(account).platform(Platform.COUPANG)
+                .externalOrderId("ORD-17").orderedAt(LocalDateTime.of(2026, 11, 2, 10, 0)).build());
+        OrderLine line = orderLineRepository.save(OrderLine.builder().order(order).status(OrderStatus.PAID)
+                .itemName("나중가양말").orderQty(1).cancelQty(0).holdQty(0).build());
+        stockMovementRepository.save(StockMovement.builder()
+                .product(product).seller(sellerB).movementType(StockMovementType.STOCK_OUT).quantity(-1)
+                .location(StockLocation.OWN).sourceMovement(lot).orderLine(line).movedOn(DAY)
+                .createdBy("admin@test.com").build());
+        stockMovementRepository.flush();
+        lotLedgerService.rebuildDebts(product.getId());
+
+        mockMvc.perform(patch("/api/products/" + product.getId()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"price\":1000}").header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+        stockMovementRepository.flush();
+        assertThat(stockMovementRepository.findById(lot.getId()).orElseThrow()).satisfies(m -> {
+            assertThat(m.getUnitPrice()).isEqualByComparingTo("1000");
+            assertThat(m.isPriceFromBase()).isTrue();
+        });
+        SellerDebt filled = sellerDebtRepository.findAll().get(0);
+        assertThat(filled.getAmount()).isEqualByComparingTo("1000");
+        mockMvc.perform(get(PATH + "/entries").param("sellerA", String.valueOf(sellerA.getId()))
+                        .param("sellerB", String.valueOf(sellerB.getId()))
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].canFillPrice").value(true));
+
+        mockMvc.perform(put(PATH + "/" + filled.getId() + "/unit-price").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"unitPrice\":1200}").header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+        stockMovementRepository.flush();
+        assertThat(stockMovementRepository.findById(lot.getId()).orElseThrow().isPriceFromBase()).isFalse();
+        assertThat(productRepository.findById(product.getId()).orElseThrow().getPrice()).isEqualByComparingTo("1000");
+        mockMvc.perform(get(PATH + "/entries").param("sellerA", String.valueOf(sellerA.getId()))
+                        .param("sellerB", String.valueOf(sellerB.getId()))
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].amount").value(1200))
+                .andExpect(jsonPath("$.data[0].canFillPrice").value(false));
     }
 }

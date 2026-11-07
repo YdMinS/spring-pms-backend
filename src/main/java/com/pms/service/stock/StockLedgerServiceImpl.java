@@ -29,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -92,6 +93,8 @@ public class StockLedgerServiceImpl implements StockLedgerService {
                     resolveUnitPrice(request, type, product, purchaseRecord, signed)));
         }
 
+        // FEATURE_2611_17 D25: an 「기타」 intake without an amount carries the registered price, marked 「미기입」.
+        LocalDateTime priceFromBaseAt = isEtcFilledFromBase(request, type, product) ? LocalDateTime.now() : null;
         StockMovement first = null;
         for (LotSlice slice : slices) {
             StockMovement saved = stockMovementRepository.save(StockMovement.builder()
@@ -103,6 +106,7 @@ public class StockLedgerServiceImpl implements StockLedgerService {
                     .reason(request.reason())
                     .reasonNote(request.reasonNote())
                     .unitPrice(slice.unitPrice())
+                    .priceFromBaseAt(priceFromBaseAt)
                     .sourceMovement(slice.source())
                     .orderClaim(orderClaim)
                     .purchaseRecord(purchaseRecord)
@@ -305,6 +309,9 @@ public class StockLedgerServiceImpl implements StockLedgerService {
      * value: a typed price still wins, because the goods on the shelf may have been bought at a
      * different price than the one the product carries today. A product with no price stays null
      * ("amount unknown"), never 0.
+     *
+     * <p>⚠️ {@code ETC} without an amount takes the registered price too, and the row is marked 「미기입」
+     * (FEATURE_2611_17 D25); a product with no price stays null until its price appears (D22).
      */
     private BigDecimal resolveUnitPrice(StockMovementRequest request, StockMovementType type,
                                         Product product, PurchaseRecord purchaseRecord, int signed) {
@@ -325,8 +332,15 @@ public class StockLedgerServiceImpl implements StockLedgerService {
                     : (request.unitPrice() != null ? request.unitPrice() : product.getPrice());
             case FREE -> BigDecimal.ZERO;
             case OPENING -> request.unitPrice() != null ? request.unitPrice() : product.getPrice();
-            default -> request.unitPrice();   // ETC (optional)
+            // ETC (optional): FEATURE_2611_17 D25 — no amount → the registered price (null when the product has none).
+            default -> isEtcFilledFromBase(request, type, product) ? product.getPrice() : request.unitPrice();
         };
+    }
+
+    /** FEATURE_2611_17 D25: an 「기타」 stock-in saved without an amount while the product has a registered price. */
+    private static boolean isEtcFilledFromBase(StockMovementRequest request, StockMovementType type, Product product) {
+        return type == StockMovementType.STOCK_IN && request.reason() == StockReason.ETC
+                && request.unitPrice() == null && product.getPrice() != null;
     }
 
     /**
