@@ -9,7 +9,8 @@ import java.time.LocalDate;
  * <p>kind {@code BORROW} = 「출고 차용」: from = the borrower (order seller), to = the lender; amount null = 「미기입」.
  * kind {@code SETTLEMENT} = 「돈 정리」: from = the payer, to = the receiver.
  *
- * @param canFillPrice [단가 입력] — the lot behind a 「미기입」 row has no unit price (D141)
+ * @param canFillPrice [단가 입력] — the lot behind a 「미기입」 row has no unit price (D141), or its unit price was filled
+ *                     from the registered price (FEATURE_2611_17 D22)
  * @param canEditPrice [단가 수정] — that lot's unit price was typed on this screen (D143 ①)
  */
 public record SellerDebtEntryView(

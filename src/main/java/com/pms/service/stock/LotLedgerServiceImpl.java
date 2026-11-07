@@ -10,6 +10,7 @@ import com.pms.domain.StockMovement;
 import com.pms.domain.StockMovementType;
 import com.pms.dto.response.SellerSalesResponse;
 import com.pms.dto.response.StockBalanceView;
+import com.pms.dto.response.StockDailyRowView;
 import com.pms.repository.LotShareUsageRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.SellerDebtRepository;
@@ -316,22 +317,31 @@ public class LotLedgerServiceImpl implements LotLedgerService {
 
     @Override
     public Map<Long, BigDecimal> outgoingAmounts(Long productId, Collection<Long> outRowIds) {
-        Ledger ledger = load(productId);
         Map<Long, BigDecimal> amounts = new HashMap<>();
+        outgoingPrices(productId, outRowIds).forEach((rowId, price) -> amounts.put(rowId, price.amount()));
+        return amounts;
+    }
+
+    @Override
+    public Map<Long, OutgoingPrice> outgoingPrices(Long productId, Collection<Long> outRowIds) {
+        Ledger ledger = load(productId);
+        Map<Long, OutgoingPrice> prices = new HashMap<>();
         for (Long rowId : outRowIds) {
             StockMovement out = ledger.byId.get(rowId);
             if (out == null || out.getSourceMovement() == null) {
-                amounts.put(rowId, null);
+                prices.put(rowId, OutgoingPrice.UNKNOWN);
                 continue;
             }
             StockMovement lot = ledger.byId.get(out.getSourceMovement().getId());
-            BigDecimal total = BigDecimal.ZERO;
+            List<StockDailyRowView.UnitCount> parts = new ArrayList<>();
+            boolean fromBase = false;
             boolean unknown = false;
             if (!isUndecided(lot)) {
                 BigDecimal unit = lot.getUnitPrice() != null ? lot.getUnitPrice()
                         : (lot.getSeller() == null ? null : maxPricedBefore(ledger, lot.getSeller(), rowId));
                 if (unit == null) unknown = true;
-                else total = unit.multiply(BigDecimal.valueOf(Math.abs(out.getQuantity())));
+                else parts.add(new StockDailyRowView.UnitCount(unit, Math.abs(out.getQuantity())));
+                fromBase = lot.getUnitPrice() != null && lot.isPriceFromBase();
             } else {
                 for (LotShareUsage usage : ledger.usagesOfOut(rowId)) {
                     PurchaseRecord share = usage.getShareRecord();
@@ -342,12 +352,16 @@ public class LotLedgerServiceImpl implements LotLedgerService {
                         unknown = true;
                         break;
                     }
-                    total = total.add(unit.multiply(BigDecimal.valueOf(usage.getQuantity())));
+                    parts.add(new StockDailyRowView.UnitCount(unit, usage.getQuantity()));
+                    // FEATURE_2611_17 D22: the piece's own price came from the registered price.
+                    fromBase |= share == null ? lot.isPriceFromBase()
+                            : share.getUnitPrice() != null && share.isPriceFromBase();
                 }
             }
-            amounts.put(rowId, unknown ? null : total.setScale(2, RoundingMode.HALF_UP));
+            prices.put(rowId, unknown ? OutgoingPrice.UNKNOWN : new OutgoingPrice(
+                    StockDailyRowView.UnitCount.merge(parts), fromBase, StockDailyRowView.UnitCount.amountOf(parts)));
         }
-        return amounts;
+        return prices;
     }
 
     @Override

@@ -1,5 +1,6 @@
 package com.pms.service;
 
+import com.pms.dto.request.DailyRowEditRequest;
 import com.pms.dto.request.PurchasePriceRequest;
 import com.pms.dto.request.ReceiptCreateRequest;
 import com.pms.dto.request.ReceiptUpdateRequest;
@@ -26,9 +27,9 @@ import java.util.List;
  * they reach (D100 · D101 · FEATURE_2610_19 D149) — never a purchase amount, a quantity or a base price.</p>
  *
  * <p>🔴 A receipt never adds a debt of its own (D88) — borrowed-goods debts come from outbound rows only
- * (FEATURE_2610_19 D33). {@link #assign}, {@link #assignWithoutReceipt}, {@link #update}, {@link #changeSeller} and
- * {@link #retypePrices} only recompute the split shares and the outbound debts of the products they touched (D131 ·
- * D132).</p>
+ * (FEATURE_2610_19 D33). {@link #assign}, {@link #assignWithoutReceipt}, {@link #update}, {@link #changeSeller},
+ * {@link #retypePrices} and {@link #editDailyRow} only recompute the split shares and the outbound debts of the
+ * products they touched (D131 · D132).</p>
  *
  * @see com.pms.controller.PurchaseReceiptController
  */
@@ -103,6 +104,26 @@ public interface PurchaseReceiptService {
      * @return the receipt the photo went to; receiptId null without a photo
      */
     ReceiptCreateResult retypePrices(LocalDate movedOn, PurchasePriceRequest request, MultipartFile photo);
+
+    /**
+     * The row popup of 「일별 입출고 내역」 (FEATURE_2611_17 D5 · D10 · D17 ~ D23 · D26): one decided incoming row or one
+     * share, saved in one transaction — nothing changes when a part is refused. Order: the seller ({@link #changeSeller}
+     * rules) → the price and photo of a purchase ({@link #retypePrices} rules, one line) or the price of an opening-stock
+     * row (D17: the row's unit price; an empty registered price takes it) → the picked receipt (the purchase becomes one
+     * more line of it, D23 · D26). receiptId = the receipt the photo went to or the picked receipt, null otherwise.
+     *
+     * <p>400: no request 「고칠 내용을 보내세요.」 · neither or both of movementId / shareRecordId 「고칠 줄을 고르세요.」 · a
+     * row with nothing to edit 「고칠 수 없는 줄입니다.」 · a seller change on a row that is not a 「판매자 바꾸기」 target
+     * 「판매자를 바꿀 수 없는 줄입니다.」 · a price on a row without one 「매입가를 넣을 수 없는 줄입니다.」 · a photo or receipt
+     * on a row that is not a purchase 「영수증을 붙일 수 없는 줄입니다.」 · both a photo and a receipt
+     * 「새 영수증 사진과 고른 영수증을 함께 넣을 수 없습니다.」 · both amounts 「총액과 단가 중 하나만 입력하세요」 · nothing to
+     * change 「바꿀 내용이 없습니다.」 · a picked receipt on a row with a receipt 「영수증을 고를 수 없는 줄입니다.」 · a picked
+     * receipt without its photo 「사진 있는 영수증만 고를 수 있습니다.」 · a picked receipt or purchase of another day
+     * 「화면 날짜의 영수증만 고를 수 있습니다.」 · a picked receipt of another payer than the seller after the save
+     * 「고른 영수증의 결제 판매자와 판매자가 다릅니다.」 · every 400 of {@link #changeSeller} and {@link #retypePrices}.
+     * Missing row, record or receipt → 404.</p>
+     */
+    ReceiptCreateResult editDailyRow(LocalDate movedOn, DailyRowEditRequest request, MultipartFile photo);
 
     /** Receipt list: purchase day in [from, to], payer seller (null = all), product name part (blank = any). */
     List<ReceiptSummaryView> search(LocalDate from, LocalDate to, Long sellerId, String productName);

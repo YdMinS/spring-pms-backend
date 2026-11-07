@@ -23,14 +23,16 @@ import java.util.Map;
  * <p>Purchased quantity on the purchase list = SUM(quantity) per (product × seller) (FEATURE_2610_09 D2 · D22).
  * A partial purchase is split into several rows; a wrong quantity is corrected with a negative row. A receipt header
  * edit rewrites rows: every line of that receipt takes the new seller and purchase day (FEATURE_2610_18 D100). The
- * amount of a decided purchase is retyped in place on the debt screen (FEATURE_2610_19 D141) and by
- * 「일별 입출고 내역」 [매입가 넣기] (FEATURE_2611_16 D1 · D6 · D17) — quantity, seller and purchase day stay.
+ * amount of a decided purchase is retyped in place on the debt screen (FEATURE_2610_19 D141), by
+ * 「일별 입출고 내역」 [매입가 넣기] (FEATURE_2611_16 D1 · D6 · D17) and its row popup (FEATURE_2611_17 D5) — quantity,
+ * seller and purchase day stay; an empty amount is filled from the registered price once there is one
+ * (FEATURE_2611_17 D22).
  *
  * <p>⚠️ The physical-side ledger is {@link StockMovement} (D1). One [입고] writes both ledgers in one transaction
  * while the stock link setting is on (FEATURE_2610_09 D65) — {@link #stockLinked} records which mode applied.
  *
  * <p>⚠️ ddl-auto=validate (prod) → the @Column definitions below must match the purchase_record DDL
- * (changesets 077 · 109-4 · 110-3 · 122-2 · 123-2).
+ * (changesets 077 · 109-4 · 110-3 · 122-2 · 123-2 · 129-1).
  *
  * @see com.pms.domain.StockMovement physical stock ledger
  */
@@ -131,6 +133,14 @@ public class PurchaseRecord extends BaseEntity {
     private LocalDateTime foundStockAt;
 
     /**
+     * Set when the empty unit price was filled from the product's registered price (FEATURE_2611_17 D15 · D22): the
+     * daily view shows 「미기입」 next to the value. A price typed later — the daily row popup, 「매입가 넣기」 or the debt
+     * screen — clears it.
+     */
+    @Column(name = "price_from_base_at")
+    private LocalDateTime priceFromBaseAt;
+
+    /**
      * 이 매입이 {@code Product.price}(기준 원가)를 움직이는가 — <b>이 판정의 유일한 자리</b>
      * (FEATURE_2609_28 / PLAN D3·D4 ①).
      *
@@ -160,8 +170,10 @@ public class PurchaseRecord extends BaseEntity {
      * The purchase amount rules live in this class only (PLAN 2609_28 D1·D2): this factory, plus
      * {@link #assignedParts} and {@link #assignmentMinus} for a receipt assignment (FEATURE_2610_19 D135 ① round 32),
      * {@link #withTypedUnitPrice} · {@link #typedUnit} · {@link #registeredPriceOf} for a unit price typed later on
-     * the debt screen (D141 ② · D145 · D146), and {@link #withRetypedAmount} · {@link #totalOf} for 「매입가 넣기」 and
-     * the daily view's amounts (FEATURE_2611_16 D6 · D8).
+     * the debt screen (D141 ② · D145 · D146), {@link #withRetypedAmount} · {@link #totalOf} for 「매입가 넣기」 and
+     * the daily view's amounts (FEATURE_2611_16 D6 · D8), and {@link #withBasePriceFill} · {@link #unitOfTotal} for an
+     * empty unit price filled from the registered price and an opening-stock price typed as a total (FEATURE_2611_17
+     * D17 · D22).
      * Web, mobile and any future bulk input must go through these methods so nobody rounds differently.
      *
      * <p>Amount input is either total OR unit price, never both — otherwise it is ambiguous which one
@@ -171,7 +183,8 @@ public class PurchaseRecord extends BaseEntity {
      *   <li>unit given  -> totalAmount = unit * quantity (scale 2, HALF_UP)</li>
      *   <li>neither given, quantity &gt; 0 -> the product's registered price at this moment is the unit price and the
      *       base price is not moved (FEATURE_2610_19 D135 ① ②); no registered price -> both stay null ("amount
-     *       unknown"; never substitute zero). A minus row is never filled (D135 ③).</li>
+     *       unknown"; never substitute zero) until the registered price appears ({@link #withBasePriceFill},
+     *       FEATURE_2611_17 D22). A minus row is never filled (D135 ③).</li>
      * </ul>
      *
      * <p>⚠️ quantity is signed: a correction row is negative and its amount is negative too, so the
@@ -296,6 +309,7 @@ public class PurchaseRecord extends BaseEntity {
                 .totalAmount(unit.multiply(BigDecimal.valueOf(quantity)).setScale(TOTAL_SCALE, RoundingMode.HALF_UP))
                 .reflectToBasePrice(reflect)
                 .priceFilledAt(filledAt)
+                .priceFromBaseAt(null)
                 .build();
     }
 
@@ -338,7 +352,7 @@ public class PurchaseRecord extends BaseEntity {
     /**
      * The amount retyped by 「매입가 넣기」 (FEATURE_2611_16 D6 · D7): total given → unit = total / quantity (scale 4,
      * HALF_UP), total at scale 2 · unit given → total = unit × quantity (scale 2, HALF_UP). Quantity, seller, purchase
-     * day, receipt and the debt screen mark stay.
+     * day, receipt and the debt screen mark stay; the 「미기입」 mark goes (FEATURE_2611_17 D22).
      *
      * @throws IllegalArgumentException both amounts or neither given (→ 400 via GlobalExceptionHandler)
      */
@@ -355,7 +369,24 @@ public class PurchaseRecord extends BaseEntity {
         BigDecimal resolvedTotal = total != null
                 ? total.setScale(TOTAL_SCALE, RoundingMode.HALF_UP)
                 : totalOf(unit, quantity);
-        return toBuilder().unitPrice(resolvedUnit).totalAmount(resolvedTotal).reflectToBasePrice(reflect).build();
+        return toBuilder().unitPrice(resolvedUnit).totalAmount(resolvedTotal).reflectToBasePrice(reflect)
+                .priceFromBaseAt(null).build();
+    }
+
+    /**
+     * The empty unit price filled from the product's registered price (FEATURE_2611_17 D15 · D22): unit = that price
+     * (scale 4, HALF_UP), total = unit × quantity (scale 2, HALF_UP), the base price is not moved and the 「미기입」 mark
+     * is set at {@code at}. Quantity, seller, purchase day and receipt stay.
+     */
+    public PurchaseRecord withBasePriceFill(BigDecimal registeredPrice, LocalDateTime at) {
+        BigDecimal unit = typedUnit(registeredPrice);
+        return toBuilder().unitPrice(unit).totalAmount(totalOf(unit, quantity)).reflectToBasePrice(false)
+                .priceFromBaseAt(at).build();
+    }
+
+    /** Whether the unit price was filled from the registered price — the 「미기입」 mark (FEATURE_2611_17 D22). */
+    public boolean isPriceFromBase() {
+        return priceFromBaseAt != null;
     }
 
     /**
@@ -384,6 +415,14 @@ public class PurchaseRecord extends BaseEntity {
     /** unit × quantity at the total scale (2, HALF_UP) — the daily view's undecided amount uses it too (D8). */
     public static BigDecimal totalOf(BigDecimal unit, int quantity) {
         return unit.multiply(BigDecimal.valueOf(quantity)).setScale(TOTAL_SCALE, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * total / quantity at the unit scale (4, HALF_UP) — an opening-stock price typed as a total in the daily row popup
+     * (FEATURE_2611_17 D17 · D18).
+     */
+    public static BigDecimal unitOfTotal(BigDecimal total, int quantity) {
+        return total.divide(BigDecimal.valueOf(quantity), UNIT_SCALE, RoundingMode.HALF_UP);
     }
 
     /** A typed unit price at the stored scale (4, HALF_UP) — the lot rows without a purchase record use it too (D141 ①). */

@@ -34,7 +34,7 @@ import java.time.LocalDateTime;
  * missing", which is a signal, not an error to reject (rejecting it makes people stop using the
  * ledger at all).
  *
- * <p>⚠️ ddl-auto=validate (dev/prod) → the @Column definitions below must match changesets 071 + 078 + 122-1.
+ * <p>⚠️ ddl-auto=validate (dev/prod) → the @Column definitions below must match changesets 071 + 078 + 122-1 + 129-1.
  *
  * @see StockMovementType movement kinds and their sign
  * @see StockReason reason codes and which type each belongs to
@@ -111,6 +111,10 @@ public class StockMovement extends BaseEntity {
      * snapshot (R15 · D140); a matched return follows the lot it used (D139); an empty lot price can be typed later
      * on the debt screen (D141).
      *
+     * <p>FEATURE_2611_17: an ETC stock-in without a typed price = the {@code Product.price} snapshot (D25); an empty
+     * lot price is filled from {@code Product.price} once the product has one (D22) — both set
+     * {@link #priceFromBaseAt}. An opening-stock price can be typed again in the daily row popup (D17).
+     *
      * <p>null is a legitimate value meaning "amount unknown" — never substituted with 0.
      */
     @Column(name = "unit_price", precision = 15, scale = 4)
@@ -151,6 +155,13 @@ public class StockMovement extends BaseEntity {
     @Column(name = "base_price_filled_at")
     private LocalDateTime basePriceFilledAt;
 
+    /**
+     * Set when the empty unit price was filled from the product's registered price (FEATURE_2611_17 D15 · D22 · D25):
+     * the daily view shows 「미기입」 next to the value. A price typed later clears it.
+     */
+    @Column(name = "price_from_base_at")
+    private LocalDateTime priceFromBaseAt;
+
     /** The day a person confirmed the goods moved. NOT the audit timestamp. */
     @Column(name = "moved_on", nullable = false)
     private LocalDate movedOn;
@@ -179,5 +190,27 @@ public class StockMovement extends BaseEntity {
         return movementType == StockMovementType.STOCK_IN && quantity != null && quantity > 0
                 && sourceMovement == null && seller != null
                 && purchaseRecord != null && purchaseRecord.isPriceRetypable();
+    }
+
+    /**
+     * An opening-stock row whose unit price the daily row popup may set (FEATURE_2611_17 D5 · D17): a stock-in of
+     * 「기초재고」 with a decided seller, even when it already has a price.
+     */
+    public boolean isOpeningPriceEditable() {
+        return movementType == StockMovementType.STOCK_IN && reason == StockReason.OPENING
+                && quantity != null && quantity > 0 && sourceMovement == null && seller != null;
+    }
+
+    /** Whether the unit price was filled from the registered price — the 「미기입」 mark (FEATURE_2611_17 D22). */
+    public boolean isPriceFromBase() {
+        return priceFromBaseAt != null;
+    }
+
+    /**
+     * This lot with its empty unit price filled from the registered price (FEATURE_2611_17 D22): unit = that price at
+     * the stored scale (4, HALF_UP), the 「미기입」 mark set at {@code at}.
+     */
+    public StockMovement withBasePriceFill(BigDecimal registeredPrice, LocalDateTime at) {
+        return toBuilder().unitPrice(PurchaseRecord.typedUnit(registeredPrice)).priceFromBaseAt(at).build();
     }
 }

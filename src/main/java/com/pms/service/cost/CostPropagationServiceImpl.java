@@ -20,6 +20,7 @@ import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.service.listing.MasterPropagationService;
 import com.pms.service.price.PriceHistoryRecorder;
+import com.pms.service.stock.BasePriceFillService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -75,6 +76,7 @@ public class CostPropagationServiceImpl implements CostPropagationService {
     private final GeneratedProductDataRepository generatedProductDataRepository;
     private final MasterPropagationService masterPropagationService;
     private final PriceHistoryRecorder priceHistoryRecorder;
+    private final BasePriceFillService basePriceFillService;
 
     // ---------------------------------------------------------------- ① 기준가 갱신
 
@@ -86,7 +88,8 @@ public class CostPropagationServiceImpl implements CostPropagationService {
             return;
         }
         Product product = record.getProduct();
-        // The purchase price becomes the new base cost — nothing else is touched here (PLAN 2609_28 D4 ①).
+        // The purchase price becomes the new base cost (PLAN 2609_28 D4 ①); the only other write is the fill of the
+        // product's empty prices below, when the registered price was empty (FEATURE_2611_17 D22).
         // ⚠️ 파급(②)을 부르지 않는다. 여기서 부르면 구매기록 저장이 파급 실패에 끌려 롤백된다.
         BigDecimal oldPrice = product.getPrice();
         BigDecimal newPrice = record.getUnitPrice().setScale(BASE_PRICE_SCALE, RoundingMode.HALF_UP);
@@ -97,6 +100,9 @@ public class CostPropagationServiceImpl implements CostPropagationService {
         //    기준가를 안 건드리고 이력도 안 남는다.
         priceHistoryRecorder.recordProductCost(product, oldPrice, newPrice,
                 PriceChangeReason.PURCHASE_UPDATE, record.getId());
+        if (oldPrice == null) {
+            basePriceFillService.fillEmptyPrices(product.getId());   // FEATURE_2611_17 D22: the price appeared
+        }
     }
 
     // ---------------------------------------------------------------- ② dry-run

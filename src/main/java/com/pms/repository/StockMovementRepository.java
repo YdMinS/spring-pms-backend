@@ -222,4 +222,28 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
             order by m.id asc
             """)
     List<StockMovement> findUndecidedIntake(@Param("productId") Long productId, @Param("movedOn") LocalDate movedOn);
+
+    /**
+     * FEATURE_2611_17 D22: the product's lots without a unit price — an incoming row that is not a return into another
+     * lot (the same rows as {@code LotLedgerServiceImpl.isLot}), record order.
+     */
+    @Query("""
+            select m from StockMovement m
+            where m.product.id = :productId and m.quantity > 0 and m.sourceMovement is null and m.unitPrice is null
+              and m.movementType in (com.pms.domain.StockMovementType.STOCK_IN,
+                                     com.pms.domain.StockMovementType.RETURN_IN,
+                                     com.pms.domain.StockMovementType.ADJUST)
+            order by m.id asc
+            """)
+    List<StockMovement> findUnpricedLots(@Param("productId") Long productId);
+
+    /** FEATURE_2611_17 D22 (start-up fill): products with a registered price that still have an unpriced lot. */
+    @Query("""
+            select distinct m.product.id from StockMovement m
+            where m.quantity > 0 and m.sourceMovement is null and m.unitPrice is null and m.product.price is not null
+              and m.movementType in (com.pms.domain.StockMovementType.STOCK_IN,
+                                     com.pms.domain.StockMovementType.RETURN_IN,
+                                     com.pms.domain.StockMovementType.ADJUST)
+            """)
+    List<Long> findPricedProductIdsWithUnpricedLots();
 }

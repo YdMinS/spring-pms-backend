@@ -31,7 +31,9 @@ public interface SellerDebtService {
     /**
      * [단가 입력] / [단가 수정] (D141 · D143): writes the unit price into the lot behind the debt, sets the registered
      * price when D144 / D145 / D146 allow it, re-splits and rewrites the product's debts. A lot whose price was not
-     * typed here and is not empty → 400 「이 단가는 여기서 고칠 수 없습니다.」 (D143 ②).
+     * typed here, is not empty and was not filled from the registered price (FEATURE_2611_17 D22) → 400
+     * 「이 단가는 여기서 고칠 수 없습니다.」 (D143 ②). Typing a price filled from the registered price drops its
+     * 「미기입」 mark.
      */
     void fillUnitPrice(Long debtId, DebtUnitPriceRequest request);
 }

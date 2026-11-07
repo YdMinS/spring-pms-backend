@@ -1,6 +1,7 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.DailyRowEditRequest;
 import com.pms.dto.request.PurchasePriceRequest;
 import com.pms.dto.request.SellerChangeRequest;
 import com.pms.dto.request.StockIntakeRequest;
@@ -32,7 +33,8 @@ import java.time.LocalDate;
  * path. The receipt assignment of the daily view is {@code POST /api/admin/purchase-receipts/assign}, the assignment
  * without a receipt {@code POST /api/admin/purchase-receipts/assign-without-receipt} (FEATURE_2611_01 D2).
  *
- * <p>⚠️ Both multipart parts of {@code /daily/purchase-price} are {@code required = false} on purpose, as in
+ * <p>⚠️ Both multipart parts of {@code /daily/purchase-price} and {@code /daily/row-edit} are {@code required = false}
+ * on purpose, as in
  * {@code PurchaseReceiptController}: the photo is optional and a missing JSON part gets the service's 400 message.</p>
  */
 @RestController
@@ -83,5 +85,18 @@ public class StockDailyController {
             @RequestPart(value = "photo", required = false) MultipartFile photo,
             @Valid @RequestPart(value = "request", required = false) PurchasePriceRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(purchaseReceiptService.retypePrices(movedOn, request, photo)));
+    }
+
+    /**
+     * The row popup of the daily view (FEATURE_2611_17 D5): {@code photo} part (optional, jpeg/png) + {@code request}
+     * part (application/json), {@code movedOn} = the day on the screen. One save for the seller, the price and the
+     * receipt of one row or share. receiptId = the receipt the photo went to or the picked receipt, null otherwise.
+     */
+    @PostMapping(value = "/daily/row-edit", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ResponseDTO<ReceiptCreateResult>> editRow(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate movedOn,
+            @RequestPart(value = "photo", required = false) MultipartFile photo,
+            @Valid @RequestPart(value = "request", required = false) DailyRowEditRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(purchaseReceiptService.editDailyRow(movedOn, request, photo)));
     }
 }

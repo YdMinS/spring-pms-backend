@@ -256,3 +256,5 @@ databaseChangeLog:
       file: db/changelog/changes/127-lotteon-account.yaml
   - include:
       file: db/changelog/changes/128-lotteon-shipping-config.yaml
+  - include:
+      file: db/changelog/changes/129-unit-price-from-base.yaml
