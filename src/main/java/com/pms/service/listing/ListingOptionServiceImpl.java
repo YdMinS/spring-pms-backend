@@ -260,8 +260,10 @@ public class ListingOptionServiceImpl implements ListingOptionService {
         // 2. Push to the market, then keep only what it accepted.
         // 2610_13 / D9 ⑤ · D56: 11st has no per-option price push — its price travels with the next [수정 요청],
         // so an 11st listing takes the "no adapter" path (saved locally, reported in skipped). 2610_26 / D53 ②: an
-        // ESM listing takes the same path.
+        // ESM listing takes the same path. LotteON too: its adapter has no per-option price push, and the price
+        // travels with the next [수정 요청] (modify payload carries slPrc per item).
         ListingChannel adapter = ElevenstListingRules.isElevenst(listing) || esm
+                || listing.getPlatform() == Platform.LOTTEON
                 ? null
                 : resolver.resolveOptional(listing.getPlatform()).orElse(null);
         List<String> skipped = new ArrayList<>();

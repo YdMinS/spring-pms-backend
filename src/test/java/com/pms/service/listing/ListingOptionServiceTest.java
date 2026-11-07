@@ -756,6 +756,28 @@ class ListingOptionServiceTest {
         assertThat(captureSaved()).hasSize(1);
     }
 
+    // 5b. LotteON has no per-option price push: an option already on the market is saved locally and reported
+    //     as skipped (it reaches the market with [수정 요청]) — never routed to the adapter, which would throw.
+    @Test
+    void setOptionPricesSavesLocallyForLotteonOptionOnMarket() {
+        ProductListing lotteon = pricingListing().toBuilder()
+                .platform(Platform.LOTTEON).status(ListingStatus.SELLING).build();
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(lotteon));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, "SITM-1")));
+        given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("18750.00"));
+
+        ChannelPriceUpdateResponse response =
+                service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, new BigDecimal("15000"))));
+
+        verify(adapter, never()).updateOptionPrice(any(), any(), any());
+        assertThat(response.skipped()).containsExactly("opt1");
+        assertThat(response.failed()).isEmpty();
+        List<ProductListingOption> saved = captureSaved();
+        assertThat(saved).hasSize(1);
+        assertThat(saved.get(0).getSellingPrice()).isEqualByComparingTo("15000");
+    }
+
     // 6. D6: what the market refused is NOT saved — the DB must not claim a price the market never took.
     @Test
     void setOptionPricesDoesNotSaveWhenMarketFails() {
