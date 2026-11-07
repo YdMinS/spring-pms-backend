@@ -6,6 +6,7 @@ import com.pms.domain.PurchaseRecord;
 import com.pms.domain.Seller;
 import com.pms.domain.SellerCard;
 import com.pms.domain.StockMovement;
+import com.pms.dto.request.DailyRowEditRequest;
 import com.pms.dto.request.PurchasePriceRequest;
 import com.pms.dto.request.PurchaseRecordRequest;
 import com.pms.dto.request.ReceiptCreateRequest;
@@ -24,6 +25,7 @@ import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.repository.StockMovementRepository;
 import com.pms.service.cost.CostPropagationService;
+import com.pms.service.stock.BasePriceFillService;
 import com.pms.service.stock.LotLedgerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
@@ -71,6 +73,7 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
     private final ProductRepository productRepository;
     private final CostPropagationService costPropagationService;
     private final LotLedgerService lotLedgerService;
+    private final BasePriceFillService basePriceFillService;
 
     @Override
     @Transactional
@@ -400,8 +403,8 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
             PurchaseRecord saved = purchaseRecordRepository.save(
                     record.withRetypedAmount(line.totalAmount(), line.unitPrice(), latest));
             List<StockMovement> rows = stockMovementRepository.findByPurchaseRecordIdIn(List.of(record.getId()));
-            stockMovementRepository.saveAll(rows.stream()
-                    .map(m -> m.toBuilder().unitPrice(saved.getUnitPrice()).build()).toList());
+            stockMovementRepository.saveAll(rows.stream()       // FEATURE_2611_17 D22: a typed price drops 「미기입」
+                    .map(m -> m.toBuilder().unitPrice(saved.getUnitPrice()).priceFromBaseAt(null).build()).toList());
             if (latest) {
                 costPropagationService.updateBasePrice(saved);           // D3 — history PURCHASE_UPDATE
             }
@@ -434,6 +437,127 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
         lots.values().forEach(lotLedgerService::resplit);
         productIds.forEach(lotLedgerService::rebuildDebts);
         return new ReceiptCreateResult(receiptId);
+    }
+
+    /**
+     * The daily row popup (FEATURE_2611_17 D5): the checks of this request first, then the seller, the price or photo
+     * ({@link #retypePrices} runs its own checks there) and the picked receipt — one transaction, so a refusal in any
+     * part leaves nothing behind.
+     */
+    @Override
+    @Transactional
+    public ReceiptCreateResult editDailyRow(LocalDate movedOn, DailyRowEditRequest request, MultipartFile photo) {
+        if (request == null || movedOn == null) {
+            throw new IllegalArgumentException("고칠 내용을 보내세요.");
+        }
+        if ((request.movementId() == null) == (request.shareRecordId() == null)) {
+            throw new IllegalArgumentException("고칠 줄을 고르세요.");
+        }
+        StockMovement row = null;
+        PurchaseRecord record;
+        if (request.movementId() != null) {
+            row = stockMovementRepository.findByIdIn(List.of(request.movementId())).stream().findFirst()
+                    .orElseThrow(() -> new ResourceNotFoundException("StockMovement", request.movementId()));
+            record = row.isPriceRetypable() ? row.getPurchaseRecord() : null;
+        } else {
+            record = purchaseRecordRepository.findByIdIn(List.of(request.shareRecordId())).stream().findFirst()
+                    .orElseThrow(() -> new ResourceNotFoundException("PurchaseRecord", request.shareRecordId()));
+            if (record.getSourceMovement() == null || !record.isPriceRetypable()) {
+                throw new IllegalArgumentException("고칠 수 없는 줄입니다.");
+            }
+        }
+        // D10 · D12 · D24: what this row lets the popup change — the same rules as the buttons.
+        boolean sellerChangeable = row != null ? row.isSellerChangeableWithoutReceipt() : record.isNoReceiptShare();
+        boolean openingPrice = row != null && row.isOpeningPriceEditable();
+        if (record == null && !sellerChangeable && !openingPrice) {
+            throw new IllegalArgumentException("고칠 수 없는 줄입니다.");
+        }
+        Seller current = row != null ? row.getSeller() : record.getSeller();
+        boolean sellerMoves = request.sellerId() != null && !request.sellerId().equals(current.getId());
+        boolean withAmount = request.totalAmount() != null || request.unitPrice() != null;
+        boolean withPhoto = photo != null && !photo.isEmpty();
+        if (sellerMoves && !sellerChangeable) {
+            throw new IllegalArgumentException("판매자를 바꿀 수 없는 줄입니다.");
+        }
+        if (withAmount && record == null && !openingPrice) {
+            throw new IllegalArgumentException("매입가를 넣을 수 없는 줄입니다.");
+        }
+        if ((withPhoto || request.receiptId() != null) && record == null) {
+            throw new IllegalArgumentException("영수증을 붙일 수 없는 줄입니다.");             // D20
+        }
+        if (withPhoto && request.receiptId() != null) {
+            throw new IllegalArgumentException("새 영수증 사진과 고른 영수증을 함께 넣을 수 없습니다.");
+        }
+        if (request.totalAmount() != null && request.unitPrice() != null) {
+            throw new IllegalArgumentException("총액과 단가 중 하나만 입력하세요");
+        }
+        if (!sellerMoves && !withAmount && !withPhoto && request.receiptId() == null) {
+            throw new IllegalArgumentException("바꿀 내용이 없습니다.");
+        }
+        // D23: a picked receipt = one of that day with its photo, paid by the seller this row has after the save.
+        PurchaseReceipt picked = null;
+        if (request.receiptId() != null) {
+            if (record.receiptKind() != PurchaseRecord.ReceiptKind.NO_RECEIPT) {
+                throw new IllegalArgumentException("영수증을 고를 수 없는 줄입니다.");          // D19
+            }
+            picked = purchaseReceiptRepository.findDetailById(request.receiptId())
+                    .orElseThrow(() -> new ResourceNotFoundException("PurchaseReceipt", request.receiptId()));
+            if (picked.getPhotoUrl() == null) {
+                throw new IllegalArgumentException("사진 있는 영수증만 고를 수 있습니다.");
+            }
+            if (!movedOn.equals(picked.getPurchasedOn()) || !movedOn.equals(record.getPurchasedOn())) {
+                throw new IllegalArgumentException("화면 날짜의 영수증만 고를 수 있습니다.");
+            }
+            Long sellerAfter = sellerMoves ? request.sellerId() : current.getId();
+            if (!picked.getPayerSeller().getId().equals(sellerAfter)) {
+                throw new IllegalArgumentException("고른 영수증의 결제 판매자와 판매자가 다릅니다.");
+            }
+        }
+
+        // D5 · D10 · D21: the seller first, so the price, the photo's receipt and its card follow the new seller.
+        if (sellerMoves) {
+            changeSeller(new SellerChangeRequest(request.sellerId(),
+                    row != null ? List.of(row.getId()) : List.of(),
+                    row != null ? List.of() : List.of(record.getId())));
+        }
+        Long receiptId = null;
+        if (record != null && (withAmount || withPhoto)) {
+            receiptId = retypePrices(movedOn, new PurchasePriceRequest(request.cardId(),
+                    List.of(new PurchasePriceRequest.Line(record.getId(), request.totalAmount(), request.unitPrice(),
+                            request.reflectToBasePrice()))), photo).receiptId();
+        } else if (withAmount) {
+            priceOpeningStock(row, request.totalAmount(), request.unitPrice());
+        }
+        if (picked != null) {
+            // D23 · D26: the purchase becomes one more line of the picked receipt (never merged into a line of it).
+            PurchaseRecord saved = purchaseRecordRepository.findById(record.getId())
+                    .orElseThrow(() -> new ResourceNotFoundException("PurchaseRecord", record.getId()));
+            purchaseRecordRepository.save(saved.asReceiptLine(picked));
+            receiptId = picked.getId();
+        }
+        return new ReceiptCreateResult(receiptId);
+    }
+
+    /**
+     * FEATURE_2611_17 D17 · D18: an opening-stock row takes the typed price (total → total / quantity); the registered
+     * price is filled only while it is empty (and the product's other empty prices follow it, D22). The debts are
+     * rewritten; the cost of orders that already went out stays (FEATURE_2611_16 D5).
+     */
+    private void priceOpeningStock(StockMovement row, BigDecimal totalAmount, BigDecimal unitPrice) {
+        BigDecimal unit = totalAmount != null
+                ? PurchaseRecord.unitOfTotal(totalAmount, row.getQuantity()) : PurchaseRecord.typedUnit(unitPrice);
+        StockMovement lot = stockMovementRepository.findById(row.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("StockMovement", row.getId()));
+        stockMovementRepository.save(lot.toBuilder().unitPrice(unit).priceFromBaseAt(null).build());
+        Long productId = row.getProduct().getId();
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new ResourceNotFoundException("Product", productId));
+        if (product.getPrice() == null) {
+            productRepository.save(product.toBuilder().price(PurchaseRecord.registeredPriceOf(unit)).build());
+            basePriceFillService.fillEmptyPrices(productId);
+        }
+        stockMovementRepository.flush();
+        lotLedgerService.rebuildDebts(productId);
     }
 
     /** What of one undecided intake row no receipt took yet (D121 ①): its record minus the assigned records. */

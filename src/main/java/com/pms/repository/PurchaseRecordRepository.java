@@ -176,4 +176,14 @@ public interface PurchaseRecordRepository extends JpaRepository<PurchaseRecord, 
             order by r.purchasedOn desc, r.id desc
             """)
     List<PurchaseRecord> findBasePriceMovers(@Param("productId") Long productId);
+
+    /** FEATURE_2611_17 D22: the product's purchases (quantity &gt; 0) without a unit price, record order. */
+    @Query("select r from PurchaseRecord r where r.product.id = :productId and r.quantity > 0 and r.unitPrice is null"
+            + " order by r.id")
+    List<PurchaseRecord> findUnpricedPurchases(@Param("productId") Long productId);
+
+    /** FEATURE_2611_17 D22 (start-up fill): products with a registered price that still have an unpriced purchase. */
+    @Query("select distinct r.product.id from PurchaseRecord r"
+            + " where r.quantity > 0 and r.unitPrice is null and r.product.price is not null")
+    List<Long> findPricedProductIdsWithUnpricedPurchases();
 }

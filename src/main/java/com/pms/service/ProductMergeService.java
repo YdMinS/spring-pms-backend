@@ -19,6 +19,7 @@ import com.pms.repository.SellerDebtRepository;
 import com.pms.repository.ShipmentParcelItemRepository;
 import com.pms.repository.ShoppingListItemRepository;
 import com.pms.repository.StockMovementRepository;
+import com.pms.service.stock.BasePriceFillService;
 import com.pms.service.stock.LotLedgerService;
 
 import lombok.RequiredArgsConstructor;
@@ -76,6 +77,7 @@ public class ProductMergeService {
     private final ProductPurchasePlaceRepository productPurchasePlaceRepository;
     private final LotLedgerService lotLedgerService;
     private final SellerDebtRepository sellerDebtRepository;
+    private final BasePriceFillService basePriceFillService;
 
     /**
      * Run one merge.
@@ -165,7 +167,11 @@ public class ProductMergeService {
 
         String representativeUrl = renumberGallery(targetId, sourceImageIds, representative);
 
+        boolean priceAppears = target.getPrice() == null && fields.price() != null;
         applyFields(target, fields, representativeUrl, transfer.appendMemo(), sourceId, sourceName, moved);
+        if (priceAppears) {
+            basePriceFillService.fillEmptyPrices(targetId);   // FEATURE_2611_17 D22: the price appeared
+        }
 
         mergePurchasePlaces(target, sourceId);
 

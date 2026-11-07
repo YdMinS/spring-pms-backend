@@ -16,6 +16,7 @@ import com.pms.repository.ProductPurchasePlaceRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchasePlaceRepository;
 import com.pms.service.price.PriceHistoryRecorder;
+import com.pms.service.stock.BasePriceFillService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -58,6 +59,7 @@ import java.util.stream.Collectors;
 public class ProductServiceImpl implements ProductService {
     private final ProductRepository productRepository;
     private final PriceHistoryRecorder priceHistoryRecorder;
+    private final BasePriceFillService basePriceFillService;
     private final ProductUsageService productUsageService;
     private final PurchasePlaceRepository purchasePlaceRepository;
     private final ProductPurchasePlaceRepository productPurchasePlaceRepository;
@@ -248,6 +250,9 @@ public class ProductServiceImpl implements ProductService {
         // never mentions the price is not a price change (the recorder also drops equal values).
         request.getPrice().ifPresent(newPrice -> priceHistoryRecorder.recordProductCost(
                 saved, oldPrice, newPrice, PriceChangeReason.PRODUCT_EDIT, null));
+        if (oldPrice == null && saved.getPrice() != null) {
+            basePriceFillService.fillEmptyPrices(saved.getId());   // FEATURE_2611_17 D22: the price appeared
+        }
         return mapToResponse(saved, channelCountOf(saved.getId()), purchasePlacesOf(saved.getId()));
     }
 

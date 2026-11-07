@@ -20,6 +20,7 @@ import com.pms.repository.SellerSettlementRepository;
 import com.pms.repository.StockMovementRepository;
 import com.pms.service.cost.CostPropagationService;
 import com.pms.service.price.PriceHistoryRecorder;
+import com.pms.service.stock.BasePriceFillService;
 import com.pms.service.stock.LotLedgerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
@@ -57,6 +58,7 @@ public class SellerDebtServiceImpl implements SellerDebtService {
     private final CostPropagationService costPropagationService;
     private final PriceHistoryRecorder priceHistoryRecorder;
     private final LotLedgerService lotLedgerService;
+    private final BasePriceFillService basePriceFillService;
 
     @Override
     public List<SellerDebtPairView> pairs() {
@@ -92,7 +94,8 @@ public class SellerDebtServiceImpl implements SellerDebtService {
         List<SellerDebtEntryView> entries = new ArrayList<>();
         for (SellerDebt debt : sellerDebtRepository.findBetween(sellerAId, sellerBId)) {
             Priced target = target(debt);
-            boolean canFill = debt.getAmount() == null && target.unitPrice() == null;
+            // FEATURE_2611_17 D22: a price filled from the registered price can still be typed here.
+            boolean canFill = (debt.getAmount() == null && target.unitPrice() == null) || target.fromBase();
             entries.add(new SellerDebtEntryView(KIND_BORROW, debt.getId(), debt.getMovedOn(),
                     debt.getBorrower().getId(), debt.getBorrower().getSellerName(),
                     debt.getLender().getId(), debt.getLender().getSellerName(),
@@ -145,7 +148,8 @@ public class SellerDebtServiceImpl implements SellerDebtService {
         SellerDebt debt = sellerDebtRepository.findById(debtId)
                 .orElseThrow(() -> new ResourceNotFoundException("SellerDebt", debtId));
         Priced target = target(debt);
-        boolean editing = target.unitPrice() != null;
+        // FEATURE_2611_17 D22: a price filled from the registered price is filled again, not edited.
+        boolean editing = target.unitPrice() != null && !target.fromBase();
         if (editing && target.filledAt() == null) {
             throw new IllegalArgumentException("이 단가는 여기서 고칠 수 없습니다.");   // D143 ②
         }
@@ -161,7 +165,7 @@ public class SellerDebtServiceImpl implements SellerDebtService {
                     record.withTypedUnitPrice(request.unitPrice(), latest, now));
             List<StockMovement> rows = stockMovementRepository.findByPurchaseRecordIdIn(List.of(record.getId()));
             stockMovementRepository.saveAll(rows.stream()
-                    .map(m -> m.toBuilder().unitPrice(saved.getUnitPrice()).build()).toList());
+                    .map(m -> m.toBuilder().unitPrice(saved.getUnitPrice()).priceFromBaseAt(null).build()).toList());
             if (latest) {
                 costPropagationService.updateBasePrice(saved);   // D144 ② ⑤ — overwrites, history PURCHASE_UPDATE
             }
@@ -188,12 +192,16 @@ public class SellerDebtServiceImpl implements SellerDebtService {
                     .unitPrice(unit)
                     .priceFilledAt(now)
                     .basePriceFilledAt(setRegistered ? now : null)   // D146 ① · ② (c) clears it
+                    .priceFromBaseAt(null)                           // FEATURE_2611_17 D22
                     .build());
             if (setRegistered) {
                 BigDecimal newPrice = PurchaseRecord.registeredPriceOf(unit);
                 productRepository.save(product.toBuilder().price(newPrice).build());
                 priceHistoryRecorder.recordProductCost(product, registered, newPrice,
                         PriceChangeReason.PURCHASE_UPDATE, null);    // D145 ② · D146 ③
+                if (registered == null) {
+                    basePriceFillService.fillEmptyPrices(productId);   // FEATURE_2611_17 D22: the price appeared
+                }
             }
         }
         stockMovementRepository.flush();
@@ -216,17 +224,19 @@ public class SellerDebtServiceImpl implements SellerDebtService {
     private Priced target(SellerDebt debt) {
         if (debt.getShareRecord() != null) {
             PurchaseRecord share = debt.getShareRecord();
-            return new Priced(share, null, share.getUnitPrice(), share.getPriceFilledAt());
+            return new Priced(share, null, share.getUnitPrice(), share.getPriceFilledAt(), share.isPriceFromBase());
         }
         StockMovement lot = debt.getSourceMovement();
         if (lot.getPurchaseRecord() != null) {
             PurchaseRecord record = lot.getPurchaseRecord();
-            return new Priced(record, null, record.getUnitPrice(), record.getPriceFilledAt());
+            return new Priced(record, null, record.getUnitPrice(), record.getPriceFilledAt(), record.isPriceFromBase());
         }
-        return new Priced(null, lot, lot.getUnitPrice(), lot.getPriceFilledAt());
+        return new Priced(null, lot, lot.getUnitPrice(), lot.getPriceFilledAt(), lot.isPriceFromBase());
     }
 
-    private record Priced(PurchaseRecord record, StockMovement lot, BigDecimal unitPrice, LocalDateTime filledAt) {
+    /** fromBase = the unit price was filled from the registered price (FEATURE_2611_17 D22). */
+    private record Priced(PurchaseRecord record, StockMovement lot, BigDecimal unitPrice, LocalDateTime filledAt,
+                          boolean fromBase) {
     }
 
     private PairSum pair(Map<String, PairSum> sums, Seller x, Seller y) {

@@ -6,6 +6,7 @@ import com.pms.domain.PurchaseRecord;
 import com.pms.domain.Seller;
 import com.pms.domain.StockMovement;
 import com.pms.dto.response.StockBalanceView;
+import com.pms.dto.response.StockDailyRowView;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -35,8 +36,9 @@ import java.util.Map;
  * no debt arises.
  *
  * <p>❌ Never edit a ledger row's quantity or source (D125). The only columns that change later are the seller
- * ({@link #moveOwner}, D149) and the unit price, which is typed in two places: on the debt screen (D141 · D143)
- * and again by 「일별 입출고 내역」 [매입가 넣기] (FEATURE_2611_16 D6).
+ * ({@link #moveOwner}, D149) and the unit price, which is typed on the debt screen (D141 · D143), by
+ * 「일별 입출고 내역」 [매입가 넣기] (FEATURE_2611_16 D6) and its row popup (FEATURE_2611_17 D5 · D17), or filled
+ * from the product's registered price while empty ({@code BasePriceFillService}, FEATURE_2611_17 D22).
  */
 public interface LotLedgerService {
 
@@ -67,6 +69,18 @@ public interface LotLedgerService {
      * undecided piece had none, or the row used no lot (D48 ③).
      */
     Map<Long, BigDecimal> outgoingAmounts(Long productId, Collection<Long> outRowIds);
+
+    /**
+     * The same pieces as {@link #outgoingAmounts}, per row id, with what is behind the amount (FEATURE_2611_17 D16 ·
+     * D22): each piece's unit price and count (same prices merged), whether a piece's price was filled from the
+     * registered price, and the amount. {@link OutgoingPrice#UNKNOWN} = 「미기입」.
+     */
+    Map<Long, OutgoingPrice> outgoingPrices(Long productId, Collection<Long> outRowIds);
+
+    /** What {@link #outgoingPrices} returns for one outgoing row. unitPrices and amount are null together. */
+    record OutgoingPrice(List<StockDailyRowView.UnitCount> unitPrices, boolean priceFromBase, BigDecimal amount) {
+        public static final OutgoingPrice UNKNOWN = new OutgoingPrice(null, false, null);
+    }
 
     /**
      * Purchase-price value of 「재고 조회」 lines (FEATURE_2611_02 D23 · D30 ~ D32 · D25), per given line: the pieces of

@@ -1,0 +1,25 @@
+# An empty unit price filled from the product's registered price (FEATURE_2611_17 / D15 · D22 · D25).
+#   129-1 purchase_record.price_from_base_at · stock_movement.price_from_base_at set = the unit price was filled from
+#         the registered price (the price appeared later, or an 「기타」 intake was saved without an amount). The daily
+#         view shows 「미기입」 next to such a value; typing a price clears it. NULL = every other row.
+# ⚠️ No BOOLEAN column here -> no MySQL BIT follow-up changeSet (the flag is a TIMESTAMP).
+# ⚠️ No data change here: the rows that are empty today are filled at start-up by UnitPriceFromBaseBackfillRunner
+#    (the debts of each filled product are rewritten there too, which SQL cannot do).
+databaseChangeLog:
+
+  - changeSet:
+      id: 129-1-unit-price-from-base
+      author: oclyx
+      comment: "FEATURE_2611_17 D22: price_from_base_at on purchase_record and stock_movement."
+      changes:
+        - addColumn:
+            tableName: purchase_record
+            columns:
+              - column: { name: price_from_base_at, type: TIMESTAMP }
+        - addColumn:
+            tableName: stock_movement
+            columns:
+              - column: { name: price_from_base_at, type: TIMESTAMP }
+      rollback:
+        - dropColumn: { tableName: stock_movement, columnName: price_from_base_at }
+        - dropColumn: { tableName: purchase_record, columnName: price_from_base_at }

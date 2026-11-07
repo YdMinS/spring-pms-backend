@@ -23,6 +23,7 @@ import com.pms.repository.PurchaseRecordRepository;
 import com.pms.domain.PriceChangeReason;
 import com.pms.service.listing.MasterPropagationService;
 import com.pms.service.price.PriceHistoryRecorder;
+import com.pms.service.stock.BasePriceFillService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -63,6 +64,7 @@ class CostPropagationServiceImplTest {
     @Mock private GeneratedProductDataRepository generatedProductDataRepository;
     @Mock private MasterPropagationService masterPropagationService;
     @Mock private PriceHistoryRecorder priceHistoryRecorder;
+    @Mock private BasePriceFillService basePriceFillService;
 
     @InjectMocks private CostPropagationServiceImpl service;
 
@@ -130,6 +132,7 @@ class CostPropagationServiceImplTest {
         verify(priceHistoryRecorder).recordProductCost(eq(product),
                 eq(new BigDecimal("3000.00")), eq(new BigDecimal("4000.00")),
                 eq(PriceChangeReason.PURCHASE_UPDATE), eq(1L));
+        verifyNoInteractions(basePriceFillService);              // FEATURE_2611_17 D22: the price was not empty
     }
 
     @Test
@@ -173,6 +176,8 @@ class CostPropagationServiceImplTest {
 
         verify(productRepository).save(any());
         verifyNoInteractions(masterPropagationService);
+        // FEATURE_2611_17 D22: the registered price was empty — its empty purchases and lots are filled.
+        verify(basePriceFillService).fillEmptyPrices(33L);
     }
 
     // ---------------------------------------------------------------- ② 대상 산출
