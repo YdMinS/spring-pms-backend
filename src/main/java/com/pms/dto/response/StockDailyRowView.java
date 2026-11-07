@@ -16,7 +16,8 @@ import java.util.List;
  *                      (FEATURE_2611_02 D8)
  * @param sellerId      the seller of {@code sellerName}; null when {@code sellerName} is null (FEATURE_2611_16 D11)
  * @param sellerName    outbound = the order seller (D124); undecided intake = null; other rows = the row's seller
- * @param owners        undecided intake only: the assigned owners as 「{seller} {qty}」 (D130)
+ * @param owners        undecided intake only: the assigned owners as 「{seller}」 — the name only, each seller once,
+ *                      first-share order (D130 · FEATURE_2611_18 D1 · D3)
  * @param undecidedLeft undecided intake only: what no receipt took yet (D121 ⑤); null for other rows
  * @param orderNumber   outbound only
  * @param tags          outbound only: 「{seller} 재고 사용」 · 「영수증 미등록 재고 사용」 (D124 · D128)
