@@ -24,7 +24,8 @@ import java.time.LocalDateTime;
  * forbidden; the [입고] click on the purchase list IS that confirmation, so
  * {@code PurchaseListService -> StockLedgerService} is the one opened path. A receipt header edit
  * (FEATURE_2610_18 D101) writes no row — it only moves the rows of its lines, and every row that used them
- * (FEATURE_2610_19 D149), to the new payer seller.
+ * (FEATURE_2610_19 D149), to the new payer seller, and the rows of its lines to a new purchase day
+ * (FEATURE_2611_21 D26).
  *
  * <p>⚠️ {@code movedOn} (the day a person confirmed the goods moved) and {@code createdAt} (the audit
  * timestamp of the row) are <b>different</b>. Yesterday's delivery can be entered this morning.
@@ -162,7 +163,11 @@ public class StockMovement extends BaseEntity {
     @Column(name = "price_from_base_at")
     private LocalDateTime priceFromBaseAt;
 
-    /** The day a person confirmed the goods moved. NOT the audit timestamp. */
+    /**
+     * The day a person confirmed the goods moved. NOT the audit timestamp. An admin may correct it later in
+     * 「일별 입출고 내역」 — {@code StockDateEditService} only, each correction kept in {@link StockMovementDateEdit}
+     * (FEATURE_2611_21 D1 · D7 · D11).
+     */
     @Column(name = "moved_on", nullable = false)
     private LocalDate movedOn;
 

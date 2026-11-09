@@ -12,6 +12,7 @@ import com.pms.dto.response.StockDailyView;
 import com.pms.repository.LotShareUsageRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
+import com.pms.repository.StockMovementDateEditRepository;
 import com.pms.repository.StockMovementRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -40,6 +41,7 @@ public class StockDailyServiceImpl implements StockDailyService {
     private final LotShareUsageRepository lotShareUsageRepository;
     private final ProductRepository productRepository;
     private final LotLedgerService lotLedgerService;
+    private final StockMovementDateEditRepository stockMovementDateEditRepository;
 
     @Override
     public StockDailyView daily(LocalDate date) {
@@ -66,6 +68,13 @@ public class StockDailyServiceImpl implements StockDailyService {
                 .collect(Collectors.groupingBy(m -> m.getProduct().getId(), LinkedHashMap::new,
                         Collectors.mapping(StockMovement::getId, Collectors.toList())))
                 .forEach((productId, ids) -> outPrices.putAll(lotLedgerService.outgoingPrices(productId, ids)));
+        // FEATURE_2611_21 D24: the day corrections of the day's rows, newest first.
+        Map<Long, List<StockDailyRowView.DateEdit>> editsByRow = rows.isEmpty() ? Map.of()
+                : stockMovementDateEditRepository.findByStockMovementIdInOrderByIdDesc(
+                        rows.stream().map(StockMovement::getId).toList()).stream()
+                .collect(Collectors.groupingBy(e -> e.getStockMovement().getId(), LinkedHashMap::new,
+                        Collectors.mapping(e -> new StockDailyRowView.DateEdit(e.getEditedAt(), e.getEditedBy(),
+                                e.getOldMovedOn(), e.getNewMovedOn()), Collectors.toList())));
 
         List<StockDailyRowView> views = new ArrayList<>();
         for (StockMovement m : rows) {
@@ -105,6 +114,10 @@ public class StockDailyServiceImpl implements StockDailyService {
             }
             // FEATURE_2611_16 D1 · D17: a decided purchase row is a 「매입가 넣기」 target through its record.
             PurchaseRecord record = m.isPriceRetypable() ? m.getPurchaseRecord() : null;
+            // FEATURE_2611_21 D18 · D20 · D22: the lot an outgoing row came from and whether its value can be fixed.
+            StockMovement source = m.getQuantity() < 0 ? m.getSourceMovement() : null;
+            boolean sourcePriceEditable = source != null
+                    && sourcePriceEditable(source, usagesByOut.getOrDefault(m.getId(), List.of()));
             views.add(new StockDailyRowView(m.getId(), m.getMovementType(), m.getReason(),
                     m.getProduct().getId(), m.getProduct().getProductName(), m.getProduct().getImageUrl(),
                     m.getQuantity(), rowSeller == null ? null : rowSeller.getId(),
@@ -112,7 +125,9 @@ public class StockDailyServiceImpl implements StockDailyService {
                     undecidedLeft, orderNumber, tags, amount, m.isSellerChangeableWithoutReceipt(),
                     record == null ? null : record.getId(), record == null ? null : record.receiptKind(),
                     record == null || record.getReceipt() == null ? null : record.getReceipt().getId(),
-                    shareViews, priced.unitPrices(), priced.priceFromBase(), m.isOpeningPriceEditable()));
+                    shareViews, priced.unitPrices(), priced.priceFromBase(), m.isOpeningPriceEditable(),
+                    source == null ? null : source.getId(), source == null ? null : source.getMovedOn(),
+                    sourcePriceEditable, editsByRow.getOrDefault(m.getId(), List.of())));
         }
 
         // D147: products with an undecided quantity left among that day's purchases.
@@ -141,6 +156,18 @@ public class StockDailyServiceImpl implements StockDailyService {
         }
         return new IntakeBarcodeView(true, product.getId(), product.getProductName(), product.getPrice(),
                 product.getImageUrl());
+    }
+
+    /**
+     * FEATURE_2611_21 D20: the lot has a value to fix in its window — a decided purchase or opening stock
+     * ({@link StockMovement#isPriceRetypable} · {@link StockMovement#isOpeningPriceEditable}), or an undecided lot of
+     * which the outgoing row used at least one registered share.
+     */
+    private static boolean sourcePriceEditable(StockMovement lot, List<LotShareUsage> usages) {
+        if (LotLedgerServiceImpl.isUndecided(lot)) {
+            return usages.stream().anyMatch(u -> u.getShareRecord() != null);
+        }
+        return lot.isPriceRetypable() || lot.isOpeningPriceEditable();
     }
 
     /** D124 · D128: whose goods an outbound row used, when they are not the order seller's. */

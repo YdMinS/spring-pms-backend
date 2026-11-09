@@ -1,0 +1,28 @@
+# Day corrections of stock ledger rows (FEATURE_2611_21 / D7 · D24).
+#   130-1 stock_movement_date_edit = one row per corrected ledger row and correction: the old and the new day, who
+#         corrected it (the login email) and when (KST wall clock). The daily view lists them under the row's window.
+# ⚠️ No BOOLEAN column here -> no MySQL BIT follow-up changeSet.
+# ⚠️ H2 constraint names are schema-global unique -> table-prefixed names.
+databaseChangeLog:
+
+  - changeSet:
+      id: 130-1-stock-movement-date-edit
+      author: oclyx
+      comment: "FEATURE_2611_21 D7: stock_movement_date_edit (day corrections of ledger rows)."
+      changes:
+        - createTable:
+            tableName: stock_movement_date_edit
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: tenant_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: stock_movement_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: old_moved_on, type: DATE, constraints: { nullable: false } }
+              - column: { name: new_moved_on, type: DATE, constraints: { nullable: false } }
+              - column: { name: edited_by, type: VARCHAR(100) }
+              - column: { name: edited_at, type: TIMESTAMP, constraints: { nullable: false } }
+              - column: { name: created_date, type: TIMESTAMP }
+              - column: { name: modified_date, type: TIMESTAMP }
+        - addForeignKeyConstraint: { constraintName: fk_stockmovementdateedit_tenant, baseTableName: stock_movement_date_edit, baseColumnNames: tenant_id, referencedTableName: tenant, referencedColumnNames: id }
+        - addForeignKeyConstraint: { constraintName: fk_stockmovementdateedit_movement, baseTableName: stock_movement_date_edit, baseColumnNames: stock_movement_id, referencedTableName: stock_movement, referencedColumnNames: id }
+      rollback:
+        - dropTable: { tableName: stock_movement_date_edit }

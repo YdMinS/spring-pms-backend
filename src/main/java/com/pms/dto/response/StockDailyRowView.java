@@ -6,6 +6,8 @@ import com.pms.domain.StockReason;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -35,6 +37,12 @@ import java.util.List;
  * @param priceFromBase a part of {@code amount} has a unit price filled from the registered price — the screen shows
  *                      「미기입」 next to the value (FEATURE_2611_17 D22)
  * @param openingPriceEditable an opening-stock row the row popup may price (FEATURE_2611_17 D5 · D17)
+ * @param sourceMovementId outgoing rows only: the lot it came from — 「○월 ○일 입고로 이동」 (FEATURE_2611_21 D18 · D22);
+ *                      null = no lot (stock link off, no stock left) or not an outgoing row
+ * @param sourceMovedOn the day of that lot; null with {@code sourceMovementId}
+ * @param sourcePriceEditable that lot has a value to fix — a decided purchase or opening stock, or an undecided lot of
+ *                      which this row used a registered share (D20); false without a lot
+ * @param dateEdits     the day corrections of this row, newest first (D7 · D24); empty = never corrected
  */
 public record StockDailyRowView(
         Long movementId,
@@ -58,8 +66,15 @@ public record StockDailyRowView(
         List<Share> shares,
         List<UnitCount> unitPrices,
         boolean priceFromBase,
-        boolean openingPriceEditable
+        boolean openingPriceEditable,
+        Long sourceMovementId,
+        LocalDate sourceMovedOn,
+        boolean sourcePriceEditable,
+        List<DateEdit> dateEdits
 ) {
+    /** One day correction of the row (FEATURE_2611_21 D24): when (KST wall clock), who (login email), from → to. */
+    public record DateEdit(LocalDateTime editedAt, String editedBy, LocalDate oldMovedOn, LocalDate newMovedOn) {}
+
     /**
      * One share of an undecided intake row (FEATURE_2611_16 D8): its purchase record, owner, quantity, amount (the
      * record's total; null = 「미기입」) and receipt kind, plus its unit price (null = 「미기입」) and the 「미기입」 mark of

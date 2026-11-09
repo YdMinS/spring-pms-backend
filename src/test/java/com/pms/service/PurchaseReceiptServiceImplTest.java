@@ -19,6 +19,7 @@ import com.pms.repository.StockMovementRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.service.cost.CostPropagationService;
 import com.pms.service.stock.LotLedgerService;
+import com.pms.service.stock.StockDateEditService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -46,7 +47,7 @@ import static org.mockito.Mockito.verify;
 /**
  * PurchaseReceiptServiceImpl — payer seller from the card or picked by hand (D87), photo required (D76), every line
  * owned by the payer seller through the check-in (D89), list summary sums (D94), header edit moves the lines and their
- * stock rows (D100 · D101).
+ * stock rows (D100 · D101), and a new purchase day goes through the day correction (FEATURE_2611_21 D26).
  */
 @ExtendWith(MockitoExtension.class)
 class PurchaseReceiptServiceImplTest {
@@ -62,6 +63,7 @@ class PurchaseReceiptServiceImplTest {
     @Mock private ProductRepository productRepository;
     @Mock private CostPropagationService costPropagationService;
     @Mock private LotLedgerService lotLedgerService;
+    @Mock private StockDateEditService stockDateEditService;
 
     @InjectMocks private PurchaseReceiptServiceImpl service;
 
@@ -170,7 +172,10 @@ class PurchaseReceiptServiceImplTest {
                 .product(Product.builder().id(100L).productName("양말A").build()).build();
     }
 
-    /** D100 · D101: a new card → its owner pays; every line and its stock row move to that seller, stock day kept. */
+    /**
+     * D100 · D101: a new card → its owner pays; every line and its stock row move to that seller, and the new day goes
+     * through the day correction (FEATURE_2611_21 D26).
+     */
     @Test
     void testUpdateMovesLinesAndStockToCardOwner() {
         PurchaseReceipt receipt = PurchaseReceipt.builder().id(50L).purchasedOn(DAY).payerSeller(SELLER_A).build();
@@ -201,11 +206,15 @@ class PurchaseReceiptServiceImplTest {
         ArgumentCaptor<List<StockMovement>> movements = ArgumentCaptor.forClass(List.class);
         verify(lotLedgerService).moveOwner(movements.capture(), eq(List.of()), eq(SELLER_B));
         assertThat(movements.getValue()).singleElement().satisfies(m -> assertThat(m.getId()).isEqualTo(30L));
+        verify(stockDateEditService).moveReceiptDay(any(), eq(NEW_DAY));
     }
 
-    /** D100 ⑥ · D101: the receipt's own hidden card may stay; a day-only edit leaves stock alone. */
+    /**
+     * D100 ⑥ · D101: the receipt's own hidden card may stay; a day-only edit moves no owner and hands the new day to the
+     * day correction (FEATURE_2611_21 D26).
+     */
     @Test
-    void testUpdateKeepsHiddenCardAndLeavesStockOnDayOnlyEdit() {
+    void testUpdateKeepsHiddenCardAndMovesDayThroughDateEdit() {
         SellerCard hidden = SellerCard.builder().id(7L).seller(SELLER_A).alias("A법인").maskedNumber("1234-****")
                 .hiddenAt(LocalDateTime.of(2026, 10, 1, 9, 0)).build();
         PurchaseReceipt receipt = PurchaseReceipt.builder().id(50L).purchasedOn(DAY).payerSeller(SELLER_A).card(hidden)
@@ -217,6 +226,11 @@ class PurchaseReceiptServiceImplTest {
 
         verify(sellerCardService, never()).requireVisible(any());
         verify(stockMovementRepository, never()).findByPurchaseRecordIdIn(any());
+        verify(lotLedgerService, never()).moveOwner(any(), any(), any());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<PurchaseRecord>> moved = ArgumentCaptor.forClass(List.class);
+        verify(stockDateEditService).moveReceiptDay(moved.capture(), eq(NEW_DAY));
+        assertThat(moved.getValue()).singleElement().satisfies(r -> assertThat(r.getId()).isEqualTo(1L));
         ArgumentCaptor<PurchaseReceipt> saved = ArgumentCaptor.forClass(PurchaseReceipt.class);
         verify(purchaseReceiptRepository).save(saved.capture());
         assertThat(saved.getValue().getCard()).isSameAs(hidden);
