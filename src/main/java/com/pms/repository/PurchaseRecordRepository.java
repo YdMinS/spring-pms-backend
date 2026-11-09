@@ -43,7 +43,8 @@ public interface PurchaseRecordRepository extends JpaRepository<PurchaseRecord, 
 
     /**
      * Purchase lines of the given receipts in input order, product fetched (FEATURE_2610_18 D94) — the receipt list's
-     * first product · line count · amount sum and the receipt detail's lines.
+     * first product · line count · amount sum, the receipt detail's lines, the header edit's lines and the
+     * 「영수증 나중에」 check of a day correction (FEATURE_2611_21 D25 · D26).
      */
     @Query("select r from PurchaseRecord r join fetch r.product where r.receipt.id in :receiptIds order by r.id")
     List<PurchaseRecord> findByReceiptIds(@Param("receiptIds") Collection<Long> receiptIds);
@@ -130,7 +131,8 @@ public interface PurchaseRecordRepository extends JpaRepository<PurchaseRecord, 
 
     /**
      * Receipt assignments taken from the given undecided intake rows (FEATURE_2610_19 D130), record order — with the
-     * receipt, for the daily view's share kinds (FEATURE_2611_16 D8).
+     * receipt, for the daily view's share kinds (FEATURE_2611_16 D8) and the shares an undecided row's day correction
+     * moves (FEATURE_2611_21 D13).
      */
     @EntityGraph(attributePaths = {"seller", "sourceMovement", "receipt"})
     List<PurchaseRecord> findBySourceMovementIdIn(Collection<Long> movementIds);
@@ -186,4 +188,20 @@ public interface PurchaseRecordRepository extends JpaRepository<PurchaseRecord, 
     @Query("select distinct r.product.id from PurchaseRecord r"
             + " where r.quantity > 0 and r.unitPrice is null and r.product.price is not null")
     List<Long> findPricedProductIdsWithUnpricedPurchases();
+
+    /**
+     * FEATURE_2611_21 D13: the shares of one product taken from undecided intake rows whose undecided record has that
+     * purchase day, record order.
+     */
+    @Query("select s from PurchaseRecord s where s.product.id = :productId"
+            + " and s.sourceMovement.purchaseRecord.purchasedOn = :day order by s.id")
+    List<PurchaseRecord> findSharesOfUndecidedDay(@Param("productId") Long productId, @Param("day") LocalDate day);
+
+    /**
+     * FEATURE_2611_21 D13: the assignment minus rows of one product and purchase day — no seller, quantity below 0, no
+     * source row ({@link PurchaseRecord#assignmentMinus}) — record order.
+     */
+    @Query("select r from PurchaseRecord r where r.product.id = :productId and r.purchasedOn = :day"
+            + " and r.seller is null and r.quantity < 0 and r.sourceMovement is null order by r.id")
+    List<PurchaseRecord> findAssignmentMinuses(@Param("productId") Long productId, @Param("day") LocalDate day);
 }

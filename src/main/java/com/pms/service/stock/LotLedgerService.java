@@ -36,9 +36,10 @@ import java.util.Map;
  * no debt arises.
  *
  * <p>❌ Never edit a ledger row's quantity or source (D125). The only columns that change later are the seller
- * ({@link #moveOwner}, D149) and the unit price, which is typed on the debt screen (D141 · D143), by
+ * ({@link #moveOwner}, D149), the unit price, which is typed on the debt screen (D141 · D143), by
  * 「일별 입출고 내역」 [매입가 넣기] (FEATURE_2611_16 D6) and its row popup (FEATURE_2611_17 D5 · D17), or filled
- * from the product's registered price while empty ({@code BasePriceFillService}, FEATURE_2611_17 D22).
+ * from the product's registered price while empty ({@code BasePriceFillService}, FEATURE_2611_17 D22), and the day,
+ * corrected by an admin ({@code StockDateEditService}, FEATURE_2611_21 D11).
  */
 public interface LotLedgerService {
 

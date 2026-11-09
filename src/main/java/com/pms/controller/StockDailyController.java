@@ -1,6 +1,7 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.DailyDateMoveRequest;
 import com.pms.dto.request.DailyRowEditRequest;
 import com.pms.dto.request.PurchasePriceRequest;
 import com.pms.dto.request.SellerChangeRequest;
@@ -11,6 +12,7 @@ import com.pms.dto.response.StockDailyView;
 import com.pms.service.PurchaseListService;
 import com.pms.service.PurchaseReceiptService;
 import com.pms.service.stock.StockDailyService;
+import com.pms.service.stock.StockDateEditService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -46,6 +48,7 @@ public class StockDailyController {
     private final StockDailyService stockDailyService;
     private final PurchaseListService purchaseListService;
     private final PurchaseReceiptService purchaseReceiptService;
+    private final StockDateEditService stockDateEditService;
 
     /** One day of the ledger (D119 · D123) and the undecided products of that day (D147). */
     @GetMapping("/daily")
@@ -89,8 +92,9 @@ public class StockDailyController {
 
     /**
      * The row popup of the daily view (FEATURE_2611_17 D5): {@code photo} part (optional, jpeg/png) + {@code request}
-     * part (application/json), {@code movedOn} = the day on the screen. One save for the seller, the price and the
-     * receipt of one row or share. receiptId = the receipt the photo went to or the picked receipt, null otherwise.
+     * part (application/json), {@code movedOn} = the day on the screen. One save for the seller, the price, the
+     * receipt and the day (FEATURE_2611_21 D9) of one row or share. receiptId = the receipt the photo went to or the
+     * picked receipt, null otherwise.
      */
     @PostMapping(value = "/daily/row-edit", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ResponseDTO<ReceiptCreateResult>> editRow(
@@ -98,5 +102,15 @@ public class StockDailyController {
             @RequestPart(value = "photo", required = false) MultipartFile photo,
             @Valid @RequestPart(value = "request", required = false) DailyRowEditRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(purchaseReceiptService.editDailyRow(movedOn, request, photo)));
+    }
+
+    /**
+     * The 「날짜 바꾸기」 window of the daily view (FEATURE_2611_21 D9): one row to a new day — an order outbound row with
+     * every row of that order on its day (D4). The 400 texts = {@link StockDateEditService#moveRow}.
+     */
+    @PostMapping("/daily/move-date")
+    public ResponseEntity<ResponseDTO<Void>> moveDate(@RequestBody DailyDateMoveRequest request) {
+        stockDateEditService.moveRow(request.movementId(), request.newMovedOn());
+        return ResponseEntity.ok(ResponseDTO.success(null));
     }
 }

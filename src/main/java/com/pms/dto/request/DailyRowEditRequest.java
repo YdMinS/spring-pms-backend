@@ -3,6 +3,7 @@ package com.pms.dto.request;
 import jakarta.validation.constraints.DecimalMin;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 
 /**
  * The row popup of 「일별 입출고 내역」 (FEATURE_2611_17 D5): the JSON part next to the optional receipt photo — one row
@@ -19,6 +20,8 @@ import java.math.BigDecimal;
  * @param receiptId          a receipt of that day with its photo to add the purchase to (D23 · D26); null = none
  * @param cardId             the card of a new receipt made from the photo (FEATURE_2611_16 D12); null =
  *                           「카드로 알 수 없음」
+ * @param newMovedOn         the row's new day, saved last (FEATURE_2611_21 D9); null or the row's day = the day stays ·
+ *                           a share takes none (D13)
  */
 public record DailyRowEditRequest(
         Long movementId,
@@ -28,5 +31,6 @@ public record DailyRowEditRequest(
         @DecimalMin("0.0000") BigDecimal unitPrice,
         Boolean reflectToBasePrice,
         Long receiptId,
-        Long cardId
+        Long cardId,
+        LocalDate newMovedOn
 ) {}
