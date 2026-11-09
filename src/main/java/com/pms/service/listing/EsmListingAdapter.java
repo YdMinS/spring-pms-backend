@@ -51,7 +51,9 @@ import java.util.stream.Collectors;
  * <p>Register = post 20 {@code POST /item/v1/goods} · update = {@code PUT /item/v1/goods/{goodsNo}} with the same full
  * body plus {@code isSell} (D30) · status = post 21 {@code GET …/sell-status} folded over the two sites (D31) · stop =
  * post 21 {@code PUT …/sell-status} with both {@code isSell} false (D33). The review-note lookup keeps the interface
- * default (no call, D32); price push and market import stay unsupported (D41). Both sites are always targeted (D5).
+ * default (no call, D32); market import stays unsupported (D41). A hand-set price goes with the full update
+ * (FEATURE_2611_19 / D18 — {@link #pushesPriceByUpdate}); a saved stock = post 26 for an option set, post 194 for a
+ * single option (D19). Both sites are always targeted (D5).
  * Product read (FEATURE_2611_11 / D12 · D17) = post 20 {@code GET /item/v1/goods/{goodsNo}}.</p>
  *
  * <p>Value sources: name D20 · category D13 · notices D16 · D17 · fixed fields D18 · image D22 + additional market
@@ -236,6 +238,54 @@ public class EsmListingAdapter implements ListingChannel {
             }
         }
         return new MarketPrices(byOptionId);
+    }
+
+    /** FEATURE_2611_19 / D18: ESM has one product price + option surcharges → the price goes with {@link #update}. */
+    @Override
+    public boolean pushesPriceByUpdate() {
+        return true;
+    }
+
+    /** FEATURE_2611_19 / D19: ESM takes a stock push per listing. */
+    @Override
+    public boolean pushesStock() {
+        return true;
+    }
+
+    /**
+     * FEATURE_2611_19 / D19: all of {@code changed}, or none — the body carries every active option, so a product
+     * without an ESM goods number or with an active option ESM does not have yet is saved only (adding an option is
+     * [수정 요청]'s job).
+     */
+    @Override
+    public List<ProductListingOption> stockPushTargets(ProductListing cell, List<ProductListingOption> changed) {
+        if (!StringUtils.hasText(cell.getPlatformProductId())) {
+            return List.of();
+        }
+        boolean allNumbered = productListingOptionRepository.findByProductListingId(cell.getId()).stream()
+                .filter(o -> Boolean.TRUE.equals(o.getActive()))
+                .allMatch(o -> StringUtils.hasText(o.getPlatformOptionId()));
+        return allNumbered ? changed : List.of();
+    }
+
+    /**
+     * FEATURE_2611_19 / D19 · D21: one call for the whole listing — two or more active options = post 26 with the option
+     * block of {@link #buildPayload} (stocks as saved, 0 = sold out + 1), one active option = post 194 with that option's
+     * stock on both sites (0 → 1, D28). A refusal throws (the same ESM text for every option).
+     */
+    @Override
+    public Map<Long, String> updateOptionStocks(ProductListing cell, List<StockPush> pushes, MarketplaceAccount acct) {
+        EsmKey key = EsmCredentials.of(acct);
+        List<Line> lines = activeLines(cell);
+        if (lines.size() >= 2) {
+            client.put(String.format(EsmPaths.RECOMMENDED_OPTIONS, cell.getPlatformProductId()),
+                    options(lines, min(lines, Line::gmarketPrice), min(lines, Line::auctionPrice)), key);
+        } else {
+            int qty = lines.isEmpty() ? 1 : lines.get(0).sentQty();
+            client.put(String.format(EsmPaths.STOCK, cell.getPlatformProductId()),
+                    ordered("stock", ordered("gmkt", qty, "iac", qty)), key);
+        }
+        return Map.of();
     }
 
     /** D33: both sites to 「판매중지」 through post 21 — the delete API (post 29) is never called. */

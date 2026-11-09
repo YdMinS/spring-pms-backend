@@ -53,7 +53,8 @@ import java.util.stream.Collectors;
  * <p>Register = 1003 {@code POST /rest/prodservices/product} · update = 1619 {@code PUT …/product/{prdNo}} with the
  * same full body (D56) · status = 1007 {@code POST /rest/prodmarketservice/prodmarket} (D96) · stop = 1631
  * {@code PUT /rest/prodstatservice/stat/stopdisplay/{prdNo}} (D96). Bodies are EUC-KR XML ({@link ElevenstXml}).
- * The review-note lookup keeps the interface default (no call, D58); price push stays unsupported (D9 ⑤). Product
+ * The review-note lookup keeps the interface default (no call, D58). A hand-set price goes with the 1619 update
+ * (FEATURE_2611_19 / D18 — {@link #pushesPriceByUpdate}); a saved stock = 1009 once, then 1625 per option (D20). Product
  * read (FEATURE_2611_11 / D12 · D17) = 1620 {@code GET /rest/prodmarketservice/prodmarket/{prdNo}} for the name, the
  * category and the detail + 1009 for the options (FEATURE_2611_12 / D25 · D26) + the public OpenAPI photo read (D35).
  * Name search (FEATURE_2611_12 / D27) = 1007 with {@code prdNm}.</p>
@@ -74,6 +75,10 @@ public class ElevenstListingAdapter implements ListingChannel {
      * {@code sellerStockCd} and 11st's own option number {@code prdStckNo}.
      */
     static final String STOCKS_PATH = "/rest/prodmarketservice/prodmarket/stocks";
+    /** FEATURE_2611_19 / D20: 1625 stock change — {@code PUT /rest/prodservices/stockqty/{prdStckNo}}. */
+    static final String STOCK_QTY_PATH = "/rest/prodservices/stockqty/";
+    /** FEATURE_2611_19 / D20: the refusal of an option whose 11st option number is not in the 1009 answer. */
+    static final String STOCK_NUMBER_NOT_FOUND = "11번가 옵션 번호를 찾지 못했습니다";
     /**
      * FEATURE_2611_11 / §2-11 · FEATURE_2611_12 / D26: 1620 single-product lookup — {@code prdNm} · {@code htmlDetail} ·
      * {@code dispCtgrNo} · {@code selPrc} (no photo fields).
@@ -286,6 +291,87 @@ public class ElevenstListingAdapter implements ListingChannel {
     @Override
     public void delete(ProductListing cell, MarketplaceAccount acct) {
         requireSuccess(client.put(STOP_PATH + cell.getPlatformProductId(), null, acct));
+    }
+
+    /** FEATURE_2611_19 / D18: 11st has one product price + option surcharges → the price goes with {@link #update}. */
+    @Override
+    public boolean pushesPriceByUpdate() {
+        return true;
+    }
+
+    /** FEATURE_2611_19 / D20: 11st takes a stock push per option. */
+    @Override
+    public boolean pushesStock() {
+        return true;
+    }
+
+    /** FEATURE_2611_19 / D20: an option with a market id on a product with an 11st product number. */
+    @Override
+    public List<ProductListingOption> stockPushTargets(ProductListing cell, List<ProductListingOption> changed) {
+        if (!StringUtils.hasText(cell.getPlatformProductId())) {
+            return List.of();
+        }
+        return changed.stream().filter(o -> StringUtils.hasText(o.getPlatformOptionId())).toList();
+    }
+
+    /**
+     * FEATURE_2611_19 / D20 · D21: one 1009 call for the 11st option numbers ({@code prdStckNo}), then one 1625 call per
+     * option. The pair = the 1009 line whose {@code prdStckNo} is the option's market id → else whose
+     * {@code sellerStockCd} is our option id → else, when the cell has one active option and 1009 one line, that line.
+     * {@code optWght} is not sent. A failed 1009 read throws (every option refused with its text).
+     */
+    @Override
+    public Map<Long, String> updateOptionStocks(ProductListing cell, List<StockPush> pushes, MarketplaceAccount acct) {
+        StringBuilder query = new StringBuilder("<ProductStocks><ProductStock>");
+        ElevenstXml.element(query, "prdNo", cell.getPlatformProductId());
+        query.append("</ProductStock></ProductStocks>");
+        byte[] raw = client.post(STOCKS_PATH, query.toString(), acct);
+        Document doc = ElevenstXml.parseOrNull(raw);
+        if (doc == null) {
+            throw new BusinessException("11번가 옵션을 읽지 못했습니다: " + ElevenstXml.messageOf(raw),
+                    HttpStatus.BAD_GATEWAY);
+        }
+        List<Element> lines = ElevenstXml.elements(doc, "ProductStock");
+        long activeCount = productListingOptionRepository.findByProductListingId(cell.getId()).stream()
+                .filter(o -> Boolean.TRUE.equals(o.getActive())).count();
+        Map<Long, String> refused = new LinkedHashMap<>();
+        for (StockPush push : pushes) {
+            String stockNo = stockNumberOf(push.option(), lines, activeCount);
+            if (stockNo == null) {
+                refused.put(push.option().getId(), STOCK_NUMBER_NOT_FOUND);
+                continue;
+            }
+            StringBuilder body = new StringBuilder("<ProductStock>");
+            ElevenstXml.element(body, "prdNo", cell.getPlatformProductId());
+            ElevenstXml.element(body, "prdStckNo", stockNo);
+            ElevenstXml.element(body, "stckQty", push.stock());
+            body.append("</ProductStock>");
+            try {
+                requireSuccess(client.put(STOCK_QTY_PATH + stockNo, body.toString(), acct));
+            } catch (RuntimeException e) {
+                refused.put(push.option().getId(), e.getMessage());
+            }
+        }
+        return refused;
+    }
+
+    /** FEATURE_2611_19 / D20: the 11st option number ({@code prdStckNo}) of one of our options, or null. */
+    private static String stockNumberOf(ProductListingOption option, List<Element> lines, long activeCount) {
+        for (Element line : lines) {
+            String stockNo = ElevenstXml.firstText(line, "prdStckNo");
+            if (stockNo != null && stockNo.equals(option.getPlatformOptionId())) {
+                return stockNo;
+            }
+        }
+        for (Element line : lines) {
+            if (String.valueOf(option.getId()).equals(ElevenstXml.firstText(line, "sellerStockCd"))) {
+                return ElevenstXml.firstText(line, "prdStckNo");
+            }
+        }
+        if (activeCount == 1 && lines.size() == 1) {
+            return ElevenstXml.firstText(lines.get(0), "prdStckNo");
+        }
+        return null;
     }
 
     /**

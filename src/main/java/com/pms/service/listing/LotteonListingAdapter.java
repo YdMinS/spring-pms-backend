@@ -50,7 +50,8 @@ import java.util.stream.Collectors;
  * LotteON {@link ListingChannel} adapter (FEATURE_2610_24 / D2) — HTTP only, no cell state changes.
  *
  * <p>Register = 87 · update = 90 then 111 for switched-off items (D24 · D67) · status and product read = 94 (D25 ·
- * D51) · stop = 92 {@code END} (D27) · name search = 93 (D54) · market prices = the 94 answer already read (D59).
+ * D51) · stop = 92 {@code END} (D27) · name search = 93 (D54) · market prices = the 94 answer already read (D59) ·
+ * selling price = 91 · stock = 86 (FEATURE_2611_19 / D3 · D5).
  * The display category is looked up on 205 per register / update and not stored (D11). Bodies are JSON
  * ({@link LotteonApiClient}). Field names are the public guide's, first checked on the production server.</p>
  *
@@ -82,6 +83,8 @@ public class LotteonListingAdapter implements ListingChannel {
     /** D54: one page of the name search. */
     private static final int SEARCH_ROWS = 100;
     private static final DateTimeFormatter LOTTEON_TIME = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+    /** FEATURE_2611_19 / D3: 91 {@code hstEndDttm} — the price holds until changed again. */
+    private static final String PRICE_END = "99991231235959";
     private static final Pattern IMG_SRC = Pattern.compile("<img[^>]+src\\s*=\\s*[\"']([^\"']+)[\"']",
             Pattern.CASE_INSENSITIVE);
     /** D59: the key prefix under which {@link #fetchStatus} keeps the item prices by our option number. */
@@ -175,6 +178,70 @@ public class LotteonListingAdapter implements ListingChannel {
                 throw new BusinessException(itemFailure, HttpStatus.BAD_GATEWAY);
             }
         }
+    }
+
+    /**
+     * FEATURE_2611_19 / D3 · D14: one 91 line — the item's selling price from now (Korean time) to 9999-12-31. No
+     * sub-seller number and no discount type. A refused line is thrown with LotteON's own text.
+     */
+    @Override
+    public void updateOptionPrice(ProductListingOption option, BigDecimal price, MarketplaceAccount acct) {
+        LotteonKey key = LotteonCredentials.of(acct);
+        Map<String, Object> line = itemLine(key, option.getProductListing().getPlatformProductId(), option);
+        line.put("slPrc", price.longValueExact());
+        line.put("hstStrtDttm", LocalDateTime.now(SyncWindow.KST).format(LOTTEON_TIME));
+        line.put("hstEndDttm", PRICE_END);
+        JsonNode body = client.post(LotteonPaths.ITEM_PRICE, Map.of("itmPrcLst", List.of(line)), key.apiKey());
+        String failure = LotteonApiClient.lineFailure(body);
+        if (failure != null) {
+            throw new BusinessException(failure, HttpStatus.BAD_GATEWAY);
+        }
+    }
+
+    /** FEATURE_2611_19 / D5: LotteON takes a stock push per item. */
+    @Override
+    public boolean pushesStock() {
+        return true;
+    }
+
+    /** FEATURE_2611_19 / D5: an option LotteON numbered ({@code sitmNo}) on a product LotteON numbered. */
+    @Override
+    public List<ProductListingOption> stockPushTargets(ProductListing cell, List<ProductListingOption> changed) {
+        if (!StringUtils.hasText(cell.getPlatformProductId())) {
+            return List.of();
+        }
+        return changed.stream().filter(o -> StringUtils.hasText(o.getPlatformOptionId())).toList();
+    }
+
+    /** FEATURE_2611_19 / D5 · D14 · D21: one 86 line per option; a refusal is that option's only. */
+    @Override
+    public Map<Long, String> updateOptionStocks(ProductListing cell, List<StockPush> pushes, MarketplaceAccount acct) {
+        LotteonKey key = LotteonCredentials.of(acct);
+        Map<Long, String> refused = new LinkedHashMap<>();
+        for (StockPush push : pushes) {
+            Map<String, Object> line = itemLine(key, cell.getPlatformProductId(), push.option());
+            line.put("stkQty", push.stock());
+            try {
+                JsonNode body = client.post(LotteonPaths.ITEM_STOCK, Map.of("itmStkLst", List.of(line)), key.apiKey());
+                String failure = LotteonApiClient.lineFailure(body);
+                if (failure != null) {
+                    refused.put(push.option().getId(), failure);
+                }
+            } catch (RuntimeException e) {
+                refused.put(push.option().getId(), e.getMessage());
+            }
+        }
+        return refused;
+    }
+
+    /** FEATURE_2611_19 / D3 · D5: the seller group, seller number, product number and item number of one item. */
+    private static Map<String, Object> itemLine(LotteonKey key, String spdNo, ProductListingOption option) {
+        Map<String, Object> line = new LinkedHashMap<>();
+        line.put("trGrpCd", key.trGrpCd());
+        line.put("trNo", key.trNo());
+        line.put("spdNo", spdNo);
+        line.put("sitmNo", option.getPlatformOptionId());
+        return line;
     }
 
     /** D27: 92 with {@code END}. */

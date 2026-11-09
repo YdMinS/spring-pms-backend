@@ -7,6 +7,8 @@ import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 
 import java.math.BigDecimal;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Per-platform channel adapter seam (FEATURE_2608_06 / 3c). The orchestration
@@ -158,8 +160,9 @@ public interface ListingChannel {
     /**
      * Change the selling price of ONE option that is already on the market (FEATURE_2609_19 / D4). Unlike
      * {@link #update} (whole object re-submitted for re-approval) this is a partial update that takes effect
-     * immediately. A platform that has no such API (NAVER) keeps this default and throws — callers only invoke
-     * it for options that carry a {@code platformOptionId} (= Coupang vendorItemId).
+     * immediately. A platform that has no such API keeps this default and throws — callers only invoke it for options
+     * that carry a {@code platformOptionId} (Coupang vendorItemId · LotteON sitmNo, FEATURE_2611_19 / D3), and never on a
+     * platform whose {@link #pushesPriceByUpdate} is true.
      *
      * @param option the channel option to reprice
      * @param price  the price to send, already normalised to whole won by the caller (D13)
@@ -167,6 +170,50 @@ public interface ListingChannel {
      */
     default void updateOptionPrice(ProductListingOption option, BigDecimal price, MarketplaceAccount acct) {
         throw new UnsupportedOperationException("가격 부분수정 미지원 플랫폼: " + platform());
+    }
+
+    /**
+     * FEATURE_2611_19 / D18: true = a hand-set selling price reaches this market by re-sending the whole product
+     * ({@link #update}, once per save) because the market has one product price plus per-option surcharges (11st ·
+     * ESM). false (default) = one {@link #updateOptionPrice} call per option.
+     */
+    default boolean pushesPriceByUpdate() {
+        return false;
+    }
+
+    /**
+     * FEATURE_2611_19 / D1 · D7: true = a stock saved in oclyx is sent to this market right away
+     * ({@link #stockPushTargets} → {@link #updateOptionStocks}). false (default) = this platform has no stock push; the
+     * save stays local and the screens keep their [수정 요청] notice.
+     */
+    default boolean pushesStock() {
+        return false;
+    }
+
+    /**
+     * FEATURE_2611_19 / D5 · D16 · D19 · D20: which of {@code changed} (active options whose stock was just saved) this
+     * market can take a stock push for now. The others are saved only. Pure read — no market call.
+     *
+     * @param cell    the listing
+     * @param changed active options of {@code cell}
+     * @return a subset of {@code changed}
+     */
+    default List<ProductListingOption> stockPushTargets(ProductListing cell, List<ProductListingOption> changed) {
+        return List.of();
+    }
+
+    /**
+     * FEATURE_2611_19 / D5 · D16 · D19 · D20: send the market stock of {@code pushes} (all from
+     * {@link #stockPushTargets}). A per-option market reports each option on its own; a throw means every option of
+     * this call was refused with that message.
+     *
+     * @param cell   the listing on the market
+     * @param pushes option + the market stock to send (channel ?? master ?? 9999)
+     * @param acct   the marketplace account (credentials)
+     * @return the market's own refusal text by our option id — an id that is absent was accepted
+     */
+    default Map<Long, String> updateOptionStocks(ProductListing cell, List<StockPush> pushes, MarketplaceAccount acct) {
+        throw new UnsupportedOperationException("재고 전송 미지원 플랫폼: " + platform());
     }
 
     /**

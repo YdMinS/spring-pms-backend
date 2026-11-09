@@ -144,8 +144,8 @@ public class ProductListingOption extends BaseEntity {
      * ({@code ListingStockPolicy.DEFAULT_STOCK_QUANTITY}). Resolution = channel ?? master ?? 9999.
      *
      * <p>⚠️ D5: the override may not exceed the master option's value (ceiling = master ?? 9999) — the write
-     * path rejects a larger value, and lowering the master clamps the channels that are above it. Clamping
-     * never auto-pushes to the market ([수정 요청] does that).</p>
+     * path rejects a larger value, and lowering the master clamps the channels that are above it. A saved or
+     * clamped value is sent to the market after the save (FEATURE_2611_19 / D1 · D10 — {@code ChannelStockPushService}).</p>
      */
     @Column(name = "stock_quantity")
     @Schema(description = "Per-channel stock override; null = inherit the master option's stock", example = "30")

@@ -283,4 +283,55 @@ class EsmListingAdapterTest {
         assertThat(json).contains("\"images\":{\"basicImgURL\":\"https://s3/thumb.jpg\",\"addtionalImg1URL\":\"s3/a1.jpg\"}");
         assertThat(json).doesNotContain("s3/main.jpg");
     }
+
+    // ---------------------------------------------------------------- FEATURE_2611_19 / D18 · D19
+
+    /** D19: all changed options or none — every active option needs an ESM option number, and the product a goods no. */
+    @Test
+    void stockPushTargets_allOrNothing() {
+        ProductListingOption a = option(11L, "작은", "10000", "9000", 5).toBuilder().platformOptionId("11").build();
+        ProductListingOption b = option(12L, "큰", "12000", "11000", 0).toBuilder().platformOptionId("12").build();
+        ProductListingOption fresh = option(13L, "새", "12000", "11000", 3);
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(a, b));
+
+        assertThat(adapter.pushesPriceByUpdate()).isTrue();
+        assertThat(adapter.pushesStock()).isTrue();
+        assertThat(adapter.stockPushTargets(cell, List.of(a))).containsExactly(a);
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(a, b, fresh));
+        assertThat(adapter.stockPushTargets(cell, List.of(a))).isEmpty();
+    }
+
+    /** D19 · D28: two or more active options → post 26 with the option block (0 = sold out + 1). */
+    @Test
+    void updateOptionStocks_optionSet_sendsRecommendedOptions() {
+        ProductListingOption a = option(11L, "작은", "10000", "9000", 5).toBuilder().platformOptionId("11").build();
+        ProductListingOption b = option(12L, "큰", "12000", "11000", 0).toBuilder().platformOptionId("12").build();
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(a, b));
+
+        assertThat(adapter.updateOptionStocks(cell, List.of(new StockPush(b, 0)), account)).isEmpty();
+
+        ArgumentCaptor<Object> body = ArgumentCaptor.forClass(Object.class);
+        verify(client).put(eq("/item/v1/goods/2103374786/recommended-options"), body.capture(), eq(key));
+        com.fasterxml.jackson.databind.JsonNode details = JSON.valueToTree(body.getValue())
+                .path("independent").path("details");
+        assertThat(details).hasSize(2);
+        assertThat(details.path(1).path("manageCode").asText()).isEqualTo("12");
+        assertThat(details.path(1).path("isSoldOut").asBoolean()).isTrue();
+        assertThat(details.path(1).path("qty").path("gmkt").asInt()).isEqualTo(1);
+        assertThat(details.path(0).path("qty").path("iac").asInt()).isEqualTo(5);
+        assertThat(details.path(1).path("addAmntSite").path("gmkt").asLong()).isEqualTo(2000L);
+    }
+
+    /** D19 · D28: one active option → post 194, the same stock on both sites, 0 sent as 1. */
+    @Test
+    void updateOptionStocks_singleOption_sendsStockZeroAsOne() {
+        ProductListingOption a = option(11L, "단품", "10000", "9000", 0).toBuilder().platformOptionId("11").build();
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(a));
+
+        adapter.updateOptionStocks(cell, List.of(new StockPush(a, 0)), account);
+
+        ArgumentCaptor<Object> body = ArgumentCaptor.forClass(Object.class);
+        verify(client).put(eq("/item/v1/goods/2103374786/stock"), body.capture(), eq(key));
+        assertThat(JSON.valueToTree(body.getValue()).toString()).isEqualTo("{\"stock\":{\"gmkt\":1,\"iac\":1}}");
+    }
 }

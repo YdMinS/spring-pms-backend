@@ -12,7 +12,9 @@ import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
 import com.pms.repository.CategoryRepository;
+import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MarginPolicyRepository;
+import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterProductRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
@@ -27,6 +29,11 @@ import org.springframework.http.MediaType;
 import java.math.BigDecimal;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -46,6 +53,7 @@ class ListingOptionControllerTest extends BaseIntegrationTest {
     @Autowired private MarginPolicyRepository marginPolicyRepository;
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
+    @Autowired private MarketplaceAccountRepository marketplaceAccountRepository;
 
     @MockBean private CoupangApiClient coupangApiClient;
 
@@ -57,10 +65,11 @@ class ListingOptionControllerTest extends BaseIntegrationTest {
     private Long marketListingId;
     private Long marketOptAId;
     private Long marketOptBId;
+    private Seller seller;
 
     @BeforeEach
     void seed() {
-        Seller seller = sellerRepository.save(Seller.builder()
+        seller = sellerRepository.save(Seller.builder()
                 .sellerName("행복상회").businessRegistration("111-22-33333").build());
         categoryRepository.save(Category.builder()
                 .name("신발").platform(Platform.COUPANG).platformCategoryId("cat-1").build());
@@ -217,10 +226,54 @@ class ListingOptionControllerTest extends BaseIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"stocks\":[{\"optionId\":" + opt1Id + ",\"stockQuantity\":30}]}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.options.length()").value(3));
+                .andExpect(jsonPath("$.data.listing.options.length()").value(3))
+                // FEATURE_2611_19 / D7: a DRAFT cell has no market numbers → saved only
+                .andExpect(jsonPath("$.data.pushed").value(0))
+                .andExpect(jsonPath("$.data.skipped[0]").value("opt1"));
 
         assertThat(productListingOptionRepository.findById(opt1Id).orElseThrow().getStockQuantity()).isEqualTo(30);
         assertThat(productListingOptionRepository.findById(opt2Id).orElseThrow().getStockQuantity()).isNull();
+    }
+
+    // FEATURE_2611_19 / D7 · D16 · D26: a cell on the market — the save commits, then the option with a Coupang option
+    // id is sent (0 as 0); the other is saved only; no [수정 요청] prompt.
+    @Test
+    void setStock_marketCell_sendsTheNumberedOption_andReportsTheOther() throws Exception {
+        marketplaceAccountRepository.save(MarketplaceAccountFixture.coupangCoreBuilder().seller(seller).build());
+        given(coupangApiClient.put(anyString(), anyString(), any())).willReturn("{\"code\":\"SUCCESS\"}");
+
+        mockMvc.perform(put(stockPath(marketListingId)).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"stocks\":[{\"optionId\":" + marketOptAId + ",\"stockQuantity\":0},"
+                                + "{\"optionId\":" + marketOptBId + ",\"stockQuantity\":4}]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.pushed").value(1))
+                .andExpect(jsonPath("$.data.skipped[0]").value("market-b"))
+                .andExpect(jsonPath("$.data.failed.length()").value(0))
+                .andExpect(jsonPath("$.data.listing.needsResync").value(false));
+
+        verify(coupangApiClient).put(
+                eq("/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/V-1/quantities/0"), eq("{}"), any());
+        assertThat(productListingOptionRepository.findById(marketOptAId).orElseThrow().getStockQuantity()).isZero();
+    }
+
+    // FEATURE_2611_19 / D6: the market refuses → the stock stays saved and the refusal comes back as a failed line.
+    @Test
+    void setStock_marketRefuses_stockStaysSaved_failedLine() throws Exception {
+        marketplaceAccountRepository.save(MarketplaceAccountFixture.coupangCoreBuilder().seller(seller).build());
+        given(coupangApiClient.put(anyString(), anyString(), any()))
+                .willThrow(new IllegalStateException("삭제된 상품은 변경이 불가능합니다"));
+
+        mockMvc.perform(put(stockPath(marketListingId)).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"stocks\":[{\"optionId\":" + marketOptAId + ",\"stockQuantity\":3}]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.pushed").value(0))
+                .andExpect(jsonPath("$.data.failed[0].optionName").value("market-a"))
+                .andExpect(jsonPath("$.data.failed[0].message").value("삭제된 상품은 변경이 불가능합니다"));
+
+        assertThat(productListingOptionRepository.findById(marketOptAId).orElseThrow().getStockQuantity())
+                .isEqualTo(3);
     }
 
     @Test
