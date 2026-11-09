@@ -258,3 +258,5 @@ databaseChangeLog:
       file: db/changelog/changes/128-lotteon-shipping-config.yaml
   - include:
       file: db/changelog/changes/129-unit-price-from-base.yaml
+  - include:
+      file: db/changelog/changes/130-stock-movement-date-edit.yaml

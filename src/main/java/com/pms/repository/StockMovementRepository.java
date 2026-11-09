@@ -182,8 +182,8 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
 
     /**
      * Rows tied to the given purchase records (FEATURE_2610_18 D101) — the stock rows of a receipt's lines, moved to
-     * the new payer seller when the receipt header changes its payer, and the stock rows of a purchase record moved by
-     * 「판매자 바꾸기」 (FEATURE_2611_01 D7).
+     * the new payer seller when the receipt header changes its payer and to a new purchase day when it changes its day
+     * (FEATURE_2611_21 D26), and the stock rows of a purchase record moved by 「판매자 바꾸기」 (FEATURE_2611_01 D7).
      */
     List<StockMovement> findByPurchaseRecordIdIn(Collection<Long> purchaseRecordIds);
 
@@ -207,10 +207,13 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
     /** Rows that used one of these lots (FEATURE_2610_19 D149 ① (b)). */
     List<StockMovement> findBySourceMovementIdIn(Collection<Long> sourceMovementIds);
 
-    /** One day of the ledger for the daily in/out view (FEATURE_2610_19 D119 · D123), record order. */
-    @EntityGraph(attributePaths = {"product", "seller", "sourceMovement", "sourceMovement.seller", "purchaseRecord",
-            "purchaseRecord.receipt", "orderLine", "orderLine.order", "orderLine.order.marketplaceAccount",
-            "orderLine.order.marketplaceAccount.seller"})
+    /**
+     * One day of the ledger for the daily in/out view (FEATURE_2610_19 D119 · D123), record order — with the purchase
+     * record of each row's lot (FEATURE_2611_21 D20) — and the order rows a day correction moves together (D4).
+     */
+    @EntityGraph(attributePaths = {"product", "seller", "sourceMovement", "sourceMovement.seller",
+            "sourceMovement.purchaseRecord", "purchaseRecord", "purchaseRecord.receipt", "orderLine", "orderLine.order",
+            "orderLine.order.marketplaceAccount", "orderLine.order.marketplaceAccount.seller"})
     List<StockMovement> findByMovedOnOrderByIdAsc(LocalDate movedOn);
 
     /** Undecided intake rows of one product and day, record order (FEATURE_2610_19 D121 ⑥ · D130). */

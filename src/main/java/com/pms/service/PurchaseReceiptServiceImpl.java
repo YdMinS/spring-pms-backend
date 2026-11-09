@@ -27,6 +27,7 @@ import com.pms.repository.StockMovementRepository;
 import com.pms.service.cost.CostPropagationService;
 import com.pms.service.stock.BasePriceFillService;
 import com.pms.service.stock.LotLedgerService;
+import com.pms.service.stock.StockDateEditService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -74,6 +75,7 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
     private final CostPropagationService costPropagationService;
     private final LotLedgerService lotLedgerService;
     private final BasePriceFillService basePriceFillService;
+    private final StockDateEditService stockDateEditService;
 
     @Override
     @Transactional
@@ -145,6 +147,12 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
                     .orElseThrow(() -> new ResourceNotFoundException("Seller", request.payerSellerId()));
         }
         boolean payerChanged = !receipt.getPayerSeller().getId().equals(payer.getId());
+        List<PurchaseRecord> lines = purchaseRecordRepository.findByReceiptIds(List.of(receiptId));
+        // FEATURE_2611_21 D26 · D31 · D32: a new purchase day also moves the stock rows of the lines (checked before
+        // anything is written) and re-decides the base price (D14 · D28); a share keeps its undecided row (D30).
+        if (!request.purchasedOn().equals(receipt.getPurchasedOn())) {
+            stockDateEditService.moveReceiptDay(lines, request.purchasedOn());
+        }
 
         purchaseReceiptRepository.save(receipt.toBuilder()
                 .purchasedOn(request.purchasedOn())
@@ -152,15 +160,13 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
                 .card(card)
                 .build());
 
-        // D100 ③: every line follows the header (seller and purchase day). Amounts, quantities, the base price and
-        // the purchase checks stay (D100 ④ ⑤).
-        List<PurchaseRecord> lines = purchaseRecordRepository.findByReceiptIds(List.of(receiptId));
+        // D100 ③: every line follows the header (seller and purchase day). Amounts, quantities and the purchase checks
+        // stay (D100 ④).
         purchaseRecordRepository.saveAll(lines.stream()
                 .map(r -> r.toBuilder().seller(payer).purchasedOn(request.purchasedOn()).build())
                 .toList());
 
-        // D101: a new payer seller takes the stock rows of those lines; their day, quantity and price stay.
-        // A purchase-day-only edit leaves stock alone.
+        // D101: a new payer seller takes the stock rows of those lines; their quantity and price stay.
         // FEATURE_2610_19 D149 · D132: the rows that used those lots follow too, assigned shares (D130) re-split their
         // undecided lots, and the debts of the touched products are rewritten.
         if (payerChanged && !lines.isEmpty()) {
@@ -441,8 +447,9 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
 
     /**
      * The daily row popup (FEATURE_2611_17 D5): the checks of this request first, then the seller, the price or photo
-     * ({@link #retypePrices} runs its own checks there) and the picked receipt — one transaction, so a refusal in any
-     * part leaves nothing behind.
+     * ({@link #retypePrices} runs its own checks there), the picked receipt and the row's new day
+     * ({@link StockDateEditService#moveRow} runs its own checks there, FEATURE_2611_21 D9) — one transaction, so a
+     * refusal in any part leaves nothing behind.
      */
     @Override
     @Transactional
@@ -491,7 +498,16 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
         if (request.totalAmount() != null && request.unitPrice() != null) {
             throw new IllegalArgumentException("총액과 단가 중 하나만 입력하세요");
         }
-        if (!sellerMoves && !withAmount && !withPhoto && request.receiptId() == null) {
+        // FEATURE_2611_21 D9 · D13: a share has no day of its own, and a day cannot move with a receipt being bound.
+        if (request.newMovedOn() != null && row == null) {
+            throw new IllegalArgumentException("고칠 수 없는 줄입니다.");
+        }
+        boolean dateMoves = row != null && request.newMovedOn() != null
+                && !request.newMovedOn().equals(row.getMovedOn());
+        if (dateMoves && (withPhoto || request.receiptId() != null)) {
+            throw new IllegalArgumentException("영수증에 묶인 입고는 날짜를 옮길 수 없습니다.");
+        }
+        if (!sellerMoves && !withAmount && !withPhoto && request.receiptId() == null && !dateMoves) {
             throw new IllegalArgumentException("바꿀 내용이 없습니다.");
         }
         // D23: a picked receipt = one of that day with its photo, paid by the seller this row has after the save.
@@ -534,6 +550,9 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
                     .orElseThrow(() -> new ResourceNotFoundException("PurchaseRecord", record.getId()));
             purchaseRecordRepository.save(saved.asReceiptLine(picked));
             receiptId = picked.getId();
+        }
+        if (dateMoves) {
+            stockDateEditService.moveRow(row.getId(), request.newMovedOn());      // FEATURE_2611_21 D9: the day last
         }
         return new ReceiptCreateResult(receiptId);
     }

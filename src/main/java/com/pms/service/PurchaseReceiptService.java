@@ -23,8 +23,9 @@ import java.util.List;
  * com.pms.domain.PurchaseReceipt)} owns the amount, base price and stock rules — {@link #create} never writes
  * purchase_record or stock_movement by itself. An {@link #assign} line writes no stock row (FEATURE_2610_19 D130)
  * and takes its purchase records from the {@link com.pms.domain.PurchaseRecord} factories (D135 ① round 32).
- * {@link #update} changes only the seller and purchase day of the receipt's lines and the seller of the stock rows
- * they reach (D100 · D101 · FEATURE_2610_19 D149) — never a purchase amount, a quantity or a base price.</p>
+ * {@link #update} changes only the seller and purchase day of the receipt's lines and the seller and day of the stock
+ * rows they reach (D100 · D101 · FEATURE_2610_19 D149 · FEATURE_2611_21 D26) — never a purchase amount or a quantity;
+ * a new purchase day re-decides the base price (FEATURE_2611_21 D14 · D28).</p>
  *
  * <p>🔴 A receipt never adds a debt of its own (D88) — borrowed-goods debts come from outbound rows only
  * (FEATURE_2610_19 D33). {@link #assign}, {@link #assignWithoutReceipt}, {@link #update}, {@link #changeSeller},
@@ -44,8 +45,10 @@ public interface PurchaseReceiptService {
     /**
      * Receipt header edit (D100): purchase day, card, payer seller — every line takes the new seller and day in the
      * same transaction. A changed payer seller also moves the stock rows of those lines (D101) and every row that used
-     * them, and rewrites the debts (FEATURE_2610_19 D149 · D132). Missing receipt → 404 · no card and no payer seller →
-     * 400 「결제 판매자를 선택하세요.」 · another hidden card → 404.
+     * them, and rewrites the debts (FEATURE_2610_19 D149 · D132). A changed purchase day also moves the day of the stock
+     * rows of those lines ({@link com.pms.service.stock.StockDateEditService#moveReceiptDay}, FEATURE_2611_21 D26 ·
+     * D31 · D32 — its 400 texts). Missing receipt → 404 · no card and no payer seller → 400 「결제 판매자를 선택하세요.」 ·
+     * another hidden card → 404.
      */
     ReceiptDetailView update(Long receiptId, ReceiptUpdateRequest request);
 
@@ -110,7 +113,8 @@ public interface PurchaseReceiptService {
      * share, saved in one transaction — nothing changes when a part is refused. Order: the seller ({@link #changeSeller}
      * rules) → the price and photo of a purchase ({@link #retypePrices} rules, one line) or the price of an opening-stock
      * row (D17: the row's unit price; an empty registered price takes it) → the picked receipt (the purchase becomes one
-     * more line of it, D23 · D26). receiptId = the receipt the photo went to or the picked receipt, null otherwise.
+     * more line of it, D23 · D26) → the row's new day ({@link com.pms.service.stock.StockDateEditService#moveRow} rules,
+     * FEATURE_2611_21 D9). receiptId = the receipt the photo went to or the picked receipt, null otherwise.
      *
      * <p>400: no request 「고칠 내용을 보내세요.」 · neither or both of movementId / shareRecordId 「고칠 줄을 고르세요.」 · a
      * row with nothing to edit 「고칠 수 없는 줄입니다.」 · a seller change on a row that is not a 「판매자 바꾸기」 target
@@ -120,7 +124,9 @@ public interface PurchaseReceiptService {
      * change 「바꿀 내용이 없습니다.」 · a picked receipt on a row with a receipt 「영수증을 고를 수 없는 줄입니다.」 · a picked
      * receipt without its photo 「사진 있는 영수증만 고를 수 있습니다.」 · a picked receipt or purchase of another day
      * 「화면 날짜의 영수증만 고를 수 있습니다.」 · a picked receipt of another payer than the seller after the save
-     * 「고른 영수증의 결제 판매자와 판매자가 다릅니다.」 · every 400 of {@link #changeSeller} and {@link #retypePrices}.
+     * 「고른 영수증의 결제 판매자와 판매자가 다릅니다.」 · a new day on a share 「고칠 수 없는 줄입니다.」 · a new day with a
+     * photo or a picked receipt 「영수증에 묶인 입고는 날짜를 옮길 수 없습니다.」 · every 400 of {@link #changeSeller},
+     * {@link #retypePrices} and {@code StockDateEditService.moveRow}.
      * Missing row, record or receipt → 404.</p>
      */
     ReceiptCreateResult editDailyRow(LocalDate movedOn, DailyRowEditRequest request, MultipartFile photo);
