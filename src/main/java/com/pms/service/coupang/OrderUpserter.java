@@ -173,10 +173,13 @@ public class OrderUpserter {
         String receiverName = trimName(box.path("receiver").path("name").asText(null));
 
         return orderRepository.findByMarketplaceAccount_IdAndExternalOrderId(account.getId(), orderId)
+                // A blank name from Coupang never erases a stored one — the API has returned blank PII for orders
+                // that WING still shows (2026-11-10), and every re-fetch (15-min sync, 03:00 reconcile, detail
+                // refresh, label sheet) would otherwise wipe it. A non-blank name still replaces the stored one.
                 .map(existing -> orderRepository.save(existing.toBuilder()
                         .orderedAt(orderedAt)
-                        .ordererName(ordererName)
-                        .receiverName(receiverName)
+                        .ordererName(ordererName != null ? ordererName : existing.getOrdererName())
+                        .receiverName(receiverName != null ? receiverName : existing.getReceiverName())
                         .build()))
                 .orElseGet(() -> orderRepository.save(Order.builder()
                         .marketplaceAccount(account)

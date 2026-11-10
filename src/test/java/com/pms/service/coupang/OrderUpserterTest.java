@@ -282,6 +282,30 @@ class OrderUpserterTest {
     }
 
     @Test
+    void 빈이름이오면저장된이름을지우지않는다() {
+        givenOrderWithNames("기존주문자", "기존수취인");
+
+        upserter.upsertBox(account, box(boxWithNames("", "")));
+
+        ArgumentCaptor<Order> order = ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository).save(order.capture());
+        assertThat(order.getValue().getOrdererName()).isEqualTo("기존주문자");
+        assertThat(order.getValue().getReceiverName()).isEqualTo("기존수취인");
+    }
+
+    @Test
+    void 다른이름이오면저장된이름을갱신한다() {
+        givenOrderWithNames("기존주문자", "기존수취인");
+
+        upserter.upsertBox(account, box(boxWithNames("새주문자", "새수취인")));
+
+        ArgumentCaptor<Order> order = ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository).save(order.capture());
+        assertThat(order.getValue().getOrdererName()).isEqualTo("새주문자");
+        assertThat(order.getValue().getReceiverName()).isEqualTo("새수취인");
+    }
+
+    @Test
     void paidAt오프셋파싱실패시null() {
         givenNothingExists();
 
@@ -460,6 +484,28 @@ class OrderUpserterTest {
              "orderer":{"name":"%s"},
              "orderItems":[{"vendorItemId":"%s","vendorItemName":"양말A","shippingCount":3}]}
             """.formatted(ORDER_ID, BOX_ID, name, ITEM_ID);
+    }
+
+    /** An existing order header with both names stored; shipment and line are new. */
+    private void givenOrderWithNames(String ordererName, String receiverName) {
+        Order order = Order.builder().id(10L).marketplaceAccount(account).platform(Platform.COUPANG)
+                .externalOrderId(ORDER_ID).ordererName(ordererName).receiverName(receiverName).build();
+        given(orderRepository.findByMarketplaceAccount_IdAndExternalOrderId(eq(1L), any()))
+                .willReturn(Optional.of(order));
+        lenient().when(orderShipmentRepository.findByOrder_IdAndExternalShipmentId(any(), any()))
+                .thenReturn(Optional.empty());
+        given(coupangOrderLineRepository
+                .findByMarketplaceAccount_IdAndShipmentBoxIdAndOrderIdRawAndVendorItemId(any(), any(), any(), any()))
+                .willReturn(Optional.empty());
+    }
+
+    private String boxWithNames(String ordererName, String receiverName) {
+        return """
+            {"orderId":"%s","shipmentBoxId":"%s","status":"INSTRUCT",
+             "orderer":{"name":"%s"},
+             "receiver":{"name":"%s","postCode":"14043"},
+             "orderItems":[{"vendorItemId":"%s","vendorItemName":"양말A","shippingCount":3}]}
+            """.formatted(ORDER_ID, BOX_ID, ordererName, receiverName, ITEM_ID);
     }
 
     private String boxWithPaidAt(String paidAt) {
