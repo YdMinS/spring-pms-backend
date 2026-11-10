@@ -16,9 +16,11 @@ import java.util.Map;
  * Response of the per-channel option endpoints (FEATURE_2608_06 / 42): the listing's full option set (active and
  * inactive) so the toggle UI can render everything, plus a listing-level {@code needsResync} flag.
  *
- * <p>{@code needsResync} is only meaningful on the PUT (set-active) response: it is {@code true} when any cell of
- * this listing is already pushed ({@code status != DRAFT}) — an active-set change alone does not reach the market,
- * so the front prompts a re-register/update. GET always returns {@code false} (a read is not a resync trigger).</p>
+ * <p>{@code needsResync} is filled by the option writes; GET and the price write return {@code false}. The
+ * set-active and name writes return {@code true} when this listing is already pushed ({@code status != DRAFT}) —
+ * that change alone does not reach the market, so the front prompts a re-register/update. The stock write does the
+ * same only for a platform without a stock push; a Coupang, LotteON, 11st or ESM listing sends the saved stock right
+ * after the save and returns {@code false} (FEATURE_2611_19 / D7).</p>
  */
 @Getter
 @Builder

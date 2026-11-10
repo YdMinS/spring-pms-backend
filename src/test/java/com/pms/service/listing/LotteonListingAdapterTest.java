@@ -360,4 +360,77 @@ class LotteonListingAdapterTest {
         assertThat(request.path("regStrtDttm").asText()).isEqualTo("20000101000000");
         assertThat(request.path("regEndDttm").asText()).isEqualTo("99991231235959");
     }
+
+    // ---------------------------------------------------------------- FEATURE_2611_19: price · stock push
+
+    /** D3 · D14: one 91 line — seller numbers, product, item, whole-won price, now → 9999-12-31; no lrtrNo / itmDcTypCd. */
+    @Test
+    void updateOptionPrice_sendsOne91Line_untilYear9999() throws Exception {
+        ProductListingOption option = option(11L, "1L", "9900", "LO555_1", true, null).toBuilder()
+                .productListing(cell).build();
+        answer(LotteonPaths.ITEM_PRICE, "{\"returnCode\":\"0000\",\"data\":[{\"resultCode\":\"0000\"}]}");
+
+        adapter.updateOptionPrice(option, new BigDecimal("15000.00"), account);
+
+        ArgumentCaptor<Object> body = ArgumentCaptor.forClass(Object.class);
+        verify(client).post(eq(LotteonPaths.ITEM_PRICE), body.capture(), eq("KEY"));
+        JsonNode line = JSON.valueToTree(body.getValue()).path("itmPrcLst").path(0);
+        assertThat(line.path("trGrpCd").asText()).isEqualTo("SR");
+        assertThat(line.path("trNo").asText()).isEqualTo("LO1");
+        assertThat(line.path("spdNo").asText()).isEqualTo("LO555");
+        assertThat(line.path("sitmNo").asText()).isEqualTo("LO555_1");
+        assertThat(line.path("slPrc").isIntegralNumber()).isTrue();
+        assertThat(line.path("slPrc").asLong()).isEqualTo(15000L);
+        assertThat(line.path("hstStrtDttm").asText()).hasSize(14);
+        assertThat(line.path("hstEndDttm").asText()).isEqualTo("99991231235959");
+        assertThat(line.has("lrtrNo")).isFalse();
+        assertThat(line.has("itmDcTypCd")).isFalse();
+    }
+
+    /** D4: a refused 91 line is thrown with LotteON's own text. */
+    @Test
+    void updateOptionPrice_refusedLine_throwsLotteonText() throws Exception {
+        ProductListingOption option = option(11L, "1L", "9900", "LO555_1", true, null).toBuilder()
+                .productListing(cell).build();
+        answer(LotteonPaths.ITEM_PRICE, "{\"returnCode\":\"0000\",\"data\":[{\"resultCode\":\"2001\","
+                + "\"resultMessage\":\"종료일이 시작일 보다 이전 날짜일 수 없습니다\"}]}");
+
+        assertThatThrownBy(() -> adapter.updateOptionPrice(option, new BigDecimal("15000.00"), account))
+                .isInstanceOf(BusinessException.class).hasMessage("종료일이 시작일 보다 이전 날짜일 수 없습니다");
+    }
+
+    /** D5: targets = options LotteON numbered, on a product LotteON numbered. */
+    @Test
+    void stockPushTargets_numberedItemsOnly() {
+        ProductListingOption numbered = option(11L, "1L", "9900", "LO555_1", true, null);
+        ProductListingOption waiting = option(12L, "2L", "9900", null, true, null);
+
+        assertThat(adapter.pushesStock()).isTrue();
+        assertThat(adapter.stockPushTargets(cell, List.of(numbered, waiting))).containsExactly(numbered);
+        assertThat(adapter.stockPushTargets(cell.toBuilder().platformProductId(null).build(), List.of(numbered)))
+                .isEmpty();
+    }
+
+    /** D5 · D21: one 86 line per item; a refused line is that option's only. */
+    @Test
+    void updateOptionStocks_one86LinePerItem_refusalIsPerOption() throws Exception {
+        ProductListingOption a = option(11L, "1L", "9900", "LO555_1", true, null);
+        ProductListingOption b = option(12L, "2L", "9900", "LO555_2", true, null);
+        given(client.post(eq(LotteonPaths.ITEM_STOCK), any(), eq("KEY"))).willReturn(
+                JSON.readTree("{\"returnCode\":\"0000\",\"data\":[{\"resultCode\":\"0000\"}]}"),
+                JSON.readTree("{\"returnCode\":\"0000\",\"data\":[{\"resultCode\":\"1002\","
+                        + "\"resultMessage\":\"재고수량 형식 오류\"}]}"));
+
+        Map<Long, String> refused = adapter.updateOptionStocks(cell,
+                List.of(new StockPush(a, 0), new StockPush(b, 7)), account);
+
+        assertThat(refused).containsExactly(Map.entry(12L, "재고수량 형식 오류"));
+        ArgumentCaptor<Object> body = ArgumentCaptor.forClass(Object.class);
+        verify(client, org.mockito.Mockito.times(2)).post(eq(LotteonPaths.ITEM_STOCK), body.capture(), eq("KEY"));
+        JsonNode first = JSON.valueToTree(body.getAllValues().get(0)).path("itmStkLst").path(0);
+        assertThat(first.path("spdNo").asText()).isEqualTo("LO555");
+        assertThat(first.path("sitmNo").asText()).isEqualTo("LO555_1");
+        assertThat(first.path("stkQty").asInt()).isEqualTo(0);
+        assertThat(first.has("lrtrNo")).isFalse();
+    }
 }

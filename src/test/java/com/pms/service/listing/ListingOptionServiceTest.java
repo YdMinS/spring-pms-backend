@@ -62,12 +62,20 @@ class ListingOptionServiceTest {
     @Mock private ListingChannel adapter;
     // 2609_28/D23: real recorder over a mocked repository — the skip rules run end-to-end from the hook.
     @Mock private com.pms.repository.PriceChangeLogRepository priceChangeLogRepository;
+    // FEATURE_2611_19 / D26: the stock save commits through the template, then the push service sends it.
+    @Mock private org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+    @Mock private ChannelStockPushService channelStockPushService;
+    // FEATURE_2611_19 / D18: the generated assets an 11st / ESM whole-product price push re-sends.
+    @Mock private com.pms.repository.GeneratedProductDataRepository generatedProductDataRepository;
     @InjectMocks private ListingOptionServiceImpl service;
 
     @org.junit.jupiter.api.BeforeEach
     void injectPriceHistoryRecorder() {
         org.springframework.test.util.ReflectionTestUtils.setField(service, "priceHistoryRecorder",
                 new com.pms.service.price.PriceHistoryRecorder(priceChangeLogRepository));
+        // The template runs its callback in place — the unit test sees one call sequence.
+        org.mockito.Mockito.lenient().when(transactionTemplate.execute(any())).thenAnswer(inv ->
+                inv.<org.springframework.transaction.support.TransactionCallback<?>>getArgument(0).doInTransaction(null));
     }
 
     private static final Long LISTING_ID = 100L;
@@ -304,7 +312,7 @@ class ListingOptionServiceTest {
                 .willReturn(List.of(optionWithStock(1L, 5), optionWithStock(2L, 7)));
 
         ListingOptionsResponse response =
-                service.setOptionStocks(LISTING_ID, List.of(new OptionStock(1L, 30)));
+                service.setOptionStocks(LISTING_ID, List.of(new OptionStock(1L, 30))).listing();
 
         ArgumentCaptor<List<ProductListingOption>> saved = ArgumentCaptor.forClass(List.class);
         verify(productListingOptionRepository).saveAll(saved.capture());
@@ -325,7 +333,7 @@ class ListingOptionServiceTest {
                 .willReturn(List.of(optionWithStock(1L, 30)));
 
         ListingOptionsResponse response =
-                service.setOptionStocks(LISTING_ID, List.of(new OptionStock(1L, null)));
+                service.setOptionStocks(LISTING_ID, List.of(new OptionStock(1L, null))).listing();
 
         ArgumentCaptor<List<ProductListingOption>> saved = ArgumentCaptor.forClass(List.class);
         verify(productListingOptionRepository).saveAll(saved.capture());
@@ -355,7 +363,7 @@ class ListingOptionServiceTest {
                 .willReturn(List.of(optionWithStock(1L, null)));
 
         ListingOptionsResponse response =
-                service.setOptionStocks(LISTING_ID, List.of(new OptionStock(1L, 9999)));
+                service.setOptionStocks(LISTING_ID, List.of(new OptionStock(1L, 9999))).listing();
         assertThat(response.getOptions().get(0).getStockQuantity()).isEqualTo(9999);
 
         assertThatThrownBy(() -> service.setOptionStocks(LISTING_ID, List.of(new OptionStock(1L, 10000))))
@@ -401,10 +409,63 @@ class ListingOptionServiceTest {
                 .willReturn(List.of(channelOnly));
 
         ListingOptionsResponse response =
-                service.setOptionStocks(LISTING_ID, List.of(new OptionStock(9L, 9999)));
+                service.setOptionStocks(LISTING_ID, List.of(new OptionStock(9L, 9999))).listing();
 
         assertThat(response.getOptions().get(0).getMaxStock()).isEqualTo(9999);
         assertThat(response.getOptions().get(0).isChannelOnly()).isTrue();
+    }
+
+    // FEATURE_2611_19 / D6 · D7 · D26: saved first, then sent — a refused option stays saved and comes back in failed;
+    // a market that takes the stock right away needs no [수정 요청] prompt.
+    @Test
+    void setOptionStocks_savesThenSends_refusedStaysSaved_noResyncPrompt() {
+        ProductListing selling = listingWithMasterStocks("opt1", 50, "opt2", 50).toBuilder()
+                .status(ListingStatus.SELLING).build();
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(selling));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(optionWithStock(1L, 5), optionWithStock(2L, 7)));
+        given(resolver.resolveOptional(Platform.COUPANG)).willReturn(Optional.of(adapter));
+        given(adapter.pushesStock()).willReturn(true);
+        given(channelStockPushService.push(Map.of(LISTING_ID, List.of(1L, 2L)))).willReturn(List.of(
+                new StockPushLine(LISTING_ID, Platform.COUPANG, "행복상회", "opt1", StockPushLine.Result.PUSHED, null),
+                new StockPushLine(LISTING_ID, Platform.COUPANG, "행복상회", "opt2", StockPushLine.Result.FAILED,
+                        "쿠팡 재고변경 실패: 삭제된 상품")));
+
+        com.pms.dto.response.ChannelStockUpdateResponse response = service.setOptionStocks(LISTING_ID,
+                List.of(new OptionStock(1L, 30), new OptionStock(2L, 0)));
+
+        // the save runs inside the template (its own transaction, committed when execute returns) — the push after it
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(transactionTemplate, productListingOptionRepository,
+                channelStockPushService);
+        order.verify(transactionTemplate).execute(any());
+        order.verify(channelStockPushService).push(any());
+        verify(productListingOptionRepository).saveAll(anyList());
+        assertThat(captureSaved()).hasSize(2);
+        assertThat(response.pushed()).isEqualTo(1);
+        assertThat(response.skipped()).isEmpty();
+        assertThat(response.failed()).singleElement().satisfies(f -> {
+            assertThat(f.optionName()).isEqualTo("opt2");
+            assertThat(f.message()).isEqualTo("쿠팡 재고변경 실패: 삭제된 상품");
+        });
+        assertThat(response.listing().isNeedsResync()).isFalse();
+    }
+
+    // FEATURE_2611_19 / D7: a platform without a stock push keeps today's [수정 요청] prompt and reports nothing.
+    @Test
+    void setOptionStocks_platformWithoutStockPush_keepsTheResyncPrompt() {
+        ProductListing selling = listingWithMasterStocks("opt1", 50, null, null).toBuilder()
+                .status(ListingStatus.SELLING).build();
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(selling));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(optionWithStock(1L, 5)));
+
+        com.pms.dto.response.ChannelStockUpdateResponse response =
+                service.setOptionStocks(LISTING_ID, List.of(new OptionStock(1L, 30)));
+
+        assertThat(response.listing().isNeedsResync()).isTrue();
+        assertThat(response.pushed()).isZero();
+        assertThat(response.skipped()).isEmpty();
+        assertThat(response.failed()).isEmpty();
     }
 
     // ---------------------------------------------------------------- 2609_22: per-channel option names
@@ -756,26 +817,43 @@ class ListingOptionServiceTest {
         assertThat(captureSaved()).hasSize(1);
     }
 
-    // 5b. LotteON has no per-option price push: an option already on the market is saved locally and reported
-    //     as skipped (it reaches the market with [수정 요청]) — never routed to the adapter, which would throw.
+    // 5b. FEATURE_2611_19 / D3 · D4: a LotteON option already on the market (sitmNo) is repriced there like Coupang.
     @Test
-    void setOptionPricesSavesLocallyForLotteonOptionOnMarket() {
+    void setOptionPricesPushesLotteonOptionOnMarket() {
         ProductListing lotteon = pricingListing().toBuilder()
                 .platform(Platform.LOTTEON).status(ListingStatus.SELLING).build();
         given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(lotteon));
         given(productListingOptionRepository.findByProductListingId(LISTING_ID))
                 .willReturn(List.of(pricedOption(1L, "SITM-1")));
         given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("18750.00"));
+        given(resolver.resolveOptional(Platform.LOTTEON)).willReturn(Optional.of(adapter));
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(7L, Platform.LOTTEON))
+                .willReturn(Optional.of(activeAccount()));
+
+        ChannelPriceUpdateResponse response =
+                service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, new BigDecimal("15000"))));
+
+        verify(adapter).updateOptionPrice(any(), eq(new BigDecimal("15000.00")), any());
+        assertThat(response.pushed()).isEqualTo(1);
+        assertThat(response.skipped()).isEmpty();
+        assertThat(captureSaved().get(0).getMarketPrice()).isEqualByComparingTo("15000");
+    }
+
+    // 5c. FEATURE_2611_19 / D25: a switched-off option is saved only, even when the market numbered it.
+    @Test
+    void setOptionPricesSkipsSwitchedOffOptionOnMarket() {
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(pricingListing()));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, "V-1").toBuilder().active(false).build()));
+        given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("18750.00"));
+        given(resolver.resolveOptional(Platform.COUPANG)).willReturn(Optional.of(adapter));
 
         ChannelPriceUpdateResponse response =
                 service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, new BigDecimal("15000"))));
 
         verify(adapter, never()).updateOptionPrice(any(), any(), any());
         assertThat(response.skipped()).containsExactly("opt1");
-        assertThat(response.failed()).isEmpty();
-        List<ProductListingOption> saved = captureSaved();
-        assertThat(saved).hasSize(1);
-        assertThat(saved.get(0).getSellingPrice()).isEqualByComparingTo("15000");
+        assertThat(captureSaved().get(0).getMarketPrice()).isNull();
     }
 
     // 6. D6: what the market refused is NOT saved — the DB must not claim a price the market never took.
@@ -925,21 +1003,96 @@ class ListingOptionServiceTest {
         verify(productListingOptionRepository, never()).saveAll(any());
     }
 
-    // 2610_13 / D9 ⑤ · D56: an 11st listing never pushes a price — the option is saved and reported as skipped.
+    // FEATURE_2611_19 / D18 · D33: an 11st listing on the market sends the whole product once — every edited active
+    // option counts as pushed; no per-option call; status / needsMarketSync untouched (the listing is never saved); the
+    // untouched active option's market price record = its local price, which the update just sent.
     @Test
-    void elevenstListing_savesTypedPriceLocally_withoutPush() {
-        ProductListing elevenst = livePricingListing().toBuilder().platform(Platform.ELEVENST).build();
+    @SuppressWarnings("unchecked")
+    void elevenstListing_onMarket_sendsTheWholeProductOnce() {
+        ProductListing elevenst = livePricingListing().toBuilder().platform(Platform.ELEVENST)
+                .platformProductId("5551").build();
+        com.pms.domain.GeneratedProductData gen = com.pms.domain.GeneratedProductData.builder().id(1L).build();
         given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(elevenst));
         given(productListingOptionRepository.findByProductListingId(LISTING_ID))
-                .willReturn(List.of(pricedOption(1L, "1")));
+                .willReturn(List.of(pricedOption(1L, "1"), pricedOption(2L, "2")));
         given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("18750.00"));
+        given(resolver.resolveOptional(Platform.ELEVENST)).willReturn(Optional.of(adapter));
+        given(adapter.pushesPriceByUpdate()).willReturn(true);
+        given(generatedProductDataRepository.findByProductListingId(LISTING_ID)).willReturn(Optional.of(gen));
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(7L, Platform.ELEVENST))
+                .willReturn(Optional.of(activeAccount()));
 
         ChannelPriceUpdateResponse response =
                 service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, new BigDecimal("15000"))));
 
-        assertThat(response.skipped()).containsExactly("opt1");
-        verify(resolver, never()).resolveOptional(any());
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(productListingOptionRepository, adapter);
+        ArgumentCaptor<List<ProductListingOption>> saves = ArgumentCaptor.forClass(List.class);
+        order.verify(productListingOptionRepository).saveAll(saves.capture());
+        order.verify(adapter).update(eq(elevenst), eq(gen), any());
+        order.verify(productListingOptionRepository).saveAll(saves.capture());
         verify(adapter, never()).updateOptionPrice(any(), any(), any());
+        verify(productListingRepository, never()).save(any());
+        assertThat(response.pushed()).isEqualTo(1);
+        assertThat(response.skipped()).isEmpty();
+        assertThat(saves.getAllValues().get(0)).singleElement()
+                .satisfies(o -> assertThat(o.getMarketPrice()).isEqualByComparingTo("15000"));
+        assertThat(saves.getAllValues().get(1)).singleElement().satisfies(o -> {
+            assertThat(o.getId()).isEqualTo(2L);
+            assertThat(o.getSellingPrice()).isEqualByComparingTo("6000");
+            assertThat(o.getMarketPrice()).isEqualByComparingTo("6000");
+            assertThat(o.getMarketPriceAt()).isNotNull();
+        });
+    }
+
+    // FEATURE_2611_19 / D18: an active option 11st does not have yet → nothing is sent, the edited option is saved only.
+    @Test
+    void elevenstListing_activeOptionWithoutMarketNumber_savesOnly() {
+        ProductListing elevenst = livePricingListing().toBuilder().platform(Platform.ELEVENST)
+                .platformProductId("5551").build();
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(elevenst));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, "1"), pricedOption(2L, null)));
+        given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("18750.00"));
+        given(resolver.resolveOptional(Platform.ELEVENST)).willReturn(Optional.of(adapter));
+        given(adapter.pushesPriceByUpdate()).willReturn(true);
+        given(generatedProductDataRepository.findByProductListingId(LISTING_ID))
+                .willReturn(Optional.of(com.pms.domain.GeneratedProductData.builder().id(1L).build()));
+
+        ChannelPriceUpdateResponse response =
+                service.setOptionPrices(LISTING_ID, List.of(new OptionPrice(1L, new BigDecimal("15000"))));
+
+        verify(adapter, never()).update(any(), any(), any());
+        verify(marketplaceAccountRepository, never()).findBySeller_IdAndPlatform(any(), any());
+        assertThat(response.skipped()).containsExactly("opt1");
+        assertThat(response.pushed()).isZero();
+        assertThat(captureSaved().get(0).getMarketPrice()).isNull();
+    }
+
+    // FEATURE_2611_19 / D18: the market refuses → the request fails with the market's text and no price history is
+    // written (the transaction rolls the option save back).
+    @Test
+    void elevenstListing_marketRefuses_failsTheRequest_noHistory() {
+        ProductListing elevenst = livePricingListing().toBuilder().platform(Platform.ELEVENST)
+                .platformProductId("5551").build();
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(elevenst));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, "1")));
+        given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("18750.00"));
+        given(resolver.resolveOptional(Platform.ELEVENST)).willReturn(Optional.of(adapter));
+        given(adapter.pushesPriceByUpdate()).willReturn(true);
+        given(generatedProductDataRepository.findByProductListingId(LISTING_ID))
+                .willReturn(Optional.of(com.pms.domain.GeneratedProductData.builder().id(1L).build()));
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(7L, Platform.ELEVENST))
+                .willReturn(Optional.of(activeAccount()));
+        org.mockito.BDDMockito.willThrow(new com.pms.exception.BusinessException("판매가 변경 불가 상품",
+                        org.springframework.http.HttpStatus.BAD_GATEWAY))
+                .given(adapter).update(any(), any(), any());
+
+        assertThatThrownBy(() -> service.setOptionPrices(LISTING_ID,
+                List.of(new OptionPrice(1L, new BigDecimal("15000")))))
+                .isInstanceOf(com.pms.exception.BusinessException.class)
+                .hasMessage("판매가 변경 불가 상품");
+        verify(priceChangeLogRepository, never()).saveAll(any());
     }
 
     // ---------------------------------------------------------------- 2610_26 / D53 ②: ESM per-site manual price
@@ -959,6 +1112,8 @@ class ListingOptionServiceTest {
                 .auctionSellingPrice(new BigDecimal("6500.00"))
                 .auctionPriceSource(GeneratedContentSource.AUTO).build();
         given(productListingOptionRepository.findByProductListingId(LISTING_ID)).willReturn(List.of(option));
+        given(resolver.resolveOptional(Platform.ESM)).willReturn(Optional.of(adapter));
+        given(adapter.pushesPriceByUpdate()).willReturn(true);
         given(listingAssetService.quoteOptionPrice(any(), any()))
                 .willReturn(new com.pms.service.PriceCalculator.PriceResult(
                         new BigDecimal("9000.00"), new BigDecimal("11250.00")));
@@ -971,12 +1126,47 @@ class ListingOptionServiceTest {
         assertThat(saved.getPriceSource()).isEqualTo(GeneratedContentSource.AUTO);
         assertThat(saved.getAuctionSellingPrice()).isEqualByComparingTo("12340");
         assertThat(saved.getAuctionPriceSource()).isEqualTo(GeneratedContentSource.MANUAL_OVERRIDE);
-        verify(resolver, never()).resolveOptional(any());
+        // FEATURE_2611_19 / D18: no ESM goods number on this listing → saved only, nothing sent.
+        verify(adapter, never()).update(any(), any(), any());
         assertThat(response.pushed()).isZero();
         ArgumentCaptor<List<com.pms.domain.PriceChangeLog>> rows = ArgumentCaptor.forClass(List.class);
         verify(priceChangeLogRepository, org.mockito.Mockito.times(2)).saveAll(rows.capture());
         assertThat(rows.getAllValues().get(1)).singleElement().satisfies(row ->
                 assertThat(row.getTargetType()).isEqualTo(com.pms.domain.PriceTargetType.LISTING_SELLING_AUCTION));
+    }
+
+    // FEATURE_2611_19 / D18 · D33: an ESM listing on the market sends the whole product once — both site prices are
+    // then live, on the edited option and on the untouched active one alike.
+    @Test
+    @SuppressWarnings("unchecked")
+    void setOptionPrices_esm_onMarket_sendsTheWholeProduct_bothSitePricesLive() {
+        ProductListing esm = esmPricingListing().toBuilder().platformProductId("2103374786").build();
+        com.pms.domain.GeneratedProductData gen = com.pms.domain.GeneratedProductData.builder().id(1L).build();
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(esm));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID))
+                .willReturn(List.of(pricedOption(1L, "1"), pricedOption(2L, "2").toBuilder()
+                        .auctionSellingPrice(new BigDecimal("5800.00")).build()));
+        given(priceCalculator.displayOriginalPrice(any(), any())).willReturn(new BigDecimal("18750.00"));
+        given(resolver.resolveOptional(Platform.ESM)).willReturn(Optional.of(adapter));
+        given(adapter.pushesPriceByUpdate()).willReturn(true);
+        given(generatedProductDataRepository.findByProductListingId(LISTING_ID)).willReturn(Optional.of(gen));
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(7L, Platform.ESM))
+                .willReturn(Optional.of(activeAccount()));
+
+        ChannelPriceUpdateResponse response = service.setOptionPrices(LISTING_ID,
+                List.of(new OptionPrice(1L, new BigDecimal("15000"), new BigDecimal("14000"))));
+
+        verify(adapter).update(eq(esm), eq(gen), any());
+        assertThat(response.pushed()).isEqualTo(1);
+        ArgumentCaptor<List<ProductListingOption>> saves = ArgumentCaptor.forClass(List.class);
+        verify(productListingOptionRepository, org.mockito.Mockito.times(2)).saveAll(saves.capture());
+        ProductListingOption saved = saves.getAllValues().get(0).get(0);
+        assertThat(saved.getMarketPrice()).isEqualByComparingTo("15000");
+        assertThat(saved.getAuctionMarketPrice()).isEqualByComparingTo("14000");
+        ProductListingOption untouched = saves.getAllValues().get(1).get(0);
+        assertThat(untouched.getId()).isEqualTo(2L);
+        assertThat(untouched.getMarketPrice()).isEqualByComparingTo("6000");
+        assertThat(untouched.getAuctionMarketPrice()).isEqualByComparingTo("5800");
     }
 
     @Test

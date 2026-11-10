@@ -16,6 +16,10 @@ public final class LotteonPaths {
     public static final String PRODUCT_STATUS = "/v1/openapi/product/v1/product/status/change";
     /** [111] item sale status change. */
     public static final String ITEM_STATUS = "/v1/openapi/product/v1/item/status/change";
+    /** [91] item selling price change (FEATURE_2611_19 / D3). */
+    public static final String ITEM_PRICE = "/v1/openapi/product/v1/item/price/change";
+    /** [86] item stock change (FEATURE_2611_19 / D5). */
+    public static final String ITEM_STOCK = "/v1/openapi/product/v1/item/stock/change";
     /** [93] product list. */
     public static final String PRODUCT_LIST = "/v1/openapi/product/v1/product/list";
     /** [94] product detail. */

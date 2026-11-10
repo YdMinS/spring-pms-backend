@@ -846,6 +846,43 @@ public class CoupangListingAdapter implements ListingChannel {
         }
     }
 
+    /** FEATURE_2611_19 / D16: Coupang takes a stock push per option. */
+    @Override
+    public boolean pushesStock() {
+        return true;
+    }
+
+    /** FEATURE_2611_19 / D16: an option with a Coupang option id (vendorItemId). */
+    @Override
+    public List<ProductListingOption> stockPushTargets(ProductListing cell, List<ProductListingOption> changed) {
+        return changed.stream().filter(o -> StringUtils.hasText(o.getPlatformOptionId())).toList();
+    }
+
+    /**
+     * FEATURE_2611_19 / D16 · D21: one UPDATE_PRODUCT_QUANTITY_BY_ITEM call per option; a refusal is that option's
+     * only (judged like {@link #updateOptionPrice}).
+     */
+    @Override
+    public Map<Long, String> updateOptionStocks(ProductListing cell, List<StockPush> pushes, MarketplaceAccount acct) {
+        Map<Long, String> refused = new LinkedHashMap<>();
+        for (StockPush push : pushes) {
+            String path = properties.getVendorItemQuantityPath()
+                    .replace("{vendorItemId}", push.option().getPlatformOptionId())
+                    .replace("{quantity}", String.valueOf(push.stock()));
+            try {
+                String raw = client.put(path, "{}", acct);
+                JsonNode body = readJson(raw);
+                String code = body.path("code").asText("");
+                if (!code.isBlank() && !"SUCCESS".equalsIgnoreCase(code) && !"200".equals(code)) {
+                    refused.put(push.option().getId(), "쿠팡 재고변경 실패: " + body.path("message").asText(raw));
+                }
+            } catch (RuntimeException e) {
+                refused.put(push.option().getId(), e.getMessage());
+            }
+        }
+        return refused;
+    }
+
     @Override
     public void validateRegistrable(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct) {
         // gen is unused here (kept for the ListingChannel contract symmetry — see interface Javadoc).
