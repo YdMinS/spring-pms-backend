@@ -5,11 +5,14 @@ import com.pms.domain.ProductListingOption;
 
 /**
  * Stock-quantity resolution for options (FEATURE_2608_06 / 102). The single place that knows the rule
- * {@code channel ?? master ?? 9999}, shared by four callers: the Coupang payload builder, the per-channel
- * stock write (ceiling validation), the master-save clamp, and the matrix/option responses (maxStock).
+ * {@code channel ?? master ?? 9999}. {@link #resolve} callers: the payload builders of the four listing adapters
+ * (Coupang, 11st, ESM, LotteON) and the stock push after a save (ChannelStockPushServiceImpl, plus
+ * MasterProductServiceImpl.marketStocks, which picks the options to send — FEATURE_2611_19). {@link #ceiling}
+ * callers: the per-channel stock write (ceiling validation), the master-save clamp, and the matrix/option
+ * responses (maxStock).
  *
  * <p>⚠️ Keep it stateless and logic-free — a follow-up may turn the master value from "typed in by hand" into
- * a computed one (per-product / per-seller stock), and one source keeps the four callers from drifting.</p>
+ * a computed one (per-product / per-seller stock), and one source keeps these callers from drifting.</p>
  */
 public final class ListingStockPolicy {
 

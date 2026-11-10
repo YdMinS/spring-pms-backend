@@ -625,7 +625,9 @@ class MasterProductControllerTest extends BaseIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON).content(update))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.marketRegistered").value(true))    // still locked for delete
-                .andExpect(jsonPath("$.data.items[?(@.productId == " + productId1 + ")].quantity").value(3));
+                .andExpect(jsonPath("$.data.items[?(@.productId == " + productId1 + ")].quantity").value(3))
+                // FEATURE_2611_19 / D27 · D28: the master stock did not move → nothing was sent
+                .andExpect(jsonPath("$.data.stockPushResults.length()").value(0));
 
         // 2609_74/D4: the rename guard is gone — a market-registered option can be renamed.
         String rename = "{\"name\":\"기본2\",\"items\":["

@@ -2,6 +2,7 @@ package com.pms.service.listing;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingMarketImage;
 import com.pms.domain.ListingStatus;
@@ -35,6 +36,7 @@ import org.springframework.util.StringUtils;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -51,7 +53,10 @@ import java.util.stream.Collectors;
  * <p>Register = post 20 {@code POST /item/v1/goods} · update = {@code PUT /item/v1/goods/{goodsNo}} with the same full
  * body plus {@code isSell} (D30) · status = post 21 {@code GET …/sell-status} folded over the two sites (D31) · stop =
  * post 21 {@code PUT …/sell-status} with both {@code isSell} false (D33). The review-note lookup keeps the interface
- * default (no call, D32); price push and market import stay unsupported (D41). Both sites are always targeted (D5).
+ * default (no call, D32); market import stays unsupported (D41). A hand-set price goes with the full update
+ * (FEATURE_2611_19 / D18 — {@link #pushesPriceByUpdate}); a saved stock = one goods GET, then post 26 with the option
+ * block as read (stock changed only) or post 194 when ESM shows no option rows (D19 · D32 · D36). Both sites are always
+ * targeted (D5).
  * Product read (FEATURE_2611_11 / D12 · D17) = post 20 {@code GET /item/v1/goods/{goodsNo}}.</p>
  *
  * <p>Value sources: name D20 · category D13 · notices D16 · D17 · fixed fields D18 · image D22 + additional market
@@ -65,6 +70,8 @@ public class EsmListingAdapter implements ListingChannel {
     static final String RULE_BLOCK_PREFIX = "G마켓 · 옥션 규칙에 맞지 않아 올릴 수 없습니다: ";
     static final String NO_GMARKET_CATEGORY = "ESM 이 이 카테고리에 G마켓 카테고리를 짝지어 두지 않았습니다";
     static final String NO_AUCTION_CATEGORY = "ESM 이 이 카테고리에 옥션 카테고리를 짝지어 두지 않았습니다";
+    /** FEATURE_2611_19 / D37: a stock push whose option has no row in the option block read from ESM. */
+    static final String OPTION_NOT_FOUND = "G마켓/옥션 옵션을 찾지 못했습니다";
 
     /** D25 ②: post 119 — at most 50 values in one selection option. */
     private static final int MAX_OPTIONS = 50;
@@ -236,6 +243,99 @@ public class EsmListingAdapter implements ListingChannel {
             }
         }
         return new MarketPrices(byOptionId);
+    }
+
+    /** FEATURE_2611_19 / D18: ESM has one product price + option surcharges → the price goes with {@link #update}. */
+    @Override
+    public boolean pushesPriceByUpdate() {
+        return true;
+    }
+
+    /** FEATURE_2611_19 / D19: ESM takes a stock push per listing. */
+    @Override
+    public boolean pushesStock() {
+        return true;
+    }
+
+    /**
+     * FEATURE_2611_19 / D19: all of {@code changed}, or none — a product without an ESM goods number or with an active
+     * option that has no ESM option number yet is saved only (adding an option is [수정 요청]'s job).
+     */
+    @Override
+    public List<ProductListingOption> stockPushTargets(ProductListing cell, List<ProductListingOption> changed) {
+        if (!StringUtils.hasText(cell.getPlatformProductId())) {
+            return List.of();
+        }
+        boolean allNumbered = productListingOptionRepository.findByProductListingId(cell.getId()).stream()
+                .filter(o -> Boolean.TRUE.equals(o.getActive()))
+                .allMatch(o -> StringUtils.hasText(o.getPlatformOptionId()));
+        return allNumbered ? changed : List.of();
+    }
+
+    /**
+     * FEATURE_2611_19 / D32 · D36 · D37 · D38: one goods GET (post 20) first, then one call for the whole listing
+     * (D21). The option block read back ({@code itemAddtionalInfo.recommendedOpts}) has option rows → post 26 with
+     * that block as read, where only {@code qty} and {@code isSoldOut} of the rows paired with a push change (paired
+     * by {@code manageCode} = our option id, field names ignoring case); names, surcharges and unpaired rows go back
+     * as read. No option rows → post 194 with that option's stock on both sites (0 → 1, D28) only when the listing has
+     * exactly one active option; with two or more active options nothing is sent and every push is refused with
+     * {@link #OPTION_NOT_FOUND} (D39 — which option the single-item product is cannot be told). A push without a
+     * paired row is refused with {@link #OPTION_NOT_FOUND}; none paired = no post 26. A failed GET throws (every push
+     * refused with that text); a refused post 26 refuses every paired push with the ESM text.
+     */
+    @Override
+    public Map<Long, String> updateOptionStocks(ProductListing cell, List<StockPush> pushes, MarketplaceAccount acct) {
+        EsmKey key = EsmCredentials.of(acct);
+        JsonNode goods = client.get(EsmPaths.GOODS + "/" + cell.getPlatformProductId(), key);
+        JsonNode read = child(child(goods, "itemAddtionalInfo"), "recommendedOpts");
+        JsonNode readRows = child(child(read, "independent"), "details");
+        Map<Long, String> refused = new LinkedHashMap<>();
+        if (!readRows.isArray() || readRows.isEmpty()) {
+            // D39: a single-item product is taken as our option only when the listing has exactly one active option.
+            List<ProductListingOption> active = productListingOptionRepository.findByProductListingId(cell.getId())
+                    .stream().filter(o -> Boolean.TRUE.equals(o.getActive())).toList();
+            StockPush only = active.size() != 1 ? null : pushes.stream()
+                    .filter(push -> push.option().getId().equals(active.get(0).getId())).findFirst().orElse(null);
+            if (only == null) {
+                pushes.forEach(push -> refused.put(push.option().getId(), OPTION_NOT_FOUND));
+                return refused;
+            }
+            int qty = qtySent(only.stock());
+            client.put(String.format(EsmPaths.STOCK, cell.getPlatformProductId()),
+                    ordered("stock", ordered("gmkt", qty, "iac", qty)), key);
+            return refused;
+        }
+        ObjectNode block = (ObjectNode) read.deepCopy();
+        Map<String, ObjectNode> rowByCode = new HashMap<>();
+        for (JsonNode row : child(child(block, "independent"), "details")) {
+            if (row.isObject()) {
+                rowByCode.putIfAbsent(child(row, "manageCode").asText(""), (ObjectNode) row);
+            }
+        }
+        List<Long> paired = new ArrayList<>();
+        for (StockPush push : pushes) {
+            ObjectNode row = rowByCode.get(String.valueOf(push.option().getId()));
+            if (row == null) {
+                refused.put(push.option().getId(), OPTION_NOT_FOUND);
+                continue;
+            }
+            int qty = qtySent(push.stock());
+            JsonNode readQty = child(row, "qty");
+            ObjectNode qtyNode = readQty.isObject() ? (ObjectNode) readQty : row.putObject(fieldName(row, "qty"));
+            qtyNode.put(fieldName(qtyNode, "gmkt"), qty);
+            qtyNode.put(fieldName(qtyNode, "iac"), qty);
+            row.put(fieldName(row, "isSoldOut"), push.stock() == 0);
+            paired.add(push.option().getId());
+        }
+        if (paired.isEmpty()) {
+            return refused;
+        }
+        try {
+            client.put(String.format(EsmPaths.RECOMMENDED_OPTIONS, cell.getPlatformProductId()), block, key);
+        } catch (RuntimeException e) {
+            paired.forEach(id -> refused.put(id, String.valueOf(e.getMessage())));
+        }
+        return refused;
     }
 
     /** D33: both sites to 「판매중지」 through post 21 — the delete API (post 29) is never called. */
@@ -492,6 +592,17 @@ public class EsmListingAdapter implements ListingChannel {
         return MissingNode.getInstance();
     }
 
+    /** FEATURE_2611_19 / D37: the field of {@code node} named {@code name} ignoring case — {@code name} when absent. */
+    private static String fieldName(JsonNode node, String name) {
+        for (Iterator<String> it = node.fieldNames(); it.hasNext(); ) {
+            String field = it.next();
+            if (field.equalsIgnoreCase(name)) {
+                return field;
+            }
+        }
+        return name;
+    }
+
     /** A number or numeric text written by ESM, or null when it is absent or not a number (FEATURE_2610_27 / D36). */
     private static BigDecimal decimalOrNull(JsonNode node) {
         if (node == null || node.isNull() || node.isMissingNode()) {
@@ -529,6 +640,11 @@ public class EsmListingAdapter implements ListingChannel {
         return lines.stream().map(price).min(BigDecimal::compareTo).orElse(BigDecimal.ZERO);
     }
 
+    /** D28: what ESM takes for a stock — 1 for a sold-out option ({@code isSoldOut} carries it), at most 99999. */
+    private static int qtySent(int stock) {
+        return stock == 0 ? 1 : Math.min(stock, MAX_STOCK);
+    }
+
     private static long won(BigDecimal amount) {
         return amount.setScale(0, RoundingMode.HALF_UP).longValueExact();
     }
@@ -541,7 +657,7 @@ public class EsmListingAdapter implements ListingChannel {
                         BigDecimal auctionPrice, int stock) {
 
         int sentQty() {
-            return stock == 0 ? 1 : Math.min(stock, MAX_STOCK);
+            return qtySent(stock);
         }
     }
 }

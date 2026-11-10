@@ -80,6 +80,9 @@ oklyx:
     # ⚠️ Do NOT append a forceSalePriceUpdate query string: put() takes no query argument and folding one into
     # the path breaks the HMAC signature.
     vendor-item-price-path: /v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendorItemId}/prices/{price}
+    # Per-item (vendorItem) stock change (FEATURE_2611_19 / D16). {vendorItemId}/{quantity} are replaced at call time;
+    # no body. Same seller_api group as the price path above.
+    vendor-item-quantity-path: /v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendorItemId}/quantities/{quantity}
     # Return/cancel request list query GET_RETURN_REQUEST_BY_QUERY (cancelType=CANCEL to reconcile paid-order cancellations).
     returnrequests-path: /v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests
     # Single return receipt lookup, used right before re-sending a collect invoice: if Coupang already has one

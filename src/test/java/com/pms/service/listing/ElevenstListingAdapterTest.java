@@ -22,6 +22,7 @@ import com.pms.service.listing.shipping.ElevenstShippingResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -39,6 +40,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.verify;
 
 /** FEATURE_2610_13 / D55 · D59 · D62 · D66 · D68 · D69 · D90 · D103 · D107. */
 @ExtendWith(MockitoExtension.class)
@@ -420,5 +422,59 @@ class ElevenstListingAdapterTest {
         assertThat(xml).contains("<prdImage01>https://s3/thumb.jpg</prdImage01><prdImage02>s3/a1.jpg</prdImage02>"
                 + "<prdImage03>s3/a2.jpg</prdImage03>");
         assertThat(xml).doesNotContain("prdImage04", "s3/main.jpg");
+    }
+
+    // ---------------------------------------------------------------- FEATURE_2611_19 / D18 · D20
+
+    /** D18: the price goes with the whole-product update; D20: stock targets need a product number + option number. */
+    @Test
+    void pricePushIsTheWholeUpdate_stockTargetsNeedMarketNumbers() {
+        ProductListingOption numbered = option(11L, "작은", "9900.00", 5, null).toBuilder().platformOptionId("11").build();
+        ProductListingOption waiting = option(12L, "큰", "9900.00", 5, null);
+
+        assertThat(adapter.pushesPriceByUpdate()).isTrue();
+        assertThat(adapter.pushesStock()).isTrue();
+        assertThat(adapter.stockPushTargets(cell, List.of(numbered, waiting))).containsExactly(numbered);
+        assertThat(adapter.stockPushTargets(cell.toBuilder().platformProductId(null).build(), List.of(numbered)))
+                .isEmpty();
+    }
+
+    /**
+     * D20: 1009 once, then 1625 per option — pair by prdStckNo = market id, else sellerStockCd = our id; no pair →
+     * 「11번가 옵션 번호를 찾지 못했습니다」. Body = prdNo · prdStckNo · stckQty (no optWght).
+     */
+    @Test
+    void updateOptionStocks_pairsPrdStckNoThenSellerStockCd_unpairedIsRefused() {
+        ProductListingOption imported = option(11L, "작은", "9900.00", 5, null).toBuilder().platformOptionId("900").build();
+        ProductListingOption ours = option(12L, "큰", "9900.00", 5, null).toBuilder().platformOptionId("12").build();
+        ProductListingOption lost = option(13L, "중간", "9900.00", 5, null).toBuilder().platformOptionId("13").build();
+        options(imported, ours, lost);
+        stocks("<ProductStock><prdStckNo>900</prdStckNo><sellerStockCd>x</sellerStockCd></ProductStock>"
+                + "<ProductStock><prdStckNo>901</prdStckNo><sellerStockCd>12</sellerStockCd></ProductStock>");
+        given(client.put(org.mockito.ArgumentMatchers.startsWith(ElevenstListingAdapter.STOCK_QTY_PATH), anyString(),
+                any())).willReturn(ElevenstXml.document("<ClientMessage><resultCode>200</resultCode></ClientMessage>"));
+
+        Map<Long, String> refused = adapter.updateOptionStocks(cell, List.of(
+                new StockPush(imported, 0), new StockPush(ours, 7), new StockPush(lost, 3)), null);
+
+        assertThat(refused).containsExactly(Map.entry(13L, "11번가 옵션 번호를 찾지 못했습니다"));
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(client).put(eq(ElevenstListingAdapter.STOCK_QTY_PATH + "900"), body.capture(), any());
+        assertThat(body.getValue()).isEqualTo(
+                "<ProductStock><prdNo>5551</prdNo><prdStckNo>900</prdStckNo><stckQty>0</stckQty></ProductStock>");
+        verify(client).put(eq(ElevenstListingAdapter.STOCK_QTY_PATH + "901"), anyString(), any());
+        verify(client, org.mockito.Mockito.times(1)).post(eq(ElevenstListingAdapter.STOCKS_PATH), anyString(), any());
+    }
+
+    /** D20: one active option and one 1009 line → that line, even without a pair. */
+    @Test
+    void updateOptionStocks_singleOptionSingleLine_takesThatLine() {
+        ProductListingOption single = option(11L, "단품", "9900.00", 5, null).toBuilder().platformOptionId("11").build();
+        options(single);
+        stocks("<ProductStock><prdStckNo>777</prdStckNo></ProductStock>");
+        given(client.put(eq(ElevenstListingAdapter.STOCK_QTY_PATH + "777"), anyString(), any()))
+                .willReturn(ElevenstXml.document("<ClientMessage><resultCode>200</resultCode></ClientMessage>"));
+
+        assertThat(adapter.updateOptionStocks(cell, List.of(new StockPush(single, 4)), null)).isEmpty();
     }
 }

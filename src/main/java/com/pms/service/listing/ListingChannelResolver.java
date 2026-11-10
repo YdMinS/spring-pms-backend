@@ -10,9 +10,9 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * Resolves the {@link ListingChannel} adapter for a platform (FEATURE_2608_06 / 3c). Spring injects every
- * {@link ListingChannel} bean; {@link #resolve} matches on {@link ListingChannel#platform()}. Currently only
- * COUPANG; the NAVER adapter joins later (3d) with no orchestration change.
+ * Resolves the {@link ListingChannel} adapter for a platform (FEATURE_2608_06 / 3c). Spring injects the
+ * {@link ListingChannel} beans as a list; {@link #resolve} matches on {@link ListingChannel#platform()}. Adapters
+ * today: COUPANG, ELEVENST, ESM and LOTTEON; NAVER has none yet.
  */
 @Component
 public class ListingChannelResolver {
@@ -35,10 +35,10 @@ public class ListingChannelResolver {
     }
 
     /**
-     * Non-throwing lookup (FEATURE_2608_06 / 77) — for <b>read</b> paths that merely enrich a response with
-     * channel-owned info. {@code getGenerated}/{@code regenerate}/{@code updateFieldValues}/{@code updateTags}
-     * all share one mapper; using {@link #resolve} there would 400 every one of them the moment a cell on a
-     * not-yet-supported platform (NAVER, until 3d) exists. Absent adapter = empty = "no opinion", not an error.
+     * Non-throwing lookup (FEATURE_2608_06 / 77) for callers that treat a platform without an adapter (NAVER
+     * today) as "no opinion" instead of a 400: the generated-product response (shippingReady), the option price
+     * and stock writes (ListingOptionServiceImpl), the stock push after a save (ChannelStockPushServiceImpl,
+     * FEATURE_2611_19) and repricing (RepricingServiceImpl). Absent adapter = empty, not an error.
      *
      * @param platform platform key (e.g. "COUPANG")
      * @return the matching adapter, or empty when none handles the platform

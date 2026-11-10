@@ -7,6 +7,7 @@ import com.pms.dto.request.SetOptionPricesRequest;
 import com.pms.dto.request.SetOptionStocksRequest;
 import com.pms.dto.response.ChannelApplyOptionNamesResponse;
 import com.pms.dto.response.ChannelPriceUpdateResponse;
+import com.pms.dto.response.ChannelStockUpdateResponse;
 import com.pms.dto.response.ListingOptionsResponse;
 import com.pms.service.listing.ListingOptionService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -50,9 +51,10 @@ public class ListingOptionController {
     }
 
     @PutMapping("/product-listings/{id}/options/stock")
-    @Operation(summary = "Set the stock quantity of some options (partial; null clears the override)")
+    @Operation(summary = "Set the stock quantity of some options (partial; null clears the override) and send it to "
+            + "the market (a refusal keeps the saved stock — reported in failed)")
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<ResponseDTO<ListingOptionsResponse>> setOptionStocks(
+    public ResponseEntity<ResponseDTO<ChannelStockUpdateResponse>> setOptionStocks(
             @PathVariable Long id, @Valid @RequestBody SetOptionStocksRequest request) {
         return ResponseEntity.ok(ResponseDTO.success(
                 listingOptionService.setOptionStocks(id, request.getStocks())));

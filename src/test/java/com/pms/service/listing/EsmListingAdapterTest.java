@@ -9,6 +9,7 @@ import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.exception.BusinessException;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -29,6 +30,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.http.HttpStatus;
 
 import java.math.BigDecimal;
 import java.util.LinkedHashMap;
@@ -40,6 +42,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 /** FEATURE_2610_26 / D13 · D20 · D21 · D23 · D24 · D25 · D28 · D29 · D30 · D31 · D33 · D54. */
@@ -282,5 +285,144 @@ class EsmListingAdapterTest {
         String json = JSON.writeValueAsString(body.getValue());
         assertThat(json).contains("\"images\":{\"basicImgURL\":\"https://s3/thumb.jpg\",\"addtionalImg1URL\":\"s3/a1.jpg\"}");
         assertThat(json).doesNotContain("s3/main.jpg");
+    }
+
+    // ---------------------------------------------------------------- FEATURE_2611_19 / D18 · D19 · D32 · D36 ~ D39
+
+    /** D19: all changed options or none — every active option needs an ESM option number, and the product a goods no. */
+    @Test
+    void stockPushTargets_allOrNothing() {
+        ProductListingOption a = option(11L, "작은", "10000", "9000", 5).toBuilder().platformOptionId("11").build();
+        ProductListingOption b = option(12L, "큰", "12000", "11000", 0).toBuilder().platformOptionId("12").build();
+        ProductListingOption fresh = option(13L, "새", "12000", "11000", 3);
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(a, b));
+
+        assertThat(adapter.pushesPriceByUpdate()).isTrue();
+        assertThat(adapter.pushesStock()).isTrue();
+        assertThat(adapter.stockPushTargets(cell, List.of(a))).containsExactly(a);
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(a, b, fresh));
+        assertThat(adapter.stockPushTargets(cell, List.of(a))).isEmpty();
+    }
+
+    /** Goods GET answer whose option block has rows 11 · 12 · 99 (99 = an option switched off in oclyx). */
+    private static final String GOODS_WITH_ROWS = "{\"itemAddtionalInfo\":{\"recommendedOpts\":{\"type\":1,"
+            + "\"isStockManage\":true,\"independent\":{\"recommendedOptName\":{\"koreanText\":\"크기\"},\"details\":["
+            + "{\"recommendedOptValue\":{\"koreanText\":\"작은\"},\"isSoldOut\":false,\"qty\":{\"gmkt\":4,\"iac\":4},"
+            + "\"manageCode\":\"11\",\"addAmntSite\":{\"gmkt\":0,\"iac\":0}},"
+            + "{\"recommendedOptValue\":{\"koreanText\":\"큰(마켓)\"},\"IsSoldOut\":false,\"Qty\":{\"Gmkt\":7,\"Iac\":7},"
+            + "\"ManageCode\":\"12\",\"addAmntSite\":{\"gmkt\":2000,\"iac\":2500}},"
+            + "{\"recommendedOptValue\":{\"koreanText\":\"꺼둔\"},\"isSoldOut\":false,\"qty\":{\"gmkt\":3,\"iac\":3},"
+            + "\"manageCode\":\"99\",\"addAmntSite\":{\"gmkt\":500,\"iac\":500}}]}}}}";
+
+    /**
+     * D32 · D36: option rows on ESM → post 26 with the block as read; only the paired row's qty / isSoldOut change
+     * (0 = sold out + 1, field names kept as ESM wrote them), names · surcharges · other rows as read. The local option
+     * set is not read at all.
+     */
+    @Test
+    void updateOptionStocks_optionRows_sendsTheBlockAsRead_onlyPairedStockChanged() throws Exception {
+        ProductListingOption b = option(12L, "큰", "14000", "14000", 0).toBuilder().platformOptionId("12").build();
+        given(client.get(eq("/item/v1/goods/2103374786"), eq(key))).willReturn(JSON.readTree(GOODS_WITH_ROWS));
+
+        assertThat(adapter.updateOptionStocks(cell, List.of(new StockPush(b, 0)), account)).isEmpty();
+
+        ArgumentCaptor<Object> body = ArgumentCaptor.forClass(Object.class);
+        verify(client).put(eq("/item/v1/goods/2103374786/recommended-options"), body.capture(), eq(key));
+        com.fasterxml.jackson.databind.JsonNode sent = JSON.valueToTree(body.getValue());
+        com.fasterxml.jackson.databind.JsonNode expected = JSON.readTree(GOODS_WITH_ROWS)
+                .path("itemAddtionalInfo").path("recommendedOpts");
+        ((com.fasterxml.jackson.databind.node.ObjectNode) expected.path("independent").path("details").path(1))
+                .put("IsSoldOut", true);
+        ((com.fasterxml.jackson.databind.node.ObjectNode) expected.path("independent").path("details").path(1)
+                .path("Qty")).put("Gmkt", 1).put("Iac", 1);
+        assertThat(sent).isEqualTo(expected);
+        verify(productListingOptionRepository, never()).findByProductListingId(any());
+    }
+
+    /** D37: a push without a row is refused, the paired one goes out; a refused post 26 = ESM text on the paired. */
+    @Test
+    void updateOptionStocks_unpairedPushRefused_post26RefusalOnPairedOnly() throws Exception {
+        ProductListingOption a = option(11L, "작은", "10000", "9000", 5).toBuilder().platformOptionId("11").build();
+        ProductListingOption fresh = option(13L, "새", "12000", "11000", 3).toBuilder().platformOptionId("13").build();
+        given(client.get(eq("/item/v1/goods/2103374786"), eq(key))).willReturn(JSON.readTree(GOODS_WITH_ROWS));
+        given(client.put(eq("/item/v1/goods/2103374786/recommended-options"), any(), eq(key)))
+                .willThrow(new BusinessException("[GMKT]재고를 확인하세요", HttpStatus.BAD_GATEWAY));
+
+        Map<Long, String> refused = adapter.updateOptionStocks(cell,
+                List.of(new StockPush(a, 6), new StockPush(fresh, 3)), account);
+
+        assertThat(refused).containsExactlyInAnyOrderEntriesOf(Map.of(
+                11L, "[GMKT]재고를 확인하세요", 13L, EsmListingAdapter.OPTION_NOT_FOUND));
+    }
+
+    /** D37: no push pairs with a row → post 26 is not called. */
+    @Test
+    void updateOptionStocks_nonePaired_noPost26() throws Exception {
+        ProductListingOption fresh = option(13L, "새", "12000", "11000", 3).toBuilder().platformOptionId("13").build();
+        given(client.get(eq("/item/v1/goods/2103374786"), eq(key))).willReturn(JSON.readTree(GOODS_WITH_ROWS));
+
+        assertThat(adapter.updateOptionStocks(cell, List.of(new StockPush(fresh, 3)), account))
+                .containsExactlyEntriesOf(Map.of(13L, EsmListingAdapter.OPTION_NOT_FOUND));
+        verify(client, never()).put(any(), any(), any());
+    }
+
+    /** D36 · D39 · D28: no option rows on ESM and one active option → post 194, both sites, 0 sent as 1. */
+    @Test
+    void updateOptionStocks_noOptionRows_oneActiveOption_sendsPost194_zeroAsOne() throws Exception {
+        ProductListingOption a = option(11L, "단품", "10000", "9000", 0).toBuilder().platformOptionId("11").build();
+        ProductListingOption off = option(12L, "꺼둔", "10000", "9000", 5).toBuilder().active(false).build();
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(a, off));
+        given(client.get(eq("/item/v1/goods/2103374786"), eq(key)))
+                .willReturn(JSON.readTree("{\"itemAddtionalInfo\":{\"recommendedOpts\":{\"type\":0}}}"));
+
+        assertThat(adapter.updateOptionStocks(cell, List.of(new StockPush(a, 0)), account)).isEmpty();
+
+        ArgumentCaptor<Object> body = ArgumentCaptor.forClass(Object.class);
+        verify(client).put(eq("/item/v1/goods/2103374786/stock"), body.capture(), eq(key));
+        assertThat(JSON.valueToTree(body.getValue()).toString()).isEqualTo("{\"stock\":{\"gmkt\":1,\"iac\":1}}");
+    }
+
+    /** D39: no option rows on ESM, two active options, both sent → both refused, nothing sent. */
+    @Test
+    void updateOptionStocks_noOptionRows_twoActiveOptions_bothSent_bothRefused() throws Exception {
+        ProductListingOption a = option(11L, "작은", "10000", "9000", 5).toBuilder().platformOptionId("11").build();
+        ProductListingOption b = option(12L, "큰", "12000", "11000", 2).toBuilder().platformOptionId("12").build();
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(a, b));
+        given(client.get(eq("/item/v1/goods/2103374786"), eq(key)))
+                .willReturn(JSON.readTree("{\"itemAddtionalInfo\":{\"recommendedOpts\":{\"type\":0}}}"));
+
+        assertThat(adapter.updateOptionStocks(cell, List.of(new StockPush(a, 5), new StockPush(b, 2)), account))
+                .containsExactlyInAnyOrderEntriesOf(Map.of(
+                        11L, EsmListingAdapter.OPTION_NOT_FOUND, 12L, EsmListingAdapter.OPTION_NOT_FOUND));
+        verify(client, never()).put(any(), any(), any());
+    }
+
+    /**
+     * D39: no option rows on ESM, two active options, only one saved → refused, nothing sent (its stock must not become
+     * the single-item product's stock — that product may be the other option).
+     */
+    @Test
+    void updateOptionStocks_noOptionRows_twoActiveOptions_oneSent_refused() throws Exception {
+        ProductListingOption a = option(11L, "작은", "10000", "9000", 5).toBuilder().platformOptionId("11").build();
+        ProductListingOption b = option(12L, "큰", "12000", "11000", 2).toBuilder().platformOptionId("12").build();
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(a, b));
+        given(client.get(eq("/item/v1/goods/2103374786"), eq(key)))
+                .willReturn(JSON.readTree("{\"itemAddtionalInfo\":{\"recommendedOpts\":{\"type\":0}}}"));
+
+        assertThat(adapter.updateOptionStocks(cell, List.of(new StockPush(b, 2)), account))
+                .containsExactlyEntriesOf(Map.of(12L, EsmListingAdapter.OPTION_NOT_FOUND));
+        verify(client, never()).put(any(), any(), any());
+    }
+
+    /** D38: the goods GET fails → the call throws (every push refused with that text) and nothing is sent. */
+    @Test
+    void updateOptionStocks_goodsReadFails_throws_nothingSent() {
+        ProductListingOption a = option(11L, "작은", "10000", "9000", 5).toBuilder().platformOptionId("11").build();
+        given(client.get(eq("/item/v1/goods/2103374786"), eq(key)))
+                .willThrow(new BusinessException("G마켓 · 옥션 호출 실패", HttpStatus.BAD_GATEWAY));
+
+        assertThatThrownBy(() -> adapter.updateOptionStocks(cell, List.of(new StockPush(a, 5)), account))
+                .hasMessage("G마켓 · 옥션 호출 실패");
+        verify(client, never()).put(any(), any(), any());
     }
 }
