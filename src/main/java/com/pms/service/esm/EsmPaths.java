@@ -29,6 +29,10 @@ public final class EsmPaths {
     public static final String GOODS = "/item/v1/goods";
     /** [21] price · stock · selling status — {@code /item/v1/goods/{goodsNo}/sell-status}. */
     public static final String SELL_STATUS = "/item/v1/goods/%s/sell-status";
+    /** [26] recommended options register / update — the whole option set (FEATURE_2611_19 / D19). */
+    public static final String RECOMMENDED_OPTIONS = "/item/v1/goods/%s/recommended-options";
+    /** [194] stock of a product sold without options (FEATURE_2611_19 / D19). */
+    public static final String STOCK = "/item/v1/goods/%s/stock";
 
     private EsmPaths() {
     }

@@ -16,7 +16,7 @@ import java.util.Map;
 @Getter
 @NoArgsConstructor
 @AllArgsConstructor
-@Builder
+@Builder(toBuilder = true)
 @Schema(description = "Master option (SKU variant) response")
 public class MasterOptionResponse {
 
@@ -53,9 +53,41 @@ public class MasterOptionResponse {
     private Integer stockQuantity;
 
     @Schema(description = "How many channel options were clamped down to the new master stock by this save "
-            + "(102/D5). 0 = none. Only meaningful on the update response; the change is NOT pushed to the "
-            + "market — the front prompts [수정 요청].", example = "0")
+            + "(102/D5). 0 = none. Only meaningful on the update response; the clamped stock is sent to the market "
+            + "with the other changed ones — see stockPushResults (FEATURE_2611_19 / D10).", example = "0")
     private int clampedChannels;
+
+    @Schema(description = "Update response only (FEATURE_2611_19 / D28): one line per channel option whose market "
+            + "stock this save changed, on a market that takes a stock push. Empty = nothing was sent; null on "
+            + "every other response.", nullable = true)
+    private List<StockPushResult> stockPushResults;
+
+    @Getter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    @Schema(description = "What happened to one channel option's stock on its way to the market (FEATURE_2611_19 / D28)")
+    public static class StockPushResult {
+
+        @Schema(description = "Channel listing ID", example = "100")
+        private Long productListingId;
+
+        @Schema(description = "Platform of the listing", example = "LOTTEON")
+        private String platform;
+
+        @Schema(description = "Seller name of the listing", nullable = true, example = "행복상회")
+        private String sellerName;
+
+        @Schema(description = "Channel option name", example = "2세트")
+        private String optionName;
+
+        @Schema(description = "PUSHED = the market took it · SKIPPED = saved only (no market number yet) · "
+                + "FAILED = the market refused, the stock stays saved", example = "PUSHED")
+        private String result;
+
+        @Schema(description = "The market's own text when FAILED, else null", nullable = true)
+        private String message;
+    }
 
     @Getter
     @NoArgsConstructor

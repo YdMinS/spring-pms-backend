@@ -121,7 +121,19 @@ class MasterProductServiceTest {
     @Mock private MasterPropagationService masterPropagationService;
     // 2609_45/D9: the matrix now asks the resolver which category each cell actually uses.
     @Mock private MasterChannelConfigService masterChannelConfigService;
+    // FEATURE_2611_19 / D26: the option save commits through the template, then the changed channel stocks are sent.
+    @Mock private org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+    @Mock private org.springframework.beans.factory.ObjectProvider<com.pms.service.listing.ChannelStockPushService>
+            channelStockPushServiceProvider;
+    @Mock private com.pms.service.listing.ChannelStockPushService channelStockPushService;
     @InjectMocks private MasterProductServiceImpl service;
+
+    @org.junit.jupiter.api.BeforeEach
+    void runTransactionCallbacksInPlace() {
+        lenient().when(transactionTemplate.execute(any())).thenAnswer(inv ->
+                inv.<org.springframework.transaction.support.TransactionCallback<?>>getArgument(0).doInTransaction(null));
+        lenient().when(channelStockPushServiceProvider.getObject()).thenReturn(channelStockPushService);
+    }
 
     private Seller seller(Long id, String name) {
         return Seller.builder().id(id).sellerName(name).businessRegistration(id + "-x").build();
@@ -2350,10 +2362,10 @@ class MasterProductServiceTest {
         verify(productListingOptionRepository, never()).saveAll(any());
     }
 
-    // (11-1) A clamp is a local write only: it must never trigger a regeneration or a channel structure sync
-    // (D5 forbids auto-pushing to the market — the front prompts [수정 요청] with clampedChannels).
+    // (11-1) A clamp never triggers a regeneration or a channel structure sync — the market only hears of it through the
+    // stock push after the save (FEATURE_2611_19 / D10).
     @Test
-    void updateOption_clamp_savesChannelOptionsOnlyAndNeverPushes() {
+    void updateOption_clamp_savesChannelOptionsOnly_noRegenerationOrStructureSync() {
         givenOptionWithStocks(50, 30);
 
         service.updateOption(1L, 10L, stockRequest(20));
@@ -2362,6 +2374,58 @@ class MasterProductServiceTest {
         verify(listingAssetService, never()).recalculateOptionPrices(any());
         verify(masterOptionChannelSync, never()).onOptionCreated(any(), any());
         verify(masterOptionChannelSync, never()).onOptionRenamed(any(), any(), any());
+    }
+
+    // FEATURE_2611_19 / D10 · D27 · D28: after the save, only the active linked options whose market stock moved are
+    // sent — one following the master, one pulled down; one below the new value and one switched off are not.
+    @Test
+    @SuppressWarnings("unchecked")
+    void updateOption_loweringMasterStock_sendsOnlyTheChangedActiveChannelOptions_andReturnsTheLines() {
+        MasterProductOption option = givenOptionWithStocks(50, null);
+        ProductListing cell = ProductListing.builder().id(100L).platform(Platform.LOTTEON).name("셀").build();
+        ProductListingOption follows = ProductListingOption.builder().id(5L).productListing(cell).optionName("따라감")
+                .masterProductOption(option).active(true).stockQuantity(null).build();
+        ProductListingOption above = follows.toBuilder().id(6L).optionName("높음").stockQuantity(30).build();
+        ProductListingOption below = follows.toBuilder().id(7L).optionName("낮음").stockQuantity(10).build();
+        ProductListingOption off = follows.toBuilder().id(8L).optionName("꺼짐").active(false).build();
+        // before the save · the clamp read · after the save (the clamp lowered 「높음」 to 20)
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(
+                List.of(follows, above, below, off),
+                List.of(follows, above, below, off),
+                List.of(follows, above.toBuilder().stockQuantity(20).build(), below, off));
+        given(channelStockPushService.push(any())).willReturn(List.of(
+                new com.pms.service.listing.StockPushLine(100L, Platform.LOTTEON, "행복상회", "따라감",
+                        com.pms.service.listing.StockPushLine.Result.PUSHED, null),
+                new com.pms.service.listing.StockPushLine(100L, Platform.LOTTEON, "행복상회", "높음",
+                        com.pms.service.listing.StockPushLine.Result.FAILED, "재고수량 형식 오류")));
+
+        MasterOptionResponse response = service.updateOption(1L, 10L, stockRequest(20));
+
+        ArgumentCaptor<java.util.Map<Long, List<Long>>> targets = ArgumentCaptor.forClass(java.util.Map.class);
+        InOrder order = inOrder(transactionTemplate, channelStockPushService);
+        order.verify(transactionTemplate).execute(any());
+        order.verify(channelStockPushService).push(targets.capture());
+        verify(productListingOptionRepository).saveAll(any());
+        assertThat(targets.getValue()).containsExactly(java.util.Map.entry(100L, List.of(5L, 6L)));
+        assertThat(response.getStockPushResults()).hasSize(2);
+        MasterOptionResponse.StockPushResult failed = response.getStockPushResults().get(1);
+        assertThat(failed.getProductListingId()).isEqualTo(100L);
+        assertThat(failed.getPlatform()).isEqualTo("LOTTEON");
+        assertThat(failed.getSellerName()).isEqualTo("행복상회");
+        assertThat(failed.getOptionName()).isEqualTo("높음");
+        assertThat(failed.getResult()).isEqualTo("FAILED");
+        assertThat(failed.getMessage()).isEqualTo("재고수량 형식 오류");
+    }
+
+    // FEATURE_2611_19 / D27: a save that leaves the master stock as it was sends nothing.
+    @Test
+    void updateOption_sameMasterStock_sendsNothing() {
+        givenOptionWithStocks(50, null);
+
+        MasterOptionResponse response = service.updateOption(1L, 10L, stockRequest(50));
+
+        verify(channelStockPushService, never()).push(any());
+        assertThat(response.getStockPushResults()).isEmpty();
     }
 
     // (12) The value round-trips, and null clears it (back to inheriting → the 9999 fallback).

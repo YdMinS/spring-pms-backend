@@ -1,6 +1,7 @@
 package com.pms.service.listing;
 
 import com.pms.domain.GeneratedContentSource;
+import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
@@ -14,8 +15,10 @@ import com.pms.dto.request.SetOptionPricesRequest;
 import com.pms.dto.request.SetOptionStocksRequest;
 import com.pms.dto.response.ChannelApplyOptionNamesResponse;
 import com.pms.dto.response.ChannelPriceUpdateResponse;
+import com.pms.dto.response.ChannelStockUpdateResponse;
 import com.pms.dto.response.ListingOptionsResponse;
 import com.pms.exception.ResourceNotFoundException;
+import com.pms.repository.GeneratedProductDataRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -30,7 +33,9 @@ import com.pms.service.esm.EsmPriceRules;
 import com.pms.service.price.PriceHistoryRecorder;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
@@ -67,6 +72,14 @@ public class ListingOptionServiceImpl implements ListingOptionService {
     private final ListingChannelResolver resolver;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final PriceHistoryRecorder priceHistoryRecorder;
+    /**
+     * FEATURE_2611_19 / D26: the stock save commits through this template first, then {@link #channelStockPushService}
+     * sends it — a market refusal can never roll the save back (D6).
+     */
+    private final TransactionTemplate transactionTemplate;
+    private final ChannelStockPushService channelStockPushService;
+    /** FEATURE_2611_19 / D18: the generated assets a whole-product price push re-sends. */
+    private final GeneratedProductDataRepository generatedProductDataRepository;
 
     @Override
     public ListingOptionsResponse getOptions(Long listingId) {
@@ -141,12 +154,26 @@ public class ListingOptionServiceImpl implements ListingOptionService {
 
     /**
      * Partial write: only the listed options change, and each value is independent (see
-     * {@link ListingOptionService#setOptionStocks}). Every validation runs before {@code saveAll} so a rejected
-     * request leaves nothing half-applied — the same principle as the two guards above.
+     * {@link ListingOptionService#setOptionStocks}). FEATURE_2611_19 / D26: {@code SUPPORTS} instead of the class's
+     * read-only transaction — called from the controller there is no transaction, so the template's own transaction
+     * commits the save before anything is sent (a caller that already holds a transaction keeps it). The market answer
+     * only adds lines to the response.
      */
     @Override
-    @Transactional
-    public ListingOptionsResponse setOptionStocks(Long listingId, List<SetOptionStocksRequest.OptionStock> stocks) {
+    @Transactional(propagation = Propagation.SUPPORTS)
+    public ChannelStockUpdateResponse setOptionStocks(Long listingId,
+                                                      List<SetOptionStocksRequest.OptionStock> stocks) {
+        ListingOptionsResponse saved = transactionTemplate.execute(status -> saveOptionStocks(listingId, stocks));
+        List<Long> optionIds = stocks.stream().map(SetOptionStocksRequest.OptionStock::getOptionId).distinct().toList();
+        List<StockPushLine> lines = channelStockPushService.push(Map.of(listingId, optionIds));
+        return ChannelStockUpdateResponse.of(saved, lines);
+    }
+
+    /**
+     * The stock save itself. Every validation runs before {@code saveAll} so a rejected request leaves nothing
+     * half-applied — the same principle as the two guards above.
+     */
+    private ListingOptionsResponse saveOptionStocks(Long listingId, List<SetOptionStocksRequest.OptionStock> stocks) {
         ProductListing listing = productListingRepository.findScopedById(listingId)
                 .orElseThrow(() -> new ResourceNotFoundException("ProductListing", listingId));
 
@@ -189,7 +216,10 @@ public class ListingOptionServiceImpl implements ListingOptionService {
         List<ProductListingOption> merged = options.stream()
                 .map(option -> toSave.getOrDefault(option.getId(), option))
                 .toList();
-        boolean needsResync = listing.getStatus() != null && listing.getStatus() != ListingStatus.DRAFT;
+        // FEATURE_2611_19 / D7: a market that takes the stock right away needs no [수정 요청] prompt.
+        boolean pushesStock = resolver.resolveOptional(listing.getPlatform())
+                .map(ListingChannel::pushesStock).orElse(false);
+        boolean needsResync = !pushesStock && listing.getStatus() != null && listing.getStatus() != ListingStatus.DRAFT;
         return ListingOptionsResponse.of(listing, merged, needsResync,
                 registrationName(listing, merged), masterById);
     }
@@ -199,8 +229,9 @@ public class ListingOptionServiceImpl implements ListingOptionService {
      * this different from the two writes above: the new price is pushed to the market inside this request
      * (D4), and an option is saved only once the market has accepted it (D6) — so the market call happens
      * <em>before</em> {@code saveAll}, and its failures are caught rather than thrown (a thrown exception
-     * would roll back the options that did succeed). An 11st listing pushes nothing — every option is saved
-     * locally (FEATURE_2610_13 / D9 ⑤ · D56); an ESM listing likewise, and it carries the Auction price too
+     * would roll back the options that did succeed). An 11st or ESM listing (one product price + surcharges) sends the
+     * whole product once instead, inside this transaction, and its refusal is thrown — nothing is saved
+     * (FEATURE_2611_19 / D18 · {@link #pushWholeProduct}). An ESM listing carries the Auction price too
      * (FEATURE_2610_26 / D53 ②).
      */
     @Override
@@ -258,29 +289,27 @@ public class ListingOptionServiceImpl implements ListingOptionService {
         }
 
         // 2. Push to the market, then keep only what it accepted.
-        // 2610_13 / D9 ⑤ · D56: 11st has no per-option price push — its price travels with the next [수정 요청],
-        // so an 11st listing takes the "no adapter" path (saved locally, reported in skipped). 2610_26 / D53 ②: an
-        // ESM listing takes the same path. LotteON too: its adapter has no per-option price push, and the price
-        // travels with the next [수정 요청] (modify payload carries slPrc per item).
-        ListingChannel adapter = ElevenstListingRules.isElevenst(listing) || esm
-                || listing.getPlatform() == Platform.LOTTEON
-                ? null
-                : resolver.resolveOptional(listing.getPlatform()).orElse(null);
+        // FEATURE_2611_19 / D18: 11st · ESM take the whole product instead (one call, refusal = nothing saved).
+        ListingChannel adapter = resolver.resolveOptional(listing.getPlatform()).orElse(null);
+        if (adapter != null && adapter.pushesPriceByUpdate()) {
+            return pushWholeProduct(listing, options, byId, targets, auctionTargets, esm, adapter);
+        }
         List<String> skipped = new ArrayList<>();
         List<ChannelPriceUpdateResponse.FailedOption> failed = new ArrayList<>();
         Map<Long, ProductListingOption> toSave = new LinkedHashMap<>();
         int pushed = 0;
         // Resolved up front, and only when something is actually going to be sent: a missing/inactive account
         // is a request-level 404/400, not a per-option failure, so it must not land inside the catch below.
-        boolean anyToPush = adapter != null && targets.keySet().stream()
-                .anyMatch(id -> StringUtils.hasText(byId.get(id).getPlatformOptionId()));
+        boolean anyToPush = adapter != null && targets.keySet().stream().map(byId::get)
+                .anyMatch(ListingOptionServiceImpl::sendsPrice);
         MarketplaceAccount account = anyToPush ? resolveAccount(listing) : null;
         for (Map.Entry<Long, TargetPrice> entry : targets.entrySet()) {
             ProductListingOption option = byId.get(entry.getKey());
             TargetPrice target = entry.getValue();
-            // No market identifier (unapproved option / DRAFT cell) or no adapter for this platform → the
-            // price is ours alone to keep; it reaches the market with the next register/[수정 요청] (D5).
-            if (adapter == null || !StringUtils.hasText(option.getPlatformOptionId())) {
+            // No market identifier (unapproved option / DRAFT cell), a switched-off option (FEATURE_2611_19 / D25) or
+            // no adapter for this platform → the price is ours alone to keep; it reaches the market with the next
+            // register/[수정 요청] (D5).
+            if (adapter == null || !sendsPrice(option)) {
                 skipped.add(option.getOptionName());
                 // pushed=false: nothing reached the market, so market_price must stay as it was (2609_39/D19).
                 toSave.put(option.getId(), applied(option, target, auctionTargets.get(option.getId()), false));
@@ -298,9 +327,82 @@ public class ListingOptionServiceImpl implements ListingOptionService {
         }
         productListingOptionRepository.saveAll(List.copyOf(toSave.values()));
 
-        // Price history hook ④ (PLAN 2609_28 D23). Only what was actually saved is recorded — an option the
-        // market rejected keeps its old price, so it is not a change. Dropping a manual price back to AUTO
-        // is a movement too and belongs to this path, hence MANUAL for both directions.
+        recordPriceHistory(listing, byId, toSave, esm);
+        return priceResponse(listing, options, toSave, pushed, skipped, failed);
+    }
+
+    /**
+     * FEATURE_2611_19 / D18 · D25: an 11st / ESM listing. Every target price is saved; an option is sent (pushed) when it
+     * is active and the listing can take the whole product now — a market number, generated assets and a market number
+     * on every active option. Then the adapter re-sends the whole product once; its exception propagates and rolls the
+     * whole save back (no price history either). On success every active option's market price record = the local
+     * price just sent (D33). Status, tag history and {@code needsMarketSync} are not touched (the
+     * [수정 요청] after-work of {@code ListingRegistrationServiceImpl.updateRequest} is not run).
+     */
+    private ChannelPriceUpdateResponse pushWholeProduct(ProductListing listing, List<ProductListingOption> options,
+                                                        Map<Long, ProductListingOption> byId,
+                                                        Map<Long, TargetPrice> targets,
+                                                        Map<Long, TargetPrice> auctionTargets, boolean esm,
+                                                        ListingChannel adapter) {
+        GeneratedProductData gen = generatedProductDataRepository.findByProductListingId(listing.getId()).orElse(null);
+        boolean sendable = StringUtils.hasText(listing.getPlatformProductId()) && gen != null
+                && options.stream().filter(o -> Boolean.TRUE.equals(o.getActive()))
+                        .allMatch(o -> StringUtils.hasText(o.getPlatformOptionId()));
+        List<String> skipped = new ArrayList<>();
+        Map<Long, ProductListingOption> toSave = new LinkedHashMap<>();
+        int pushed = 0;
+        for (Map.Entry<Long, TargetPrice> entry : targets.entrySet()) {
+            ProductListingOption option = byId.get(entry.getKey());
+            boolean send = sendable && Boolean.TRUE.equals(option.getActive());
+            toSave.put(option.getId(), applied(option, entry.getValue(), auctionTargets.get(option.getId()), send));
+            if (send) {
+                pushed++;
+            } else {
+                skipped.add(option.getOptionName());
+            }
+        }
+        // Resolved before the save: a missing / inactive account is a request-level 404 / 400 (D21).
+        MarketplaceAccount account = pushed > 0 ? resolveAccount(listing) : null;
+        productListingOptionRepository.saveAll(List.copyOf(toSave.values()));
+        Map<Long, ProductListingOption> shown = new LinkedHashMap<>();
+        if (pushed > 0) {
+            adapter.update(listing, gen, account);
+            // D33: the update sent every active option's local price, so the untouched active options' market price
+            // record follows too (the edited ones got theirs from applied above).
+            List<ProductListingOption> sentAsIs = options.stream()
+                    .filter(o -> Boolean.TRUE.equals(o.getActive()) && !toSave.containsKey(o.getId()))
+                    .map(o -> marketPriceRecorded(o, esm))
+                    .toList();
+            if (!sentAsIs.isEmpty()) {
+                productListingOptionRepository.saveAll(sentAsIs);
+            }
+            sentAsIs.forEach(o -> shown.put(o.getId(), o));
+        }
+        recordPriceHistory(listing, byId, toSave, esm);
+        shown.putAll(toSave);
+        return priceResponse(listing, options, shown, pushed, skipped, List.of());
+    }
+
+    /**
+     * FEATURE_2611_19 / D33: an option the whole-product update sent unchanged — its local price is now the market's
+     * (the Auction price too on ESM), as after a register (ListingRegistrationServiceImpl 2609_39/D19 ③).
+     */
+    private static ProductListingOption marketPriceRecorded(ProductListingOption option, boolean esm) {
+        ProductListingOption.ProductListingOptionBuilder builder = option.toBuilder()
+                .marketPrice(option.getSellingPrice()).marketPriceAt(LocalDateTime.now(SyncWindow.KST));
+        if (esm) {
+            builder.auctionMarketPrice(option.getAuctionSellingPrice());
+        }
+        return builder.build();
+    }
+
+    /**
+     * Price history hook ④ (PLAN 2609_28 D23). Only what was actually saved is recorded — an option the market rejected
+     * keeps its old price, so it is not a change. Dropping a manual price back to AUTO is a movement too and belongs to
+     * this path, hence MANUAL for both directions.
+     */
+    private void recordPriceHistory(ProductListing listing, Map<Long, ProductListingOption> byId,
+                                    Map<Long, ProductListingOption> toSave, boolean esm) {
         priceHistoryRecorder.recordSellingPrices(listing,
                 toSave.values().stream()
                         .map(saved -> new PriceHistoryRecorder.SellingPriceChange(saved,
@@ -316,8 +418,13 @@ public class ListingOptionServiceImpl implements ListingOptionService {
                             .toList(),
                     PriceChangeReason.MANUAL);
         }
+    }
 
-        // Return the full option set with the saved rows swapped in (setOptionStocks' closing block).
+    /** The full option set with the saved rows swapped in (setOptionStocks' closing block) + the push counts. */
+    private ChannelPriceUpdateResponse priceResponse(ProductListing listing, List<ProductListingOption> options,
+                                                     Map<Long, ProductListingOption> toSave, int pushed,
+                                                     List<String> skipped,
+                                                     List<ChannelPriceUpdateResponse.FailedOption> failed) {
         List<ProductListingOption> merged = options.stream()
                 .map(option -> toSave.getOrDefault(option.getId(), option))
                 .toList();
@@ -485,6 +592,11 @@ public class ListingOptionServiceImpl implements ListingOptionService {
         }
     }
 
+    /** D5 · FEATURE_2611_19 / D25: a per-option price push goes to an active option the market has numbered. */
+    private static boolean sendsPrice(ProductListingOption option) {
+        return Boolean.TRUE.equals(option.getActive()) && StringUtils.hasText(option.getPlatformOptionId());
+    }
+
     /** The prices an option is about to get, held until the market has accepted them (D6). */
     private record TargetPrice(BigDecimal salePrice, BigDecimal originalPrice, GeneratedContentSource source) {
     }
@@ -522,6 +634,10 @@ public class ListingOptionServiceImpl implements ListingOptionService {
         }
         if (pushed) {
             builder.marketPrice(target.salePrice()).marketPriceAt(LocalDateTime.now(SyncWindow.KST));
+            // FEATURE_2611_19 / D18: an ESM whole-product push sends the Auction price as well.
+            if (auction != null) {
+                builder.auctionMarketPrice(auction.salePrice());
+            }
         }
         return builder.build();
     }

@@ -1941,4 +1941,28 @@ class CoupangListingAdapterTest {
         assertThat(product.detailHtml()).isEqualTo("<img src=\"https://cdn/detail-1.jpg\">\n<p>설명</p>");
         assertThat(product.imageNotice()).isNull();
     }
+
+    // ---------------------------------------------------------------- FEATURE_2611_19 / D16: item stock change
+
+    /** D16: one UPDATE_PRODUCT_QUANTITY_BY_ITEM per option on the seller_api path (real properties); 0 goes as 0. */
+    @Test
+    void updateOptionStocks_sellerApiQuantityPath_perOption_refusalIsThatOptionOnly() {
+        org.springframework.test.util.ReflectionTestUtils.setField(
+                adapter, "properties", new com.pms.config.CoupangProperties());
+        given(client.put(eq("/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/V-1/quantities/0"),
+                anyString(), any())).willReturn("{\"code\":\"SUCCESS\",\"message\":\"재고 변경을 완료했습니다.\"}");
+        given(client.put(eq("/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/V-2/quantities/7"),
+                anyString(), any())).willReturn("{\"code\":\"ERROR\",\"message\":\"삭제된 상품은 변경이 불가능합니다\"}");
+        ProductListingOption a = ProductListingOption.builder().id(1L).optionName("a").platformOptionId("V-1").build();
+        ProductListingOption b = ProductListingOption.builder().id(2L).optionName("b").platformOptionId("V-2").build();
+        ProductListingOption none = ProductListingOption.builder().id(3L).optionName("c").build();
+
+        assertThat(adapter.pushesStock()).isTrue();
+        assertThat(adapter.stockPushTargets(ProductListing.builder().id(9L).build(), List.of(a, b, none)))
+                .containsExactly(a, b);
+        java.util.Map<Long, String> refused = adapter.updateOptionStocks(ProductListing.builder().id(9L).build(),
+                List.of(new StockPush(a, 0), new StockPush(b, 7)), MarketplaceAccount.builder().build());
+
+        assertThat(refused).containsExactly(java.util.Map.entry(2L, "쿠팡 재고변경 실패: 삭제된 상품은 변경이 불가능합니다"));
+    }
 }

@@ -54,12 +54,14 @@ import com.pms.repository.ProductListingRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.repository.SellerRepository;
 import com.pms.service.listing.CellBomResolver;
+import com.pms.service.listing.ChannelStockPushService;
 import com.pms.service.listing.ListingOptionNames;
 import com.pms.service.listing.ListingStockPolicy;
 import com.pms.service.listing.MarketOptionPolicy;
 import com.pms.service.listing.MasterOptionChannelSync;
 import com.pms.service.listing.MasterPropagationService;
 import com.pms.service.listing.OptionCheckSuffix;
+import com.pms.service.listing.StockPushLine;
 import com.pms.service.listing.TagMergeService;
 import com.pms.service.listing.shipping.ElevenstShippingKeys;
 import com.pms.service.listing.shipping.EsmShippingKeys;
@@ -70,8 +72,11 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -131,6 +136,16 @@ public class MasterProductServiceImpl implements MasterProductService {
     private final RegistrationNameGenerator registrationNameGenerator;
     private final OptionCheckSuffixResolver optionCheckSuffixResolver;
     private final MasterChannelConfigService masterChannelConfigService;
+    /**
+     * FEATURE_2611_19 / D26: the option save commits through this template first, then the changed channel stocks are
+     * sent — a market refusal can never roll the save back (D6).
+     */
+    private final TransactionTemplate transactionTemplate;
+    /**
+     * FEATURE_2611_19 / D10: sends the changed channel stocks. Looked up on use — the push service reaches the channel
+     * adapters, and the Coupang adapter depends on this service (a constructor reference would be a cycle).
+     */
+    private final ObjectProvider<ChannelStockPushService> channelStockPushService;
 
     private static final String IMAGE_STORAGE_CATEGORY = "master";
 
@@ -1158,9 +1173,26 @@ public class MasterProductServiceImpl implements MasterProductService {
         return mapToOptionResponse(option, toVector(request), lockedOptionIds.contains(option.getId()), 0);
     }
 
+    /**
+     * FEATURE_2611_19 / D10 · D26 · D27 · D28: {@code SUPPORTS} instead of a write transaction — called from the
+     * controller there is no transaction, so {@link #saveOption} commits in the template's own transaction first (a
+     * caller that already holds a transaction keeps it); then every active channel option whose market stock this save
+     * changed is sent, and the lines come back in {@code stockPushResults}.
+     */
     @Override
-    @Transactional
+    @Transactional(propagation = Propagation.SUPPORTS)
     public MasterOptionResponse updateOption(Long masterId, Long optionId, MasterOptionRequest request) {
+        SavedOption saved = transactionTemplate.execute(status -> saveOption(masterId, optionId, request));
+        List<StockPushLine> lines = saved.stockTargets().isEmpty()
+                ? List.of()
+                : channelStockPushService.getObject().push(saved.stockTargets());
+        return saved.response().toBuilder()
+                .stockPushResults(lines.stream().map(MasterProductServiceImpl::toStockPushResult).toList())
+                .build();
+    }
+
+    /** The option save itself (one transaction) + the channel options whose market stock it changed (D27). */
+    private SavedOption saveOption(Long masterId, Long optionId, MasterOptionRequest request) {
         requireScopedMaster(masterId);
         MasterProductOption option = requireOption(masterId, optionId);
 
@@ -1197,6 +1229,10 @@ public class MasterProductServiceImpl implements MasterProductService {
             vector = oldVector;
         }
 
+        // FEATURE_2611_19 / D27: the market stock of every linked active channel option BEFORE the save — read now,
+        // because the save below writes the new master stock into the managed `option`.
+        Map<Long, Map<Long, Integer>> stocksBefore = marketStocks(masterId, option);
+
         // Override fields follow the items rule: a given id/map replaces, null keeps the existing override.
         // For the category-meta maps, null = keep existing; a value (empty map included) = replace (59).
         MasterProductOption updated = optionRepository.save(option.toBuilder()
@@ -1219,7 +1255,60 @@ public class MasterProductServiceImpl implements MasterProductService {
         // outside resyncChannels' early return.
         int clampedChannels = clampChannelStocks(masterId, updated);
         // Reuse the judgement computed above — re-running the helper would double the lock queries per save.
-        return mapToOptionResponse(updated, vector, locked, clampedChannels);
+        return new SavedOption(mapToOptionResponse(updated, vector, locked, clampedChannels),
+                changedStocks(stocksBefore, marketStocks(masterId, updated)));
+    }
+
+    /** {@link #saveOption}'s result: the response + the channel options to send, per listing (D27). */
+    private record SavedOption(MasterOptionResponse response, Map<Long, List<Long>> stockTargets) {
+    }
+
+    /**
+     * FEATURE_2611_19 / D27: the market stock ({@link ListingStockPolicy#resolve} — channel ?? master ?? 9999) of every
+     * <b>active</b> channel option linked to {@code masterOption}, by listing id → option id.
+     */
+    private Map<Long, Map<Long, Integer>> marketStocks(Long masterId, MasterProductOption masterOption) {
+        Map<Long, Map<Long, Integer>> byListing = new LinkedHashMap<>();
+        for (ProductListing cell : productListingRepository.findByMasterProductId(masterId)) {
+            Map<Long, Integer> stocks = new LinkedHashMap<>();
+            productListingOptionRepository.findByProductListingId(cell.getId()).stream()
+                    .filter(cellOption -> linkedTo(cellOption, masterOption.getId()))
+                    .filter(cellOption -> Boolean.TRUE.equals(cellOption.getActive()))
+                    .forEach(cellOption -> stocks.put(cellOption.getId(),
+                            ListingStockPolicy.resolve(cellOption, masterOption)));
+            if (!stocks.isEmpty()) {
+                byListing.put(cell.getId(), stocks);
+            }
+        }
+        return byListing;
+    }
+
+    /** FEATURE_2611_19 / D27: the options whose market stock moved (a stock that stayed the same is not sent). */
+    private static Map<Long, List<Long>> changedStocks(Map<Long, Map<Long, Integer>> before,
+                                                       Map<Long, Map<Long, Integer>> after) {
+        Map<Long, List<Long>> changed = new LinkedHashMap<>();
+        after.forEach((listingId, stocks) -> {
+            Map<Long, Integer> old = before.getOrDefault(listingId, Map.of());
+            List<Long> moved = stocks.entrySet().stream()
+                    .filter(e -> !Objects.equals(old.get(e.getKey()), e.getValue()))
+                    .map(Map.Entry::getKey)
+                    .toList();
+            if (!moved.isEmpty()) {
+                changed.put(listingId, moved);
+            }
+        });
+        return changed;
+    }
+
+    private static MasterOptionResponse.StockPushResult toStockPushResult(StockPushLine line) {
+        return MasterOptionResponse.StockPushResult.builder()
+                .productListingId(line.productListingId())
+                .platform(line.platform() == null ? null : line.platform().name())
+                .sellerName(line.sellerName())
+                .optionName(line.optionName())
+                .result(line.result().name())
+                .message(line.message())
+                .build();
     }
 
     @Override
@@ -1574,9 +1663,10 @@ public class MasterProductServiceImpl implements MasterProductService {
      * 102/D5: a channel's stock may never exceed the master's, so lowering the master pulls every channel
      * option that sits above the new ceiling down to it. Returns how many channel options were lowered.
      *
-     * <p>⚠️ The change is deliberately NOT pushed to the market (no auto-push rule): the count travels back in
-     * the response so the front can prompt [수정 요청]. The matching axis is {@code master_product_option_id}
-     * (2609_22/D1) — the same one {@link #resyncChannels} uses; do not invent a second one.</p>
+     * <p>FEATURE_2611_19 / D10: the lowered stock is sent to the market by {@link #updateOption} after the save commits
+     * (with every other changed one — D27); the count travels back in the response. The matching axis is
+     * {@code master_product_option_id} (2609_22/D1) — the same one {@link #resyncChannels} uses; do not invent a
+     * second one.</p>
      */
     private int clampChannelStocks(Long masterId, MasterProductOption updated) {
         int ceiling = ListingStockPolicy.ceiling(updated);

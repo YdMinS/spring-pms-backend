@@ -11,9 +11,11 @@ import java.util.List;
  *                contains an {@code options} array of its own (D14).
  * @param pushed  how many options actually reached the market
  * @param skipped names of options saved locally only, because they carry no market identifier yet
- *                (not approved / DRAFT cell, D5) or their platform takes no price push (11st, FEATURE_2610_13 /
- *                D9 ⑤ · D56)
- * @param failed  options the market rejected — those are <b>not saved</b> (D6); the message is Coupang's own
+ *                (not approved / DRAFT cell, D5), because a whole-product market (11st · ESM) does not have every
+ *                active option yet, or because they are switched off (FEATURE_2611_19 / D18 · D25)
+ * @param failed  options the market rejected — those are <b>not saved</b> (D6); the message is the market's own. A
+ *                whole-product market (11st · ESM) never fills it: its refusal fails the request (FEATURE_2611_19 /
+ *                D18). The stock save reads {@code failed} the other way round — see {@link ChannelStockUpdateResponse}
  */
 public record ChannelPriceUpdateResponse(ListingOptionsResponse listing, int pushed,
                                          List<String> skipped, List<FailedOption> failed) {

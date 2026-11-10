@@ -87,6 +87,13 @@ public class CoupangProperties {
     private String vendorItemPricePath =
             "/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendorItemId}/prices/{price}";
 
+    /**
+     * Per-item (vendorItem) stock change UPDATE_PRODUCT_QUANTITY_BY_ITEM (FEATURE_2611_19 / D16). {vendorItemId} ·
+     * {quantity} are replaced at call time; no body. Same seller_api group as the price path above.
+     */
+    private String vendorItemQuantityPath =
+            "/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendorItemId}/quantities/{quantity}";
+
     /** 송장업로드(발송처리) 경로. {vendorId} 치환. 상품준비중(INSTRUCT)→배송지시(DEPARTURE) 전환. */
     private String invoicesPath = "/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/orders/invoices";
 

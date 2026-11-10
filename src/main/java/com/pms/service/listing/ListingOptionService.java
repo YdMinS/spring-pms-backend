@@ -5,6 +5,7 @@ import com.pms.dto.request.SetOptionPricesRequest;
 import com.pms.dto.request.SetOptionStocksRequest;
 import com.pms.dto.response.ChannelApplyOptionNamesResponse;
 import com.pms.dto.response.ChannelPriceUpdateResponse;
+import com.pms.dto.response.ChannelStockUpdateResponse;
 import com.pms.dto.response.ListingOptionsResponse;
 
 import java.util.List;
@@ -15,10 +16,10 @@ import java.util.List;
  * pushes; deactivated options keep their row (re-activation + order mapping preserved) but are excluded from the
  * payload.
  *
- * <p>⚠️ The active-set and stock writes only change local values + report whether a re-push is needed — they never
- * auto-push to the market (register/update are separate explicit actions). {@link #setOptionPrices} is the one
- * exception (2609_19): a price change is a partial market update that needs no re-approval, so it is sent right
- * away.</p>
+ * <p>⚠️ The active-set and name writes only change local values + report whether a re-push is needed — they never
+ * auto-push to the market (register/update are separate explicit actions). {@link #setOptionPrices} (2609_19) and
+ * {@link #setOptionStocks} (FEATURE_2611_19 / D1) are the exceptions: a price or stock change is sent right away and
+ * needs no re-approval.</p>
  */
 public interface ListingOptionService {
 
@@ -47,10 +48,12 @@ public interface ListingOptionService {
      * again (and 9999 if the master leaves it unset too). Empty list → 400; ids not belonging to the listing →
      * 400; a value above the option's ceiling (master stock ?? 9999) → 400, thrown before anything is saved.</p>
      *
-     * <p>⚠️ Like the active-set write, this never pushes to the market — {@code needsResync} tells the front to
-     * send the change with [수정 요청].</p>
+     * <p>FEATURE_2611_19 / D1 · D26: once the save has committed, the listed options are sent to the market through
+     * {@link ChannelStockPushService} — Coupang · LotteON · 11st · ESM. A refusal keeps the saved stock and comes back in
+     * {@code failed} (D6); {@code listing.needsResync} is then false. On a platform without a stock push nothing is
+     * sent and {@code needsResync} tells the front to send the change with [수정 요청] (D7).</p>
      */
-    ListingOptionsResponse setOptionStocks(Long listingId, List<SetOptionStocksRequest.OptionStock> stocks);
+    ChannelStockUpdateResponse setOptionStocks(Long listingId, List<SetOptionStocksRequest.OptionStock> stocks);
 
     /**
      * Set the selling price of some options of a channel listing by hand and push the new price to the market
@@ -60,21 +63,25 @@ public interface ListingOptionService {
      * marks the option {@code MANUAL_OVERRIDE} so a cell regeneration leaves it alone (D2). The display
      * (strike-through) price is refreshed alongside so the market never shows "sale price &gt; original" (D7).</p>
      *
-     * <p>⚠️ Unlike the other two writes this one <b>does</b> reach the market: Coupang changes an item's price
-     * without re-approval, so no {@code needsResync} prompt is raised. An option with no market identifier
+     * <p>⚠️ This write reaches the market: Coupang and LotteON change an item's price without re-approval, so no
+     * {@code needsResync} prompt is raised (FEATURE_2611_19 / D3 · D4). An option with no market identifier
      * (unapproved / DRAFT cell) is saved locally and reported in {@code skipped} (D5); an option the market
      * refuses is <b>not saved</b> and is reported in {@code failed} (D6) — the request still returns 200.</p>
      *
      * <p>Empty list → 400; ids not belonging to the listing → 400; an option going back to AUTO whose price
      * cannot be computed (category/fees/delivery/box/margin unset) → 400 with nothing saved (D16).</p>
      *
-     * <p>FEATURE_2610_13: on an 11st listing a typed price off the 10-won unit → 400 (D71), and nothing is pushed —
-     * every option is saved locally and reported in {@code skipped}; 11st gets the price with [수정 요청] (D9 ⑤ ·
-     * D56).</p>
+     * <p>FEATURE_2610_13: on an 11st listing a typed price off the 10-won unit → 400 (D71).</p>
      *
      * <p>FEATURE_2610_26 / D53 ②: on an ESM listing each row also carries {@code auctionSellingPrice} (null = back to
      * the calculated Auction price; only the typed site turns {@code MANUAL_OVERRIDE}), a typed Gmarket or Auction
-     * price off the 10-won unit → 400, and nothing is pushed — the same local save as 11st.</p>
+     * price off the 10-won unit → 400.</p>
+     *
+     * <p>FEATURE_2611_19 / D18: an 11st or ESM listing sends the price by re-sending the whole product once, inside this
+     * request's transaction, when the listing has a market number and generated assets and every active option has a
+     * market number — else every option is saved locally and reported in {@code skipped}. A refusal there fails the
+     * whole request (502, nothing saved, no price history); listing status, tag history and the 「마켓 반영 필요」 flag
+     * stay as they are.</p>
      */
     ChannelPriceUpdateResponse setOptionPrices(Long listingId, List<SetOptionPricesRequest.OptionPrice> prices);
 
