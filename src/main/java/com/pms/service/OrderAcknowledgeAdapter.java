@@ -10,7 +10,8 @@ import java.util.Set;
 
 /**
  * Per-marketplace order confirmation ([발주처리]) — FEATURE_2610_23 / D21, the same shape as {@code ClaimSyncAdapter}.
- * Implementations: {@link CoupangOrderAcknowledgeAdapter} · {@link ElevenstOrderAcknowledgeAdapter}.
+ * Implementations: {@link CoupangOrderAcknowledgeAdapter} · {@link ElevenstOrderAcknowledgeAdapter} ·
+ * {@link LotteonOrderAcknowledgeAdapter}.
  *
  * <p>{@link OrderAcknowledgeServiceImpl} sorts the lines first (no adapter · no delivery bundle = unsupported, not
  * paid = skipped) and hands each adapter only its own paid lines. A marketplace without an adapter keeps the

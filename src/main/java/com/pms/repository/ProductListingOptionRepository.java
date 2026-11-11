@@ -93,6 +93,30 @@ public interface ProductListingOptionRepository extends JpaRepository<ProductLis
                                                          @Param("prdNo") String prdNo);
 
     /**
+     * The option a LotteON order line was sold as (FEATURE_2611_23 / D12): our option id read from the order's
+     * {@code eitmNo}, accepted only when it belongs to a LotteON listing of the same sales channel (the account's
+     * seller).
+     *
+     * @return empty when the id belongs to another channel or another platform
+     */
+    @Query("select o from ProductListingOption o join o.productListing l, MarketplaceAccount a "
+            + "where o.id = :optionId and a.id = :accountId and l.seller = a.seller "
+            + "and l.platform = com.pms.domain.Platform.LOTTEON")
+    Optional<ProductListingOption> findLotteonOrderOption(@Param("optionId") Long optionId,
+                                                          @Param("accountId") Long accountId);
+
+    /**
+     * The options of the account seller's LotteON listings whose stored market option id is the order's
+     * {@code sitmNo} (FEATURE_2611_23 / D12), oldest first.
+     */
+    @Query("select o from ProductListingOption o join o.productListing l, MarketplaceAccount a "
+            + "where a.id = :accountId and l.seller = a.seller "
+            + "and l.platform = com.pms.domain.Platform.LOTTEON "
+            + "and o.platformOptionId = :sitmNo order by o.id asc")
+    List<ProductListingOption> findLotteonOptionsByMarketId(@Param("accountId") Long accountId,
+                                                            @Param("sitmNo") String sitmNo);
+
+    /**
      * Delete all options for a specific product listing.
      *
      * @param productListingId ID of the parent ProductListing

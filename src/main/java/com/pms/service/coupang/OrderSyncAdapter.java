@@ -6,7 +6,8 @@ import com.pms.service.coupang.OrderSyncFacade.OrderSyncResult;
 
 /**
  * Per-marketplace order sync round (FEATURE_2610_23 / D21 — one frame per function, the same shape as
- * {@code ClaimSyncAdapter}). Implementations: {@link CoupangOrderSyncAdapter} · {@link ElevenstOrderSyncAdapter}.
+ * {@code ClaimSyncAdapter}). Implementations: {@link CoupangOrderSyncAdapter} · {@link ElevenstOrderSyncAdapter} ·
+ * {@link LotteonOrderSyncAdapter}.
  *
  * <p>Callers pick the one adapter whose {@link #platform()} matches the account. A marketplace without an adapter
  * is not a sync target (D14) — the scheduled and the seller / all rounds skip it, and the screen's target list does

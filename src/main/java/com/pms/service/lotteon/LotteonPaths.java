@@ -1,7 +1,7 @@
 package com.pms.service.lotteon;
 
 /**
- * LotteON Open API paths (FEATURE_2610_24 — public guide numbers in brackets). Appended to
+ * LotteON Open API paths (FEATURE_2610_24 · FEATURE_2611_23 — public guide numbers in brackets). Appended to
  * {@code oklyx.lotteon.base-url}; the standard category lookup goes to {@code category-base-url}.
  */
 public final class LotteonPaths {
@@ -30,6 +30,16 @@ public final class LotteonPaths {
     public static final String FEE_POLICIES = "/v1/openapi/contract/v1/dvl/getDvCstListSr";
     /** [205] standard category lookup (category host). */
     public static final String STANDARD_CATEGORY = "/cheetah/econCheetah.ecn?job=cheetahStandardCategory";
+    /** [209] outbound / retrieval instruction list (FEATURE_2611_23 / D11). */
+    public static final String DELIVERY_ORDERS = "/v1/openapi/delivery/v1/SellerDeliveryOrdersSearch";
+    /** [210] instruction receipt inform (FEATURE_2611_23 / D16). */
+    public static final String IF_COMPLETE = "/v1/openapi/delivery/v1/SellerIfCompleteInform";
+    /** [140] delivery progress state list (FEATURE_2611_23 / D11 · D20). */
+    public static final String PROGRESS_STATES = "/v1/openapi/delivery/v1/SellerDeliveryProgressStateSearch";
+    /** [298] delivery progress state inform (FEATURE_2611_23 / D18). */
+    public static final String PROGRESS_INFORM = "/v1/openapi/delivery/v2/SellerDeliveryProgressStateInform";
+    /** [139] invoice number modification (FEATURE_2611_23 / D19). */
+    public static final String INVOICE_MODIFY = "/v1/openapi/delivery/v1/SellerInvoiceNoModifyInform";
 
     private LotteonPaths() {
     }
