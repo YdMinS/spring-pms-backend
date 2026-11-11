@@ -362,9 +362,7 @@ public class LotteonInquiryAdapter implements InquirySyncAdapter {
 
     /** R7: {@code spdNm}, plus {@code / sitmNm} when an item name is present. */
     private static String itemName(JsonNode row) {
-        String product = text(row, "spdNm");
-        String item = text(row, "sitmNm");
-        return (item == null) ? product : (product == null ? item : product + " / " + item);
+        return LotteonOrderRows.itemName(row);
     }
 
     /** D62: the first 100 characters of {@code ctctTtl}. */
