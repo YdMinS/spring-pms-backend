@@ -2084,7 +2084,7 @@ class CoupangListingAdapterTest {
         verify(client, times(1)).get(anyString(), anyString(), any());
     }
 
-    // D15: the shipping config is checked only when 배송·반품 is overwritten.
+    // D15: the shipping config is checked only when shipping·return is overwritten.
     @Test
     void update_unpickedShippingIncomplete_isNotChecked() throws Exception {
         lenient().when(shippingConfigResolver.resolve(any())).thenReturn(emptyShipping());

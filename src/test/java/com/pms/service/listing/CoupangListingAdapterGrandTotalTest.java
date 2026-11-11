@@ -278,7 +278,8 @@ class CoupangListingAdapterGrandTotalTest {
         verify(masterChannelConfigService, times(1)).resolveChannelCategory(any());
     }
 
-    // FEATURE_2611_25 / D17: 속성 not picked → one PUT, the 총 수량 state untouched, the read attributes kept.
+    // FEATURE_2611_25 / D17: attributes not picked → one PUT, the grand total state untouched, the read attributes
+    // kept.
     @Test
     void update_attributesNotPicked_onePutAndKeepsGrandTotalState() throws Exception {
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);

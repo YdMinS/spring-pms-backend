@@ -803,11 +803,12 @@ public class CoupangListingAdapter implements ListingChannel {
      *   <li>A picked item whose oclyx value cannot be built is a 400 before the PUT (D15 · R5).</li>
      *   <li>A batch push whose picked items all equal Coupang and that sends no option line sends nothing
      *       ({@link PushOutcome#notSent()}, D26) — never for a product awaiting approval (D27 ②).</li>
-     *   <li>FEATURE_2610_34 · D17: the 총 수량 retry runs only when 속성 is picked, judged on the items oclyx wrote the
-     *       attributes of: a revision follows the listing's own 총 수량 state, not the category memory (D6) — except a
-     *       {@code SENT} listing whose category remembers it, which tries once without it (D11). Without it and
-     *       rejected with {@link #GRAND_TOTAL_REQUIRED} → one more PUT with it ({@code SENT_CONFIRMED}, D16), a
-     *       rejection again → 400 (D24). The memory itself is never changed by a revision (D17).</li>
+     *   <li>FEATURE_2610_34 · D17: the grand total retry runs only when attributes are picked, judged on the items
+     *       oclyx wrote the attributes of: a revision follows the listing's own grand total state, not the category
+     *       memory (D6) — except a {@code SENT} listing whose category remembers it, which tries once without it
+     *       (D11). Without it and rejected with {@link #GRAND_TOTAL_REQUIRED} → one more PUT with it
+     *       ({@code SENT_CONFIRMED}, D16), a rejection again → 400 (D24). The memory itself is never changed by a
+     *       revision (D17).</li>
      *   <li>Any other refusal (a 4xx · a 2xx whose {@code code} is not a success) is a 400 with Coupang's message
      *       (D20 · R6); a 5xx stays the client's exception.</li>
      *   <li>D31 · R12: a passed [수정 요청] reports the shown option lines' on/off; a batch push reports none.</li>
@@ -870,7 +871,9 @@ public class CoupangListingAdapter implements ListingChannel {
             ListingUpdateItem.REGISTRATION_NAME, ListingUpdateItem.DISPLAY_NAME,
             ListingUpdateItem.CATEGORY, ListingUpdateItem.SHIPPING));
 
-    /** D6 · R4: the 17 배송·반품 fields (putShippingBlock 16 + extraInfoMessage) and their screen names, in order. */
+    /**
+     * D6 · R4: the 17 shipping·return fields (putShippingBlock 16 + extraInfoMessage) and their screen names, in order.
+     */
     private static final String[][] SHIPPING_FIELDS = {
             {"outboundShippingPlaceCode", "출고지 코드"},
             {"returnCenterCode", "반품지 코드"},
@@ -1235,7 +1238,7 @@ public class CoupangListingAdapter implements ListingChannel {
                 : new ListingUpdatePreviewResponse.Line(key, key.label(), true, null, null, null, differing);
     }
 
-    /** 배송·반품: 17 fields compared one by one; the texts carry the differing fields only (R4). */
+    /** Shipping·return: 17 fields compared one by one; the texts carry the differing fields only (R4). */
     private static ListingUpdatePreviewResponse.Line shippingLine(ListingUpdateItem key, JsonNode data,
                                                                   Map<String, Object> oclyx) {
         List<String> coupangParts = new ArrayList<>();
@@ -1406,13 +1409,13 @@ public class CoupangListingAdapter implements ListingChannel {
         }
     }
 
-    /** D17: 속성 not picked → one PUT, the 총 수량 state is kept. */
+    /** D17: attributes not picked → one PUT, the grand total state is kept. */
     private GrandTotalSend sendOnce(ObjectNode body, MarketplaceAccount acct) {
         putRevision(body, acct);
         return null;
     }
 
-    /** FEATURE_2610_34 · D17: the 총 수량 flow, on the items oclyx wrote the attributes of only. */
+    /** FEATURE_2610_34 · D17: the grand total flow, on the items oclyx wrote the attributes of only. */
     private GrandTotalSend sendWithGrandTotalRetry(ProductListing cell, Revision revision, OclyxValues values,
                                                    List<Integer> written, MarketplaceAccount acct) {
         ObjectNode withGrandTotal = revision.body();
@@ -1491,7 +1494,7 @@ public class CoupangListingAdapter implements ListingChannel {
         }
     }
 
-    /** D17: whether an item oclyx wrote the attributes of sends a 총 수량 attribute. */
+    /** D17: whether an item oclyx wrote the attributes of sends a grand total attribute. */
     private static boolean writtenCarriesGrandTotal(ArrayNode items, List<Integer> written) {
         for (int index : written) {
             for (JsonNode attribute : items.get(index).path("attributes")) {
@@ -1503,7 +1506,7 @@ public class CoupangListingAdapter implements ListingChannel {
         return false;
     }
 
-    /** FEATURE_2610_38 · D17: false when an item oclyx wrote carries 총 수량 as its only attribute. */
+    /** FEATURE_2610_38 · D17: false when an item oclyx wrote carries the grand total as its only attribute. */
     private static boolean writtenOmittable(ArrayNode items, List<Integer> written) {
         for (int index : written) {
             JsonNode attributes = items.get(index).path("attributes");
@@ -1522,8 +1525,8 @@ public class CoupangListingAdapter implements ListingChannel {
     }
 
     /**
-     * D17: a copy of the body without 총 수량 on the items oclyx wrote the attributes of — an item left with no attribute
-     * loses the key; every other item is as received. The given body is not changed.
+     * D17: a copy of the body without the grand total on the items oclyx wrote the attributes of — an item left with no
+     * attribute loses the key; every other item is as received. The given body is not changed.
      */
     private static ObjectNode withoutWrittenGrandTotal(ObjectNode body, List<Integer> written) {
         ObjectNode copy = body.deepCopy();
@@ -1561,7 +1564,7 @@ public class CoupangListingAdapter implements ListingChannel {
         return tags;
     }
 
-    /** A Coupang option's attributes as {@code 이름=값}, blank values dropped. */
+    /** A Coupang option's attributes as {@code name=value}, blank values dropped. */
     private static List<String> coupangAttributes(JsonNode item) {
         List<String> attributes = new ArrayList<>();
         for (JsonNode attribute : item.path("attributes")) {
@@ -1573,14 +1576,14 @@ public class CoupangListingAdapter implements ListingChannel {
         return attributes;
     }
 
-    /** The attributes oclyx sends as {@code 이름=값}. */
+    /** The attributes oclyx sends as {@code name=value}. */
     private static List<String> attributeTexts(List<Map<String, Object>> attributes) {
         return attributes.stream()
                 .map(a -> a.get("attributeTypeName") + "=" + a.get("attributeValueName"))
                 .toList();
     }
 
-    /** A Coupang option's notices: (group, item, content) key → {@code 항목=내용}, blank contents dropped. */
+    /** A Coupang option's notices: (group, item, content) key → {@code item=content}, blank contents dropped. */
     private static Map<String, String> coupangNotices(JsonNode item) {
         Map<String, String> notices = new LinkedHashMap<>();
         for (JsonNode notice : item.path("notices")) {
@@ -1810,9 +1813,10 @@ public class CoupangListingAdapter implements ListingChannel {
     }
 
     /**
-     * 96 ⑨: every required 고시 of the picked 품목군 must carry a value. Shared by validateRegistrable (register)
-     * and buildPayload — the latter is the only gate on the [수정 요청] path (108/D4 skips validateRegistrable),
-     * where a stale-key notice used to be dropped by toNotices and reach Coupang as an opaque
+     * 96 ⑨: every required notice of the picked notice group must carry a value. A register goes through
+     * validateRegistrable and then buildPayload; buildPayload, the revision overwrite and the revision option lines
+     * all reach it through {@code itemNotices} — the only notice gate on the [수정 요청] path (108/D4 skips
+     * validateRegistrable), where a stale-key notice used to be dropped by toNotices and reach Coupang as an opaque
      * "'1 번 옵션 의 고시정보' 다시 확인해 주세요" (2026-10-19, master 1705).
      */
     private static void requireNotices(List<CategoryNotice> requiredNotices, Map<String, String> notices,
@@ -2099,7 +2103,9 @@ public class CoupangListingAdapter implements ListingChannel {
                 : toAttributes(attrs, context.unitByAttr(), context.usableByAttr(), bundle);
     }
 
-    /** One option's {@code notices[]} — empty when there is none to send. 96 ⑨: the required 고시 are checked first. */
+    /**
+     * One option's {@code notices[]} — empty when there is none to send. 96 ⑨: the required notices are checked first.
+     */
     private static List<Map<String, Object>> itemNotices(CategoryContext context, MasterProductOption mo,
                                                          ProductListingOption option) {
         Map<String, String> notices = mergedNotices(context.masterNotices(), mo, option);
