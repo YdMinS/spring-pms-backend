@@ -4,10 +4,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.pms.domain.OrderStatus;
 
 import java.math.BigDecimal;
+import java.util.Comparator;
+import java.util.List;
 
 /**
  * Reads one LotteON order row ([209] · [140]) — FEATURE_2611_23 / D7 · D8. Shared by the upserter, the confirmation,
- * the sheets and the invoice work.
+ * the sheets, the invoice work and the delivery-record list (D19).
  */
 public final class LotteonOrderRows {
 
@@ -17,6 +19,50 @@ public final class LotteonOrderRows {
     /** D8: a delivery ({@code dvRtrvDvsCd} DV) line of an order ({@code odTypCd} 10). */
     public static boolean isOrderDelivery(JsonNode row) {
         return "DV".equals(text(row, "dvRtrvDvsCd")) && "10".equals(text(row, "odTypCd"));
+    }
+
+    /**
+     * D19 ②: the delivery records of one order line — the {@link #isOrderDelivery} rows of {@code odSeq}, in
+     * {@code procSeq} numeric order (R17). Used by the invoice update and the record list.
+     */
+    public static List<JsonNode> shipmentRecords(List<JsonNode> rows, String odSeq) {
+        if (odSeq == null) {
+            return List.of();
+        }
+        return rows.stream()
+                .filter(LotteonOrderRows::isOrderDelivery)
+                .filter(row -> odSeq.equals(text(row, "odSeq")))
+                .sorted(Comparator.comparing(row -> sequence(text(row, "procSeq"))))
+                .toList();
+    }
+
+    /** R17: [140] {@code odPrgsStepCd} → LotteON's own step name; a code not in the table is returned as is. */
+    public static String stepName(String step) {
+        if (step == null) {
+            return null;
+        }
+        return switch (step) {
+            case "11" -> "출고지시";
+            case "12" -> "상품준비";
+            case "13" -> "발송완료";
+            case "14" -> "배송완료";
+            case "15" -> "수취완료";
+            case "21" -> "취소완료";
+            case "22" -> "철회";
+            default -> step;
+        };
+    }
+
+    /** {@code procSeq} as a number for ordering; blank or not a number sorts last. */
+    private static BigDecimal sequence(String value) {
+        if (value == null) {
+            return BigDecimal.valueOf(Long.MAX_VALUE);
+        }
+        try {
+            return new BigDecimal(value);
+        } catch (NumberFormatException e) {
+            return BigDecimal.valueOf(Long.MAX_VALUE);
+        }
     }
 
     /** D8: {@code odPrgsStepCd} → neutral status; anything else → null (never loaded). */

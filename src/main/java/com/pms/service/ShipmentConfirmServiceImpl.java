@@ -42,11 +42,11 @@ import static com.pms.service.InvoiceWriteBack.statusName;
 /**
  * {@link ShipmentConfirmService} implementation — the shipment confirm leg; each marketplace registers its invoices
  * through its {@link ShipmentInvoiceAdapter} (FEATURE_2610_23 / D21 — {@link CoupangShipmentInvoiceAdapter} ·
- * {@link ElevenstShipmentInvoiceAdapter}).
+ * {@link ElevenstShipmentInvoiceAdapter} · {@link LotteonShipmentInvoiceAdapter}).
  *
  * Flow (result file): parse xlsx → find each order's lines with {@code findByExternalOrderId} → orders of a
  * marketplace without an adapter are reported as unmatched (D14) → each adapter ships its own orders in the platform
- * order (Coupang → 11st); the file's orders missing from the DB go to the Coupang adapter's lookup (D25) → the
+ * order (Coupang → 11st → LotteON); the file's orders missing from the DB go to the Coupang adapter's lookup (D25) → the
  * internal-stage orders of a marketplace that opens the internal stage are sent right after that marketplace by
  * {@code shipInternalOrders} (acknowledge → invoice, FEATURE_2609_75 / D27 · FEATURE_2610_23 / D22 · D23).
  *
@@ -182,7 +182,7 @@ public class ShipmentConfirmServiceImpl implements ShipmentConfirmService {
                 .orElseThrow(() -> new IllegalArgumentException("주문 라인을 찾을 수 없습니다"));
         MarketplaceAccount account = anchor.getOrder().getMarketplaceAccount();
         ShipmentInvoiceAdapter adapter = adapterFor(account.getPlatform())
-                .orElseThrow(() -> new IllegalArgumentException("쿠팡 · 11번가 주문만 발송처리할 수 있습니다"));     // D7 · FEATURE_2610_17 / D2
+                .orElseThrow(() -> new IllegalArgumentException("쿠팡 · 11번가 · 롯데ON 주문만 발송처리할 수 있습니다"));     // D7 · FEATURE_2610_17 / D2
         return adapter.shipManual(request, anchor, account, invoiceNumber);
     }
 
