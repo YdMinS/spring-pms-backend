@@ -5,6 +5,7 @@ import com.pms.domain.GeneratedProductData;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.dto.response.ListingUpdatePreviewResponse;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -86,6 +87,8 @@ public interface ListingChannel {
     /**
      * Update the listing: rebuild the WHOLE product object → PUT (no incremental option add — approved
      * options cannot be added piecemeal on Coupang; the whole object is re-submitted for re-approval).
+     * Coupang instead overwrites the picked items on the product it reads from Coupang right before the PUT
+     * (FEATURE_2611_25 / D1).
      *
      * @param cell the registered cell
      * @param gen  generated assets (payload source)
@@ -113,6 +116,44 @@ public interface ListingChannel {
     default PushOutcome updateAndReport(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct) {
         update(cell, gen, acct);
         return PushOutcome.unchanged(null);
+    }
+
+    /**
+     * FEATURE_2611_25 / D1 · D12 · R2: true = a [수정 요청] on this market opens a compare window first
+     * ({@link #previewUpdate}) and sends the picked items ({@link #updateAndReport(ProductListing, GeneratedProductData,
+     * MarketplaceAccount, ListingUpdateSelection)}). false (default) = the update is sent as it is today.
+     */
+    default boolean comparesBeforeUpdate() {
+        return false;
+    }
+
+    /**
+     * FEATURE_2611_25 / D3 · D14 · D15: read the product from the market and list the items whose oclyx value differs
+     * from it. <b>Read only</b> — nothing is sent and nothing is stored. Only a market whose
+     * {@link #comparesBeforeUpdate} is true implements it.
+     *
+     * @return the differing items, the items whose oclyx value cannot be built and the option lines to pick
+     */
+    default ListingUpdatePreviewResponse previewUpdate(ProductListing cell, GeneratedProductData gen,
+                                                       MarketplaceAccount acct) {
+        throw new UnsupportedOperationException(platform() + " 수정 비교 미지원");
+    }
+
+    /**
+     * FEATURE_2611_25 / D1 · D21: {@link #updateAndReport(ProductListing, GeneratedProductData, MarketplaceAccount)}
+     * with what to overwrite. Default = the selection is ignored (a market outside Coupang ignores the body, D21).
+     */
+    default PushOutcome updateAndReport(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct,
+                                        ListingUpdateSelection selection) {
+        return updateAndReport(cell, gen, acct);
+    }
+
+    /**
+     * FEATURE_2611_25 / D23: true = after a passed update the orchestration does NOT turn the deactivated approved
+     * options back to not-approved (the market keeps those options as they were, D8). false (default) = as today.
+     */
+    default boolean keepsInactiveOptionsOnUpdate() {
+        return false;
     }
 
     /**

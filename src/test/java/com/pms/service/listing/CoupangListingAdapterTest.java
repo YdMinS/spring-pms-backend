@@ -4,12 +4,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.domain.Category;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingStatus;
+import com.pms.domain.ListingUpdateItem;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
+import com.pms.dto.response.ListingUpdatePreviewResponse;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -52,6 +54,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /**
@@ -1420,6 +1423,8 @@ class CoupangListingAdapterTest {
                 .categoryNoticeGroup("가공식품").build();
         ProductListing cell = ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
                 .platformProductId("123456789").masterProduct(master).marketBundleType("SINGLE").build();
+        // FEATURE_2611_25: a revision reads the product first; option A has no Coupang pair → a new option line.
+        given(client.get(endsWith("/123456789"), eq(""), any())).willReturn(COUPANG_PRODUCT);
         given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
         given(metaAdapter.getMeta(any(), eq("cat-1"))).willReturn(sharedNoticeKeySchema());
         givenOneActiveOption();
@@ -1458,20 +1463,19 @@ class CoupangListingAdapterTest {
         assertThat(json.path("items").get(0).has("sellerProductItemId")).isFalse();
     }
 
-    // 108/D3: the update payload identifies the existing product + its already-approved options.
+    // 108/D3 · FEATURE_2611_25 / D1: the revision identifies the existing product and keeps the read Coupang option ids.
     @Test
     void update_sendsSellerProductIdAndItemIds() throws Exception {
-        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
-                ProductListingOption.builder().id(1L).optionName("1세트")
-                        .sellingPrice(new BigDecimal("10000")).active(true)
-                        .sellerProductItemId("777").platformOptionId("888").build()));
-        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
+        given(client.get(endsWith("/123456789"), eq(""), any())).willReturn(COUPANG_PRODUCT);
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(pairedOption()));
+        lenient().when(masterChannelConfigService.resolveChannelCategory(any()))
+                .thenReturn(channelCategory("56137", false));
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         given(client.put(anyString(), payload.capture(), any())).willReturn("{\"code\":\"SUCCESS\"}");
 
-        adapter.update(cell().toBuilder().marketBundleType("SINGLE").build(), gen, acct());
+        adapter.update(cell(), gen, acct());
 
         JsonNode json = objectMapper.readTree(payload.getValue());
         assertThat(json.path("sellerProductId").asText()).isEqualTo("123456789");
@@ -1480,23 +1484,25 @@ class CoupangListingAdapterTest {
         assertThat(item.path("vendorItemId").asText()).isEqualTo("888");
     }
 
-    // 108/D3: a not-yet-approved option has no market ids → the keys are absent (never null-valued).
+    // 108/D3 · FEATURE_2611_25 / D24: a new option goes out after the kept Coupang option without any id key.
     @Test
     void update_omitsItemIdsForNewOption() throws Exception {
-        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(
-                ProductListingOption.builder().id(2L).optionName("2세트")
-                        .sellingPrice(new BigDecimal("20000")).active(true).build()));   // ids null
-        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
+        given(client.get(endsWith("/123456789"), eq(""), any())).willReturn(COUPANG_PRODUCT);
+        given(productListingOptionRepository.findByProductListingId(100L))
+                .willReturn(List.of(pairedOption(), newOption()));
+        lenient().when(masterChannelConfigService.resolveChannelCategory(any()))
+                .thenReturn(channelCategory("56137", false));
         GeneratedProductData gen = GeneratedProductData.builder()
                 .thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         given(client.put(anyString(), payload.capture(), any())).willReturn("{\"code\":\"SUCCESS\"}");
 
-        adapter.update(cell().toBuilder().marketBundleType("SINGLE").build(), gen, acct());
+        adapter.update(cell(), gen, acct());
 
-        JsonNode item = objectMapper.readTree(payload.getValue()).path("items").get(0);
-        assertThat(item.has("sellerProductItemId")).isFalse();
-        assertThat(item.has("vendorItemId")).isFalse();
+        JsonNode items = objectMapper.readTree(payload.getValue()).path("items");
+        assertThat(items).hasSize(2);
+        assertThat(items.get(1).has("sellerProductItemId")).isFalse();
+        assertThat(items.get(1).has("vendorItemId")).isFalse();
     }
 
     // ---------------------------------------------------------------- 102: option stock quantity
@@ -1725,8 +1731,6 @@ class CoupangListingAdapterTest {
                 .platformProductId("123456789").masterProduct(master).marketBundleType(marketBundleType).build();
     }
 
-    private static final String PRODUCT_WITHOUT_BUNDLE = "{\"code\":\"SUCCESS\",\"data\":{\"items\":[]}}";
-
     private static String productWithBundle(String bundleType) {
         return "{\"code\":\"SUCCESS\",\"data\":{\"statusName\":\"승인완료\",\"bundleInfo\":{\"bundleType\":\""
                 + bundleType + "\"},\"items\":[]}}";
@@ -1764,59 +1768,6 @@ class CoupangListingAdapterTest {
         PushOutcome outcome = adapter.registerAndReport(mixedCell(null), gen, acct());
 
         assertThat(outcome.marketBundleType()).isEqualTo("AB");
-    }
-
-    // D6: a revision sends the stored type, not the master's composition — SINGLE on a mixed master keeps the
-    // attributes; no GET, isBundle not consulted.
-    @Test
-    void update_storedSingleOnMixedMaster_sendsSingleWithAttributes() throws Exception {
-        givenOneActiveOption();
-        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
-        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
-        given(client.put(anyString(), payload.capture(), any())).willReturn("{\"code\":\"SUCCESS\"}");
-        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
-
-        PushOutcome outcome = adapter.updateAndReport(mixedCell("SINGLE"), gen, acct());
-
-        JsonNode json = objectMapper.readTree(payload.getValue());
-        assertThat(json.path("bundleInfo").path("bundleType").asText()).isEqualTo("SINGLE");
-        assertThat(json.path("items").get(0).has("attributes")).isTrue();
-        assertThat(outcome.marketBundleType()).isEqualTo("SINGLE");
-        verify(client, never()).get(anyString(), anyString(), any());
-        verify(masterProductService, never()).isBundle(any());
-    }
-
-    // D11: a listing that does not know its type reads it once and sends what Coupang reported (AB carries its
-    // search options — FEATURE_2610_38 / D24).
-    @Test
-    void update_unknownBundleType_readsOnceAndSendsIt() throws Exception {
-        givenOneActiveOption();
-        givenAbSchema();
-        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
-        given(client.get(anyString(), eq(""), any())).willReturn(productWithBundle("AB"));
-        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
-        given(client.put(anyString(), payload.capture(), any())).willReturn("{\"code\":\"SUCCESS\"}");
-        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
-
-        PushOutcome outcome = adapter.updateAndReport(mixedCell(null), gen, acct());
-
-        JsonNode json = objectMapper.readTree(payload.getValue());
-        assertThat(json.path("bundleInfo").path("bundleType").asText()).isEqualTo("AB");
-        assertThat(json.path("items").get(0).path("attributes").get(0).path("exposed").asText()).isEqualTo("NONE");
-        assertThat(outcome.marketBundleType()).isEqualTo("AB");
-        verify(client).get(anyString(), eq(""), any());                   // D11: one read
-    }
-
-    // D11: the read answers without a bundle type → 400, no PUT.
-    @Test
-    void update_unknownBundleTypeAndNoneReported_throwsBeforePut() {
-        given(client.get(anyString(), eq(""), any())).willReturn(PRODUCT_WITHOUT_BUNDLE);
-        GeneratedProductData gen = GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build();
-
-        assertThatThrownBy(() -> adapter.updateAndReport(mixedCell(null), gen, acct()))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(CoupangListingAdapter.BUNDLE_TYPE_UNREAD);
-        verify(client, never()).put(anyString(), anyString(), any());
     }
 
     // D10 ③: the status read carries data.bundleInfo.bundleType.
@@ -1964,5 +1915,466 @@ class CoupangListingAdapterTest {
                 List.of(new StockPush(a, 0), new StockPush(b, 7)), MarketplaceAccount.builder().build());
 
         assertThat(refused).containsExactly(java.util.Map.entry(2L, "쿠팡 재고변경 실패: 삭제된 상품은 변경이 불가능합니다"));
+    }
+
+    // ---------------------------------------------------------------- FEATURE_2611_25: revision on the read product
+
+    private static final String COUPANG_ITEM = "{\"sellerProductItemId\":777,\"vendorItemId\":888,"
+            + "\"itemName\":\"45g 1개\",\"originalPrice\":9000,\"salePrice\":8000,\"maximumBuyCount\":50,"
+            + "\"unitCount\":3,\"maximumBuyForPerson\":2,\"maximumBuyForPersonPeriod\":7,\"outboundShippingTimeDay\":2,"
+            + "\"adultOnly\":\"EVERYONE\",\"taxType\":\"FREE\",\"parallelImported\":\"NOT_PARALLEL_IMPORTED\","
+            + "\"overseasPurchased\":\"NOT_OVERSEAS_PURCHASED\",\"pccNeeded\":false,"
+            + "\"certifications\":[{\"certificationType\":\"ETC\",\"certificationCode\":\"C-1\"}],"
+            + "\"images\":[{\"imageOrder\":0,\"imageType\":\"REPRESENTATION\",\"cdnPath\":\"vendor_inventory/a.jpg\"}],"
+            + "\"searchTags\":[\"월계수\"],"
+            + "\"contents\":[{\"contentsType\":\"TEXT\",\"contentDetails\":[{\"content\":\"<p>쿠팡</p>\",\"detailType\":\"TEXT\"}]}],"
+            + "\"attributes\":[{\"attributeTypeName\":\"수량\",\"attributeValueName\":\"1개\"}],\"notices\":[]}";
+
+    private static String coupangProduct(String bundleInfo, String items) {
+        return "{\"code\":\"SUCCESS\",\"data\":{\"sellerProductId\":123456789,\"sellerProductName\":\"쿠팡 등록명\","
+                + "\"displayProductName\":\"쿠팡 노출명\",\"displayCategoryCode\":56137,"
+                + "\"saleStartedAt\":\"2022-07-25T00:00:00\",\"saleEndedAt\":\"2099-01-01T23:59:59\","
+                + "\"brand\":\"쿠팡브랜드\",\"requested\":false,\"outboundShippingPlaceCode\":\"OUT-9\","
+                + "\"returnCenterCode\":\"RC-9\"" + bundleInfo + ",\"items\":[" + items + "]}}";
+    }
+
+    private static final String COUPANG_PRODUCT = coupangProduct("", COUPANG_ITEM);
+    private static final String COUPANG_PRODUCT_AB = coupangProduct(",\"bundleInfo\":{\"bundleType\":\"AB\"}", COUPANG_ITEM);
+    private static final String COUPANG_PRODUCT_PENDING = coupangProduct("", COUPANG_ITEM.replace(
+            "\"sellerProductItemId\":777,\"vendorItemId\":888,\"itemName\":\"45g 1개\"", "\"itemName\":\"1세트\""));
+    private static final String COUPANG_PRODUCT_PARTIAL = coupangProduct("", COUPANG_ITEM
+            + ",{\"sellerProductItemId\":999,\"itemName\":\"심사중 옵션\",\"salePrice\":5000}");
+
+    private static ProductListingOption pairedOption() {
+        return ProductListingOption.builder().id(1L).optionName("45g 1개")
+                .sellingPrice(new BigDecimal("8000")).originalPrice(new BigDecimal("9000")).stockQuantity(50)
+                .active(true).sellerProductItemId("777").platformOptionId("888")
+                .categoryAttributes(new java.util.LinkedHashMap<>(Map.of("수량", "1개"))).build();
+    }
+
+    private static ProductListingOption newOption() {
+        return ProductListingOption.builder().id(2L).optionName("2세트")
+                .sellingPrice(new BigDecimal("20000")).active(true).build();
+    }
+
+    private static ProductListingOption offOption() {
+        return ProductListingOption.builder().id(3L).optionName("3세트")
+                .sellingPrice(new BigDecimal("30000")).active(false).build();
+    }
+
+    private static ProductListingOption extraOption() {
+        return ProductListingOption.builder().id(4L).optionName("4세트")
+                .sellingPrice(new BigDecimal("40000")).active(true).build();
+    }
+
+    private static ResolvedShippingConfig emptyShipping() {
+        return new ResolvedShippingConfig(null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null);
+    }
+
+    private static GeneratedProductData defaultGen() {
+        return GeneratedProductData.builder().thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>").build();
+    }
+
+    private void givenProduct(String product) {
+        given(client.get(endsWith("/123456789"), eq(""), any())).willReturn(product);
+    }
+
+    private void givenOptions(ProductListingOption... options) {
+        given(productListingOptionRepository.findByProductListingId(100L)).willReturn(List.of(options));
+    }
+
+    private void givenCategory56137() {
+        lenient().when(masterChannelConfigService.resolveChannelCategory(any()))
+                .thenReturn(channelCategory("56137", false));
+    }
+
+    private ArgumentCaptor<String> capturePut() {
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.put(anyString(), payload.capture(), any())).willReturn("{\"code\":\"SUCCESS\"}");
+        return payload;
+    }
+
+    /** The Given of previewUpdate_listsOnlyDifferingItemsInOrder: everything equal but the display name and shipping. */
+    private ProductListing givenAllButNameAndShippingSame(String product, ProductListingOption... options) {
+        givenProduct(product);
+        givenOptions(options);
+        lenient().when(tagMergeService.resolveTags(any())).thenReturn(List.of("월계수"));
+        givenCategory56137();
+        return cell().toBuilder().registrationName("쿠팡 등록명").build();
+    }
+
+    private static GeneratedProductData marketGen() {
+        return GeneratedProductData.builder().thumbnailUrl("https://s3/thumb.jpg").detailHtml("<p>셀</p>")
+                .thumbnailSource(com.pms.domain.GeneratedContentSource.MARKET)
+                .source(com.pms.domain.GeneratedContentSource.MARKET).build();
+    }
+
+    // D1 · D6 · D18 · D20: only the picked display name is ours; every other read value goes back as read.
+    @Test
+    void update_pickedDisplayNameOnly_keepsEveryOtherReceivedValue() throws Exception {
+        givenProduct(COUPANG_PRODUCT);
+        givenOptions(pairedOption());
+        ArgumentCaptor<String> payload = capturePut();
+
+        PushOutcome outcome = adapter.updateAndReport(cell(), defaultGen(), acct(),
+                ListingUpdateSelection.request(List.of(ListingUpdateItem.DISPLAY_NAME), List.of()));
+
+        JsonNode json = objectMapper.readTree(payload.getValue());
+        assertThat(json.path("displayProductName").asText()).isEqualTo("셀");
+        assertThat(json.path("sellerProductName").asText()).isEqualTo("쿠팡 등록명");
+        assertThat(json.path("saleStartedAt").asText()).isEqualTo("2022-07-25T00:00:00");
+        assertThat(json.path("saleEndedAt").asText()).isEqualTo("2099-01-01T23:59:59");
+        assertThat(json.path("brand").asText()).isEqualTo("쿠팡브랜드");
+        assertThat(json.path("outboundShippingPlaceCode").asText()).isEqualTo("OUT-9");
+        assertThat(json.path("requested").asBoolean()).isTrue();
+        assertThat(json.path("vendorId").asText()).isEqualTo("V1");
+        assertThat(json.path("vendorUserId").asText()).isEqualTo("wing-user");
+        assertThat(json.has("bundleInfo")).isFalse();
+        assertThat(json.path("items")).hasSize(1);
+        assertThat(json.path("items").get(0).path("itemName").asText()).isEqualTo("45g 1개");
+        assertThat(json.path("items").get(0).path("unitCount").asInt()).isEqualTo(3);
+        assertThat(json.path("items").get(0).path("taxType").asText()).isEqualTo("FREE");
+        verify(client, times(1)).get(anyString(), anyString(), any());
+        verify(client, times(1)).put(anyString(), anyString(), any());
+        verify(masterChannelConfigService, never()).resolveChannelCategory(any());
+        verify(shippingConfigResolver, never()).resolve(any());
+        assertThat(outcome.marketBundleType()).isNull();
+        assertThat(outcome.grandTotalSend()).isNull();
+        assertThat(outcome.skipped()).isFalse();
+    }
+
+    // D2 · D16: a product read without bundleInfo is sent without it — no 400, the master is not consulted.
+    @Test
+    void update_noBundleInfo_sendsWithoutBundleInfo() throws Exception {
+        givenProduct(COUPANG_PRODUCT);
+        givenOptions(pairedOption());
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("56137", false));
+        ArgumentCaptor<String> payload = capturePut();
+
+        PushOutcome outcome = adapter.updateAndReport(mixedCell(null), defaultGen(), acct());
+
+        assertThat(objectMapper.readTree(payload.getValue()).has("bundleInfo")).isFalse();
+        verify(masterProductService, never()).isBundle(any());
+        assertThat(outcome.marketBundleType()).isNull();
+    }
+
+    // D2 · D16: a received AB is kept and an overwritten option sends search options only (FEATURE_2610_38 / D24).
+    @Test
+    void update_receivedAbBundle_keptAndSearchOptionsOnly() throws Exception {
+        givenProduct(COUPANG_PRODUCT_AB);
+        givenAbSchema();
+        given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(channelCategory("cat-1", false));
+        java.util.LinkedHashMap<String, String> attributes = new java.util.LinkedHashMap<>();
+        attributes.put("원산지", "국내산");
+        attributes.put("수량", "1");
+        givenOptions(pairedOption().toBuilder().categoryAttributes(attributes).build());
+        ArgumentCaptor<String> payload = capturePut();
+
+        PushOutcome outcome = adapter.updateAndReport(cell(), defaultGen(), acct(),
+                ListingUpdateSelection.request(List.of(ListingUpdateItem.ATTRIBUTES), List.of()));
+
+        JsonNode json = objectMapper.readTree(payload.getValue());
+        assertThat(json.path("bundleInfo").path("bundleType").asText()).isEqualTo("AB");
+        JsonNode sent = json.path("items").get(0).path("attributes");
+        assertThat(sent).hasSize(1);
+        assertThat(sent.get(0).path("attributeTypeName").asText()).isEqualTo("원산지");
+        assertThat(sent.get(0).path("exposed").asText()).isEqualTo("NONE");
+        assertThat(outcome.marketBundleType()).isEqualTo("AB");
+        verify(client, times(1)).get(anyString(), anyString(), any());
+    }
+
+    // D15: the shipping config is checked only when 배송·반품 is overwritten.
+    @Test
+    void update_unpickedShippingIncomplete_isNotChecked() throws Exception {
+        lenient().when(shippingConfigResolver.resolve(any())).thenReturn(emptyShipping());
+        givenProduct(COUPANG_PRODUCT);
+        givenOptions(pairedOption());
+        ArgumentCaptor<String> payload = capturePut();
+
+        adapter.updateAndReport(cell(), defaultGen(), acct(),
+                ListingUpdateSelection.request(List.of(ListingUpdateItem.DISPLAY_NAME), List.of()));
+
+        verify(client, times(1)).put(anyString(), anyString(), any());
+        assertThat(objectMapper.readTree(payload.getValue()).path("outboundShippingPlaceCode").asText())
+                .isEqualTo("OUT-9");
+    }
+
+    @Test
+    void update_pickedShippingIncomplete_throwsBeforePut() {
+        given(shippingConfigResolver.resolve(any())).willReturn(emptyShipping());
+        givenProduct(COUPANG_PRODUCT);
+        givenOptions(pairedOption());
+
+        assertThatThrownBy(() -> adapter.updateAndReport(cell(), defaultGen(), acct(),
+                ListingUpdateSelection.request(List.of(ListingUpdateItem.SHIPPING), List.of())))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("배송설정 미완료");
+        verify(client, never()).put(anyString(), anyString(), any());
+    }
+
+    // D24 · D25: a picked new option is appended with oclyx values; the fixed values follow the first read option.
+    @Test
+    void update_newOptionAdded_followsFirstItemFixedValues() throws Exception {
+        givenProduct(COUPANG_PRODUCT);
+        givenOptions(pairedOption(), newOption());
+        givenCategory56137();
+        ArgumentCaptor<String> payload = capturePut();
+
+        adapter.updateAndReport(cell(), defaultGen(), acct(), ListingUpdateSelection.request(List.of(), List.of(2L)));
+
+        JsonNode items = objectMapper.readTree(payload.getValue()).path("items");
+        assertThat(items).hasSize(2);
+        assertThat(items.get(0).path("itemName").asText()).isEqualTo("45g 1개");
+        JsonNode added = items.get(1);
+        assertThat(added.has("sellerProductItemId")).isFalse();
+        assertThat(added.has("vendorItemId")).isFalse();
+        assertThat(added.path("itemName").asText()).isEqualTo("2세트");
+        assertThat(added.path("salePrice").asInt()).isEqualTo(20000);
+        assertThat(added.path("originalPrice").asInt()).isEqualTo(20000);
+        assertThat(added.path("unitCount").asInt()).isEqualTo(3);
+        assertThat(added.path("maximumBuyForPerson").asInt()).isEqualTo(2);
+        assertThat(added.path("maximumBuyForPersonPeriod").asInt()).isEqualTo(7);
+        assertThat(added.path("outboundShippingTimeDay").asInt()).isEqualTo(2);
+        assertThat(added.path("taxType").asText()).isEqualTo("FREE");
+        assertThat(added.path("certifications").get(0).path("certificationType").asText()).isEqualTo("ETC");
+    }
+
+    // D24: an unchecked new option is not sent.
+    @Test
+    void update_newOptionNotPicked_isNotSent() throws Exception {
+        givenProduct(COUPANG_PRODUCT);
+        givenOptions(pairedOption(), newOption());
+        givenCategory56137();
+        ArgumentCaptor<String> payload = capturePut();
+
+        adapter.updateAndReport(cell(), defaultGen(), acct(), ListingUpdateSelection.request(List.of(), List.of()));
+
+        assertThat(objectMapper.readTree(payload.getValue()).path("items")).hasSize(1);
+    }
+
+    // D8: an option turned off in oclyx is not paired — its Coupang option goes back as read.
+    @Test
+    void update_inactiveOption_keepsReceivedItem() throws Exception {
+        givenProduct(COUPANG_PRODUCT);
+        givenOptions(pairedOption().toBuilder().active(false).optionName("바꾼 이름").build());
+        ArgumentCaptor<String> payload = capturePut();
+
+        adapter.updateAndReport(cell(), defaultGen(), acct(),
+                ListingUpdateSelection.request(List.of(ListingUpdateItem.OPTION_NAME), List.of()));
+
+        JsonNode items = objectMapper.readTree(payload.getValue()).path("items");
+        assertThat(items).hasSize(1);
+        assertThat(items.get(0).path("itemName").asText()).isEqualTo("45g 1개");
+    }
+
+    // D24 · D30: adding an option to a received AB product that already has one → 400 before the PUT.
+    @Test
+    void update_abWithNewOption_throwsMixedBundleBeforePut() {
+        givenProduct(COUPANG_PRODUCT_AB);
+        givenAbSchema();
+        lenient().when(masterChannelConfigService.resolveChannelCategory(any()))
+                .thenReturn(channelCategory("cat-1", false));
+        givenOptions(pairedOption(), newOption());
+
+        assertThatThrownBy(() -> adapter.updateAndReport(cell(), defaultGen(), acct(),
+                ListingUpdateSelection.request(List.of(), List.of(2L))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(CoupangListingAdapter.MIXED_BUNDLE_ONE_OPTION);
+        verify(client, never()).put(anyString(), anyString(), any());
+    }
+
+    // D20 · R6: a 4xx refusal is a 400 carrying Coupang's message.
+    @Test
+    void update_rejected4xx_throws400WithCoupangMessage() {
+        givenProduct(COUPANG_PRODUCT);
+        givenOptions(pairedOption());
+        given(client.put(anyString(), anyString(), any())).willThrow(HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST, "Bad Request", HttpHeaders.EMPTY,
+                "{\"code\":\"ERROR\",\"message\":\"수정 불가 칸\"}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+        assertThatThrownBy(() -> adapter.updateAndReport(cell(), defaultGen(), acct(),
+                ListingUpdateSelection.request(List.of(ListingUpdateItem.DISPLAY_NAME), List.of())))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("쿠팡이 상품 수정을 거부했습니다: 수정 불가 칸");
+    }
+
+    // D26: a batch push whose six items all equal Coupang sends nothing.
+    @Test
+    void update_batchAllSame_notSent() {
+        ProductListing cell = givenAllButNameAndShippingSame(COUPANG_PRODUCT, pairedOption());
+
+        PushOutcome outcome = adapter.updateAndReport(cell, marketGen(), acct(), ListingUpdateSelection.batch());
+
+        assertThat(outcome.skipped()).isTrue();
+        verify(client, never()).put(anyString(), anyString(), any());
+    }
+
+    // D3 · D6 · D7 · D19: only the differing items, in D6 order; one GET, no PUT.
+    @Test
+    void previewUpdate_listsOnlyDifferingItemsInOrder() {
+        ProductListing cell = givenAllButNameAndShippingSame(COUPANG_PRODUCT, pairedOption());
+
+        ListingUpdatePreviewResponse preview = adapter.previewUpdate(cell, marketGen(), acct());
+
+        assertThat(preview.items()).extracting(ListingUpdatePreviewResponse.Line::key)
+                .containsExactly(ListingUpdateItem.DISPLAY_NAME, ListingUpdateItem.SHIPPING);
+        assertThat(preview.items().get(0).coupangValue()).isEqualTo("쿠팡 노출명");
+        assertThat(preview.items().get(0).oclyxValue()).isEqualTo("셀");
+        assertThat(preview.items().get(0).selectable()).isTrue();
+        assertThat(preview.items().get(1).oclyxValue()).contains("출고지 코드 OUT-1");
+        assertThat(preview.items().get(1).coupangValue()).contains("출고지 코드 OUT-9");
+        assertThat(preview.optionLines()).isEmpty();
+        verify(client, times(1)).get(anyString(), anyString(), any());
+        verify(client, never()).put(anyString(), anyString(), any());
+    }
+
+    // D15 · R5: an item whose oclyx value cannot be built is listed unselectable, never a 400.
+    @Test
+    void previewUpdate_uncheckableWhenOclyxValueMissing() {
+        ProductListing cell = givenAllButNameAndShippingSame(COUPANG_PRODUCT, pairedOption());
+        given(shippingConfigResolver.resolve(any())).willReturn(emptyShipping());
+
+        ListingUpdatePreviewResponse preview = adapter.previewUpdate(cell, marketGen(), acct());
+
+        ListingUpdatePreviewResponse.Line shipping = preview.items().stream()
+                .filter(l -> l.key() == ListingUpdateItem.SHIPPING).findFirst().orElseThrow();
+        assertThat(shipping.selectable()).isFalse();
+        assertThat(shipping.unavailableReason()).contains("배송설정 미완료");
+        assertThat(shipping.oclyxValue()).isNull();
+        assertThat(shipping.options()).isEmpty();
+    }
+
+    // D24 · D28: the option lines = active options without a Coupang pair (an inactive one is not listed).
+    @Test
+    void previewUpdate_listsNewOption() {
+        ProductListing cell = givenAllButNameAndShippingSame(COUPANG_PRODUCT, pairedOption(), newOption(), offOption());
+
+        ListingUpdatePreviewResponse preview = adapter.previewUpdate(cell, marketGen(), acct());
+
+        assertThat(preview.approvalPending()).isFalse();
+        assertThat(preview.mixedBundle()).isFalse();
+        assertThat(preview.optionLines()).containsExactly(
+                new ListingUpdatePreviewResponse.OptionChoice(2L, "2세트", true));
+    }
+
+    // D27 ① · D29: awaiting approval = product-level items only, every option as a line checked by its on/off.
+    @Test
+    void previewUpdate_approvalPending_listsAllOptionsCheckedByActive() {
+        ProductListing cell = givenAllButNameAndShippingSame(COUPANG_PRODUCT_PENDING, newOption(), offOption());
+
+        ListingUpdatePreviewResponse preview = adapter.previewUpdate(cell, marketGen(), acct());
+
+        assertThat(preview.approvalPending()).isTrue();
+        assertThat(preview.items()).extracting(ListingUpdatePreviewResponse.Line::key)
+                .containsExactly(ListingUpdateItem.DISPLAY_NAME, ListingUpdateItem.SHIPPING);
+        assertThat(preview.optionLines()).containsExactly(
+                new ListingUpdatePreviewResponse.OptionChoice(2L, "2세트", true),
+                new ListingUpdatePreviewResponse.OptionChoice(3L, "3세트", false));
+    }
+
+    // D27 · D29 · D31: awaiting approval = the read options are replaced by the picked ones (fixed values from the
+    // first read option); the product-level values stay as read.
+    @Test
+    void update_approvalPending_replacesItemsWithPickedOptions() throws Exception {
+        givenProduct(COUPANG_PRODUCT_PENDING);
+        givenOptions(newOption(), offOption());
+        givenCategory56137();
+        ArgumentCaptor<String> payload = capturePut();
+
+        PushOutcome outcome = adapter.updateAndReport(cell(), defaultGen(), acct(),
+                ListingUpdateSelection.request(List.of(ListingUpdateItem.DISPLAY_NAME), List.of(2L, 3L)));
+
+        JsonNode json = objectMapper.readTree(payload.getValue());
+        JsonNode items = json.path("items");
+        assertThat(items).hasSize(2);
+        assertThat(items).extracting(i -> i.path("itemName").asText()).containsExactly("2세트", "3세트");
+        for (JsonNode item : items) {
+            assertThat(item.path("unitCount").asInt()).isEqualTo(3);
+            assertThat(item.path("taxType").asText()).isEqualTo("FREE");
+            assertThat(item.has("sellerProductItemId")).isFalse();
+            assertThat(item.has("vendorItemId")).isFalse();
+        }
+        assertThat(json.path("displayProductName").asText()).isEqualTo("셀");
+        assertThat(json.path("saleStartedAt").asText()).isEqualTo("2022-07-25T00:00:00");
+        assertThat(outcome.optionActive()).isEqualTo(Map.of(2L, true, 3L, true));
+    }
+
+    // D28: a Coupang option without a vendorItemId is dropped; the unpaired active option takes its place.
+    @Test
+    void update_partialApproval_dropsUnnumberedCoupangItems() throws Exception {
+        givenProduct(COUPANG_PRODUCT_PARTIAL);
+        givenOptions(pairedOption(), newOption());
+        givenCategory56137();
+        ArgumentCaptor<String> payload = capturePut();
+
+        adapter.updateAndReport(cell(), defaultGen(), acct());
+
+        JsonNode items = objectMapper.readTree(payload.getValue()).path("items");
+        assertThat(items).hasSize(2);
+        assertThat(items.get(0).path("vendorItemId").asText()).isEqualTo("888");
+        assertThat(items.get(1).path("itemName").asText()).isEqualTo("2세트");
+        assertThat(payload.getValue()).doesNotContain("심사중 옵션");
+    }
+
+    // R11: nothing left on a product awaiting approval → 400 before the PUT.
+    @Test
+    void update_approvalPendingNothingPicked_throws400() {
+        givenProduct(COUPANG_PRODUCT_PENDING);
+        givenOptions(newOption());
+
+        assertThatThrownBy(() -> adapter.updateAndReport(cell(), defaultGen(), acct(),
+                ListingUpdateSelection.request(List.of(), List.of())))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("활성 옵션 없음");
+        verify(client, never()).put(anyString(), anyString(), any());
+    }
+
+    // D31 · R12: a [수정 요청] reports the shown option lines' on/off (the paired option 1 is not a line).
+    @Test
+    void update_request_reportsOptionChoice() throws Exception {
+        givenProduct(COUPANG_PRODUCT);
+        givenOptions(pairedOption(), newOption(), extraOption());
+        givenCategory56137();
+        ArgumentCaptor<String> payload = capturePut();
+
+        PushOutcome outcome = adapter.updateAndReport(cell(), defaultGen(), acct(),
+                ListingUpdateSelection.request(List.of(), List.of(2L)));
+
+        assertThat(objectMapper.readTree(payload.getValue()).path("items"))
+                .extracting(i -> i.path("itemName").asText()).containsExactly("45g 1개", "2세트");
+        assertThat(outcome.optionActive()).isEqualTo(Map.of(2L, true, 4L, false));
+    }
+
+    // D24 · D31: a batch push adds every active new option and reports no option choice.
+    @Test
+    void update_batch_reportsNoOptionChoice() throws Exception {
+        givenProduct(COUPANG_PRODUCT);
+        givenOptions(pairedOption(), newOption(), extraOption());
+        givenCategory56137();
+        ArgumentCaptor<String> payload = capturePut();
+
+        PushOutcome outcome = adapter.updateAndReport(cell(), defaultGen(), acct(), ListingUpdateSelection.batch());
+
+        assertThat(objectMapper.readTree(payload.getValue()).path("items"))
+                .extracting(i -> i.path("itemName").asText()).containsExactly("45g 1개", "2세트", "4세트");
+        assertThat(outcome.optionActive()).isEmpty();
+        assertThat(outcome.skipped()).isFalse();
+    }
+
+    // D27 ②: a product awaiting approval is never skipped by a batch push.
+    @Test
+    void update_approvalPendingBatch_isNotSkipped() throws Exception {
+        ProductListing cell = givenAllButNameAndShippingSame(COUPANG_PRODUCT_PENDING, newOption());
+        ArgumentCaptor<String> payload = capturePut();
+
+        PushOutcome outcome = adapter.updateAndReport(cell, marketGen(), acct(), ListingUpdateSelection.batch());
+
+        assertThat(outcome.skipped()).isFalse();
+        verify(client, times(1)).put(anyString(), anyString(), any());
+        JsonNode items = objectMapper.readTree(payload.getValue()).path("items");
+        assertThat(items).hasSize(1);
+        assertThat(items.get(0).path("itemName").asText()).isEqualTo("2세트");
     }
 }

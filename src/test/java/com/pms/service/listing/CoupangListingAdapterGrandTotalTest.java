@@ -3,6 +3,7 @@ package com.pms.service.listing;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.GrandTotalSend;
+import com.pms.domain.ListingUpdateItem;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
@@ -41,8 +42,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.endsWith;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -57,6 +61,10 @@ class CoupangListingAdapterGrandTotalTest {
             "{\"code\":\"ERROR\",\"message\":\"유효하지 않은 구매 옵션이 존재합니다.\",\"data\":null}";
     private static final String REQUIRED_BODY =
             "{\"code\":\"ERROR\",\"message\":\"[2의 필수 옵션이(총 수량) 입력되지 않았습니다.]\"}";
+
+    private static final String GRAND_TOTAL_PRODUCT = "{\"code\":\"SUCCESS\",\"data\":{\"sellerProductId\":123456789,"
+            + "\"items\":[{\"sellerProductItemId\":777,\"vendorItemId\":888,\"itemName\":\"2개\",\"salePrice\":6000,"
+            + "\"attributes\":[{\"attributeTypeName\":\"수량\",\"attributeValueName\":\"2개\"}]}]}}";
 
     @Mock private CoupangApiClient client;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
@@ -88,7 +96,10 @@ class CoupangListingAdapterGrandTotalTest {
         lenient().when(productListingOptionRepository.findByProductListingId(100L)).thenReturn(List.of(
                 ProductListingOption.builder().id(1L).optionName("2개").sellingPrice(new BigDecimal("6000"))
                         .active(true).categoryAttributes(new java.util.LinkedHashMap<>(Map.of("수량", "2", "총 수량", "2")))
+                        .sellerProductItemId("777").platformOptionId("888")
                         .build()));
+        // FEATURE_2611_25 / D1: a revision reads the product from Coupang first.
+        lenient().when(client.get(endsWith("/123456789"), eq(""), any())).thenReturn(GRAND_TOTAL_PRODUCT);
     }
 
     private PlatformCategory category(boolean remembered) {
@@ -265,5 +276,21 @@ class CoupangListingAdapterGrandTotalTest {
         verify(client, times(1)).put(anyString(), anyString(), any());
         // Only the payload build resolves the category — the memory is not consulted for a confirmed listing.
         verify(masterChannelConfigService, times(1)).resolveChannelCategory(any());
+    }
+
+    // FEATURE_2611_25 / D17: 속성 not picked → one PUT, the 총 수량 state untouched, the read attributes kept.
+    @Test
+    void update_attributesNotPicked_onePutAndKeepsGrandTotalState() throws Exception {
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        given(client.put(anyString(), payload.capture(), any())).willReturn("{\"code\":\"SUCCESS\"}");
+
+        PushOutcome outcome = adapter.updateAndReport(cell(GrandTotalSend.OMITTED), gen, acct(),
+                ListingUpdateSelection.request(List.of(ListingUpdateItem.DISPLAY_NAME), List.of()));
+
+        verify(client, times(1)).put(anyString(), anyString(), any());
+        assertThat(outcome.grandTotalSend()).isNull();
+        assertThat(objectMapper.readTree(payload.getValue()).path("items").get(0).path("attributes").get(0)
+                .path("attributeValueName").asText()).isEqualTo("2개");
+        verify(masterChannelConfigService, never()).resolveChannelCategory(any());
     }
 }
