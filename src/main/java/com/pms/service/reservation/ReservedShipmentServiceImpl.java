@@ -98,7 +98,12 @@ public class ReservedShipmentServiceImpl implements ReservedShipmentService {
         if (invoicesByOrderId.isEmpty()) {
             throw new IllegalArgumentException("파일에 주문번호·운송장번호가 있는 행이 없습니다");
         }
-        Map<Platform, String> carrierCodes = resolveCarrierCodes();
+        // D56 ②: read the file's orders first (file order) — the carrier codes are checked for their marketplaces only.
+        Map<String, List<OrderLine>> linesByOrderId = new LinkedHashMap<>();
+        for (String orderId : invoicesByOrderId.keySet()) {
+            linesByOrderId.put(orderId, orderLineRepository.findByExternalOrderId(orderId));
+        }
+        Map<Platform, String> carrierCodes = resolveCarrierCodes(linesByOrderId.values());
 
         ReservedShipment reservation = null;
         int reserved = 0;
@@ -108,14 +113,14 @@ public class ReservedShipmentServiceImpl implements ReservedShipmentService {
         for (Map.Entry<String, List<String>> entry : invoicesByOrderId.entrySet()) {
             String orderId = entry.getKey();
             String invoices = joinInvoices(orderId, entry.getValue());
-            List<OrderLine> lines = orderLineRepository.findByExternalOrderId(orderId);
+            List<OrderLine> lines = linesByOrderId.get(orderId);
             if (lines.isEmpty()) {
                 excluded.add(new ExcludedOrder(orderId, "주문을 찾을 수 없습니다"));
                 continue;
             }
             Platform platform = lines.get(0).getOrder().getMarketplaceAccount().getPlatform();
             if (!internalStageMarkets.supports(platform)) {
-                excluded.add(new ExcludedOrder(orderId, "쿠팡 주문이 아닙니다"));
+                excluded.add(new ExcludedOrder(orderId, "내부 상품준비중을 지원하지 않는 마켓 주문입니다"));
                 continue;
             }
             String carrierCode = carrierCodes.get(platform);
@@ -500,12 +505,19 @@ public class ReservedShipmentServiceImpl implements ReservedShipmentService {
     }
 
     /**
-     * Carrier codes of the active carrier for every marketplace that opens the internal stage (the same rule as the
-     * bulk shipment confirm; FEATURE_2610_23 / D23 · D24), read before the file's orders. Not set → 400, not 500.
+     * Carrier codes of the active carrier for the marketplaces of the file's orders that open the internal stage
+     * (FEATURE_2611_23 / D50 · D56 ②) — the marketplace of each order's first line; an order without lines adds none.
+     * Not set → 400, not 500.
      */
-    private Map<Platform, String> resolveCarrierCodes() {
+    private Map<Platform, String> resolveCarrierCodes(Collection<List<OrderLine>> orders) {
+        Set<Platform> inFile = EnumSet.noneOf(Platform.class);
+        for (List<OrderLine> lines : orders) {
+            if (!lines.isEmpty()) {
+                inFile.add(lines.get(0).getOrder().getMarketplaceAccount().getPlatform());
+            }
+        }
         Map<Platform, String> codes = new EnumMap<>(Platform.class);
-        for (Platform platform : Platform.values()) {
+        for (Platform platform : inFile) {
             if (!internalStageMarkets.supports(platform)) {
                 continue;
             }
@@ -556,7 +568,10 @@ public class ReservedShipmentServiceImpl implements ReservedShipmentService {
         return toRows(List.of(scopedItem(itemId))).get(0);
     }
 
-    /** 결과 행 → 응답 행. 라인 id(E7 [예약 취소] 입력)는 배송 묶음별로 한 번에 읽는다(N+1 금지). */
+    /**
+     * Result rows → response rows. The line ids (the E7 [예약 취소] input) and the marketplace of each delivery bundle
+     * (FEATURE_2611_23 / D64 ①, the first line met) are read once for all bundles (no N+1).
+     */
     private List<ReservedShipmentRowResponse> toRows(List<ReservedShipmentItem> items) {
         if (items.isEmpty()) {
             return List.of();
@@ -564,12 +579,17 @@ public class ReservedShipmentServiceImpl implements ReservedShipmentService {
         Set<Long> shipmentIds = new LinkedHashSet<>();
         items.forEach(i -> shipmentIds.add(i.getOrderShipment().getId()));
         Map<Long, List<Long>> lineIdsByShipment = new HashMap<>();
+        Map<Long, String> platformByShipment = new HashMap<>();
         for (OrderLine line : orderLineRepository.findWithAccountByOrderShipment_IdIn(shipmentIds)) {
-            lineIdsByShipment.computeIfAbsent(line.getOrderShipment().getId(), k -> new ArrayList<>()).add(line.getId());
+            Long shipmentId = line.getOrderShipment().getId();
+            lineIdsByShipment.computeIfAbsent(shipmentId, k -> new ArrayList<>()).add(line.getId());
+            platformByShipment.putIfAbsent(shipmentId,
+                    line.getOrder().getMarketplaceAccount().getPlatform().name());
         }
         return items.stream()
                 .map(i -> ReservedShipmentRowResponse.of(i,
-                        lineIdsByShipment.getOrDefault(i.getOrderShipment().getId(), List.of())))
+                        lineIdsByShipment.getOrDefault(i.getOrderShipment().getId(), List.of()),
+                        platformByShipment.get(i.getOrderShipment().getId())))
                 .toList();
     }
 }

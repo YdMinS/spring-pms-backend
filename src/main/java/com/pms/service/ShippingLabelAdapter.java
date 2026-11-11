@@ -9,7 +9,8 @@ import java.util.Set;
 
 /**
  * Per-marketplace label-sheet rows ([송장 접수시트]) — FEATURE_2610_23 / D21, the same shape as
- * {@code ClaimSyncAdapter}. Implementations: {@link CoupangShippingLabelAdapter} · {@link ElevenstShippingLabelAdapter}.
+ * {@code ClaimSyncAdapter}. Implementations: {@link CoupangShippingLabelAdapter} · {@link ElevenstShippingLabelAdapter} ·
+ * {@link LotteonShippingLabelAdapter}.
  *
  * <p>{@link ShippingLabelServiceImpl} picks the adapter by the account's platform; a marketplace without an adapter
  * keeps today's result (skipped in the list sheet, 400 for the single-order sheet — D14). Rows are loaded into the

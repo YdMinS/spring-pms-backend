@@ -6,10 +6,12 @@ import com.pms.service.ShipmentConfirmResult.FailedBox;
 import com.pms.service.ShipmentConfirmResult.SkippedOrder;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * Per-marketplace order confirmation ([발주처리]) — FEATURE_2610_23 / D21, the same shape as {@code ClaimSyncAdapter}.
- * Implementations: {@link CoupangOrderAcknowledgeAdapter} · {@link ElevenstOrderAcknowledgeAdapter}.
+ * Implementations: {@link CoupangOrderAcknowledgeAdapter} · {@link ElevenstOrderAcknowledgeAdapter} ·
+ * {@link LotteonOrderAcknowledgeAdapter}.
  *
  * <p>{@link OrderAcknowledgeServiceImpl} sorts the lines first (no adapter · no delivery bundle = unsupported, not
  * paid = skipped) and hands each adapter only its own paid lines. A marketplace without an adapter keeps the
@@ -31,6 +33,15 @@ public interface OrderAcknowledgeAdapter {
      */
     default boolean internalStage() {
         return false;
+    }
+
+    /**
+     * Lines of this marketplace that the internal-stage mark ([내부 발주처리]) leaves out even when paid
+     * (FEATURE_2611_23 / D53 · R1) — they keep their own marketplace buttons. Read only when {@link #internalStage()}
+     * is true. Default: none.
+     */
+    default Set<Long> internalStageExcludedLineIds(List<OrderLine> lines) {
+        return Set.of();
     }
 
     /**

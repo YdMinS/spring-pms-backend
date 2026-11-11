@@ -13,10 +13,10 @@ import java.util.Map;
 /**
  * Per-marketplace invoice registration (the result file · the single manual invoice · the stored invoices of the
  * internal stage) — FEATURE_2610_23 / D21, the same shape as {@code ClaimSyncAdapter}. Implementations:
- * {@link CoupangShipmentInvoiceAdapter} · {@link ElevenstShipmentInvoiceAdapter}.
+ * {@link CoupangShipmentInvoiceAdapter} · {@link ElevenstShipmentInvoiceAdapter} · {@link LotteonShipmentInvoiceAdapter}.
  *
  * <p>{@link ShipmentConfirmServiceImpl} parses the file, finds each order in the DB and hands every adapter its own
- * orders, in the platform order (Coupang → 11st). A marketplace without an adapter keeps today's result (unmatched in
+ * orders, in the platform order (Coupang → 11st → LotteON). A marketplace without an adapter keeps today's result (unmatched in
  * the file, 400 for the single invoice — D14). The internal-stage orders of the file (D23 · D24) are not handed to
  * {@link #shipFromFile} — the service sends them through {@link #sendReservedInvoices}.
  *

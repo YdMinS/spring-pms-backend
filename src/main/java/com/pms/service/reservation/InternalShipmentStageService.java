@@ -6,11 +6,11 @@ import java.util.List;
 /**
  * 배송 묶음의 내부 단계(「내부 상품준비중」·「발송대기중」) 전환 창구 (FEATURE_2609_75 / D1 · D14 · D18).
  *
- * ⚠️ 쿠팡에 아무것도 보내지 않는다 — DB 만 바꾼다.
+ * ⚠️ Sends nothing to any marketplace — only the DB changes.
  */
 public interface InternalShipmentStageService {
 
-    /** 선택 라인이 속한 결제완료 쿠팡 배송 묶음을 「내부 상품준비중」으로(E1). */
+    /** Marks the paid bundles of the selected lines, of marketplaces that open the internal stage (Coupang · 11st), as 「내부 상품준비중」 (E1). */
     InternalStageResult markInternal(List<Long> orderItemIds);
 
     /** 「내부 상품준비중」 배송 묶음을 없음으로 되돌린다(E2, D18 행1). */

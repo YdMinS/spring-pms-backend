@@ -11,6 +11,7 @@ import com.pms.service.ShipmentConfirmResult.FailedBox;
 import com.pms.service.ShipmentConfirmResult.SkippedOrder;
 import com.pms.service.elevenst.ElevenstOrderActions;
 import com.pms.service.elevenst.ElevenstOrderList;
+import com.pms.service.elevenst.ElevenstRawFields;
 import com.pms.service.elevenst.ElevenstRejectedException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -28,7 +30,8 @@ import java.util.stream.Collectors;
 
 /**
  * 11st order confirmation 1634 (FEATURE_2610_17 / D20 · D48 · D67), moved from {@link OrderAcknowledgeServiceImpl}
- * unchanged (FEATURE_2610_23 / D3 · D21). The internal-stage bundle stays closed for 11st (D24).
+ * unchanged (FEATURE_2610_23 / D3 · D21). 11st opens the internal-stage bundle (FEATURE_2611_23 / D51) — a
+ * reserved-sale line (raw 201) and a visit-pickup line ({@code visitDlvYn} = Y) are left out of the mark (D53).
  */
 @Slf4j
 @Component
@@ -44,9 +47,33 @@ public class ElevenstOrderAcknowledgeAdapter implements OrderAcknowledgeAdapter 
         return Platform.ELEVENST;
     }
 
+    /** FEATURE_2611_23 / D51 ①: 11st opens the internal-stage bundle. */
+    @Override
+    public boolean internalStage() {
+        return true;
+    }
+
+    /**
+     * FEATURE_2611_23 / D53 · R1: a reserved-sale line before stock-in (raw 201) and a visit-pickup line
+     * ({@code raw.visitDlvYn} = Y) keep [발주처리] · [입고완료 처리] · [방문수령 완료] only — never marked internally.
+     */
+    @Override
+    public Set<Long> internalStageExcludedLineIds(List<OrderLine> lines) {
+        List<Long> lineIds = lines.stream().map(OrderLine::getId).toList();
+        Set<Long> excluded = new HashSet<>();
+        for (ElevenstOrderLine mirror : elevenstOrderLineRepository.findByOrderLine_IdIn(lineIds)) {
+            if (ElevenstOrderList.RESERVED.code().equals(mirror.getPlatformStatus())
+                    || ElevenstRawFields.yes(mirror, "visitDlvYn")) {
+                excluded.add(mirror.getOrderLine().getId());
+            }
+        }
+        return excluded;
+    }
+
     /**
      * Groups the lines by (account, delivery number) — FEATURE_2610_17 / D48 — and sends them. The succeeded delivery
-     * numbers are not reported: 11st has no internal stage (FEATURE_2610_23 / D24).
+     * numbers are reported for the internal stage (FEATURE_2611_23 / R2): a delivery number whose sent product groups
+     * all succeeded.
      */
     @Override
     public AcknowledgeOutcome acknowledge(List<OrderLine> lines) {
@@ -58,7 +85,7 @@ public class ElevenstOrderAcknowledgeAdapter implements OrderAcknowledgeAdapter 
         }
         ElevenstAckOutcome outcome = acknowledgeElevenst(groups);
         return new AcknowledgeOutcome(outcome.groups(), outcome.succeeded(), outcome.failed(), outcome.reserved(),
-                List.of());
+                outcome.succeededDlvNos());
     }
 
     /**
@@ -81,6 +108,7 @@ public class ElevenstOrderAcknowledgeAdapter implements OrderAcknowledgeAdapter 
         List<OrderLine> confirmed = new ArrayList<>();
         List<SkippedOrder> reserved = new ArrayList<>();
         Set<String> reservedOrders = new LinkedHashSet<>();
+        List<String> succeededDlvNos = new ArrayList<>();
         for (List<OrderLine> dlvLines : linesByAccountAndDlvNo.values()) {
             MarketplaceAccount account = dlvLines.get(0).getOrder().getMarketplaceAccount();
             String dlvNo = dlvLines.get(0).getOrderShipment().getExternalShipmentId();
@@ -104,6 +132,7 @@ public class ElevenstOrderAcknowledgeAdapter implements OrderAcknowledgeAdapter 
                 byProduct.computeIfAbsent(prdNo, k -> new ArrayList<>()).add(line);
                 anchorByProduct.putIfAbsent(prdNo, mirror);
             }
+            boolean dlvFailed = false;
             for (Map.Entry<String, List<OrderLine>> group : byProduct.entrySet()) {
                 groups++;
                 try {
@@ -114,7 +143,12 @@ public class ElevenstOrderAcknowledgeAdapter implements OrderAcknowledgeAdapter 
                     log.warn("11번가 발주처리 실패: account={} dlvNo={} prdNo={}", account.getId(), dlvNo,
                             group.getKey(), e);
                     failed.add(failedGroup(dlvNo, e));
+                    dlvFailed = true;
                 }
+            }
+            // R2: reported only when at least one product group was sent and none of them failed.
+            if (!byProduct.isEmpty() && !dlvFailed) {
+                succeededDlvNos.add(dlvNo);
             }
         }
         if (!confirmed.isEmpty()) {
@@ -126,7 +160,7 @@ public class ElevenstOrderAcknowledgeAdapter implements OrderAcknowledgeAdapter 
                 log.warn("11번가 발주처리 write-back 실패 (11번가 전송은 성공): {}", e.getMessage());
             }
         }
-        return new ElevenstAckOutcome(groups, succeeded, failed, reserved);
+        return new ElevenstAckOutcome(groups, succeeded, failed, reserved, succeededDlvNos);
     }
 
     /**
@@ -144,9 +178,9 @@ public class ElevenstOrderAcknowledgeAdapter implements OrderAcknowledgeAdapter 
 
     /**
      * {@link #acknowledgeElevenst} result — groups sent · groups succeeded · failed groups · reserved-sale orders left
-     * out (D67).
+     * out (D67) · delivery numbers whose sent groups all succeeded (FEATURE_2611_23 / R2).
      */
     private record ElevenstAckOutcome(int groups, int succeeded, List<FailedBox> failed,
-                                      List<SkippedOrder> reserved) {
+                                      List<SkippedOrder> reserved, List<String> succeededDlvNos) {
     }
 }

@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.config.CoupangProperties;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.OrderShipment;
 import com.pms.domain.Platform;
 import com.pms.service.coupang.SyncWindow;
 import com.pms.service.elevenst.ElevenstOrderApi;
@@ -12,17 +13,20 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
  * 11st label-sheet rows (FEATURE_2610_17 / D2 · D42) — the 1635 preparing list, moved from
- * {@link ShippingLabelServiceImpl} unchanged (FEATURE_2610_23 / D3 · D21). The internal-stage slot stays empty for
- * 11st (D24). Address and phone are read, never stored (D7).
+ * {@link ShippingLabelServiceImpl} unchanged (FEATURE_2610_23 / D3 · D21). The internal-stage slot reads the 1876
+ * paid list (FEATURE_2611_23 / D51 ②). Address and phone are read, never stored (D7).
  */
 @Slf4j
 @Component
@@ -51,6 +55,48 @@ public class ElevenstShippingLabelAdapter implements ShippingLabelAdapter {
     public List<ShippingLabelRow> collectOrderRows(MarketplaceAccount account, String externalOrderId,
                                                    Long orderItemId) {
         return collectElevenstRows(account, externalOrderId);
+    }
+
+    /**
+     * Internal-stage sheet (FEATURE_2611_23 / D51 ②): the 1876 paid list from the day before the oldest order of the
+     * bundles (0:00 KST; today − 1 day when no order time is known) until now, in 7-day calls, keeping only the rows
+     * whose delivery number ({@code dlvNo}) is one of the bundles' {@code external_shipment_id}. Each
+     * ({@code ordNo}, {@code ordPrdSeq}) row is taken once and filled with the same 11st sheet rule. The rows are not
+     * loaded into the order tables (R3).
+     *
+     * @return the delivery numbers found in the list
+     */
+    @Override
+    public Set<String> collectInternalRows(MarketplaceAccount account, List<OrderShipment> internal,
+                                           List<ShippingLabelRow> rows) {
+        Set<String> targetDlvNos = new HashSet<>();
+        internal.forEach(s -> targetDlvNos.add(s.getExternalShipmentId()));
+        LocalDateTime now = LocalDateTime.now(SyncWindow.KST);
+        LocalDate oldest = internal.stream()
+                .map(s -> s.getOrder().getOrderedAt())
+                .filter(Objects::nonNull)
+                .map(LocalDateTime::toLocalDate)
+                .min(Comparator.naturalOrder())
+                .orElse(now.toLocalDate());
+        LocalDateTime start = oldest.minusDays(1).atStartOfDay();
+        Set<String> found = new HashSet<>();
+        Set<String> seen = new HashSet<>();
+        for (LocalDateTime from = start; from.isBefore(now); from = from.plusDays(ELEVENST_WINDOW_DAYS)) {
+            LocalDateTime to = from.plusDays(ELEVENST_WINDOW_DAYS).isAfter(now) ? now : from.plusDays(ELEVENST_WINDOW_DAYS);
+            List<Map<String, String>> page = elevenstOrderApi.listByMinute(account, ElevenstPaths.ORDERS_PAID,
+                    "ordPrdSeq", from, to);
+            for (Map<String, String> row : page) {
+                String dlvNo = value(row, "dlvNo");
+                if (!targetDlvNos.contains(dlvNo)) {
+                    continue;
+                }
+                if (seen.add(value(row, "ordNo") + "|" + value(row, "ordPrdSeq"))) {
+                    found.add(dlvNo);
+                    flattenElevenstRow(account, row, rows);
+                }
+            }
+        }
+        return found;
     }
 
     /**
