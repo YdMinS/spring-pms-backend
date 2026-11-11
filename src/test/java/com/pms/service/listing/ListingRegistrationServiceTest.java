@@ -3,6 +3,7 @@ package com.pms.service.listing;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.GrandTotalSend;
 import com.pms.domain.ListingStatus;
+import com.pms.domain.ListingUpdateItem;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OptionApprovalStatus;
 import com.pms.domain.Platform;
@@ -10,9 +11,11 @@ import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
 import com.pms.domain.Seller;
+import com.pms.dto.request.ListingUpdateSelectionRequest;
 import com.pms.dto.response.ListingRegisterResponse;
 import com.pms.dto.response.ListingStatusResponse;
 import com.pms.dto.response.ListingSyncResponse;
+import com.pms.dto.response.ListingUpdatePreviewResponse;
 import com.pms.dto.response.MarketOptionResponse;
 import com.pms.exception.BusinessException;
 import com.pms.exception.ResourceNotFoundException;
@@ -36,10 +39,13 @@ import org.springframework.web.client.HttpClientErrorException;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
+import static com.pms.domain.ListingUpdateItem.DISPLAY_NAME;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -94,7 +100,7 @@ class ListingRegistrationServiceTest {
                 .willReturn(Optional.of(account()));
         given(resolver.resolve(Platform.COUPANG)).willReturn(adapter);
         // FEATURE_2610_34: a revision that reports nothing about 총 수량 (lenient — register tests never revise).
-        lenient().when(adapter.updateAndReport(any(), any(), any())).thenReturn(PushOutcome.unchanged(null));
+        lenient().when(adapter.updateAndReport(any(), any(), any(), any())).thenReturn(PushOutcome.unchanged(null));
     }
 
     // (a) register happy: DRAFT + gen → SUBMITTED + platformProductId; options untouched.
@@ -256,11 +262,11 @@ class ListingRegistrationServiceTest {
                 .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
 
-        ListingRegisterResponse response = service.updateRequest(CELL_ID);
+        ListingRegisterResponse response = service.updateRequest(CELL_ID, null);
 
         assertThat(response.getStatus()).isEqualTo("SUBMITTED");
         assertThat(response.getPlatformProductId()).isEqualTo("SP-1");
-        verify(adapter).updateAndReport(any(), any(), any());
+        verify(adapter).updateAndReport(any(), any(), any(), any());
 
         ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
         verify(productListingRepository).save(captor.capture());
@@ -278,10 +284,10 @@ class ListingRegistrationServiceTest {
         given(generatedProductDataRepository.findByProductListingId(CELL_ID))
                 .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
-        given(adapter.updateAndReport(any(), any(), any()))
+        given(adapter.updateAndReport(any(), any(), any(), any()))
                 .willReturn(new PushOutcome(null, GrandTotalSend.SENT_CONFIRMED, null, false));
 
-        ListingRegisterResponse response = service.updateRequest(CELL_ID);
+        ListingRegisterResponse response = service.updateRequest(CELL_ID, null);
 
         assertThat(response.getGrandTotalNotice()).isNull();
         ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
@@ -296,10 +302,10 @@ class ListingRegistrationServiceTest {
         given(productListingRepository.findScopedById(CELL_ID))
                 .willReturn(Optional.of(cell(ListingStatus.DRAFT, null)));
 
-        assertThatThrownBy(() -> service.updateRequest(CELL_ID))
+        assertThatThrownBy(() -> service.updateRequest(CELL_ID, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("미등록");
-        verify(adapter, never()).updateAndReport(any(), any(), any());
+        verify(adapter, never()).updateAndReport(any(), any(), any(), any());
     }
 
     // 3: deactivated options that were APPROVED are reverted (they are dropped from the payload); active
@@ -318,7 +324,7 @@ class ListingRegistrationServiceTest {
         given(productListingOptionRepository.findByProductListingId(CELL_ID))
                 .willReturn(List.of(activeApproved, inactiveApproved));
 
-        service.updateRequest(CELL_ID);
+        service.updateRequest(CELL_ID, null);
 
         ArgumentCaptor<ProductListingOption> captor = ArgumentCaptor.forClass(ProductListingOption.class);
         verify(productListingOptionRepository).save(captor.capture());
@@ -336,7 +342,7 @@ class ListingRegistrationServiceTest {
                 .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
 
-        assertThat(service.updateRequest(CELL_ID).getStatus()).isEqualTo("SUBMITTED");
+        assertThat(service.updateRequest(CELL_ID, null).getStatus()).isEqualTo("SUBMITTED");
     }
 
     // (c) fetchStatus SELLING: matched option → market ids + APPROVED saved; status saved.
@@ -738,10 +744,10 @@ class ListingRegistrationServiceTest {
         given(generatedProductDataRepository.findByProductListingId(CELL_ID))
                 .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
         given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(List.of(option()));
-        given(adapter.updateAndReport(any(), any(), any()))
+        given(adapter.updateAndReport(any(), any(), any(), any()))
                 .willReturn(new PushOutcome(null, null, null, false, "SINGLE"));
 
-        service.updateRequest(CELL_ID);
+        service.updateRequest(CELL_ID, null);
 
         ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
         verify(productListingRepository).save(captor.capture());
@@ -779,5 +785,139 @@ class ListingRegistrationServiceTest {
         ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
         verify(productListingRepository).save(captor.capture());
         assertThat(captor.getValue().getMarketBundleType()).isEqualTo("AB");
+    }
+
+    // ---- FEATURE_2611_25: [수정 요청] body · compare preview · no revert on Coupang (D23) · option on/off (D31) ----
+
+    private void givenRegisteredCellWithGen(List<ProductListingOption> options) {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.SELLING, "SP-1")));
+        given(generatedProductDataRepository.findByProductListingId(CELL_ID))
+                .willReturn(Optional.of(GeneratedProductData.builder().thumbnailUrl("t").detailHtml("d").build()));
+        given(productListingOptionRepository.findByProductListingId(CELL_ID)).willReturn(options);
+    }
+
+    // D21 · D31: the body picks reach the adapter as they are.
+    @Test
+    void updateRequest_bodyPicks_passedToAdapter() {
+        givenRegisteredCellWithGen(List.of(option()));
+        stubAccountAndAdapter();
+
+        service.updateRequest(CELL_ID, new ListingUpdateSelectionRequest(List.of(DISPLAY_NAME), List.of()));
+
+        ArgumentCaptor<ListingUpdateSelection> captor = ArgumentCaptor.forClass(ListingUpdateSelection.class);
+        verify(adapter).updateAndReport(any(), any(), any(), captor.capture());
+        assertThat(captor.getValue().overwrite()).containsExactly(DISPLAY_NAME);
+        assertThat(captor.getValue().defaultOptions()).isFalse();
+        assertThat(captor.getValue().addOptionIds()).isEmpty();
+        assertThat(captor.getValue().skipWhenUnchanged()).isFalse();
+        assertThat(captor.getValue().savesOptionChoice()).isTrue();
+    }
+
+    // D9 · R3: no body = the batch items and every option line active now.
+    @Test
+    void updateRequest_noBody_usesBatchItemsAndAllNewOptions() {
+        givenRegisteredCellWithGen(List.of(option()));
+        stubAccountAndAdapter();
+
+        service.updateRequest(CELL_ID, null);
+
+        ArgumentCaptor<ListingUpdateSelection> captor = ArgumentCaptor.forClass(ListingUpdateSelection.class);
+        verify(adapter).updateAndReport(any(), any(), any(), captor.capture());
+        assertThat(captor.getValue().overwrite()).isEqualTo(ListingUpdateItem.BATCH_DEFAULT);
+        assertThat(captor.getValue().defaultOptions()).isTrue();
+        assertThat(captor.getValue().skipWhenUnchanged()).isFalse();
+        assertThat(captor.getValue().savesOptionChoice()).isTrue();
+    }
+
+    // D23: a market that keeps inactive options (Coupang) → no revert, the cell still goes to SUBMITTED.
+    @Test
+    void updateRequest_marketKeepsInactiveOptions_noRevert() {
+        ProductListingOption activeApproved = option().toBuilder()
+                .id(50L).approvalStatus(OptionApprovalStatus.APPROVED).active(true).build();
+        ProductListingOption inactiveApproved = option().toBuilder()
+                .id(51L).approvalStatus(OptionApprovalStatus.APPROVED).active(false).build();
+        givenRegisteredCellWithGen(List.of(activeApproved, inactiveApproved));
+        stubAccountAndAdapter();
+        given(adapter.keepsInactiveOptionsOnUpdate()).willReturn(true);
+
+        service.updateRequest(CELL_ID, null);
+
+        verify(productListingOptionRepository, never()).save(any());
+        ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(captor.capture());
+        assertThat(captor.getValue().getStatus()).isEqualTo(ListingStatus.SUBMITTED);
+    }
+
+    // D3 · D14: the preview is the adapter's, nothing is stored or sent.
+    @Test
+    void previewUpdateRequest_returnsAdapterPreview() {
+        givenRegisteredCellWithGen(List.of(option()));
+        stubAccountAndAdapter();
+        given(adapter.comparesBeforeUpdate()).willReturn(true);
+        ListingUpdatePreviewResponse preview =
+                new ListingUpdatePreviewResponse(100L, List.of(), false, false, List.of());
+        given(adapter.previewUpdate(any(), any(), any())).willReturn(preview);
+
+        ListingUpdatePreviewResponse response = service.previewUpdateRequest(CELL_ID);
+
+        assertThat(response).isSameAs(preview);
+        verify(productListingRepository, never()).save(any());
+        verify(adapter, never()).updateAndReport(any(), any(), any(), any());
+    }
+
+    // D12 · R2: a market that does not compare before an update → 400 before any read.
+    @Test
+    void previewUpdateRequest_marketWithoutCompare_throws400() {
+        given(productListingRepository.findScopedById(CELL_ID))
+                .willReturn(Optional.of(cell(ListingStatus.SELLING, "SP-1")));
+        given(resolver.resolve(Platform.COUPANG)).willReturn(adapter);
+        given(adapter.comparesBeforeUpdate()).willReturn(false);
+
+        assertThatThrownBy(() -> service.previewUpdateRequest(CELL_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("COUPANG 수정 비교 미지원");
+        verify(adapter, never()).previewUpdate(any(), any(), any());
+    }
+
+    // D31 · R12: a passed revision stores the on/off the adapter reported for the shown option lines.
+    @Test
+    void updateRequest_savesReportedOptionChoice() {
+        ProductListingOption added = ProductListingOption.builder().id(51L).optionName("추가")
+                .sellingPrice(new BigDecimal("6000")).active(false).build();
+        givenRegisteredCellWithGen(List.of(option(), added));
+        stubAccountAndAdapter();
+        given(adapter.keepsInactiveOptionsOnUpdate()).willReturn(true);
+        given(adapter.updateAndReport(any(), any(), any(), any()))
+                .willReturn(new PushOutcome(null, null, null, false, null, false, Map.of(50L, false, 51L, true)));
+
+        service.updateRequest(CELL_ID, new ListingUpdateSelectionRequest(List.of(), List.of(51L)));
+
+        ArgumentCaptor<ProductListingOption> captor = ArgumentCaptor.forClass(ProductListingOption.class);
+        verify(productListingOptionRepository, times(2)).save(captor.capture());
+        assertThat(captor.getAllValues())
+                .extracting(ProductListingOption::getId, ProductListingOption::getActive)
+                .containsExactlyInAnyOrder(
+                        tuple(50L, false),
+                        tuple(51L, true));
+    }
+
+    // D31: a rejected revision stores nothing.
+    @Test
+    void updateRequest_rejected_savesNoOptionChoice() {
+        ProductListingOption added = ProductListingOption.builder().id(51L).optionName("추가")
+                .sellingPrice(new BigDecimal("6000")).active(false).build();
+        givenRegisteredCellWithGen(List.of(option(), added));
+        stubAccountAndAdapter();
+        lenient().when(adapter.keepsInactiveOptionsOnUpdate()).thenReturn(true);
+        given(adapter.updateAndReport(any(), any(), any(), any()))
+                .willThrow(new IllegalArgumentException("쿠팡이 상품 수정을 거부했습니다: 거절"));
+
+        assertThatThrownBy(() -> service.updateRequest(CELL_ID,
+                new ListingUpdateSelectionRequest(List.of(), List.of(51L))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("쿠팡이 상품 수정을 거부했습니다: 거절");
+        verify(productListingOptionRepository, never()).save(any());
+        verify(productListingRepository, never()).save(any());
     }
 }

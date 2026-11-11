@@ -1,8 +1,10 @@
 package com.pms.service.listing;
 
+import com.pms.dto.request.ListingUpdateSelectionRequest;
 import com.pms.dto.response.ListingRegisterResponse;
 import com.pms.dto.response.ListingStatusResponse;
 import com.pms.dto.response.ListingSyncResponse;
+import com.pms.dto.response.ListingUpdatePreviewResponse;
 import com.pms.dto.response.MarketOptionResponse;
 
 import java.util.List;
@@ -31,9 +33,18 @@ public interface ListingRegistrationService {
      * <p>On success ({@code adapter.updateAndReport} returned) the cell goes to SUBMITTED from <em>any</em> status (no
      * transition guard — REJECTED/SELLING/SUSPENDED all re-enter review), the dirty marker is cleared, a tag
      * revision is recorded, and deactivated-but-APPROVED options are reverted to NOT_APPROVED (same rule as
-     * {@code pushSync}: they are dropped from the re-submitted payload).</p>
+     * {@code pushSync}: they are dropped from the re-submitted payload) unless the market keeps them
+     * ({@code keepsInactiveOptionsOnUpdate}, Coupang — FEATURE_2611_25 / D23).</p>
+     *
+     * <p>Coupang reads the product and overwrites only the picked items (D1). {@code request} may be null.</p>
      */
-    ListingRegisterResponse updateRequest(Long listingId);
+    ListingRegisterResponse updateRequest(Long listingId, ListingUpdateSelectionRequest request);
+
+    /**
+     * FEATURE_2611_25 / D3 · D21: the items whose oclyx value differs from the value on Coupang now. One marketplace
+     * GET, zero writes.
+     */
+    ListingUpdatePreviewResponse previewUpdateRequest(Long listingId);
 
     /** Manual refresh: fetch market status + sync option ids/approval on SELLING. */
     ListingStatusResponse fetchStatus(Long listingId);

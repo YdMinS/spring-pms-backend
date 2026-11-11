@@ -8,9 +8,11 @@ import com.pms.domain.OptionApprovalStatus;
 import com.pms.domain.Platform;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.dto.request.ListingUpdateSelectionRequest;
 import com.pms.dto.response.ListingRegisterResponse;
 import com.pms.dto.response.ListingStatusResponse;
 import com.pms.dto.response.ListingSyncResponse;
+import com.pms.dto.response.ListingUpdatePreviewResponse;
 import com.pms.dto.response.MarketOptionResponse;
 import com.pms.exception.BusinessException;
 import com.pms.exception.ResourceNotFoundException;
@@ -41,8 +43,8 @@ import java.util.stream.Collectors;
  *
  * <p>Each write method is {@code @Transactional} (DB save atomicity); its marketplace HTTP calls run inside the
  * transaction — one call per write (a Coupang register or update may send one more, with or without 「총 수량」 —
- * FEATURE_2610_34; a Coupang update of a listing that does not know its bundle type reads the product once first —
- * FEATURE_2610_36 / D11), plus the market price read of a refresh (FEATURE_2610_27 / D13 ①: Coupang none extra · 11st
+ * FEATURE_2610_34; a Coupang update reads the product once first and overwrites only the picked items —
+ * FEATURE_2611_25 / D1 · D14), plus the market price read of a refresh (FEATURE_2610_27 / D13 ①: Coupang none extra · 11st
  * and ESM one extra) — with no approval wait. {@code syncApprovals} reuses the private refresh core (same
  * code path) — the inner call is a self-invocation, so its {@code @Transactional} is intentionally not a new
  * boundary: the sweep is one transaction and a caught per-listing failure (pre-flush: account/HTTP error)
@@ -127,9 +129,10 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
                 .build();
     }
 
+    /** FEATURE_2611_25 / D31: on success the option lines the window showed are saved on/off from {@code addOptions}. */
     @Override
     @Transactional
-    public ListingRegisterResponse updateRequest(Long listingId) {
+    public ListingRegisterResponse updateRequest(Long listingId, ListingUpdateSelectionRequest request) {
         ProductListing cell = productListingRepository.findScopedById(listingId)
                 .orElseThrow(() -> new ResourceNotFoundException("ProductListing", listingId));
         if (cell.getPlatformProductId() == null) {
@@ -148,15 +151,29 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
         // 108/D4: no validateRegistrable — this mirrors pushSync (which does not call it) and the cell already
         // passed it at register time. Unlike pushSync the needsMarketSync dirty marker is ignored on purpose.
         ListingChannel adapter = resolver.resolve(cell.getPlatform());
-        PushOutcome outcome = adapter.updateAndReport(cell, gen, acct);
+        PushOutcome outcome = adapter.updateAndReport(cell, gen, acct, ListingUpdateSelection.request(
+                request == null ? null : request.getOverwrite(), request == null ? null : request.getAddOptions()));
 
         // 42 (same rule as pushSync): options deactivated on this channel are dropped from the re-submitted
         // payload → they are no longer live on the market, so revert a previously-APPROVED one to NOT_APPROVED.
-        for (ProductListingOption option : options) {
-            if (!Boolean.TRUE.equals(option.getActive())
-                    && option.getApprovalStatus() == OptionApprovalStatus.APPROVED) {
-                productListingOptionRepository.save(
-                        option.toBuilder().approvalStatus(OptionApprovalStatus.NOT_APPROVED).build());
+        // Coupang keeps them on the market (D8) → no revert (FEATURE_2611_25 / D23).
+        if (!adapter.keepsInactiveOptionsOnUpdate()) {
+            for (ProductListingOption option : options) {
+                if (!Boolean.TRUE.equals(option.getActive())
+                        && option.getApprovalStatus() == OptionApprovalStatus.APPROVED) {
+                    productListingOptionRepository.save(
+                            option.toBuilder().approvalStatus(OptionApprovalStatus.NOT_APPROVED).build());
+                }
+            }
+        }
+        // FEATURE_2611_25 / D31 · R12: store the on/off the adapter reported for the option lines it showed.
+        Map<Long, Boolean> optionActive = outcome.optionActive();
+        if (optionActive != null && !optionActive.isEmpty()) {
+            for (ProductListingOption option : options) {
+                Boolean active = optionActive.get(option.getId());
+                if (active != null && !active.equals(option.getActive())) {
+                    productListingOptionRepository.save(option.toBuilder().active(active).build());
+                }
             }
         }
         // Push succeeded → append the merged tag snapshot (33) if it changed. Failed cells never reach here.
@@ -168,7 +185,7 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
                 .status(ListingStatus.SUBMITTED)
                 .needsMarketSync(false)
                 .grandTotalSend(outcome.grandTotalSend() != null ? outcome.grandTotalSend() : cell.getGrandTotalSend())
-                // FEATURE_2610_36 / D11: the bundle type sent (read once while the listing did not know it).
+                // FEATURE_2611_25 / D2: the bundle type read from Coupang (null keeps the stored one).
                 .marketBundleType(outcome.marketBundleType() != null
                         ? outcome.marketBundleType() : cell.getMarketBundleType())
                 .build());
@@ -178,6 +195,28 @@ public class ListingRegistrationServiceImpl implements ListingRegistrationServic
                 .status(ListingStatus.SUBMITTED.name())
                 .platformProductId(cell.getPlatformProductId())
                 .build();
+    }
+
+    @Override
+    public ListingUpdatePreviewResponse previewUpdateRequest(Long listingId) {
+        ProductListing cell = productListingRepository.findScopedById(listingId)
+                .orElseThrow(() -> new ResourceNotFoundException("ProductListing", listingId));
+        if (cell.getPlatformProductId() == null) {
+            throw new IllegalArgumentException("미등록");
+        }
+        ListingChannel adapter = resolver.resolve(cell.getPlatform());
+        if (!adapter.comparesBeforeUpdate()) {
+            throw new IllegalArgumentException(cell.getPlatform() + " 수정 비교 미지원");
+        }
+        MarketplaceAccount acct = resolveAccount(cell);
+        GeneratedProductData gen = generatedProductDataRepository.findByProductListingId(listingId)
+                .orElseThrow(() -> new IllegalArgumentException("자동생성 먼저"));
+        if (productListingOptionRepository.findByProductListingId(listingId).stream()
+                .noneMatch(o -> Boolean.TRUE.equals(o.getActive()))) {
+            throw new IllegalArgumentException("활성 옵션 없음");
+        }
+        // FEATURE_2611_25 / D3 · D14: one Coupang GET, nothing stored.
+        return adapter.previewUpdate(cell, gen, acct);
     }
 
     @Override
