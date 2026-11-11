@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -51,4 +52,8 @@ public interface MarketplaceAccountRepository extends JpaRepository<MarketplaceA
     @Query("select a from MarketplaceAccount a where (:sellerId is null or a.seller.id = :sellerId) "
             + "order by a.id asc")
     List<MarketplaceAccount> findAllWithSeller(@Param("sellerId") Long sellerId);
+
+    /** Accounts with their seller, read once per batch of account ids for order list rows' seller name · alias (FEATURE_2611_24 / D9). */
+    @EntityGraph(attributePaths = "seller")
+    List<MarketplaceAccount> findWithSellerByIdIn(Collection<Long> ids);
 }

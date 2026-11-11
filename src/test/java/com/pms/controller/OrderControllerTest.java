@@ -136,6 +136,8 @@ class OrderControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data[0].purchasableQty").value(7))   // 10-(2+1)
                 .andExpect(jsonPath("$.data[0].ordererName").value("홍길동"))
                 .andExpect(jsonPath("$.data[0].receiverName").value("김철수"))
+                .andExpect(jsonPath("$.data[0].sellerName").value("테스트셀러"))
+                .andExpect(jsonPath("$.data[0].accountAlias").value("쿠팡본점"))
                 .andExpect(jsonPath("$.data[0].raw").doesNotExist())
                 .andExpect(jsonPath("$.data[0].secretKey").doesNotExist());
     }
@@ -170,6 +172,8 @@ class OrderControllerTest extends BaseIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.syncedAt").exists())
                 .andExpect(jsonPath("$.data.orders[0].externalItemId").value("I1"))
+                .andExpect(jsonPath("$.data.orders[0].sellerName").value("테스트셀러"))
+                .andExpect(jsonPath("$.data.orders[0].accountAlias").value("쿠팡본점"))
                 .andExpect(jsonPath("$.data.orders[0].raw").doesNotExist());
     }
 

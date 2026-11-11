@@ -4,6 +4,7 @@ import com.pms.config.CoupangProperties;
 import com.pms.domain.CoupangOrderLine;
 import com.pms.domain.ElevenstOrderLine;
 import com.pms.domain.LotteonOrderLine;
+import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderLine;
 import com.pms.domain.OrderStatus;
 import com.pms.domain.Product;
@@ -12,6 +13,7 @@ import com.pms.dto.response.OrderMonthResponse;
 import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.LotteonOrderLineRepository;
+import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.service.elevenst.ElevenstOrderList;
@@ -28,6 +30,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -48,6 +51,10 @@ import java.util.stream.Collectors;
  * <p>The row thumbnail is the first component product of the line's BOM and the row's {@code components} are all of
  * them × {@code purchasableQty} (FEATURE_2611_15 / D16 · D18) — both from one {@link OrderLineExpander} call (the only
  * place that knows the expansion); products are read once per batch, not per line.
+ *
+ * <p>The row's seller name and sales channel alias come from reading the accounts + sellers <b>once</b> for the batch
+ * of account ids in the list, joined through a Map (FEATURE_2611_24 / D9) — {@code getSeller()} is not called per
+ * line through the order.
  */
 @Service
 @RequiredArgsConstructor
@@ -61,6 +68,7 @@ public class OrderQueryServiceImpl implements OrderQueryService {
     private final CoupangProperties coupangProperties;
     private final OrderLineExpander orderLineExpander;
     private final ProductRepository productRepository;
+    private final MarketplaceAccountRepository marketplaceAccountRepository;
 
     @Override
     public List<OrderItemResponse> list(Long sellerId, LocalDate from, LocalDate to) {
@@ -72,13 +80,15 @@ public class OrderQueryServiceImpl implements OrderQueryService {
 
     @Override
     public List<OrderItemResponse> rows(List<OrderLine> lines) {
+        Map<Long, MarketplaceAccount> accounts = accountsById(lines);
         Map<Long, CoupangOrderLine> mirrors = mirrorsByLineId(lines);
         Map<Long, ElevenstOrderLine> elevenstMirrors = elevenstMirrorsByLineId(lines);
         Map<Long, LotteonOrderLine> lotteonMirrors = lotteonMirrorsByLineId(lines);
         Map<Long, LineExpansion> expansions = orderLineExpander.expand(lines, OrderLine::purchasableQty);
         Map<Long, Product> thumbnails = thumbnailsByLineId(expansions);
         return lines.stream()
-                .map(line -> toResponse(line, mirrors.get(line.getId()), elevenstMirrors.get(line.getId()),
+                .map(line -> toResponse(line, accounts.get(line.getOrder().getMarketplaceAccount().getId()),
+                        mirrors.get(line.getId()), elevenstMirrors.get(line.getId()),
                         lotteonMirrors.get(line.getId()), thumbnails.get(line.getId()), components(expansions.get(line.getId()))))
                 .toList();
     }
@@ -113,6 +123,18 @@ public class OrderQueryServiceImpl implements OrderQueryService {
         return (sellerId == null)
                 ? orderRepository.findOrdersInPeriod(start, endExclusive)
                 : orderRepository.findOrdersInPeriodBySeller(sellerId, start, endExclusive);
+    }
+
+    /** Account id → account with its seller, one read for the distinct account ids (D9). No IN query for an empty list. */
+    private Map<Long, MarketplaceAccount> accountsById(List<OrderLine> lines) {
+        if (lines.isEmpty()) {
+            return Map.of();
+        }
+        Set<Long> ids = lines.stream()
+                .map(line -> line.getOrder().getMarketplaceAccount().getId())
+                .collect(Collectors.toSet());
+        return marketplaceAccountRepository.findWithSellerByIdIn(ids).stream()
+                .collect(Collectors.toMap(MarketplaceAccount::getId, Function.identity(), (a, b) -> a));
     }
 
     /** 라인 id → 쿠팡 거울 행. 빈 목록으로 IN 을 날리지 않는다. */
@@ -186,7 +208,7 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 .toList();
     }
 
-    private OrderItemResponse toResponse(OrderLine line, CoupangOrderLine mirror, ElevenstOrderLine elevenstMirror,
+    private OrderItemResponse toResponse(OrderLine line, MarketplaceAccount account, CoupangOrderLine mirror, ElevenstOrderLine elevenstMirror,
                                          LotteonOrderLine lotteonMirror, Product thumbnail, List<OrderItemResponse.ComponentQuantity> components) {
         var order = line.getOrder();
         // 전량취소는 저장되지 않는 파생값이라 여기서 만들어 낸다(PLAN D26).
@@ -195,6 +217,8 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 .id(line.getId())
                 .marketplaceAccountId(order.getMarketplaceAccount().getId())
                 .platform(order.getPlatform().name())
+                .sellerName(account != null && account.getSeller() != null ? account.getSeller().getSellerName() : null)
+                .accountAlias(account != null ? account.getAccountAlias() : null)
                 .externalOrderId(order.getExternalOrderId())
                 .externalBoxId(line.getOrderShipment() != null
                         ? line.getOrderShipment().getExternalShipmentId() : null)
