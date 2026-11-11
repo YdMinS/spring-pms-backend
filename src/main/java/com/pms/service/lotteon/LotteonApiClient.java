@@ -23,7 +23,8 @@ import java.io.IOException;
  *   <li>D8 — {@code oklyx.lotteon.outbound-enabled=false} (dev · local) → 503 {@value #OUTBOUND_DISABLED_MESSAGE}
  *       before any network I/O. No exception for category lookups (D10).</li>
  *   <li>D23 · D30 — an HTTP error (429 included), or a body whose {@code returnCode} is not {@code 0000}, becomes a
- *       502 whose message is LotteON's own text ({@link #messageOf}). Per-line results ({@code data[].resultCode})
+ *       502 whose message is LotteON's own text ({@link #messageOf}) — except {@value #NO_DATA} through
+ *       {@link #postList}, which is an empty answer (D66 · R28). Per-line results ({@code data[].resultCode})
  *       are the caller's to read ({@link #lineFailure}).</li>
  * </ul>
  *

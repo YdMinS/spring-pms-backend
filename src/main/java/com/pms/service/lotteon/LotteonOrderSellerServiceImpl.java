@@ -47,7 +47,7 @@ public class LotteonOrderSellerServiceImpl implements LotteonOrderSellerService 
     static final String APPOINTMENT_REASON_MESSAGE = "지연 사유를 선택하세요";
     static final String APPOINTMENT_DETAIL_MESSAGE = "제작지연은 상세 사유를 선택하세요";
 
-    /** R25: [138] is accepted at 11 출고지시 · 12 상품준비 only. */
+    /** R25: [138] is accepted at 「11 출고지시」 · 「12 상품준비」 only. */
     private static final Set<OrderStatus> APPOINTMENT_STATUSES = Set.of(OrderStatus.PAID, OrderStatus.PREPARING);
     private static final DateTimeFormatter APPOINTMENT_DAY = DateTimeFormatter.ofPattern("yyyyMMdd");
     /** D26: the promised day ends at 23:59:59. */

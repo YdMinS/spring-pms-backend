@@ -20,7 +20,7 @@ import java.util.Map;
  * LotteON order-side calls (FEATURE_2611_23 / D10 · D11 · D15 · D16 · D39): [209] outbound instructions · [140]
  * delivery progress states · [210] instruction receipt · [298] progress inform · [139] invoice modification.
  *
- * <p>Every call goes through {@link LotteonApiClient#post} with the channel's own key — a whole-call failure
+ * <p>Every call goes through {@link LotteonApiClient#post} (the [50] list: {@link LotteonApiClient#postList}, D66) with the channel's own key — a whole-call failure
  * ({@code returnCode} ≠ {@code 0000} · 4xx · 5xx · dev switch off) is thrown there (D10 · D15). This class reads the
  * per-call result ({@code data.rsltCd}) and per-line failures ({@code data.failList}).
  *
