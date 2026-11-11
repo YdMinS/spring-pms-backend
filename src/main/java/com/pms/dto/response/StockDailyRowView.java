@@ -36,13 +36,18 @@ import java.util.List;
  *                      is null (「미기입」)
  * @param priceFromBase a part of {@code amount} has a unit price filled from the registered price — the screen shows
  *                      「미기입」 next to the value (FEATURE_2611_17 D22)
- * @param openingPriceEditable an opening-stock row the row popup may price (FEATURE_2611_17 D5 · D17)
+ * @param openingPriceEditable an opening-stock or 「기타」 intake row the row popup may price (FEATURE_2611_17 D5 · D17 ·
+ *                      FEATURE_2611_22 D38)
  * @param sourceMovementId outgoing rows only: the lot it came from — 「○월 ○일 입고로 이동」 (FEATURE_2611_21 D18 · D22);
  *                      null = no lot (stock link off, no stock left) or not an outgoing row
  * @param sourceMovedOn the day of that lot; null with {@code sourceMovementId}
- * @param sourcePriceEditable that lot has a value to fix — a decided purchase or opening stock, or an undecided lot of
+ * @param sourcePriceEditable that lot has a value to fix — a decided purchase, opening stock or 「기타」 intake, or an
+ *                      undecided lot of
  *                      which this row used a registered share (D20); false without a lot
  * @param dateEdits     the day corrections of this row, newest first (D7 · D24); empty = never corrected
+ * @param fillable      an order outbound row without a lot that [입고로 채우기] may fill — stock link on and the row
+ *                      written at or after the last time it was turned on (FEATURE_2611_22 D3 ② · D11 · D16 · D28)
+ * @param filledLater   the row got its lot later — 「{sourceMovedOn} 입고로 나중에 채움」 (FEATURE_2611_22 D9)
  */
 public record StockDailyRowView(
         Long movementId,
@@ -70,7 +75,9 @@ public record StockDailyRowView(
         Long sourceMovementId,
         LocalDate sourceMovedOn,
         boolean sourcePriceEditable,
-        List<DateEdit> dateEdits
+        List<DateEdit> dateEdits,
+        boolean fillable,
+        boolean filledLater
 ) {
     /** One day correction of the row (FEATURE_2611_21 D24): when (KST wall clock), who (login email), from → to. */
     public record DateEdit(LocalDateTime editedAt, String editedBy, LocalDate oldMovedOn, LocalDate newMovedOn) {}

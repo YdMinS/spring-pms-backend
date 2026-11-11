@@ -28,6 +28,7 @@ import com.pms.dto.response.PurchaseProductGroup;
 import com.pms.dto.response.PurchaseRecordResult;
 import com.pms.dto.response.PurchaseRecordView;
 import com.pms.dto.response.PurchaseShare;
+import com.pms.dto.response.StockIntakeResult;
 import com.pms.dto.response.UnmappedOrder;
 import com.pms.config.CoupangProperties;
 import com.pms.exception.BusinessException;
@@ -359,11 +360,12 @@ public class PurchaseListServiceImpl implements PurchaseListService {
         // D17: a negative correction means "the amount was wrong", not "goods left" — STOCK_IN rejects it.
         boolean wantStock = stockLinked && ((request.recordStock() == null) || request.recordStock());
         boolean stockRecorded = wantStock && request.quantity() > 0;
+        Long lotId = null;
         if (stockRecorded) {
             // ⚠️ record 는 @Transactional(REQUIRED) 이라 이 트랜잭션에 합류한다 → 재고 실패 시 구매기록도 롤백.
             //    REQUIRES_NEW 로 바꾸면 "돈만 남고 물건은 없는" 행이 조용히 생긴다.
             // ⚠️ 단가를 넘기지 않는다(D16): 원장이 구매기록에서 승계한다. 여기서 계산하면 규칙이 두 벌이 된다.
-            stockLedgerService.record(new StockMovementRequest(
+            lotId = stockLedgerService.record(new StockMovementRequest(
                     request.productId(),          // productId
                     request.sellerId(),           // sellerId
                     StockMovementType.STOCK_IN,   // movementType
@@ -373,14 +375,14 @@ public class PurchaseListServiceImpl implements PurchaseListService {
                     null,                         // unitPrice — 구매기록에서 승계
                     null,                         // orderClaimId
                     saved.getId(),                // purchaseRecordId
-                    request.purchasedOn()));      // movedOn
+                    request.purchasedOn())).id(); // movedOn
         }
-        return new PurchaseRecordResult(saved.getId(), stockRecorded);
+        return new PurchaseRecordResult(saved.getId(), stockRecorded, lotId);
     }
 
     @Override
     @Transactional
-    public void addIntake(StockIntakeRequest request) {
+    public StockIntakeResult addIntake(StockIntakeRequest request) {
         // FEATURE_2610_19 D117 ①: the intake screen is a stock-link screen; with the link off there is no stock row to
         // assign a receipt to later (D130).
         if (!purchaseSettingService.isStockLinked()) {
@@ -406,11 +408,12 @@ public class PurchaseListServiceImpl implements PurchaseListService {
             throw new IllegalArgumentException(
                     "기초재고는 판매자를 골라야 합니다: " + String.join(", ", openingWithoutSeller));
         }
+        List<Long> lotIds = new ArrayList<>();
         for (StockIntakeRequest.Line line : request.lines()) {
             Long sellerId = only != null ? only.getId() : line.sellerId();
             if (line.reason() == StockReason.OPENING) {
                 // FEATURE_2611_01 D1: the seller's opening stock — no purchase record, unit price = the registered price.
-                stockLedgerService.record(new StockMovementRequest(
+                lotIds.add(stockLedgerService.record(new StockMovementRequest(
                         line.productId(),             // productId
                         sellerId,                     // sellerId
                         StockMovementType.STOCK_IN,   // movementType
@@ -420,7 +423,7 @@ public class PurchaseListServiceImpl implements PurchaseListService {
                         null,                         // unitPrice — the registered price
                         null,                         // orderClaimId
                         null,                         // purchaseRecordId
-                        request.movedOn()));          // movedOn
+                        request.movedOn())).id());    // movedOn
                 continue;
             }
             PurchaseRecordRequest purchase = new PurchaseRecordRequest(
@@ -433,15 +436,16 @@ public class PurchaseListServiceImpl implements PurchaseListService {
                     null,                                     // reflectToBasePrice
                     Boolean.TRUE);                            // recordStock
             if (sellerId != null) {
-                addPurchase(purchase);
+                lotIds.add(addPurchase(purchase).lotId());
                 continue;
             }
             Product product = productRepository.findById(line.productId())
                     .orElseThrow(() -> new ResourceNotFoundException("Product", line.productId()));
             PurchaseRecord saved = purchaseRecordRepository.save(
                     PurchaseRecord.of(product, null, purchase).toBuilder().stockLinked(true).build());
-            stockLedgerService.recordUndecidedIntake(saved);
+            lotIds.add(stockLedgerService.recordUndecidedIntake(saved).id());
         }
+        return new StockIntakeResult(lotIds);
     }
 
     @Override

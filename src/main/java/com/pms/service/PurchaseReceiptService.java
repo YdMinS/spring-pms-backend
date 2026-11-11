@@ -30,7 +30,8 @@ import java.util.List;
  * <p>🔴 A receipt never adds a debt of its own (D88) — borrowed-goods debts come from outbound rows only
  * (FEATURE_2610_19 D33). {@link #assign}, {@link #assignWithoutReceipt}, {@link #update}, {@link #changeSeller},
  * {@link #retypePrices} and {@link #editDailyRow} only recompute the split shares and the outbound debts of the
- * products they touched (D131 · D132).</p>
+ * products they touched (D131 · D132) — and, except {@link #update} and {@link #changeSeller}, the cost of the orders
+ * whose rows their lots filled later (FEATURE_2611_22 D22 · D25).</p>
  *
  * @see com.pms.controller.PurchaseReceiptController
  */
@@ -112,9 +113,10 @@ public interface PurchaseReceiptService {
      * The row popup of 「일별 입출고 내역」 (FEATURE_2611_17 D5 · D10 · D17 ~ D23 · D26): one decided incoming row or one
      * share, saved in one transaction — nothing changes when a part is refused. Order: the seller ({@link #changeSeller}
      * rules) → the price and photo of a purchase ({@link #retypePrices} rules, one line) or the price of an opening-stock
-     * row (D17: the row's unit price; an empty registered price takes it) → the picked receipt (the purchase becomes one
-     * more line of it, D23 · D26) → the row's new day ({@link com.pms.service.stock.StockDateEditService#moveRow} rules,
-     * FEATURE_2611_21 D9). receiptId = the receipt the photo went to or the picked receipt, null otherwise.
+     * or 「기타」 intake row (D17 · FEATURE_2611_22 D38: the row's unit price; an empty registered price takes it) → the
+     * picked receipt (the purchase becomes one more line of it, D23 · D26) → the row's new day
+     * ({@link com.pms.service.stock.StockDateEditService#moveRow} rules, FEATURE_2611_21 D9). receiptId = the receipt
+     * the photo went to or the picked receipt, null otherwise.
      *
      * <p>400: no request 「고칠 내용을 보내세요.」 · neither or both of movementId / shareRecordId 「고칠 줄을 고르세요.」 · a
      * row with nothing to edit 「고칠 수 없는 줄입니다.」 · a seller change on a row that is not a 「판매자 바꾸기」 target

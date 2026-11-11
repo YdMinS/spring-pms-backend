@@ -172,8 +172,8 @@ public class PurchaseRecord extends BaseEntity {
      * {@link #withTypedUnitPrice} · {@link #typedUnit} · {@link #registeredPriceOf} for a unit price typed later on
      * the debt screen (D141 ② · D145 · D146), {@link #withRetypedAmount} · {@link #totalOf} for 「매입가 넣기」 and
      * the daily view's amounts (FEATURE_2611_16 D6 · D8), and {@link #withBasePriceFill} · {@link #unitOfTotal} for an
-     * empty unit price filled from the registered price and an opening-stock price typed as a total (FEATURE_2611_17
-     * D17 · D22).
+     * empty unit price filled from the registered price and an opening-stock or 「기타」 intake price typed as a total
+     * (FEATURE_2611_17 D17 · D22 · FEATURE_2611_22 D38).
      * Web, mobile and any future bulk input must go through these methods so nobody rounds differently.
      *
      * <p>Amount input is either total OR unit price, never both — otherwise it is ambiguous which one
@@ -418,8 +418,8 @@ public class PurchaseRecord extends BaseEntity {
     }
 
     /**
-     * total / quantity at the unit scale (4, HALF_UP) — an opening-stock price typed as a total in the daily row popup
-     * (FEATURE_2611_17 D17 · D18).
+     * total / quantity at the unit scale (4, HALF_UP) — an opening-stock or 「기타」 intake price typed as a total in the
+     * daily row popup (FEATURE_2611_17 D17 · D18 · FEATURE_2611_22 D38).
      */
     public static BigDecimal unitOfTotal(BigDecimal total, int quantity) {
         return total.divide(BigDecimal.valueOf(quantity), UNIT_SCALE, RoundingMode.HALF_UP);

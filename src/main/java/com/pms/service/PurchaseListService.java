@@ -11,6 +11,7 @@ import com.pms.dto.response.PurchaseListResponse;
 import com.pms.dto.response.PurchaseProductGroup;
 import com.pms.dto.response.PurchaseRecordResult;
 import com.pms.dto.response.PurchaseRecordView;
+import com.pms.dto.response.StockIntakeResult;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -70,9 +71,10 @@ public interface PurchaseListService {
      * 「미정」 + 「매입」 = one undecided purchase record + one stock row (D105) · a seller + 「매입」 = that seller's
      * check-in through {@link #addPurchase(PurchaseRecordRequest)} · a seller + 「기초재고」 = that seller's opening
      * stock row (no purchase record). One seller = every line is that seller's (D116 ④ · D20). 400 while the stock
-     * link is off · a 「기초재고」 line without a seller → 400 naming the products, nothing saved (D19).
+     * link is off · a 「기초재고」 line without a seller → 400 naming the products, nothing saved (D19). Returns the stock
+     * rows written, in line order (FEATURE_2611_22 D3 ①).
      */
-    void addIntake(StockIntakeRequest request);
+    StockIntakeResult addIntake(StockIntakeRequest request);
 
     /** Recent purchases of a product, newest first, {@code limit} rows; {@code sellerId} null = every seller (D7 · D25). */
     List<PurchaseRecordView> recentPurchases(Long productId, Long sellerId, int limit);

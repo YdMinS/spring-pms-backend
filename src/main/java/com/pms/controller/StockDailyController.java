@@ -9,6 +9,7 @@ import com.pms.dto.request.StockIntakeRequest;
 import com.pms.dto.response.IntakeBarcodeView;
 import com.pms.dto.response.ReceiptCreateResult;
 import com.pms.dto.response.StockDailyView;
+import com.pms.dto.response.StockIntakeResult;
 import com.pms.service.PurchaseListService;
 import com.pms.service.PurchaseReceiptService;
 import com.pms.service.stock.StockDailyService;
@@ -63,11 +64,13 @@ public class StockDailyController {
         return ResponseEntity.ok(ResponseDTO.success(stockDailyService.barcode(value)));
     }
 
-    /** 「입고 작업」 [입고 저장] (D117 ⑥). 400 while the stock link is off. */
+    /**
+     * 「입고 작업」 [입고 저장] (D117 ⑥). 400 while the stock link is off. The stock rows written come back for the
+     * 「채울까요?」 window (FEATURE_2611_22 D3 ①).
+     */
     @PostMapping("/intake")
-    public ResponseEntity<ResponseDTO<Void>> intake(@Valid @RequestBody StockIntakeRequest request) {
-        purchaseListService.addIntake(request);
-        return ResponseEntity.ok(ResponseDTO.success(null));
+    public ResponseEntity<ResponseDTO<StockIntakeResult>> intake(@Valid @RequestBody StockIntakeRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(purchaseListService.addIntake(request)));
     }
 
     /** 「판매자 바꾸기」 of the daily view (FEATURE_2611_01 D7 · D15). */

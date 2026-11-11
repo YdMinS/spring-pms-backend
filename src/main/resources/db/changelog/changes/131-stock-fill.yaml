@@ -1,0 +1,27 @@
+# Outbound rows written without a lot, filled later from an intake (FEATURE_2611_22 / D9 · D11 · D16).
+#   131-1 tenant_purchase_setting.stock_linked_at = the last time the stock link was turned on (off -> on). NULL = never
+#         turned on since this column exists — an account that is on today counts as on from the start (D16).
+#         stock_movement.filled_at · filled_by = when and by whom (the login email) an empty source was filled later.
+#         NULL = every other row.
+# ⚠️ No BOOLEAN column here -> no MySQL BIT follow-up changeSet.
+# ⚠️ No data change here: today's rows keep NULL in all three columns.
+databaseChangeLog:
+
+  - changeSet:
+      id: 131-1-stock-fill
+      author: oclyx
+      comment: "FEATURE_2611_22 D9 D11: stock_linked_at on tenant_purchase_setting, filled_at and filled_by on stock_movement."
+      changes:
+        - addColumn:
+            tableName: tenant_purchase_setting
+            columns:
+              - column: { name: stock_linked_at, type: TIMESTAMP }
+        - addColumn:
+            tableName: stock_movement
+            columns:
+              - column: { name: filled_at, type: TIMESTAMP }
+              - column: { name: filled_by, type: VARCHAR(100) }
+      rollback:
+        - dropColumn: { tableName: stock_movement, columnName: filled_by }
+        - dropColumn: { tableName: stock_movement, columnName: filled_at }
+        - dropColumn: { tableName: tenant_purchase_setting, columnName: stock_linked_at }

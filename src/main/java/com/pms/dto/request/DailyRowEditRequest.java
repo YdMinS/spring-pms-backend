@@ -16,7 +16,7 @@ import java.time.LocalDate;
  *                           stays (D18)
  * @param unitPrice          the price per piece
  * @param reflectToBasePrice 「상품 기준가에 반영」 of a purchase (FEATURE_2611_16 D3) — null → true; not read for an
- *                           opening-stock row (D17 · D18)
+ *                           opening-stock or 「기타」 intake row (D17 · D18 · FEATURE_2611_22 D38)
  * @param receiptId          a receipt of that day with its photo to add the purchase to (D23 · D26); null = none
  * @param cardId             the card of a new receipt made from the photo (FEATURE_2611_16 D12); null =
  *                           「카드로 알 수 없음」
