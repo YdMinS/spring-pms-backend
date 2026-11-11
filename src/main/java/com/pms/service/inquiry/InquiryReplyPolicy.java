@@ -10,8 +10,8 @@ import com.pms.dto.response.ReplyCapability;
 import com.pms.service.CarrierCodeService;
 import com.pms.service.CarrierOption;
 import com.pms.service.InvoiceNumbers;
-import com.pms.service.claim.ActionChoice;
 import com.pms.service.elevenst.ElevenstSellerChoices;
+import com.pms.service.inquiry.InquiryReplyAdapter.ReplyForm;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -36,7 +36,6 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class InquiryReplyPolicy {
 
-    private static final int MAX_LENGTH = 1000;
     /**
      * Minimum length shown for an inquiry whose marketplace has no reply adapter — the reply is blocked anyway (step
      * 1); the values stay what that response carried before the adapters owned the minimum (FEATURE_2610_23 / D3 ·
@@ -50,8 +49,6 @@ public class InquiryReplyPolicy {
      * non-delivery handling too, FEATURE_2610_17 / D68).
      */
     private static final boolean ONCE = true;
-    /** FEATURE_2610_17 / D68: the 11st non-delivery detail text is 1~200 characters (same value as D39 ①). */
-    private static final int MAX_LENGTH_NON_DELIVERY = 200;
 
     private final List<InquiryReplyAdapter> adapters;
     /** FEATURE_2610_17 / D68: checks the re-shipping carrier and gives its name for the record line. */
@@ -77,14 +74,12 @@ public class InquiryReplyPolicy {
         Optional<InquiryReplyAdapter> adapter = resolve(inquiry.getPlatform());
         int minLength = adapter.map(a -> a.minLength(type)).orElseGet(() -> unsupportedMinLength(type));
         String parentReplyId = adapter.map(a -> a.parentReplyId(inquiry, replies)).orElse(null);
-        boolean nonDelivery = type == InquiryType.NON_DELIVERY;
-        int maxLength = nonDelivery ? MAX_LENGTH_NON_DELIVERY : MAX_LENGTH;
-        String form = nonDelivery ? ReplyCapability.FORM_NON_DELIVERY : ReplyCapability.FORM_TEXT;
-        List<ActionChoice> reasons =
-                nonDelivery ? ElevenstSellerChoices.NON_DELIVERY_REASONS : List.of();
+        // FEATURE_2611_23 / D70 · R46: the form, its reasons and the longest reply come from the reply adapter too.
+        ReplyForm replyForm = adapter.map(a -> a.replyForm(type)).orElseGet(() -> ReplyForm.standard(type));
 
         String reason = blockReason(inquiry, replies);
-        return new ReplyCapability(reason == null, reason, minLength, maxLength, ONCE, parentReplyId, form, reasons);
+        return new ReplyCapability(reason == null, reason, minLength, replyForm.maxLength(), ONCE, parentReplyId,
+                replyForm.form(), replyForm.reasons());
     }
 
     /**

@@ -5,6 +5,9 @@ import com.pms.domain.CustomerInquiry;
 import com.pms.domain.CustomerInquiryReply;
 import com.pms.domain.InquiryType;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.dto.response.ReplyCapability;
+import com.pms.service.claim.ActionChoice;
+import com.pms.service.elevenst.ElevenstSellerChoices;
 
 import java.util.List;
 
@@ -54,6 +57,41 @@ public interface InquiryReplyAdapter {
     /** The parent reply id this marketplace's reply must carry, or {@code null}. Default: none. */
     default String parentReplyId(CustomerInquiry inquiry, List<CustomerInquiryReply> replies) {
         return null;
+    }
+
+    /**
+     * The reply form of the type — which input the screen draws, its reasons and the longest reply (FEATURE_2611_23 /
+     * D70 · R46). Default: {@link ReplyForm#standard} (what the policy gave before the adapters owned it).
+     */
+    default ReplyForm replyForm(InquiryType type) {
+        return ReplyForm.standard(type);
+    }
+
+    /**
+     * One type's reply form (FEATURE_2611_23 / D70 · R46).
+     *
+     * @param form      {@link ReplyCapability#FORM_TEXT} or {@link ReplyCapability#FORM_NON_DELIVERY}
+     * @param reasons   the handling reasons of a {@link ReplyCapability#FORM_NON_DELIVERY} form; empty otherwise
+     * @param maxLength the longest reply text
+     */
+    record ReplyForm(String form, List<ActionChoice> reasons, int maxLength) {
+
+        /** The reply text limit of every type but the non-delivery report. */
+        public static final int TEXT_MAX_LENGTH = 1000;
+        /** FEATURE_2610_17 / D68: the non-delivery detail text is 1~200 characters (same value as D39 ①). */
+        public static final int NON_DELIVERY_MAX_LENGTH = 200;
+
+        /**
+         * The default form: a non-delivery report = the 11st handling form · its 4 reasons · 200 characters
+         * (FEATURE_2610_17 / D68); any other type = the text form · no reasons · 1,000 characters.
+         */
+        public static ReplyForm standard(InquiryType type) {
+            if (type == InquiryType.NON_DELIVERY) {
+                return new ReplyForm(ReplyCapability.FORM_NON_DELIVERY, ElevenstSellerChoices.NON_DELIVERY_REASONS,
+                        NON_DELIVERY_MAX_LENGTH);
+            }
+            return new ReplyForm(ReplyCapability.FORM_TEXT, List.of(), TEXT_MAX_LENGTH);
+        }
     }
 
     /**

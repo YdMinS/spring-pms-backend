@@ -20,5 +20,8 @@ public enum InquiryType {
     CALL_CENTER,
 
     /** 11st only: a buyer's non-delivery report 6733 「상품 미도착」, handled by 6734 (FEATURE_2610_17 / D68). */
-    NON_DELIVERY
+    NON_DELIVERY,
+
+    /** LotteON only: a buyer's question to the seller 179 「판매자 문의」, answered by 181 (FEATURE_2611_23 / D31). */
+    SELLER_INQUIRY
 }
