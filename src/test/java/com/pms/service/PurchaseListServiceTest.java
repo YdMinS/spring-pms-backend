@@ -34,6 +34,7 @@ import com.pms.dto.response.StockMovementView;
 import com.pms.exception.BusinessException;
 import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.ElevenstOrderLineRepository;
+import com.pms.repository.LotteonOrderLineRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -90,6 +91,7 @@ class PurchaseListServiceTest {
     @Mock private OrderLineRepository orderLineRepository;
     @Mock private CoupangOrderLineRepository coupangOrderLineRepository;
     @Mock private ElevenstOrderLineRepository elevenstOrderLineRepository;
+    @Mock private LotteonOrderLineRepository lotteonOrderLineRepository;
     @Mock private ProductListingOptionRepository productListingOptionRepository;
     @Mock private CellBomResolver cellBomResolver;
     @Mock private ProductRepository productRepository;

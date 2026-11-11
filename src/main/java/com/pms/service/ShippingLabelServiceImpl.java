@@ -29,7 +29,7 @@ import java.util.Set;
 
 /**
  * {@link ShippingLabelService} implementation — each marketplace's {@link ShippingLabelAdapter} reads its rows
- * (FEATURE_2610_23 / D21: Coupang ordersheets INSTRUCT · 11st 1635) → xlsx.
+ * (FEATURE_2610_23 / D21: Coupang ordersheets INSTRUCT · 11st 1635 · LotteON 140) → xlsx.
  *
  * Fetched rows are upserted into the order tables inside the adapters (PLAN 2609_13 D1) — best-effort, so a failed
  * save still returns the sheet (D6). Never put @Transactional on this service (D3). Account and seller are fetched
@@ -100,7 +100,7 @@ public class ShippingLabelServiceImpl implements ShippingLabelService {
         MarketplaceAccount account = line.getOrder().getMarketplaceAccount();
         ShippingLabelAdapter adapter = adapterFor(account.getPlatform())
                 .orElseThrow(() -> new IllegalArgumentException(
-                        "쿠팡 · 11번가 주문만 송장시트를 만들 수 있습니다: " + account.getPlatform()));
+                        "쿠팡 · 11번가 · 롯데ON 주문만 송장시트를 만들 수 있습니다: " + account.getPlatform()));
         return adapter.collectOrderRows(account, externalOrderId, orderItemId).stream()
                 .map(ShippingLabelPreviewRow::from).toList();
     }

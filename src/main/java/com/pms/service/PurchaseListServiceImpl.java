@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.pms.domain.CoupangOrderLine;
 import com.pms.domain.ElevenstOrderLine;
+import com.pms.domain.LotteonOrderLine;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderLine;
 import com.pms.domain.OrderStatus;
@@ -35,6 +36,7 @@ import com.pms.exception.BusinessException;
 import com.pms.exception.ResourceNotFoundException;
 import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.ElevenstOrderLineRepository;
+import com.pms.repository.LotteonOrderLineRepository;
 import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderLineRepository;
 import com.pms.repository.ProductListingOptionRepository;
@@ -94,6 +96,7 @@ public class PurchaseListServiceImpl implements PurchaseListService {
     private final OrderLineRepository orderLineRepository;
     private final CoupangOrderLineRepository coupangOrderLineRepository;
     private final ElevenstOrderLineRepository elevenstOrderLineRepository;
+    private final LotteonOrderLineRepository lotteonOrderLineRepository;
     private final ProductListingOptionRepository productListingOptionRepository;
     /** 셀 옵션의 구성품은 마스터를 타고 얻는다(2609_71) — 셀 BOM 사본을 읽지 않는다. */
     private final CellBomResolver cellBomResolver;
@@ -725,6 +728,21 @@ public class PurchaseListServiceImpl implements PurchaseListService {
         return byLine;
     }
 
+    /** Line id → LotteON option number ({@code sitmNo}) — the unmapped group key of LotteON lines (FEATURE_2611_23 / R12). */
+    private Map<Long, String> lotteonItemIdsByLine(List<OrderLine> lines) {
+        if (lines.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> ids = lines.stream().map(OrderLine::getId).toList();
+        Map<Long, String> byLine = new HashMap<>();
+        for (LotteonOrderLine mirror : lotteonOrderLineRepository.findByOrderLine_IdIn(ids)) {
+            if (mirror.getSitmNo() != null) {
+                byLine.putIfAbsent(mirror.getOrderLine().getId(), mirror.getSitmNo());
+            }
+        }
+        return byLine;
+    }
+
     private PurchaseLine toLine(ShoppingListItem li, Map<Long, ChannelLabel> channels, Map<Long, String> sellerNames) {
         OrderLine line = li.getOrderLine();
         ChannelLabel channel = line == null
@@ -747,18 +765,21 @@ public class PurchaseListServiceImpl implements PurchaseListService {
 
     /**
      * Paid lines whose option is unmapped or whose BOM is empty, grouped by the market option number — Coupang
-     * {@code vendorItemId} or 11st {@code prdStckNo} (FEATURE_2610_17 / D17).
+     * {@code vendorItemId}, 11st {@code prdStckNo} (FEATURE_2610_17 / D17) or LotteON {@code sitmNo} (FEATURE_2611_23 /
+     * R12).
      */
     private List<UnmappedOrder> buildUnmapped() {
         List<OrderLine> lines = purchaseTargetLines();
         Map<Long, String> vendorItemIds = vendorItemIdsByLine(lines);
         Map<Long, String> elevenstItemIds = elevenstItemIdsByLine(lines);
+        Map<Long, String> lotteonItemIds = lotteonItemIdsByLine(lines);
         Map<Long, ProductListingOption> optionsByLine = optionsByLine(lines, vendorItemIds);
         Map<Long, CellBomResolver.Bom> boms = cellBomResolver.forOptions(distinctOptions(optionsByLine));
         Map<String, List<OrderLine>> byItem = new LinkedHashMap<>();
         for (OrderLine line : lines) {
             if (line.purchasableQty() <= 0) continue;
-            String vendorItemId = vendorItemIds.getOrDefault(line.getId(), elevenstItemIds.get(line.getId()));
+            String vendorItemId = vendorItemIds.getOrDefault(line.getId(),
+                    elevenstItemIds.getOrDefault(line.getId(), lotteonItemIds.get(line.getId())));
             if (vendorItemId == null) continue;
             // 2609_71: 미매핑 = 옵션을 못 찾았거나, 마스터에 연결되지 않아 구성품을 알 수 없거나
             // (채널 전용 옵션), 마스터 옵션에 구성품이 하나도 없는 경우. 셋 다 살 것을 뽑을 수 없다.

@@ -3,6 +3,7 @@ package com.pms.service.coupang;
 import com.pms.config.CoupangProperties;
 import com.pms.domain.CoupangOrderLine;
 import com.pms.domain.ElevenstOrderLine;
+import com.pms.domain.LotteonOrderLine;
 import com.pms.domain.OrderLine;
 import com.pms.domain.OrderStatus;
 import com.pms.domain.Product;
@@ -10,6 +11,7 @@ import com.pms.dto.response.OrderItemResponse;
 import com.pms.dto.response.OrderMonthResponse;
 import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.ElevenstOrderLineRepository;
+import com.pms.repository.LotteonOrderLineRepository;
 import com.pms.repository.OrderRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.service.elevenst.ElevenstOrderList;
@@ -55,6 +57,7 @@ public class OrderQueryServiceImpl implements OrderQueryService {
     private final OrderRepository orderRepository;
     private final CoupangOrderLineRepository coupangOrderLineRepository;
     private final ElevenstOrderLineRepository elevenstOrderLineRepository;
+    private final LotteonOrderLineRepository lotteonOrderLineRepository;
     private final CoupangProperties coupangProperties;
     private final OrderLineExpander orderLineExpander;
     private final ProductRepository productRepository;
@@ -71,11 +74,12 @@ public class OrderQueryServiceImpl implements OrderQueryService {
     public List<OrderItemResponse> rows(List<OrderLine> lines) {
         Map<Long, CoupangOrderLine> mirrors = mirrorsByLineId(lines);
         Map<Long, ElevenstOrderLine> elevenstMirrors = elevenstMirrorsByLineId(lines);
+        Map<Long, LotteonOrderLine> lotteonMirrors = lotteonMirrorsByLineId(lines);
         Map<Long, LineExpansion> expansions = orderLineExpander.expand(lines, OrderLine::purchasableQty);
         Map<Long, Product> thumbnails = thumbnailsByLineId(expansions);
         return lines.stream()
                 .map(line -> toResponse(line, mirrors.get(line.getId()), elevenstMirrors.get(line.getId()),
-                        thumbnails.get(line.getId()), components(expansions.get(line.getId()))))
+                        lotteonMirrors.get(line.getId()), thumbnails.get(line.getId()), components(expansions.get(line.getId()))))
                 .toList();
     }
 
@@ -131,6 +135,16 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 .collect(Collectors.toMap(m -> m.getOrderLine().getId(), Function.identity(), (a, b) -> a));
     }
 
+    /** Line id → LotteON mirror row (FEATURE_2611_23 / D6). No IN query for an empty list. */
+    private Map<Long, LotteonOrderLine> lotteonMirrorsByLineId(List<OrderLine> lines) {
+        if (lines.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> ids = lines.stream().map(OrderLine::getId).toList();
+        return lotteonOrderLineRepository.findByOrderLine_IdIn(ids).stream()
+                .collect(Collectors.toMap(m -> m.getOrderLine().getId(), Function.identity(), (a, b) -> a));
+    }
+
     /**
      * Line id → thumbnail product (first BOM component). Lines that fail to expand have no entry — the screen
      * draws an empty box. Only the product is used here, never the quantity.
@@ -173,7 +187,7 @@ public class OrderQueryServiceImpl implements OrderQueryService {
     }
 
     private OrderItemResponse toResponse(OrderLine line, CoupangOrderLine mirror, ElevenstOrderLine elevenstMirror,
-                                         Product thumbnail, List<OrderItemResponse.ComponentQuantity> components) {
+                                         LotteonOrderLine lotteonMirror, Product thumbnail, List<OrderItemResponse.ComponentQuantity> components) {
         var order = line.getOrder();
         // 전량취소는 저장되지 않는 파생값이라 여기서 만들어 낸다(PLAN D26).
         OrderStatus effective = line.effectiveStatus();
@@ -185,8 +199,10 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 .externalBoxId(line.getOrderShipment() != null
                         ? line.getOrderShipment().getExternalShipmentId() : null)
                 // 11st: externalItemId = prdStckNo (the vendorItemId slot), platformStatus = list code (D5).
+                // LotteON: externalItemId = sitmNo, platformStatus = odPrgsStepCd (FEATURE_2611_23 / R12).
                 .externalItemId(mirror != null ? mirror.getVendorItemId()
-                        : elevenstMirror != null ? elevenstMirror.getPrdStckNo() : null)
+                        : elevenstMirror != null ? elevenstMirror.getPrdStckNo()
+                        : lotteonMirror != null ? lotteonMirror.getSitmNo() : null)
                 .itemName(line.getItemName())
                 .ordererName(order.getOrdererName())
                 .receiverName(order.getReceiverName())
@@ -196,7 +212,8 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 .purchasableQty(line.purchasableQty())
                 .status(effective != null ? effective.name() : null)
                 .platformStatus(mirror != null ? mirror.getPlatformStatus()
-                        : elevenstMirror != null ? elevenstMirror.getPlatformStatus() : null)
+                        : elevenstMirror != null ? elevenstMirror.getPlatformStatus()
+                        : lotteonMirror != null ? lotteonMirror.getPlatformStatus() : null)
                 .cancelled(line.isFullyCancelled())
                 // D29 — 표시용 상태가 PAID 인 라인에서만(전량 취소는 저장 status 가 PAID 로 남는다). 읽을 때 거른다 — 칸은 지우지 않는다(D1).
                 .internalStage(effective == OrderStatus.PAID && line.getOrderShipment() != null

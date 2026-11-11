@@ -15,6 +15,7 @@ import com.pms.dto.response.OrderItemResponse;
 import com.pms.dto.response.OrderMonthResponse;
 import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.ElevenstOrderLineRepository;
+import com.pms.repository.LotteonOrderLineRepository;
 import com.pms.repository.OrderRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.service.stock.OrderLineExpander;
@@ -52,6 +53,7 @@ class OrderQueryServiceImplTest {
     @Mock private OrderRepository orderRepository;
     @Mock private CoupangOrderLineRepository coupangOrderLineRepository;
     @Mock private ElevenstOrderLineRepository elevenstOrderLineRepository;
+    @Mock private LotteonOrderLineRepository lotteonOrderLineRepository;
     @Mock private CoupangProperties coupangProperties;
     @Mock private OrderLineExpander orderLineExpander;
     @Mock private ProductRepository productRepository;

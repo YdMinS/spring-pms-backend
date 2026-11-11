@@ -262,3 +262,5 @@ databaseChangeLog:
       file: db/changelog/changes/130-stock-movement-date-edit.yaml
   - include:
       file: db/changelog/changes/131-stock-fill.yaml
+  - include:
+      file: db/changelog/changes/132-lotteon-order.yaml
