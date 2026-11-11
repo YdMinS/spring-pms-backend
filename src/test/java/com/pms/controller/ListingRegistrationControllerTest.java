@@ -1,5 +1,6 @@
 package com.pms.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.Carrier;
 import com.pms.domain.CarrierRate;
@@ -34,6 +35,7 @@ import com.pms.service.coupang.CoupangApiClient;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
@@ -42,10 +44,16 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.endsWith;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -73,6 +81,11 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
     @Autowired private CoupangShippingConfigRepository marketplaceShippingConfigRepository;
 
     @MockBean private CoupangApiClient coupangApiClient;
+
+    private static final String INTEGRATION_PRODUCT = "{\"code\":\"SUCCESS\",\"data\":{\"sellerProductId\":123456789,"
+            + "\"displayProductName\":\"쿠팡 노출명\",\"saleStartedAt\":\"2022-07-25T00:00:00\","
+            + "\"outboundShippingPlaceCode\":\"OUT-9\",\"items\":[{\"sellerProductItemId\":777,\"vendorItemId\":888,"
+            + "\"itemName\":\"45g 1개\",\"salePrice\":8000,\"unitCount\":1}]}}";
 
     private Long draftCellId;
     private Long masterId;
@@ -131,9 +144,12 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
         // Coupang register response → sellerProductId (no live HTTP).
         given(coupangApiClient.post(anyString(), anyString(), any()))
                 .willReturn("{\"code\":\"SUCCESS\",\"data\":123456789}");
-        // 108: [수정 요청] re-submits the whole object via PUT (no preceding GET since D3-1).
+        // 108: the [수정 요청] PUT answers SUCCESS (the GET below is now required, FEATURE_2611_25).
         lenient().when(coupangApiClient.put(anyString(), anyString(), any()))
                 .thenReturn("{\"code\":\"SUCCESS\"}");
+        // FEATURE_2611_25 / D1: [수정 요청] reads the product from Coupang before overwriting it.
+        lenient().when(coupangApiClient.get(endsWith("/seller-products/123456789"), eq(""), any()))
+                .thenReturn(INTEGRATION_PRODUCT);
     }
 
     /** Delete the listing graph before base cleanup removes package / carrier_rate (FK targets). */
@@ -207,6 +223,70 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
     void updateRequest_unknownId_returns404() throws Exception {
         mockMvc.perform(post(updateRequestPath(999999L)).header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isNotFound());
+    }
+
+    // ---- FEATURE_2611_25: compare preview + [수정 요청] body ----
+
+    private String updateRequestPreviewPath(Long id) {
+        return "/api/admin/product-listings/" + id + "/update-request/preview";
+    }
+
+    @Test
+    void updateRequestPreview_noToken_returns401() throws Exception {
+        mockMvc.perform(get(updateRequestPreviewPath(draftCellId))).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void updateRequestPreview_userToken_returns403() throws Exception {
+        mockMvc.perform(get(updateRequestPreviewPath(draftCellId)).header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    // D24: the oclyx option without a Coupang pair is shown as a checked new-option line; nothing is sent.
+    @Test
+    void updateRequestPreview_adminToken_returnsNewOption() throws Exception {
+        Long id = registeredCellId();
+        mockMvc.perform(get(updateRequestPreviewPath(id)).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.productListingId").value(id))
+                .andExpect(jsonPath("$.data.approvalPending").value(false))
+                .andExpect(jsonPath("$.data.optionLines[0].optionName").value("기본"))
+                .andExpect(jsonPath("$.data.optionLines[0].checked").value(true));
+        verify(coupangApiClient, never()).put(anyString(), anyString(), any());
+    }
+
+    // D1 · D6 · D31: only the picked item is overwritten, the rest goes back as read; the unchecked line is saved off.
+    @Test
+    void updateRequest_withBody_overwritesOnlyPicked() throws Exception {
+        Long id = registeredCellId();
+        mockMvc.perform(post(updateRequestPath(id)).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"overwrite\":[\"DISPLAY_NAME\"],\"addOptions\":[]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SUBMITTED"));
+
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(coupangApiClient, atLeastOnce()).put(anyString(), body.capture(), any());
+        String sent = body.getValue();
+        assertThat(sent).contains("\"displayProductName\":\"셀\"")
+                .contains("\"saleStartedAt\":\"2022-07-25T00:00:00\"")
+                .contains("\"outboundShippingPlaceCode\":\"OUT-9\"");
+        JsonNode items = objectMapper.readTree(sent).get("items");
+        assertThat(items.size()).isEqualTo(1);
+        ProductListingOption basic = productListingOptionRepository.findByProductListingId(id).get(0);
+        assertThat(basic.getOptionName()).isEqualTo("기본");
+        assertThat(basic.getActive()).isFalse();
+    }
+
+    // R3: an unknown item key fails the body read → 400, nothing is sent.
+    @Test
+    void updateRequest_unknownItemKey_returns400() throws Exception {
+        Long id = registeredCellId();
+        mockMvc.perform(post(updateRequestPath(id)).header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"overwrite\":[\"NOPE\"]}"))
+                .andExpect(status().isBadRequest());
+        verify(coupangApiClient, never()).put(anyString(), anyString(), any());
     }
 
     // ---- fetch-status guard (2nd endpoint wiring): DRAFT cell has no market id → 400 ----

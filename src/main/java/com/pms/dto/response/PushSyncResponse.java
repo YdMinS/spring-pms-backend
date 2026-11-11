@@ -20,7 +20,7 @@ public class PushSyncResponse {
     @Schema(description = "How many were pushed to the market successfully", example = "3")
     private int pushed;
 
-    @Schema(description = "How many were skipped (not registered / not pending / no account / no assets)", example = "1")
+    @Schema(description = "How many were skipped (not registered / not pending / no account / no assets) / batch items unchanged (FEATURE_2611_25 / D26)", example = "1")
     private int skipped;
 
     @Schema(description = "How many failed to push (isolated)", example = "1")

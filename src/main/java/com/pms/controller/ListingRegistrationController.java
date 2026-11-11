@@ -1,11 +1,13 @@
 package com.pms.controller;
 
 import com.pms.dto.common.ResponseDTO;
+import com.pms.dto.request.ListingUpdateSelectionRequest;
 import com.pms.dto.request.MarketLinkRequest;
 import com.pms.dto.request.MasterApprovalRefreshRequest;
 import com.pms.dto.response.ListingRegisterResponse;
 import com.pms.dto.response.ListingStatusResponse;
 import com.pms.dto.response.ListingSyncResponse;
+import com.pms.dto.response.ListingUpdatePreviewResponse;
 import com.pms.dto.response.MarketOptionResponse;
 import com.pms.dto.response.MasterApprovalRefreshResponse;
 import com.pms.service.listing.ListingRegistrationService;
@@ -46,10 +48,19 @@ public class ListingRegistrationController {
     }
 
     @PostMapping("/product-listings/{id}/update-request")
-    @Operation(summary = "[수정 요청] Re-submit an already-registered cell for review → SUBMITTED")
+    @Operation(summary = "[수정 요청] Re-submit an already-registered cell for review → SUBMITTED"
+            + " (Coupang: optional body picks the items to overwrite)")
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<ResponseDTO<ListingRegisterResponse>> updateRequest(@PathVariable Long id) {
-        return ResponseEntity.ok(ResponseDTO.success(listingRegistrationService.updateRequest(id)));
+    public ResponseEntity<ResponseDTO<ListingRegisterResponse>> updateRequest(
+            @PathVariable Long id, @RequestBody(required = false) ListingUpdateSelectionRequest request) {
+        return ResponseEntity.ok(ResponseDTO.success(listingRegistrationService.updateRequest(id, request)));
+    }
+
+    @GetMapping("/product-listings/{id}/update-request/preview")
+    @Operation(summary = "[수정 요청] Coupang: items that differ from the market now (read-only; one marketplace GET)")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<ResponseDTO<ListingUpdatePreviewResponse>> previewUpdateRequest(@PathVariable Long id) {
+        return ResponseEntity.ok(ResponseDTO.success(listingRegistrationService.previewUpdateRequest(id)));
     }
 
     @PostMapping("/product-listings/{id}/fetch-status")

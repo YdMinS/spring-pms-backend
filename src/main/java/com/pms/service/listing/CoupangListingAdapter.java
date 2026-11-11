@@ -3,11 +3,15 @@ package com.pms.service.listing;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.pms.domain.CoupangAccountCredential;
 import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.GrandTotalSend;
 import com.pms.domain.ListingMarketImage;
 import com.pms.domain.ListingStatus;
+import com.pms.domain.ListingUpdateItem;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
@@ -18,6 +22,7 @@ import com.pms.domain.ProductListingOption;
 import com.pms.repository.ListingMarketImageRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.config.CoupangProperties;
+import com.pms.dto.response.ListingUpdatePreviewResponse;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.MasterChannelConfigService;
 import com.pms.service.MasterProductService;
@@ -48,13 +53,17 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.function.BiFunction;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -139,13 +148,13 @@ public class CoupangListingAdapter implements ListingChannel {
     // FEATURE_2610_36 / D3: the 400 text of a mixed-composition (AB) payload with two or more active options.
     static final String MIXED_BUNDLE_ONE_OPTION =
             "쿠팡은 혼합 구성 상품에 옵션 1개만 올릴 수 있습니다. 이 쿠팡 판매채널에서 옵션을 하나만 켜 두고 다시 등록하세요";
-    // FEATURE_2610_36 / D11: the 400 text when the one-time read of a revision finds no bundle type.
     // FEATURE_2610_38 / D24: the 400 text when a mixed-composition (AB) option has no search-option attribute value.
     static final String AB_SEARCH_ATTRIBUTE_REQUIRED =
             "쿠팡 혼합 구성 상품은 구매 옵션 속성(수량·중량 등)을 보낼 수 없어 검색 옵션 속성이 1개 이상 필요합니다: ";
-    static final String BUNDLE_TYPE_UNREAD = "쿠팡에서 혼합/단일 구분을 읽지 못했습니다. 잠시 뒤 다시 시도하세요";
     // FEATURE_2610_37 / D21: the 400 text of a registration Coupang refuses with no retry; Coupang's message follows.
     static final String REGISTER_REJECTED = "쿠팡이 상품 등록을 거부했습니다: ";
+    // FEATURE_2611_25 / D20 · R6: the 400 text of a revision Coupang refuses; Coupang's message follows.
+    static final String UPDATE_REJECTED = "쿠팡이 상품 수정을 거부했습니다: ";
 
     private final CoupangApiClient client;
     // 2609_19: only the per-item price path lives in config (unverified against a live account); the other
@@ -370,19 +379,7 @@ public class CoupangListingAdapter implements ListingChannel {
      */
     @Override
     public ImportedProduct fetchProduct(String platformProductId, MarketplaceAccount acct) {
-        String raw;
-        try {
-            raw = client.get(SELLER_PRODUCTS + "/" + platformProductId, "", acct);
-        } catch (HttpClientErrorException.BadRequest e) {
-            // 2026-10-16: right after an update request Coupang answers this GET with an opaque
-            // 400 {"code":"DEFAULT"} for a minute or two, then serves it again. Surface it as a retryable
-            // 400 instead of a 500.
-            if (e.getResponseBodyAsString().contains("\"DEFAULT\"")) {
-                throw new IllegalArgumentException(FETCH_IN_PROGRESS_MESSAGE);
-            }
-            throw e;
-        }
-        JsonNode data = readJson(raw).path("data");
+        JsonNode data = readProductData(platformProductId, acct);
 
         String categoryCode = asTextOrNull(data, "displayCategoryCode");
         // 2609_45/D4: the 기본 단위 of this category, read ONCE and reused for every item below. Skipped
@@ -429,6 +426,26 @@ public class CoupangListingAdapter implements ListingChannel {
                 detailHtml(data),
                 marketImages(data),
                 null);
+    }
+
+    /**
+     * The product GET (2609_22/D8) — its {@code data} node as Coupang returned it. Shared by {@link #fetchProduct} and
+     * the revision read (FEATURE_2611_25 / D1 · D14), so both read the same response the same way.
+     */
+    private JsonNode readProductData(String platformProductId, MarketplaceAccount acct) {
+        String raw;
+        try {
+            raw = client.get(SELLER_PRODUCTS + "/" + platformProductId, "", acct);
+        } catch (HttpClientErrorException.BadRequest e) {
+            // 2026-10-16: right after an update request Coupang answers this GET with an opaque
+            // 400 {"code":"DEFAULT"} for a minute or two, then serves it again. Surface it as a retryable
+            // 400 instead of a 500.
+            if (e.getResponseBodyAsString().contains("\"DEFAULT\"")) {
+                throw new IllegalArgumentException(FETCH_IN_PROGRESS_MESSAGE);
+            }
+            throw e;
+        }
+        return readJson(raw).path("data");
     }
 
     /**
@@ -736,53 +753,694 @@ public class CoupangListingAdapter implements ListingChannel {
     }
 
     /**
-     * FEATURE_2610_34: a revision follows the listing's own 총 수량 state, not the category memory (D6) — except a
-     * {@code SENT} listing whose category remembers it, which tries once without it (D11). The memory itself is never
-     * changed by a revision (D17).
-     *
-     * <ul>
-     *   <li>Sent with it ({@code SENT} without memory · {@code SENT_CONFIRMED} · no 총 수량 in the payload) → one PUT,
-     *       response not read — as before.</li>
-     *   <li>Sent without it ({@code OMITTED} · {@code SENT} with memory): no exception and no
-     *       {@link #GRAND_TOTAL_REQUIRED} in the 2xx body = pass → {@code OMITTED} (D11 · D23). A rejection containing
-     *       {@link #GRAND_TOTAL_REQUIRED} → one more PUT with it; a pass → {@code SENT_CONFIRMED} (D11 · D16), a
-     *       non-2xx or that text again → 400 (D24). Any other rejection is thrown as before.</li>
-     * </ul>
+     * FEATURE_2611_25 / D1 · D9 · D24: a revision without a selection = the [수정 요청] without a body — the D9 items are
+     * overwritten and every active option line is added (no skipping). {@link #update} goes through here too.
      */
     @Override
     public PushOutcome updateAndReport(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct) {
-        // 108/D3: re-submit the whole rebuilt object via PUT, carrying the update-only identifiers
-        // (top-level sellerProductId + per-item sellerProductItemId/vendorItemId) read from our own DB —
-        // without them Coupang would create a new product instead of revising this one. No GET to merge: we
-        // rebuild the whole document rather than merging the fetched one, so it was a wasted call (rate limit).
-        // Selling-price-only partial updates are a follow-up path (out of scope).
-        // FEATURE_2610_36 / D6 · D11: the bundle type sent is the one the listing has on Coupang; a listing that does
-        // not know it yet reads it once with the product GET, and the outcome reports it for storing.
-        String bundleType = cell.getMarketBundleType() != null
-                ? cell.getMarketBundleType() : readBundleType(cell, acct);
-        Map<String, Object> withGrandTotal = buildPayload(cell, gen, acct, true, bundleType);
+        return updateAndReport(cell, gen, acct, ListingUpdateSelection.request(null, null));
+    }
+
+    /** FEATURE_2611_25 / D12 · R2: a Coupang [수정 요청] opens the compare window first. */
+    @Override
+    public boolean comparesBeforeUpdate() {
+        return true;
+    }
+
+    /** FEATURE_2611_25 / D8 · D23: Coupang keeps the options oclyx turned off as they were — nothing to revert. */
+    @Override
+    public boolean keepsInactiveOptionsOnUpdate() {
+        return true;
+    }
+
+    /**
+     * FEATURE_2611_25 / D3 · D7 · D14 · D15 · D19 · D24 · D27 · D29: one product GET, then the items whose oclyx value
+     * differs from what Coupang holds (D6 order), the items whose oclyx value cannot be built (never a 400 here) and the
+     * option lines to pick. No PUT, nothing stored.
+     */
+    @Override
+    public ListingUpdatePreviewResponse previewUpdate(ProductListing cell, GeneratedProductData gen,
+                                                      MarketplaceAccount acct) {
+        Revision revision = readRevision(cell, acct);
+        OclyxValues values = new OclyxValues(cell, gen, acct, revision);
+        List<ListingUpdatePreviewResponse.Line> lines =
+                compare(revision, values, EnumSet.allOf(ListingUpdateItem.class));
+        List<ListingUpdatePreviewResponse.OptionChoice> choices = revision.optionLines().stream()
+                .map(o -> new ListingUpdatePreviewResponse.OptionChoice(
+                        o.getId(), o.getOptionName(), Boolean.TRUE.equals(o.getActive())))
+                .toList();
+        return new ListingUpdatePreviewResponse(cell.getId(), lines, revision.approvalPending(), revision.mixed(),
+                choices);
+    }
+
+    /**
+     * FEATURE_2611_25: a revision = read the product from Coupang again (D14), drop the Coupang options without a
+     * vendorItemId (D27 · D28), overwrite only the picked items with the oclyx value (D1 · D6 · D18), append the option
+     * lines to send (D24 · D25 · D29), PUT. Everything else of the read product goes back as read — {@code bundleInfo}
+     * included, absent stays absent (D2 · D16 · D20).
+     *
+     * <ul>
+     *   <li>A picked item whose oclyx value cannot be built is a 400 before the PUT (D15 · R5).</li>
+     *   <li>A batch push whose picked items all equal Coupang and that sends no option line sends nothing
+     *       ({@link PushOutcome#notSent()}, D26) — never for a product awaiting approval (D27 ②).</li>
+     *   <li>FEATURE_2610_34 · D17: the grand total retry runs only when attributes are picked, judged on the items
+     *       oclyx wrote the attributes of: a revision follows the listing's own grand total state, not the category
+     *       memory (D6) — except a {@code SENT} listing whose category remembers it, which tries once without it
+     *       (D11). Without it and rejected with {@link #GRAND_TOTAL_REQUIRED} → one more PUT with it
+     *       ({@code SENT_CONFIRMED}, D16), a rejection again → 400 (D24). The memory itself is never changed by a
+     *       revision (D17).</li>
+     *   <li>Any other refusal (a 4xx · a 2xx whose {@code code} is not a success) is a 400 with Coupang's message
+     *       (D20 · R6); a 5xx stays the client's exception.</li>
+     *   <li>D31 · R12: a passed [수정 요청] reports the shown option lines' on/off; a batch push reports none.</li>
+     * </ul>
+     */
+    @Override
+    public PushOutcome updateAndReport(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct,
+                                       ListingUpdateSelection selection) {
+        Revision revision = readRevision(cell, acct);
+        OclyxValues values = new OclyxValues(cell, gen, acct, revision);
+        Set<ListingUpdateItem> picked = selection.overwrite();
+        List<ProductListingOption> sendLines = revision.optionLines().stream()
+                .filter(o -> selection.sends(o.getId(), Boolean.TRUE.equals(o.getActive())))
+                .toList();
+        // R11: nothing would be left on the product.
+        if (revision.items().isEmpty() && sendLines.isEmpty()) {
+            throw new IllegalArgumentException(NO_ACTIVE_OPTION);
+        }
+        if (selection.skipWhenUnchanged() && !revision.approvalPending() && sendLines.isEmpty()
+                && compare(revision, values, picked).isEmpty()) {
+            return PushOutcome.notSent();
+        }
+
+        ObjectNode body = revision.body();
+        var cred = CoupangCredentials.of(acct);
+        String vendorUserId = requireVendorUserId(cred);
+        // D18: always ours.
+        body.put("sellerProductId", cell.getPlatformProductId());
+        body.set("vendorId", objectMapper.valueToTree(cred.getVendorId()));
+        body.put("vendorUserId", vendorUserId);
+        body.put("requested", true);
+        List<Integer> written = new ArrayList<>();
+        overwrite(revision, values, picked, written);
+        appendOptionLines(revision, values, sendLines, written);
+
+        GrandTotalSend grandTotalSend = picked.contains(ListingUpdateItem.ATTRIBUTES)
+                ? sendWithGrandTotalRetry(cell, revision, values, written, acct)
+                : sendOnce(body, acct);
+
+        Map<Long, Boolean> optionActive = new LinkedHashMap<>();
+        if (selection.savesOptionChoice()) {
+            Set<Long> sentIds = sendLines.stream().map(ProductListingOption::getId).collect(Collectors.toSet());
+            for (ProductListingOption line : revision.optionLines()) {
+                optionActive.put(line.getId(), sentIds.contains(line.getId()));
+            }
+        }
+        return new PushOutcome(null, grandTotalSend, null, false, revision.bundleType(), false,
+                Collections.unmodifiableMap(optionActive));
+    }
+
+    // --- revision (FEATURE_2611_25) ---
+
+    private static final String NO_ACTIVE_OPTION = "활성 옵션 없음";
+    private static final String DISPLAY_NAME_MISSING = "노출상품명 미입력";
+    private static final String COUPANG_DETAIL_TEXT = "쿠팡에 올라간 상세";
+    private static final String NONE_TEXT = "(없음)";
+
+    /** D27 ①: the items a product awaiting approval is compared on — every per-option item is oclyx's anyway. */
+    private static final Set<ListingUpdateItem> PENDING_ITEMS = Collections.unmodifiableSet(EnumSet.of(
+            ListingUpdateItem.REGISTRATION_NAME, ListingUpdateItem.DISPLAY_NAME,
+            ListingUpdateItem.CATEGORY, ListingUpdateItem.SHIPPING));
+
+    /**
+     * D6 · R4: the 17 shipping·return fields (putShippingBlock 16 + extraInfoMessage) and their screen names, in order.
+     */
+    private static final String[][] SHIPPING_FIELDS = {
+            {"outboundShippingPlaceCode", "출고지 코드"},
+            {"returnCenterCode", "반품지 코드"},
+            {"returnChargeName", "반품지 담당자"},
+            {"companyContactNumber", "반품지 연락처"},
+            {"returnZipCode", "반품지 우편번호"},
+            {"returnAddress", "반품지 주소"},
+            {"returnAddressDetail", "반품지 상세주소"},
+            {"returnCharge", "반품 배송비"},
+            {"deliveryChargeOnReturn", "초도반품 배송비"},
+            {"deliveryMethod", "배송방법"},
+            {"deliveryCompanyCode", "택배사"},
+            {"deliveryChargeType", "배송비 종류"},
+            {"deliveryCharge", "기본 배송비"},
+            {"freeShipOverAmount", "무료배송 조건 금액"},
+            {"remoteAreaDeliverable", "도서산간 배송"},
+            {"unionDeliveryType", "묶음배송"},
+            {"extraInfoMessage", "주문 안내 문구"}};
+    private static final Set<String> SHIPPING_AMOUNTS =
+            Set.of("returnCharge", "deliveryChargeOnReturn", "deliveryCharge", "freeShipOverAmount");
+
+    /**
+     * The product read for a revision (D14).
+     *
+     * @param data              the {@code data} node as Coupang returned it
+     * @param body              its deep copy without the Coupang options lacking a vendorItemId (D27 · D28) — what
+     *                          the PUT sends once overwritten
+     * @param firstReceivedItem the first {@code items[]} entry as received, before any drop — D25's fixed values
+     * @param bundleType        the {@code bundleInfo.bundleType} read ({@code SINGLE} · {@code AB} · null)
+     * @param approvalPending   D27: no Coupang option carries a vendorItemId
+     * @param activeOptions     the listing's active options (only they are paired · overwritten)
+     * @param pairs             active option ↔ index of its Coupang option in {@code body.items} (D13)
+     * @param optionLines       D24 · D28 active options without a pair · D29 every option when awaiting approval
+     */
+    private record Revision(JsonNode data, ObjectNode body, JsonNode firstReceivedItem, String bundleType,
+                            boolean approvalPending, List<ProductListingOption> activeOptions, List<Paired> pairs,
+                            List<ProductListingOption> optionLines) {
+
+        /** D16 · D30: the mixed-composition rules apply only when Coupang reports AB. */
+        boolean mixed() {
+            return BUNDLE_AB.equals(bundleType);
+        }
+
+        ArrayNode items() {
+            return (ArrayNode) body.get("items");
+        }
+
+        ObjectNode item(Paired pair) {
+            return (ObjectNode) items().get(pair.index());
+        }
+    }
+
+    /** An active listing option and the index of the Coupang option it is paired with (D13). */
+    private record Paired(ProductListingOption option, int index) {
+    }
+
+    /**
+     * D1 · D14: the product GET of a revision (comparison and send read it separately) + the pairing (D13 · D27 · D28 ·
+     * D29). A failed read is a 400 with its own message.
+     */
+    private Revision readRevision(ProductListing cell, MarketplaceAccount acct) {
+        JsonNode data;
+        try {
+            data = readProductData(cell.getPlatformProductId(), acct);
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException(e.getMessage(), e);
+        }
+        ObjectNode body = data.isObject() ? ((ObjectNode) data).deepCopy() : objectMapper.createObjectNode();
+        // D28: a Coupang option without a vendorItemId is not sent back.
+        ArrayNode kept = objectMapper.createArrayNode();
+        for (JsonNode item : data.path("items")) {
+            if (StringUtils.hasText(asTextOrNull(item, "vendorItemId"))) {
+                kept.add(item.deepCopy());
+            }
+        }
+        body.set("items", kept);
+
+        List<ProductListingOption> options = productListingOptionRepository.findByProductListingId(cell.getId());
+        List<ProductListingOption> activeOptions = options.stream()
+                .filter(o -> Boolean.TRUE.equals(o.getActive()))
+                .toList();
+        // D13: vendorItemId first, then sellerProductItemId; a Coupang option pairs with the first option only.
+        List<Paired> pairs = new ArrayList<>();
+        List<ProductListingOption> unpaired = new ArrayList<>();
+        Set<Integer> taken = new HashSet<>();
+        for (ProductListingOption option : activeOptions) {
+            int index = matchItem(kept, taken, "vendorItemId", option.getPlatformOptionId());
+            if (index < 0) {
+                index = matchItem(kept, taken, "sellerProductItemId", option.getSellerProductItemId());
+            }
+            if (index < 0) {
+                unpaired.add(option);
+            } else {
+                taken.add(index);
+                pairs.add(new Paired(option, index));
+            }
+        }
+        boolean approvalPending = kept.isEmpty();
+        return new Revision(data, body, data.path("items").path(0), marketBundleType(data), approvalPending,
+                activeOptions, pairs, approvalPending ? options : unpaired);
+    }
+
+    /** The first not-yet-paired Coupang option whose {@code key} text equals {@code value}; -1 when none. */
+    private static int matchItem(ArrayNode items, Set<Integer> taken, String key, String value) {
+        if (!StringUtils.hasText(value)) {
+            return -1;
+        }
+        for (int i = 0; i < items.size(); i++) {
+            if (!taken.contains(i) && value.equals(asTextOrNull(items.get(i), key))) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * The oclyx values of one revision, each built on first use and kept (one category lookup · one meta · one shipping
+     * lookup per comparison or send, §3-2). A value that cannot be built throws the same
+     * {@code IllegalArgumentException} every time it is asked for (D15).
+     */
+    private final class OclyxValues {
+        private final ProductListing cell;
+        private final GeneratedProductData gen;
+        private final Revision revision;
+        private final Memo<MasterChannelConfigService.ChannelCategory> category;
+        private final Memo<CategoryContext> context;
+        private final Memo<ResolvedShippingConfig> shipping;
+        private final Memo<List<String>> tags;
+        private final Memo<List<Map<String, Object>>> contents;
+        private final Memo<Map<Long, MasterProductOption>> masterOptions;
+        private final Memo<Map<Long, List<ListingMarketImage>>> marketImages;
+        private final Memo<String> registrationName;
+
+        OclyxValues(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct, Revision revision) {
+            this.cell = cell;
+            this.gen = gen;
+            this.revision = revision;
+            MasterProduct master = cell.getMasterProduct();
+            this.category = new Memo<>(() -> masterChannelConfigService.resolveChannelCategory(cell));
+            this.context = new Memo<>(() -> categoryContext(category.get(), cell, master, acct));
+            this.shipping = new Memo<>(() -> requireShippingConfig(cell));
+            this.tags = new Memo<>(() -> tagMergeService.resolveTags(cell));
+            this.contents = new Memo<>(() -> requireDetailContents(gen));
+            this.masterOptions = new Memo<>(() -> masterOptionsById(master));
+            this.marketImages = new Memo<>(() -> marketImagesByOption(cell));
+            this.registrationName = new Memo<>(() -> sellerProductName(cell, master, revision.activeOptions()));
+        }
+
+        String registrationName() {
+            return registrationName.get();
+        }
+
+        String displayName() {
+            if (!StringUtils.hasText(cell.getName())) {
+                throw new IllegalArgumentException(DISPLAY_NAME_MISSING);
+            }
+            return limitName(cell.getName());
+        }
+
+        MasterChannelConfigService.ChannelCategory category() {
+            return category.get();
+        }
+
+        CategoryContext context() {
+            return context.get();
+        }
+
+        List<String> tags() {
+            return tags.get();
+        }
+
+        List<Map<String, Object>> contents() {
+            return contents.get();
+        }
+
+        int stock(ProductListingOption option) {
+            return ListingStockPolicy.resolve(option, linked(option));
+        }
+
+        List<Map<String, Object>> images(ProductListingOption option) {
+            return itemImages(gen, marketImages.get().getOrDefault(option.getId(), List.of()));
+        }
+
+        List<Map<String, Object>> attributes(ProductListingOption option) {
+            return itemAttributes(context.get(), linked(option), option, revision.mixed());
+        }
+
+        List<Map<String, Object>> notices(ProductListingOption option) {
+            return itemNotices(context.get(), linked(option), option);
+        }
+
+        /** putShippingBlock's 16 fields + extraInfoMessage (null when blank). */
+        Map<String, Object> shippingBlock() {
+            ResolvedShippingConfig cfg = shipping.get();
+            Map<String, Object> block = new LinkedHashMap<>();
+            putShippingBlock(block, cfg);
+            block.put("extraInfoMessage", StringUtils.hasText(cfg.extraInfoMessage()) ? cfg.extraInfoMessage() : null);
+            return block;
+        }
+
+        boolean marketThumbnail() {
+            return gen != null && gen.getThumbnailSource() == GeneratedContentSource.MARKET;
+        }
+
+        boolean marketDetail() {
+            return gen != null && gen.getSource() == GeneratedContentSource.MARKET;
+        }
+
+        String detailText() {
+            return gen != null && gen.getSource() == GeneratedContentSource.MANUAL_OVERRIDE ? "직접 고친 상세" : "자동 생성 상세";
+        }
+
+        private MasterProductOption linked(ProductListingOption option) {
+            return linkedMaster(option, masterOptions.get());
+        }
+    }
+
+    /** A value computed once; a failure is kept and thrown again on every later call. */
+    private static final class Memo<T> {
+        private final Supplier<T> supplier;
+        private boolean done;
+        private T value;
+        private RuntimeException failure;
+
+        Memo(Supplier<T> supplier) {
+            this.supplier = supplier;
+        }
+
+        T get() {
+            if (!done) {
+                done = true;
+                try {
+                    value = supplier.get();
+                } catch (RuntimeException e) {
+                    failure = e;
+                }
+            }
+            if (failure != null) {
+                throw failure;
+            }
+            return value;
+        }
+    }
+
+    /** One per-option comparison: same or not, and the two texts (R4). */
+    private record Compared(boolean same, String coupang, String oclyx) {
+    }
+
+    /**
+     * D3 · D7 · D15 · D19 · D27 ①: the lines of {@code keys} (D6 order) — an item whose oclyx value cannot be built is
+     * listed unselectable without comparing; an equal item is not listed.
+     */
+    private List<ListingUpdatePreviewResponse.Line> compare(Revision revision, OclyxValues values,
+                                                           Set<ListingUpdateItem> keys) {
+        List<ListingUpdatePreviewResponse.Line> lines = new ArrayList<>();
+        for (ListingUpdateItem key : ListingUpdateItem.values()) {
+            if (!keys.contains(key) || (revision.approvalPending() && !PENDING_ITEMS.contains(key))) {
+                continue;
+            }
+            try {
+                ListingUpdatePreviewResponse.Line line = compareItem(key, revision, values);
+                if (line != null) {
+                    lines.add(line);
+                }
+            } catch (IllegalArgumentException e) {
+                lines.add(new ListingUpdatePreviewResponse.Line(key, key.label(), false, e.getMessage(),
+                        key.perOption() ? null : coupangText(key, revision), null, List.of()));
+            }
+        }
+        return lines;
+    }
+
+    /** One item compared (§3-4); null when equal. Throws when the oclyx value cannot be built (§3-5). */
+    private ListingUpdatePreviewResponse.Line compareItem(ListingUpdateItem key, Revision revision,
+                                                         OclyxValues values) {
+        JsonNode data = revision.data();
+        return switch (key) {
+            case REGISTRATION_NAME -> productLine(key, asTextOrNull(data, "sellerProductName"),
+                    values.registrationName());
+            case DISPLAY_NAME -> productLine(key, asTextOrNull(data, "displayProductName"), values.displayName());
+            case CATEGORY -> productLine(key, asTextOrNull(data, "displayCategoryCode"),
+                    values.category().category().getCode());
+            case OPTION_NAME -> optionItemLine(key, revision, (option, item) -> {
+                String coupang = asTextOrNull(item, "itemName");
+                return new Compared(sameText(coupang, option.getOptionName()), show(coupang),
+                        show(option.getOptionName()));
+            });
+            case PRICE -> optionItemLine(key, revision, (option, item) -> {
+                BigDecimal coupangSale = asDecimalOrNull(item, "salePrice");
+                BigDecimal coupangOriginal = asDecimalOrNull(item, "originalPrice");
+                return new Compared(sameNumber(coupangSale, option.getSellingPrice())
+                        && sameNumber(coupangOriginal, originalPrice(option)),
+                        priceText(coupangSale, coupangOriginal),
+                        priceText(option.getSellingPrice(), originalPrice(option)));
+            });
+            case STOCK -> optionItemLine(key, revision, (option, item) -> {
+                BigDecimal coupang = asDecimalOrNull(item, "maximumBuyCount");
+                BigDecimal oclyx = BigDecimal.valueOf(values.stock(option));
+                return new Compared(sameNumber(coupang, oclyx), unitText(coupang, "개"), unitText(oclyx, "개"));
+            });
+            case IMAGES -> optionItemLine(key, revision, (option, item) -> new Compared(values.marketThumbnail(),
+                    "사진 " + item.path("images").size() + "장", "사진 " + values.images(option).size() + "장"));
+            case DETAIL -> {
+                values.contents();
+                yield productLine(key, values.marketDetail() || revision.pairs().isEmpty(),
+                        COUPANG_DETAIL_TEXT, values.detailText());
+            }
+            case SEARCH_TAGS -> {
+                List<String> oclyx = values.tags();
+                boolean same = true;
+                for (Paired pair : revision.pairs()) {
+                    same &= new HashSet<>(itemTags(revision.item(pair))).equals(new HashSet<>(oclyx));
+                }
+                yield productLine(key, same, coupangText(key, revision), joined(oclyx));
+            }
+            case ATTRIBUTES -> {
+                values.context();
+                yield optionItemLine(key, revision, (option, item) -> {
+                    List<String> coupang = coupangAttributes(item);
+                    List<String> oclyx = attributeTexts(values.attributes(option));
+                    return new Compared(new HashSet<>(coupang).equals(new HashSet<>(oclyx)),
+                            joined(coupang), joined(oclyx));
+                });
+            }
+            case NOTICES -> {
+                values.context();
+                yield optionItemLine(key, revision, (option, item) -> {
+                    Map<String, String> coupang = coupangNotices(item);
+                    Map<String, String> oclyx = noticeTexts(values.notices(option));
+                    return new Compared(coupang.keySet().equals(oclyx.keySet()),
+                            joined(coupang.values()), joined(oclyx.values()));
+                });
+            }
+            case SHIPPING -> shippingLine(key, data, values.shippingBlock());
+        };
+    }
+
+    private static ListingUpdatePreviewResponse.Line productLine(ListingUpdateItem key, String coupang, String oclyx) {
+        return productLine(key, sameText(coupang, oclyx), show(coupang), show(oclyx));
+    }
+
+    private static ListingUpdatePreviewResponse.Line productLine(ListingUpdateItem key, boolean same,
+                                                                 String coupangText, String oclyxText) {
+        return same ? null
+                : new ListingUpdatePreviewResponse.Line(key, key.label(), true, null, coupangText, oclyxText, List.of());
+    }
+
+    /** D19: one line for a per-option item, carrying every paired option whose values differ; null when none does. */
+    private static ListingUpdatePreviewResponse.Line optionItemLine(
+            ListingUpdateItem key, Revision revision, BiFunction<ProductListingOption, JsonNode, Compared> compare) {
+        List<ListingUpdatePreviewResponse.OptionLine> differing = new ArrayList<>();
+        for (Paired pair : revision.pairs()) {
+            Compared compared = compare.apply(pair.option(), revision.item(pair));
+            if (!compared.same()) {
+                differing.add(new ListingUpdatePreviewResponse.OptionLine(pair.option().getId(),
+                        pair.option().getOptionName(), compared.coupang(), compared.oclyx()));
+            }
+        }
+        return differing.isEmpty() ? null
+                : new ListingUpdatePreviewResponse.Line(key, key.label(), true, null, null, null, differing);
+    }
+
+    /** Shipping·return: 17 fields compared one by one; the texts carry the differing fields only (R4). */
+    private static ListingUpdatePreviewResponse.Line shippingLine(ListingUpdateItem key, JsonNode data,
+                                                                  Map<String, Object> oclyx) {
+        List<String> coupangParts = new ArrayList<>();
+        List<String> oclyxParts = new ArrayList<>();
+        for (String[] field : SHIPPING_FIELDS) {
+            String name = field[0];
+            Object value = oclyx.get(name);
+            boolean same;
+            String coupangText;
+            String oclyxText;
+            if (SHIPPING_AMOUNTS.contains(name)) {
+                BigDecimal coupang = asDecimalOrNull(data, name);
+                BigDecimal ours = value == null ? null : new BigDecimal(value.toString());
+                same = sameNumber(coupang, ours);
+                coupangText = num(coupang);
+                oclyxText = num(ours);
+            } else {
+                String coupang = asTextOrNull(data, name);
+                String ours = value == null ? null : value.toString();
+                same = sameText(coupang, ours);
+                coupangText = show(coupang);
+                oclyxText = show(ours);
+            }
+            if (!same) {
+                coupangParts.add(field[1] + " " + coupangText);
+                oclyxParts.add(field[1] + " " + oclyxText);
+            }
+        }
+        return coupangParts.isEmpty() ? null : new ListingUpdatePreviewResponse.Line(key, key.label(), true, null,
+                String.join(" · ", coupangParts), String.join(" · ", oclyxParts), List.of());
+    }
+
+    /** The Coupang value text of a product-level item (an unselectable line still shows it, §3-5). */
+    private static String coupangText(ListingUpdateItem key, Revision revision) {
+        JsonNode data = revision.data();
+        return switch (key) {
+            case REGISTRATION_NAME -> show(asTextOrNull(data, "sellerProductName"));
+            case DISPLAY_NAME -> show(asTextOrNull(data, "displayProductName"));
+            case CATEGORY -> show(asTextOrNull(data, "displayCategoryCode"));
+            case DETAIL -> COUPANG_DETAIL_TEXT;
+            case SEARCH_TAGS -> revision.pairs().isEmpty() ? NONE_TEXT
+                    : joined(itemTags(revision.item(revision.pairs().get(0))));
+            case SHIPPING -> {
+                List<String> parts = new ArrayList<>();
+                for (String[] field : SHIPPING_FIELDS) {
+                    parts.add(field[1] + " " + (SHIPPING_AMOUNTS.contains(field[0])
+                            ? num(asDecimalOrNull(data, field[0])) : show(asTextOrNull(data, field[0]))));
+                }
+                yield String.join(" · ", parts);
+            }
+            default -> null;
+        };
+    }
+
+    /**
+     * D1 · D6 · D18 · D20: the picked items get the oclyx value — product-level fields on the product, per-option fields
+     * on every paired Coupang option. {@code written} collects the items whose attributes oclyx wrote (D17).
+     */
+    private void overwrite(Revision revision, OclyxValues values, Set<ListingUpdateItem> picked,
+                           List<Integer> written) {
+        ObjectNode body = revision.body();
+        for (ListingUpdateItem key : ListingUpdateItem.values()) {
+            if (!picked.contains(key)) {
+                continue;
+            }
+            switch (key) {
+                case REGISTRATION_NAME -> body.put("sellerProductName", values.registrationName());
+                case DISPLAY_NAME -> body.put("displayProductName", values.displayName());
+                case CATEGORY -> body.put("displayCategoryCode", values.category().category().getCode());
+                case SHIPPING -> values.shippingBlock().forEach((name, value) -> {
+                    if ("extraInfoMessage".equals(name) && value == null) {
+                        body.remove(name);
+                    } else {
+                        body.set(name, objectMapper.valueToTree(value));
+                    }
+                });
+                case DETAIL -> {
+                    JsonNode contents = objectMapper.valueToTree(values.contents());
+                    revision.pairs().forEach(p -> revision.item(p).set("contents", contents.deepCopy()));
+                }
+                case SEARCH_TAGS -> {
+                    JsonNode tags = objectMapper.valueToTree(values.tags());
+                    revision.pairs().forEach(p -> revision.item(p).set("searchTags", tags.deepCopy()));
+                }
+                case OPTION_NAME -> revision.pairs().forEach(p ->
+                        revision.item(p).put("itemName", p.option().getOptionName()));
+                case PRICE -> revision.pairs().forEach(p -> {
+                    revision.item(p).set("originalPrice", objectMapper.valueToTree(originalPrice(p.option())));
+                    revision.item(p).set("salePrice", objectMapper.valueToTree(p.option().getSellingPrice()));
+                });
+                case STOCK -> revision.pairs().forEach(p ->
+                        revision.item(p).put("maximumBuyCount", values.stock(p.option())));
+                case IMAGES -> revision.pairs().forEach(p ->
+                        revision.item(p).set("images", objectMapper.valueToTree(values.images(p.option()))));
+                case ATTRIBUTES -> {
+                    values.context();
+                    for (Paired p : revision.pairs()) {
+                        putOrRemove(revision.item(p), "attributes", values.attributes(p.option()));
+                        written.add(p.index());
+                    }
+                }
+                case NOTICES -> {
+                    values.context();
+                    for (Paired p : revision.pairs()) {
+                        putOrRemove(revision.item(p), "notices", values.notices(p.option()));
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * D24 · D25 · D27 · D29: one new Coupang option per option line to send, after the kept ones — every value oclyx
+     * owns is oclyx's (whatever is picked), the values oclyx cannot edit follow the first received option (R7: the
+     * register defaults when it has none). A mixed-composition product ends with one option at most (D24 · D30).
+     */
+    private void appendOptionLines(Revision revision, OclyxValues values, List<ProductListingOption> sendLines,
+                                   List<Integer> written) {
+        if (sendLines.isEmpty()) {
+            return;
+        }
+        values.context();
+        if (revision.mixed() && revision.items().size() + sendLines.size() >= 2) {
+            throw new IllegalArgumentException(MIXED_BUNDLE_ONE_OPTION);
+        }
+        JsonNode first = revision.firstReceivedItem();
+        for (ProductListingOption option : sendLines) {
+            List<Map<String, Object>> attributes = values.attributes(option);
+            List<Map<String, Object>> notices = values.notices(option);
+            ObjectNode item = objectMapper.createObjectNode();
+            item.put("itemName", option.getOptionName());
+            item.set("originalPrice", objectMapper.valueToTree(originalPrice(option)));
+            item.set("salePrice", objectMapper.valueToTree(option.getSellingPrice()));
+            receivedOr(item, first, "unitCount", 1);
+            item.put("maximumBuyCount", values.stock(option));
+            receivedOr(item, first, "maximumBuyForPerson", 0);
+            receivedOr(item, first, "maximumBuyForPersonPeriod", 1);
+            receivedOr(item, first, "outboundShippingTimeDay", 1);
+            receivedOr(item, first, "adultOnly", "EVERYONE");
+            receivedOr(item, first, "taxType", "TAX");
+            receivedOr(item, first, "parallelImported", "NOT_PARALLEL_IMPORTED");
+            receivedOr(item, first, "overseasPurchased", "NOT_OVERSEAS_PURCHASED");
+            receivedOr(item, first, "pccNeeded", false);
+            receivedOr(item, first, "certifications", NOT_REQUIRED_CERTIFICATIONS);
+            item.set("images", objectMapper.valueToTree(values.images(option)));
+            item.set("searchTags", objectMapper.valueToTree(values.tags()));
+            item.set("contents", objectMapper.valueToTree(values.contents()));
+            putOrRemove(item, "attributes", attributes);
+            putOrRemove(item, "notices", notices);
+            revision.items().add(item);
+            written.add(revision.items().size() - 1);
+        }
+    }
+
+    /** D25 · R7: the first received option's value of {@code key}, or the register default when it has none. */
+    private void receivedOr(ObjectNode item, JsonNode first, String key, Object fallback) {
+        JsonNode received = first.path(key);
+        item.set(key, received.isMissingNode() || received.isNull()
+                ? objectMapper.valueToTree(fallback) : received.deepCopy());
+    }
+
+    /** An empty list removes the key (as the register payload leaves it out). */
+    private void putOrRemove(ObjectNode item, String key, List<Map<String, Object>> value) {
+        if (value.isEmpty()) {
+            item.remove(key);
+        } else {
+            item.set(key, objectMapper.valueToTree(value));
+        }
+    }
+
+    /** D17: attributes not picked → one PUT, the grand total state is kept. */
+    private GrandTotalSend sendOnce(ObjectNode body, MarketplaceAccount acct) {
+        putRevision(body, acct);
+        return null;
+    }
+
+    /** FEATURE_2610_34 · D17: the grand total flow, on the items oclyx wrote the attributes of only. */
+    private GrandTotalSend sendWithGrandTotalRetry(ProductListing cell, Revision revision, OclyxValues values,
+                                                   List<Integer> written, MarketplaceAccount acct) {
+        ObjectNode withGrandTotal = revision.body();
         GrandTotalSend state = cell.getGrandTotalSend();
         // FEATURE_2610_38: never leave an item without attributes (see registerAndReport).
-        boolean omit = carriesGrandTotal(withGrandTotal) && omittable(withGrandTotal)
+        boolean omit = writtenCarriesGrandTotal(revision.items(), written)
+                && writtenOmittable(revision.items(), written)
                 && (state == GrandTotalSend.OMITTED
-                        || (state == GrandTotalSend.SENT
-                                && masterChannelConfigService.resolveChannelCategory(cell).category()
-                                        .isGrandTotalOmitted()));
+                        || (state == GrandTotalSend.SENT && values.category().category().isGrandTotalOmitted()));
         if (!omit) {
-            client.put(SELLER_PRODUCTS, writeJson(withGrandTotal), acct);
-            return new PushOutcome(null, null, null, false, bundleType);
+            putRevision(withGrandTotal, acct);
+            return null;
         }
 
         String rejection;
         try {
-            String raw = client.put(SELLER_PRODUCTS, writeJson(withoutGrandTotal(withGrandTotal)), acct);
+            String raw = client.put(SELLER_PRODUCTS, writeJson(withoutWrittenGrandTotal(withGrandTotal, written)), acct);
             if (raw == null || !raw.contains(GRAND_TOTAL_REQUIRED)) {
-                return new PushOutcome(null, GrandTotalSend.OMITTED, null, false, bundleType);
+                requireAccepted(raw);
+                return GrandTotalSend.OMITTED;
             }
             rejection = raw;
         } catch (RestClientResponseException e) {
             if (!e.getResponseBodyAsString().contains(GRAND_TOTAL_REQUIRED)) {
-                throw e;
+                throw rejected(e);
             }
             rejection = e.getResponseBodyAsString();
         }
@@ -797,27 +1455,191 @@ public class CoupangListingAdapter implements ListingChannel {
         if (raw != null && raw.contains(GRAND_TOTAL_REQUIRED)) {
             throw new IllegalArgumentException(RETRY_WITH_FAILED + coupangMessage(raw));
         }
-        return new PushOutcome(null, GrandTotalSend.SENT_CONFIRMED, null, false, bundleType);
+        requireAccepted(raw);
+        return GrandTotalSend.SENT_CONFIRMED;
+    }
+
+    /** One revision PUT; a refusal is a 400 with Coupang's message (D20 · R6), a 5xx is rethrown. */
+    private void putRevision(ObjectNode body, MarketplaceAccount acct) {
+        String raw;
+        try {
+            raw = client.put(SELLER_PRODUCTS, writeJson(body), acct);
+        } catch (RestClientResponseException e) {
+            throw rejected(e);
+        }
+        requireAccepted(raw);
+    }
+
+    /** D20 · R6: a 4xx is Coupang refusing the revision → 400 with its message; anything else stays as it is. */
+    private RuntimeException rejected(RestClientResponseException e) {
+        return e.getStatusCode().is4xxClientError()
+                ? new IllegalArgumentException(UPDATE_REJECTED + coupangMessage(e.getResponseBodyAsString()), e)
+                : e;
+    }
+
+    /** D20 · R6: a 2xx whose {@code code} is neither SUCCESS nor 200 is a refusal; no body / not JSON passes. */
+    private void requireAccepted(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return;
+        }
+        JsonNode body;
+        try {
+            body = objectMapper.readTree(raw);
+        } catch (JsonProcessingException e) {
+            return;
+        }
+        String code = body == null ? "" : body.path("code").asText("");
+        if (!code.isBlank() && !"SUCCESS".equalsIgnoreCase(code) && !"200".equals(code)) {
+            throw new IllegalArgumentException(UPDATE_REJECTED + coupangMessage(raw));
+        }
+    }
+
+    /** D17: whether an item oclyx wrote the attributes of sends a grand total attribute. */
+    private static boolean writtenCarriesGrandTotal(ArrayNode items, List<Integer> written) {
+        for (int index : written) {
+            for (JsonNode attribute : items.get(index).path("attributes")) {
+                if (GRAND_TOTAL_QUANTITY.equals(asTextOrNull(attribute, "attributeTypeName"))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** FEATURE_2610_38 · D17: false when an item oclyx wrote carries the grand total as its only attribute. */
+    private static boolean writtenOmittable(ArrayNode items, List<Integer> written) {
+        for (int index : written) {
+            JsonNode attributes = items.get(index).path("attributes");
+            if (!attributes.isArray() || attributes.isEmpty()) {
+                continue;
+            }
+            boolean onlyGrandTotal = true;
+            for (JsonNode attribute : attributes) {
+                onlyGrandTotal &= GRAND_TOTAL_QUANTITY.equals(asTextOrNull(attribute, "attributeTypeName"));
+            }
+            if (onlyGrandTotal) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
-     * FEATURE_2610_36 / D11: the Coupang bundle type of a listing that does not know it yet, read once with the
-     * {@link #fetchProduct} GET. A failed read is a 400 with its own message; a response without the value is a 400
-     * with {@link #BUNDLE_TYPE_UNREAD}. Either way the revision is not sent.
+     * D17: a copy of the body without the grand total on the items oclyx wrote the attributes of — an item left with no
+     * attribute loses the key; every other item is as received. The given body is not changed.
      */
-    private String readBundleType(ProductListing cell, MarketplaceAccount acct) {
-        ImportedProduct product;
-        try {
-            product = fetchProduct(cell.getPlatformProductId(), acct);
-        } catch (IllegalArgumentException e) {
-            throw e;
-        } catch (RuntimeException e) {
-            throw new IllegalArgumentException(e.getMessage(), e);
+    private static ObjectNode withoutWrittenGrandTotal(ObjectNode body, List<Integer> written) {
+        ObjectNode copy = body.deepCopy();
+        ArrayNode items = (ArrayNode) copy.get("items");
+        for (int index : written) {
+            ObjectNode item = (ObjectNode) items.get(index);
+            JsonNode attributes = item.path("attributes");
+            if (!attributes.isArray()) {
+                continue;
+            }
+            ArrayNode kept = item.arrayNode();
+            for (JsonNode attribute : attributes) {
+                if (!GRAND_TOTAL_QUANTITY.equals(asTextOrNull(attribute, "attributeTypeName"))) {
+                    kept.add(attribute);
+                }
+            }
+            if (kept.isEmpty()) {
+                item.remove("attributes");
+            } else {
+                item.set("attributes", kept);
+            }
         }
-        if (product.marketBundleType() == null) {
-            throw new IllegalArgumentException(BUNDLE_TYPE_UNREAD);
+        return copy;
+    }
+
+    /** A Coupang option's search tags, blanks dropped. */
+    private static List<String> itemTags(JsonNode item) {
+        List<String> tags = new ArrayList<>();
+        for (JsonNode tag : item.path("searchTags")) {
+            String value = tag.asText(null);
+            if (StringUtils.hasText(value)) {
+                tags.add(value);
+            }
         }
-        return product.marketBundleType();
+        return tags;
+    }
+
+    /** A Coupang option's attributes as {@code name=value}, blank values dropped. */
+    private static List<String> coupangAttributes(JsonNode item) {
+        List<String> attributes = new ArrayList<>();
+        for (JsonNode attribute : item.path("attributes")) {
+            String value = asTextOrNull(attribute, "attributeValueName");
+            if (StringUtils.hasText(value)) {
+                attributes.add(asTextOrNull(attribute, "attributeTypeName") + "=" + value);
+            }
+        }
+        return attributes;
+    }
+
+    /** The attributes oclyx sends as {@code name=value}. */
+    private static List<String> attributeTexts(List<Map<String, Object>> attributes) {
+        return attributes.stream()
+                .map(a -> a.get("attributeTypeName") + "=" + a.get("attributeValueName"))
+                .toList();
+    }
+
+    /** A Coupang option's notices: (group, item, content) key → {@code item=content}, blank contents dropped. */
+    private static Map<String, String> coupangNotices(JsonNode item) {
+        Map<String, String> notices = new LinkedHashMap<>();
+        for (JsonNode notice : item.path("notices")) {
+            String content = asTextOrNull(notice, "content");
+            if (StringUtils.hasText(content)) {
+                notices.put(noticeKey(asTextOrNull(notice, "noticeCategoryName"),
+                        asTextOrNull(notice, "noticeCategoryDetailName"), content),
+                        asTextOrNull(notice, "noticeCategoryDetailName") + "=" + content);
+            }
+        }
+        return notices;
+    }
+
+    /** The notices oclyx sends, keyed the same way as {@link #coupangNotices}. */
+    private static Map<String, String> noticeTexts(List<Map<String, Object>> notices) {
+        Map<String, String> texts = new LinkedHashMap<>();
+        for (Map<String, Object> notice : notices) {
+            String detail = String.valueOf(notice.get("noticeCategoryDetailName"));
+            String content = String.valueOf(notice.get("content"));
+            texts.put(noticeKey(String.valueOf(notice.get("noticeCategoryName")), detail, content),
+                    detail + "=" + content);
+        }
+        return texts;
+    }
+
+    private static String noticeKey(String group, String detail, String content) {
+        return group + "\u0000" + detail + "\u0000" + content;
+    }
+
+    /** D19 · R4: a blank text, an absent field and an empty value are the same. */
+    private static boolean sameText(String a, String b) {
+        return (StringUtils.hasText(a) ? a : "").equals(StringUtils.hasText(b) ? b : "");
+    }
+
+    private static boolean sameNumber(BigDecimal a, BigDecimal b) {
+        return a == null || b == null ? a == b : a.compareTo(b) == 0;
+    }
+
+    private static String show(String value) {
+        return StringUtils.hasText(value) ? value : NONE_TEXT;
+    }
+
+    private static String num(BigDecimal value) {
+        return value == null ? NONE_TEXT : value.stripTrailingZeros().toPlainString();
+    }
+
+    private static String unitText(BigDecimal value, String unit) {
+        return value == null ? NONE_TEXT : num(value) + unit;
+    }
+
+    private static String priceText(BigDecimal sale, BigDecimal original) {
+        return unitText(sale, "원") + " · 정가 " + unitText(original, "원");
+    }
+
+    private static String joined(java.util.Collection<String> values) {
+        return values.isEmpty() ? NONE_TEXT : String.join(", ", values);
     }
 
     @Override
@@ -921,7 +1743,7 @@ public class CoupangListingAdapter implements ListingChannel {
                         .filter(CategoryNotice::required).toList()
                 : List.of();
 
-        // FEATURE_2610_38 / D24: same master-based decision as the register payload (buildPayload, forUpdate=false).
+        // FEATURE_2610_38 / D24: same master-based decision as the register payload (buildPayload).
         boolean bundle = !schema.attributes().isEmpty()
                 && masterProductService.isBundle(master == null ? null : master.getId());
         Set<String> searchOptionNames = searchOptionNames(schema);
@@ -991,9 +1813,10 @@ public class CoupangListingAdapter implements ListingChannel {
     }
 
     /**
-     * 96 ⑨: every required 고시 of the picked 품목군 must carry a value. Shared by validateRegistrable (register)
-     * and buildPayload — the latter is the only gate on the [수정 요청] path (108/D4 skips validateRegistrable),
-     * where a stale-key notice used to be dropped by toNotices and reach Coupang as an opaque
+     * 96 ⑨: every required notice of the picked notice group must carry a value. A register goes through
+     * validateRegistrable and then buildPayload; buildPayload, the revision overwrite and the revision option lines
+     * all reach it through {@code itemNotices} — the only notice gate on the [수정 요청] path (108/D4 skips
+     * validateRegistrable), where a stale-key notice used to be dropped by toNotices and reach Coupang as an opaque
      * "'1 번 옵션 의 고시정보' 다시 확인해 주세요" (2026-10-19, master 1705).
      */
     private static void requireNotices(List<CategoryNotice> requiredNotices, Map<String, String> notices,
@@ -1008,31 +1831,13 @@ public class CoupangListingAdapter implements ListingChannel {
 
     // --- payload (§4-4, summary — not over-detailed) ---
 
-    /** Register payload (no update-only identifiers) — see the 5-arg overload. */
-    private Map<String, Object> buildPayload(ProductListing cell, GeneratedProductData gen,
-                                             MarketplaceAccount acct) {
-        return buildPayload(cell, gen, acct, false, null);
-    }
-
     /**
-     * 108/D3: {@code forUpdate=true} attaches the Coupang product-update identifiers (top-level
-     * {@code sellerProductId}, per-item {@code sellerProductItemId}/{@code vendorItemId}). They must never
-     * leak into a register payload, hence the flag instead of post-decorating the returned map (which would
-     * assume items[] order matches the option order).
-     *
-     * <p>🔴 The per-item ids only exist after approval ({@code fetchStatus} fills them on SELLING), so a
-     * not-yet-approved cell updates with identifier-less items = Coupang's replace-all semantics. The
-     * top-level {@code sellerProductId} still prevents a duplicate product.</p>
-     *
-     * <p>FEATURE_2610_36 / D6: {@code revisionBundleType} is the bundle type a revision sends (the listing's own on
-     * Coupang); a registration passes {@code null} and decides it by the master's composition (D1).</p>
+     * The register payload (FEATURE_2608_06 / 3c · 73 · 93 · 96 · 108). A revision does not build it — it overwrites the
+     * product read from Coupang (FEATURE_2611_25 / D1), calling the same value rules below (C11).
      */
     private Map<String, Object> buildPayload(ProductListing cell, GeneratedProductData gen,
-                                             MarketplaceAccount acct, boolean forUpdate, String revisionBundleType) {
+                                             MarketplaceAccount acct) {
         Map<String, Object> payload = new LinkedHashMap<>();
-        if (forUpdate) {
-            payload.put("sellerProductId", cell.getPlatformProductId());
-        }
         // Category = this channel's OWN marketplace category when it has one, else the master's own platform
         // category (FEATURE_2610_12 / D41), else the master's standard category × platform from CategoryMapping
         // (44, 2609_45/D9). ONE resolver call gives both the code and whether it is the channel's own — never
@@ -1042,15 +1847,10 @@ public class CoupangListingAdapter implements ListingChannel {
         MasterChannelConfigService.ChannelCategory category =
                 masterChannelConfigService.resolveChannelCategory(cell);
         String categoryCode = category.category().getCode();
-        boolean usesOwnCategory = category.own();
         payload.put("displayCategoryCode", categoryCode);
         var cred = CoupangCredentials.of(acct);
         payload.put("vendorId", cred.getVendorId());
-        // 73: WING login id — Coupang-required, distinct from vendorId (vendor code). Push must not proceed unset.
-        if (cred.getVendorUserId() == null || cred.getVendorUserId().isBlank()) {
-            throw new IllegalArgumentException("vendorUserId 미설정 — 계정 설정을 먼저 완료하세요");
-        }
-        payload.put("vendorUserId", cred.getVendorUserId());
+        payload.put("vendorUserId", requireVendorUserId(cred));
 
         // 73: sale period is not user-input → default now .. far future (Coupang format yyyy-MM-dd'T'HH:mm:ss).
         payload.put("saleStartedAt", LocalDateTime.now().format(SALE_DATE_FORMAT));
@@ -1074,10 +1874,7 @@ public class CoupangListingAdapter implements ListingChannel {
         // guard); matching axis = ProductListingOption.masterProductOption (2609_22/D1, never the name).
         // master==null (backfill transition) → master values only / empty.
         MasterProduct master = cell.getMasterProduct();
-        List<MasterProductOption> masterOptions = master == null ? List.of()
-                : masterProductOptionRepository.findByMasterProductId(master.getId());
-        Map<Long, MasterProductOption> byMasterOptionId = masterOptions.stream()
-                .collect(Collectors.toMap(MasterProductOption::getId, Function.identity(), (a, b) -> a));
+        Map<Long, MasterProductOption> byMasterOptionId = masterOptionsById(master);
 
         // Listing options, queried ONCE and reused for the active-name set (registration name) and items[] below.
         List<ProductListingOption> listingOptions =
@@ -1088,16 +1885,7 @@ public class CoupangListingAdapter implements ListingChannel {
         List<ProductListingOption> activeOptions = listingOptions.stream()
                 .filter(o -> Boolean.TRUE.equals(o.getActive()))
                 .toList();
-        // Registration name: the listing's own 「등록상품명」 when it stores one (FEATURE_2611_11 / D4 · D15), else
-        // auto-generated per channel from this cell's active options (67 · 32 rule). master null fallback =
-        // cell.getName() (backfill transition window). 69: the "옵션확인" suffix is resolved per cell (channel ?? master
-        // ?? seller ?? system) — single cell = one account query allowed.
-        payload.put("sellerProductName", limitName(StringUtils.hasText(cell.getRegistrationName())
-                ? cell.getRegistrationName()
-                : master != null
-                        ? registrationNameGenerator.generate(master, activeOptions,
-                                optionCheckSuffixResolver.resolve(cell))
-                        : cell.getName()));
+        payload.put("sellerProductName", sellerProductName(cell, master, activeOptions));
         // 108/D2: 노출상품명 (the name shown on the Coupang sales page) — optional, ≤100 chars, same cap as
         // sellerProductName. Reverses 35's "internal only": when omitted Coupang falls back to the
         // registration name, which is exactly the observed symptom. Blank → omit the key (never send "").
@@ -1106,6 +1894,148 @@ public class CoupangListingAdapter implements ListingChannel {
             payload.put("displayProductName", limitName(displayName));
         }
 
+        // The category meta for this code, fetched ONCE and reused for both the notice groups (61/96 ⑩) and the
+        // attribute units (96 ④). ⚠️ Do not call getMeta again inside this method — register already pays two
+        // calls in total (validateRegistrable + here, accepted per §60); adding a third is pure waste.
+        CategoryContext context = categoryContext(category, cell, master, acct);
+
+        // 63 · FEATURE_2610_36 / D1 · D2: bundleInfo.bundleType = product-level SINGLE (single composition) / AB (mixed
+        // composition), decided once by the master's component count (loop-invariant local boolean, no N+1).
+        // FEATURE_2610_37 / D15: AB carries the attributes like SINGLE.
+        boolean bundle = masterProductService.isBundle(master == null ? null : master.getId());
+        payload.put("bundleInfo", Map.of("bundleType", bundle ? BUNDLE_AB : BUNDLE_SINGLE));
+        // FEATURE_2610_36 / D3: Coupang takes one option only on a mixed-composition product — stop before the push.
+        if (bundle && activeOptions.size() >= 2) {
+            throw new IllegalArgumentException(MIXED_BUNDLE_ONE_OPTION);
+        }
+
+        // items[] (max 200): one per ACTIVE listing option (42 — per-channel subset; inactive options are
+        // excluded from the payload but keep their row). attributes/notices are assembled per item = merge(master,
+        // option) → Coupang shape (empty maps skipped, harmless).
+        // 73: images / searchTags / contents live at the ITEM level (Coupang: searchTags is item-only, images/
+        // contents are used per item). Every active option shares the same merged tag set (33) and detail HTML —
+        // computed once and reused across items; the photos are per option (FEATURE_2611_11 / D21, itemImages).
+        // FEATURE_2611_11 / D8 · D21 · D22 · D38: each option's own market photos (one query, outside the loop).
+        Map<Long, List<ListingMarketImage>> marketImagesByOption = marketImagesByOption(cell);
+        List<String> searchTags = tagMergeService.resolveTags(cell);
+        List<Map<String, Object>> itemContents = requireDetailContents(gen);
+
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (ProductListingOption option : listingOptions) {
+            if (!Boolean.TRUE.equals(option.getActive())) {
+                continue;   // deactivated on this channel → not pushed
+            }
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("itemName", option.getOptionName());
+            item.put("originalPrice", originalPrice(option));
+            item.put("salePrice", option.getSellingPrice());
+            item.put("unitCount", 1);   // 63: unit quantity (SINGLE = 1; AB unitCount is a live-account follow-up)
+            // 102: stock = this channel's override ?? the master option's ?? 9999 (unset on both).
+            item.put("maximumBuyCount",
+                    ListingStockPolicy.resolve(option, linkedMaster(option, byMasterOptionId)));
+            // 73: fixed item defaults (standard tax/adult/import flags).
+            item.put("maximumBuyForPerson", 0);
+            item.put("maximumBuyForPersonPeriod", 1);
+            item.put("outboundShippingTimeDay", 1);
+            item.put("adultOnly", "EVERYONE");
+            item.put("taxType", "TAX");
+            item.put("parallelImported", "NOT_PARALLEL_IMPORTED");
+            item.put("overseasPurchased", "NOT_OVERSEAS_PURCHASED");
+            item.put("pccNeeded", false);
+            item.put("certifications", NOT_REQUIRED_CERTIFICATIONS);
+            item.put("images", itemImages(gen, marketImagesByOption.getOrDefault(option.getId(), List.of())));
+            item.put("searchTags", searchTags);
+            item.put("contents", itemContents);
+
+            MasterProductOption mo = linkedMaster(option, byMasterOptionId);
+            List<Map<String, Object>> attributes = itemAttributes(context, mo, option, bundle);
+            if (!attributes.isEmpty()) {
+                item.put("attributes", attributes);
+            }
+            List<Map<String, Object>> notices = itemNotices(context, mo, option);
+            if (!notices.isEmpty()) {
+                item.put("notices", notices);
+            }
+            items.add(item);
+        }
+        payload.put("items", items);
+
+        return payload;
+    }
+
+    /** 73: the WING login id — Coupang-required, distinct from vendorId (vendor code). A push must not proceed unset. */
+    private static String requireVendorUserId(CoupangAccountCredential cred) {
+        if (cred.getVendorUserId() == null || cred.getVendorUserId().isBlank()) {
+            throw new IllegalArgumentException("vendorUserId 미설정 — 계정 설정을 먼저 완료하세요");
+        }
+        return cred.getVendorUserId();
+    }
+
+    /** Master options keyed by id — the single master↔channel matching axis (2609_22/D1, never the name). */
+    private Map<Long, MasterProductOption> masterOptionsById(MasterProduct master) {
+        List<MasterProductOption> masterOptions = master == null ? List.of()
+                : masterProductOptionRepository.findByMasterProductId(master.getId());
+        return masterOptions.stream()
+                .collect(Collectors.toMap(MasterProductOption::getId, Function.identity(), (a, b) -> a));
+    }
+
+    /** FEATURE_2611_11 / D8 · D21 · D22 · D38: each option's own market photos (one query). */
+    private Map<Long, List<ListingMarketImage>> marketImagesByOption(ProductListing cell) {
+        return marketImageRepository
+                .findByProductListingIdOrderBySortOrderAsc(cell.getId()).stream()
+                .filter(i -> i.getProductListingOptionId() != null)
+                .collect(Collectors.groupingBy(ListingMarketImage::getProductListingOptionId,
+                        LinkedHashMap::new, Collectors.toList()));
+    }
+
+    /**
+     * The sellerProductName: the listing's own 「등록상품명」 when it stores one (FEATURE_2611_11 / D4 · D15), else
+     * auto-generated per channel from this cell's active options (67 · 32 rule). master null fallback = cell.getName()
+     * (backfill transition window). 69: the "옵션확인" suffix is resolved per cell (channel ?? master ?? seller ??
+     * system) — single cell = one account query allowed. 93: capped at 100 chars.
+     */
+    private String sellerProductName(ProductListing cell, MasterProduct master,
+                                     List<ProductListingOption> activeOptions) {
+        return limitName(StringUtils.hasText(cell.getRegistrationName())
+                ? cell.getRegistrationName()
+                : master != null
+                        ? registrationNameGenerator.generate(master, activeOptions,
+                                optionCheckSuffixResolver.resolve(cell))
+                        : cell.getName());
+    }
+
+    /**
+     * 93: contents is required — an empty one comes back as an opaque Coupang error, so fail here where the cause
+     * (auto-generation not run) is explicit. Shared by the register payload and the revision overwrite
+     * (FEATURE_2611_25 / D15), which do not go through the register-only validation.
+     */
+    private static List<Map<String, Object>> requireDetailContents(GeneratedProductData gen) {
+        String detailHtml = gen != null ? gen.getDetailHtml() : null;
+        if (detailHtml == null || detailHtml.isBlank()) {
+            throw new IllegalArgumentException(DETAIL_HTML_MISSING);
+        }
+        return detailContents(detailHtml);
+    }
+
+    /** 73: originalPrice = display strike-through (reverse-calc, 73); null → fall back to salePrice. */
+    private static BigDecimal originalPrice(ProductListingOption option) {
+        return option.getOriginalPrice() != null ? option.getOriginalPrice() : option.getSellingPrice();
+    }
+
+    /**
+     * Everything the per-option attributes and notices need from the category, read once per push: the category,
+     * its meta (one getMeta call), the master values that seed the merge, the notice groups and the units.
+     */
+    private record CategoryContext(MasterChannelConfigService.ChannelCategory category, CategoryMetaSchema schema,
+                                   Map<String, String> masterAttributes, Map<String, String> masterNotices,
+                                   Map<String, String> groupByDetail, List<CategoryNotice> requiredNotices,
+                                   Map<String, String> unitByAttr, Map<String, List<String>> usableByAttr,
+                                   Set<String> searchOptionNames) {
+    }
+
+    private CategoryContext categoryContext(MasterChannelConfigService.ChannelCategory category, ProductListing cell,
+                                            MasterProduct master, MarketplaceAccount acct) {
+        boolean usesOwnCategory = category.own();
         /*
          * 2609_45/D12-1: when the channel uses its OWN category the master's values are ANOTHER category's
          * values — drop them from the merge base. toAttributes does not filter by schema, so a master-only
@@ -1118,10 +2048,7 @@ public class CoupangListingAdapter implements ListingChannel {
                 master != null && !usesOwnCategory ? master.getCategoryAttributes() : null;
         Map<String, String> masterNotices =
                 master != null && !usesOwnCategory ? master.getCategoryNotices() : null;
-        // The category meta for this code, fetched ONCE and reused for both the notice groups (61/96 ⑩) and the
-        // attribute units (96 ④). ⚠️ Do not call getMeta again inside this method — register already pays two
-        // calls in total (validateRegistrable + here, accepted per §60); adding a third is pure waste.
-        CategoryMetaSchema schema = metaAdapter.getMeta(acct, categoryCode);
+        CategoryMetaSchema schema = metaAdapter.getMeta(acct, category.category().getCode());
         // Notice detail(noticeCategoryDetailName) → group(noticeCategoryName) for this category (61), narrowed
         // to the group the user actually picked (96 ⑩ — 품목군 share notice keys, so a first-wins map tagged the
         // shared ones with whichever group happened to come first).
@@ -1145,119 +2072,47 @@ public class CoupangListingAdapter implements ListingChannel {
         Map<String, List<String>> usableByAttr = schema.attributes().stream()
                 .filter(a -> a.usableUnits() != null && !a.usableUnits().isEmpty())
                 .collect(Collectors.toMap(CategoryAttribute::name, CategoryAttribute::usableUnits, (a, b) -> a));
+        return new CategoryContext(category, schema, masterAttributes, masterNotices, groupByDetail, requiredNotices,
+                unitByAttr, usableByAttr, searchOptionNames(schema));
+    }
 
-        // 63 · FEATURE_2610_36 / D2: bundleInfo.bundleType = product-level SINGLE (single composition) / AB (mixed
-        // composition). Determined once (loop-invariant local boolean, no N+1): a registration by the master's
-        // component count (D1), a revision by the type the listing has on Coupang (D6 — Coupang cannot change it after
-        // the first registration). FEATURE_2610_37 / D15: AB carries the attributes like SINGLE.
-        boolean bundle = forUpdate
-                ? BUNDLE_AB.equals(revisionBundleType)
-                : masterProductService.isBundle(master == null ? null : master.getId());
-        payload.put("bundleInfo", Map.of("bundleType", bundle ? BUNDLE_AB : BUNDLE_SINGLE));
-        // FEATURE_2610_36 / D3: Coupang takes one option only on a mixed-composition product — stop before the push.
-        if (bundle && activeOptions.size() >= 2) {
-            throw new IllegalArgumentException(MIXED_BUNDLE_ONE_OPTION);
+    /**
+     * One option's {@code attributes[]} — empty when there is none to send. 47/59 · FEATURE_2610_37 / D15: per-item
+     * merged category attributes for SINGLE and AB alike — Coupang refused an AB payload without them ("아이템의 속성값을
+     * 입력하지 않았습니다", 2026-10-28).
+     */
+    private static List<Map<String, Object>> itemAttributes(CategoryContext context, MasterProductOption mo,
+                                                            ProductListingOption option, boolean bundle) {
+        Map<String, String> attrs = withConsistentGrandTotal(
+                mergedAttributes(context.masterAttributes(), mo, option));
+        // FEATURE_2610_38 / D24: …and refused one carrying purchase options ("혼합 구성 상품 등록할 때, 속성
+        // (attributeTypeName) 입력할 수 없습니다", 2026-10-29). An approved AB product (16314893607) holds no
+        // purchase-option value → an AB item sends search options only, each marked exposed=NONE. Also the
+        // only gate on the update path (validateRegistrable is register-only).
+        if (bundle) {
+            attrs = searchOptionsOnly(attrs, context.searchOptionNames());
+            if (attrs.isEmpty()) {
+                throw new IllegalArgumentException(abSearchAttributeRequired(option.getOptionName(), context.schema()));
+            }
         }
-        Set<String> searchOptionNames = searchOptionNames(schema);
+        // A stored 총 수량 is always put in the built payload: the meta can mark it OPTIONAL while Coupang
+        // still rejects an update without it ("필수 옵션이(총 수량) 입력되지 않았습니다", 2026-10-16) — same as
+        // 수량 (2026-10-09). Whether it is sent is decided by registerAndReport / updateAndReport
+        // (FEATURE_2610_34), never by the meta.
+        return attrs.isEmpty() ? List.of()
+                : toAttributes(attrs, context.unitByAttr(), context.usableByAttr(), bundle);
+    }
 
-        // items[] (max 200): one per ACTIVE listing option (42 — per-channel subset; inactive options are
-        // excluded from the payload but keep their row). New options carry no vendorItemId yet. attributes/
-        // notices are assembled per item = merge(master, option) → Coupang shape (empty maps skipped, harmless).
-        // 73: images / searchTags / contents live at the ITEM level (Coupang: searchTags is item-only, images/
-        // contents are used per item). Every active option shares the same merged tag set (33) and detail HTML —
-        // computed once and reused across items; the photos are per option (FEATURE_2611_11 / D21, itemImages).
-        // FEATURE_2611_11 / D8 · D21 · D22 · D38: each option's own market photos (one query, outside the loop).
-        Map<Long, List<ListingMarketImage>> marketImagesByOption = marketImageRepository
-                .findByProductListingIdOrderBySortOrderAsc(cell.getId()).stream()
-                .filter(i -> i.getProductListingOptionId() != null)
-                .collect(Collectors.groupingBy(ListingMarketImage::getProductListingOptionId,
-                        LinkedHashMap::new, Collectors.toList()));
-        List<String> searchTags = tagMergeService.resolveTags(cell);
-        String detailHtml = gen != null ? gen.getDetailHtml() : null;
-        // 93: contents is required — an empty one comes back as an opaque Coupang error, so fail here where the
-        // cause (auto-generation not run) is explicit. Lives in buildPayload, not validateRegistrable, because
-        // update(PUT) builds the payload without going through the register-only validation.
-        if (detailHtml == null || detailHtml.isBlank()) {
-            throw new IllegalArgumentException("상세 HTML 미생성 — 재생성 후 등록하세요");
+    /**
+     * One option's {@code notices[]} — empty when there is none to send. 96 ⑨: the required notices are checked first.
+     */
+    private static List<Map<String, Object>> itemNotices(CategoryContext context, MasterProductOption mo,
+                                                         ProductListingOption option) {
+        Map<String, String> notices = mergedNotices(context.masterNotices(), mo, option);
+        if (!context.requiredNotices().isEmpty()) {
+            requireNotices(context.requiredNotices(), notices, option.getOptionName());
         }
-        List<Map<String, Object>> itemContents = detailContents(detailHtml);
-
-        List<Map<String, Object>> items = new ArrayList<>();
-        for (ProductListingOption option : listingOptions) {
-            if (!Boolean.TRUE.equals(option.getActive())) {
-                continue;   // deactivated on this channel → not pushed
-            }
-            Map<String, Object> item = new LinkedHashMap<>();
-            // 108/D3: existing (approved) options must carry their ids on update; a new option omits the keys
-            // entirely (a null value would be read as "clear it").
-            if (forUpdate) {
-                if (option.getSellerProductItemId() != null) {
-                    item.put("sellerProductItemId", option.getSellerProductItemId());
-                }
-                if (option.getPlatformOptionId() != null) {
-                    item.put("vendorItemId", option.getPlatformOptionId());
-                }
-            }
-            item.put("itemName", option.getOptionName());
-            // 73: originalPrice = display strike-through (reverse-calc, 73); null → fall back to salePrice.
-            item.put("originalPrice", option.getOriginalPrice() != null
-                    ? option.getOriginalPrice() : option.getSellingPrice());
-            item.put("salePrice", option.getSellingPrice());
-            item.put("unitCount", 1);   // 63: unit quantity (SINGLE = 1; AB unitCount is a live-account follow-up)
-            // 102: stock = this channel's override ?? the master option's ?? 9999 (unset on both).
-            item.put("maximumBuyCount",
-                    ListingStockPolicy.resolve(option, linkedMaster(option, byMasterOptionId)));
-            // 73: fixed item defaults (standard tax/adult/import flags).
-            item.put("maximumBuyForPerson", 0);
-            item.put("maximumBuyForPersonPeriod", 1);
-            item.put("outboundShippingTimeDay", 1);
-            item.put("adultOnly", "EVERYONE");
-            item.put("taxType", "TAX");
-            item.put("parallelImported", "NOT_PARALLEL_IMPORTED");
-            item.put("overseasPurchased", "NOT_OVERSEAS_PURCHASED");
-            item.put("pccNeeded", false);
-            item.put("certifications", NOT_REQUIRED_CERTIFICATIONS);
-            item.put("images", itemImages(gen, marketImagesByOption.getOrDefault(option.getId(), List.of())));
-            item.put("searchTags", searchTags);
-            item.put("contents", itemContents);
-
-            MasterProductOption mo = linkedMaster(option, byMasterOptionId);
-            // 47/59 · FEATURE_2610_37 / D15: per-item merged category attributes for SINGLE and AB alike — Coupang
-            // refused an AB payload without them ("아이템의 속성값을 입력하지 않았습니다", 2026-10-28).
-            Map<String, String> attrs = withConsistentGrandTotal(
-                    mergedAttributes(masterAttributes, mo, option));
-            // FEATURE_2610_38 / D24: …and refused one carrying purchase options ("혼합 구성 상품 등록할 때, 속성
-            // (attributeTypeName) 입력할 수 없습니다", 2026-10-29). An approved AB product (16314893607) holds no
-            // purchase-option value → an AB item sends search options only, each marked exposed=NONE. Also the
-            // only gate on the update path (validateRegistrable is register-only).
-            if (bundle) {
-                attrs = searchOptionsOnly(attrs, searchOptionNames);
-                if (attrs.isEmpty()) {
-                    throw new IllegalArgumentException(abSearchAttributeRequired(option.getOptionName(), schema));
-                }
-            }
-            // A stored 총 수량 is always put in the built payload: the meta can mark it OPTIONAL while Coupang
-            // still rejects an update without it ("필수 옵션이(총 수량) 입력되지 않았습니다", 2026-10-16) — same as
-            // 수량 (2026-10-09). Whether it is sent is decided by registerAndReport / updateAndReport
-            // (FEATURE_2610_34), never by the meta.
-            if (!attrs.isEmpty()) {
-                item.put("attributes", toAttributes(attrs, unitByAttr, usableByAttr, bundle));
-            }
-            Map<String, String> notices = mergedNotices(masterNotices, mo, option);
-            if (!requiredNotices.isEmpty()) {
-                requireNotices(requiredNotices, notices, option.getOptionName());
-            }
-            if (!notices.isEmpty()) {
-                List<Map<String, Object>> noticeItems = toNotices(notices, groupByDetail);
-                if (!noticeItems.isEmpty()) {
-                    item.put("notices", noticeItems);
-                }
-            }
-            items.add(item);
-        }
-        payload.put("items", items);
-
-        return payload;
+        return notices.isEmpty() ? List.of() : toNotices(notices, context.groupByDetail());
     }
 
     /**
@@ -1520,6 +2375,7 @@ public class CoupangListingAdapter implements ListingChannel {
     }
 
     static final String FETCH_IN_PROGRESS_MESSAGE = "상품 수정 진행중입니다. 잠시 후 다시 시도해주십시오.";
+    private static final String DETAIL_HTML_MISSING = "상세 HTML 미생성 — 재생성 후 등록하세요";
 
     private static final String PER_UNIT_QUANTITY = "개당 수량";
     private static final String QUANTITY = "수량";

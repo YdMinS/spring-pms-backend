@@ -288,10 +288,9 @@ public class ProductListing extends BaseEntity {
 
     /**
      * FEATURE_2610_36 / D9: the {@code bundleInfo.bundleType} this listing actually has on Coupang — {@code SINGLE} ·
-     * {@code AB} · {@code null} (not known). A Coupang revision sends this value — read once from Coupang while it is
-     * {@code null} (D11) — and not the master's composition (D6: Coupang cannot change it after the first
-     * registration). Set by a successful registration, an import, the status read (D10 ① ② ③) and a successful
-     * revision that read it once (D10 ④ · D11 — a failed revision does not store it).
+     * {@code AB} · {@code null} (not known). A Coupang revision sends the bundleInfo it reads from Coupang as it is
+     * (FEATURE_2611_25 / D2) and stores the type it read on success (D10 ④ — a failed revision does not store it).
+     * Set by a successful registration, an import and the status read (D10 ① ② ③).
      * Pre-existing rows are {@code null} (changeset 121).
      */
     @Column(name = "market_bundle_type", length = 10)
