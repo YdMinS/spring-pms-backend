@@ -2,6 +2,7 @@ package com.pms.service.claim;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.pms.config.LotteonProperties;
 import com.pms.domain.ClaimAction;
 import com.pms.domain.ClaimStatus;
 import com.pms.domain.ClaimType;
@@ -44,6 +45,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -58,6 +60,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -108,7 +111,7 @@ class LotteonClaimTest {
 
     private LotteonClaimSyncAdapter syncAdapter(LotteonClaimUpserter upserter) {
         return new LotteonClaimSyncAdapter(lotteonOrderApi, upserter, orderClaimRepository, claimStaleSweeper,
-                syncStatusRecorder);
+                syncStatusRecorder, new LotteonProperties());
     }
 
     private LotteonClaimActionAdapter actionAdapter(LotteonOrderApi api) {
@@ -371,6 +374,102 @@ class LotteonClaimTest {
         assertThat(saved.getReshipCarrierCode()).isEqualTo("0002");
     }
 
+    @Test
+    void applyProgress_exchangeRetrievalConfirmedStaysInProgress() throws Exception {
+        OrderClaim exchange = exchangeClaim(ClaimStatus.IN_PROGRESS, "25", "X111");
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+                9L, ClaimType.EXCHANGE, "X1", "1")).willReturn(Optional.of(exchange));
+        given(lotteonClaimRepository.findByOrderClaim_Id(41L)).willReturn(Optional.of(row41(exchange)));
+
+        upserter().applyProgress(account, json("""
+                {"dvRtrvDvsCd":"RTRV","odTypCd":"30","clmNo":"X1","odNo":"OD2","odSeq":"1","odPrgsStepCd":"26"}"""));
+
+        OrderClaim saved = savedClaim();
+        assertThat(saved.getStatus()).isEqualTo(ClaimStatus.IN_PROGRESS);
+        assertThat(saved.getPlatformStatus()).isEqualTo("26");
+    }
+
+    @Test
+    void applyProgress_returnRetrievalConfirmedIsDone() throws Exception {
+        OrderClaim claim = returnClaim(ClaimStatus.IN_PROGRESS, "25", "R111");
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+                9L, ClaimType.RETURN, "C1", "1")).willReturn(Optional.of(claim));
+        given(lotteonClaimRepository.findByOrderClaim_Id(31L)).willReturn(Optional.of(row31(claim, null)));
+
+        upserter().applyProgress(account, json("""
+                {"dvRtrvDvsCd":"RTRV","odTypCd":"40","clmNo":"C1","odNo":"OD1","odSeq":"1","odPrgsStepCd":"26"}"""));
+
+        OrderClaim saved = savedClaim();
+        assertThat(saved.getStatus()).isEqualTo(ClaimStatus.DONE);
+        assertThat(saved.getPlatformStatus()).isEqualTo("26");
+    }
+
+    @Test
+    void applyProgress_reshipDeliveredCompletesAConfirmedExchange() throws Exception {
+        OrderClaim exchange = exchangeClaim(ClaimStatus.IN_PROGRESS, "26", "X111");
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+                9L, ClaimType.EXCHANGE, "X1", "1")).willReturn(Optional.of(exchange));
+        given(lotteonClaimRepository.findByOrderClaim_Id(41L)).willReturn(Optional.of(row41(exchange)));
+
+        upserter().applyProgress(account, json("""
+                {"dvRtrvDvsCd":"DV","odTypCd":"30","clmNo":"X1","odNo":"OD2","odSeq":"1","procSeq":"5",
+                 "odPrgsStepCd":"14"}"""));
+
+        OrderClaim saved = savedClaim();
+        assertThat(saved.getStatus()).isEqualTo(ClaimStatus.DONE);
+        assertThat(saved.getPlatformStatus()).isEqualTo("26");
+        assertThat(saved.getReshipInvoiceNo()).isNull();
+        LotteonClaim lotteon = savedLotteonClaim();
+        assertThat(lotteon.getReshipOdSeq()).isEqualTo("1");
+        assertThat(lotteon.getReshipProcSeq()).isEqualTo("5");
+    }
+
+    @Test
+    void applyProgress_reshipDeliveredBeforeConfirmKeepsTheExchangeOpen() throws Exception {
+        OrderClaim beforeConfirm = exchangeClaim(ClaimStatus.IN_PROGRESS, "25", null);
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+                9L, ClaimType.EXCHANGE, "X1", "1")).willReturn(Optional.of(beforeConfirm));
+        given(lotteonClaimRepository.findByOrderClaim_Id(41L)).willReturn(Optional.of(row41(beforeConfirm)));
+
+        upserter().applyProgress(account, json("""
+                {"dvRtrvDvsCd":"DV","odTypCd":"30","clmNo":"X1","odNo":"OD2","odSeq":"1","procSeq":"5",
+                 "odPrgsStepCd":"15"}"""));
+
+        verify(orderClaimRepository, never()).save(any());
+        verify(lotteonClaimRepository, times(1)).save(any());
+        clearInvocations(orderClaimRepository, lotteonClaimRepository);
+
+        OrderClaim stale = exchangeClaim(ClaimStatus.STALE, "26", null);
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+                9L, ClaimType.EXCHANGE, "X1", "1")).willReturn(Optional.of(stale));
+        given(lotteonClaimRepository.findByOrderClaim_Id(41L)).willReturn(Optional.of(row41(stale)));
+
+        upserter().applyProgress(account, json("""
+                {"dvRtrvDvsCd":"DV","odTypCd":"30","clmNo":"X1","odNo":"OD2","odSeq":"1","procSeq":"5",
+                 "odPrgsStepCd":"14"}"""));
+
+        verify(orderClaimRepository, never()).save(any());
+        verify(lotteonClaimRepository, times(1)).save(any());
+    }
+
+    @Test
+    void applyProgress_retrievalRowKeepsADoneExchangeDone() throws Exception {
+        OrderClaim exchange = exchangeClaim(ClaimStatus.DONE, "26", "X111");
+        given(orderClaimRepository.findByMarketplaceAccount_IdAndClaimTypeAndExternalClaimIdAndExternalItemId(
+                9L, ClaimType.EXCHANGE, "X1", "1")).willReturn(Optional.of(exchange));
+        given(lotteonClaimRepository.findByOrderClaim_Id(41L)).willReturn(Optional.of(row41(exchange)));
+
+        upserter().applyProgress(account, json("""
+                {"dvRtrvDvsCd":"RTRV","odTypCd":"30","clmNo":"X1","odNo":"OD2","odSeq":"1","odPrgsStepCd":"26",
+                 "invcNo":"X222","dvCoCd":"0001","procSeq":"6"}"""));
+
+        OrderClaim saved = savedClaim();
+        assertThat(saved.getStatus()).isEqualTo(ClaimStatus.DONE);
+        assertThat(saved.getPlatformStatus()).isEqualTo("26");
+        assertThat(saved.getCollectInvoiceNo()).isEqualTo("X222");
+        assertThat(savedLotteonClaim().getProcSeq()).isEqualTo("6");
+    }
+
     // ---------------------------------------------------------------- D86 · order round
 
     @Test
@@ -410,6 +509,48 @@ class LotteonClaimTest {
         assertThatThrownBy(() -> syncAdapter(lotteonClaimUpserter).syncWithProgress(account, List.of()))
                 .isInstanceOf(BusinessException.class).hasMessage("조회 실패");
         verify(lotteonOrderApi, never()).progressStatesOfOrder(account, "OD4");
+    }
+
+    @Test
+    void syncWithProgress_followsAConfirmedExchangePastThirtyDaysWithoutTheSweeper() {
+        LocalDateTime now = LocalDateTime.now(SyncWindow.KST);
+        OrderClaim claim41 = exchangeClaim(ClaimStatus.IN_PROGRESS, "26", "X111").toBuilder()
+                .receivedAt(now.minusDays(45)).build();
+        OrderClaim claim42 = exchangeClaim(ClaimStatus.IN_PROGRESS, "25", "X111").toBuilder()
+                .id(42L).externalClaimId("X2").externalOrderId("OD5").receivedAt(now.minusDays(45)).build();
+        given(orderClaimRepository.findOpen(9L, ClaimType.RETURN, ClaimStatus.closedStatuses())).willReturn(List.of());
+        given(orderClaimRepository.findOpen(9L, ClaimType.EXCHANGE, ClaimStatus.closedStatuses()))
+                .willReturn(List.of(claim41, claim42));
+        given(claimStaleSweeper.sweep(eq(account), anyList())).willAnswer(invocation -> invocation.getArgument(1));
+
+        ClaimSyncAdapter.ClaimSyncResult result = syncAdapter(lotteonClaimUpserter).syncWithProgress(account, List.of());
+
+        verify(claimStaleSweeper, times(1)).sweep(account, List.of(claim42));
+        verify(claimStaleSweeper, times(1)).sweep(account, List.of());
+        verify(orderClaimRepository, never()).save(any());
+        verify(lotteonOrderApi, times(1)).progressStatesOfOrder(account, "OD2");
+        verify(lotteonOrderApi, times(1)).progressStatesOfOrder(account, "OD5");
+        assertThat(result.staleClosed()).isEqualTo(0);
+    }
+
+    @Test
+    void syncWithProgress_closesAConfirmedExchangeAfterSixtyDays() {
+        OrderClaim claim43 = exchangeClaim(ClaimStatus.IN_PROGRESS, "27", "X111").toBuilder()
+                .id(43L).externalClaimId("X3").externalOrderId("OD6")
+                .receivedAt(LocalDate.now(SyncWindow.KST).minusDays(60).atStartOfDay().minusSeconds(1)).build();
+        given(orderClaimRepository.findOpen(9L, ClaimType.RETURN, ClaimStatus.closedStatuses())).willReturn(List.of());
+        given(orderClaimRepository.findOpen(9L, ClaimType.EXCHANGE, ClaimStatus.closedStatuses()))
+                .willReturn(List.of(claim43));
+        given(claimStaleSweeper.sweep(eq(account), anyList())).willAnswer(invocation -> invocation.getArgument(1));
+
+        ClaimSyncAdapter.ClaimSyncResult result = syncAdapter(lotteonClaimUpserter).syncWithProgress(account, List.of());
+
+        OrderClaim saved = savedClaim();
+        assertThat(saved.getId()).isEqualTo(43L);
+        assertThat(saved.getStatus()).isEqualTo(ClaimStatus.STALE);
+        verify(claimStaleSweeper, times(2)).sweep(account, List.of());
+        verify(lotteonOrderApi, never()).progressStatesOfOrder(account, "OD6");
+        assertThat(result.staleClosed()).isEqualTo(1);
     }
 
     @Test
@@ -478,6 +619,21 @@ class LotteonClaimTest {
         assertThat(actions(options)).containsExactly(ClaimAction.EXCHANGE_HOLD, ClaimAction.EXCHANGE_COLLECT_CONFIRM,
                 ClaimAction.EXCHANGE_RESHIP_INVOICE);
         assertThat(options.get(1).irreversible()).isTrue();
+    }
+
+    @Test
+    void availableActions_reshipShowsAfterRetrievalConfirmUntilAReshipInvoiceArrives() {
+        OrderClaim exchange = exchangeClaim(ClaimStatus.IN_PROGRESS, "26", "X111");
+        given(lotteonClaimRepository.findByOrderClaim_Id(41L))
+                .willReturn(Optional.of(row41(exchange).toBuilder().reshipOdSeq("1").build()));
+        LotteonClaimActionAdapter adapter = actionAdapter(lotteonOrderApi);
+
+        assertThat(actions(adapter.availableActions(exchange, Set.of())))
+                .containsExactly(ClaimAction.EXCHANGE_RESHIP_INVOICE);
+        assertThat(actions(adapter.availableActions(exchange.toBuilder().reshipInvoiceNo("S222").build(), Set.of())))
+                .isEmpty();
+        assertThat(actions(adapter.availableActions(exchange, Set.of(ClaimAction.EXCHANGE_RESHIP_INVOICE))))
+                .isEmpty();
     }
 
     @Test

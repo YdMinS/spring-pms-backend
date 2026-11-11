@@ -1,6 +1,7 @@
 package com.pms.service.claim;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.pms.config.LotteonProperties;
 import com.pms.domain.ClaimStatus;
 import com.pms.domain.ClaimType;
 import com.pms.domain.MarketplaceAccount;
@@ -15,6 +16,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -27,7 +29,8 @@ import java.util.Set;
  * <p>One round = the four lists once over the last {@value #CLAIM_DAYS} days ([51] returns → [67] return withdrawals
  * → [69] exchanges → [70] exchange withdrawals) → the [140] rows (steps · pickup / re-ship invoices) → D86: open claims
  * received before the window, after the {@code STALE} sweep, are followed by order number with one more [140] call
- * per distinct order.
+ * per distinct order. D95: a retrieval-confirmed exchange (IN_PROGRESS · 26 · 27) skips the 30-day sweep and is closed
+ * as STALE only {@code exchangeReceiptFollowDays} (60) days after receipt.
  *
  * <p>The [140] rows come from the order step of the same round ({@link #syncWithProgress}, no extra [140] call — R31);
  * only the claims-only round ({@link #syncExchanges}) reads [140] itself over 14 one-day windows.
@@ -47,12 +50,15 @@ public class LotteonClaimSyncAdapter implements ClaimSyncAdapter {
     private static final Set<String> CLAIM_TYPES = Set.of("40", "41", "30", "31");
     private static final Set<String> WITHDRAW_TYPES = Set.of("41", "31");
     private static final Set<String> RETURN_TYPES = Set.of("40", "41");
+    /** D87 · D95: retrieval-confirmed steps — a return is done here, an exchange still waits for its re-ship line. */
+    static final Set<String> RETRIEVAL_CONFIRMED_STEPS = Set.of("26", "27");
 
     private final LotteonOrderApi orderApi;
     private final LotteonClaimUpserter claimUpserter;
     private final OrderClaimRepository orderClaimRepository;
     private final ClaimStaleSweeper claimStaleSweeper;
     private final SyncStatusRecorder syncStatusRecorder;
+    private final LotteonProperties lotteonProperties;
 
     @Override
     public Platform platform() {
@@ -98,22 +104,61 @@ public class LotteonClaimSyncAdapter implements ClaimSyncAdapter {
         Set<String> orderNumbers = new LinkedHashSet<>();
         for (ClaimType type : List.of(ClaimType.RETURN, ClaimType.EXCHANGE)) {
             List<OrderClaim> open = orderClaimRepository.findOpen(account.getId(), type, ClaimStatus.closedStatuses());
-            List<OrderClaim> remaining = claimStaleSweeper.sweep(account, open);
-            staleClosed += open.size() - remaining.size();
-            for (OrderClaim claim : remaining) {
+            List<OrderClaim> followed = new ArrayList<>();
+            List<OrderClaim> rest = new ArrayList<>();
+            for (OrderClaim claim : open) {
+                (isFollowedExchange(claim) ? followed : rest).add(claim);
+            }
+            List<OrderClaim> remaining = claimStaleSweeper.sweep(account, rest);
+            List<OrderClaim> kept = closeExpiredFollowedExchanges(account, followed);
+            staleClosed += (rest.size() - remaining.size()) + (followed.size() - kept.size());
+            List<OrderClaim> alive = new ArrayList<>(remaining);
+            alive.addAll(kept);
+            for (OrderClaim claim : alive) {
                 if (claim.getReceivedAt() != null && claim.getReceivedAt().isBefore(from)
                         && claim.getExternalOrderId() != null) {
                     orderNumbers.add(claim.getExternalOrderId());
                 }
             }
         }
-        // D86: no cap (the 30-day sweep is the cap, D40); a LotteON failure stops here and is thrown on.
+        // D86: no cap (the 30-day sweep, 60 days for retrieval-confirmed exchanges, is the cap — D40 · D95); a LotteON failure stops here and is thrown on.
         for (String odNo : orderNumbers) {
             applyRows(account, orderApi.progressStatesOfOrder(account, odNo));
         }
         log.info("[lotteon] claim sync: account={} progressRows={} followedOrders={} staleClosed={}",
                 account.getId(), progressRows.size(), orderNumbers.size(), staleClosed);
         return new ClaimSyncResult(4, 0, staleClosed);
+    }
+
+    /** D95 ①: an IN_PROGRESS exchange whose retrieval step is 26 · 27 — followed past the 30-day sweep. */
+    static boolean isFollowedExchange(OrderClaim claim) {
+        return claim.getClaimType() == ClaimType.EXCHANGE
+                && claim.getStatus() == ClaimStatus.IN_PROGRESS
+                && claim.getPlatformStatus() != null
+                && RETRIEVAL_CONFIRMED_STEPS.contains(claim.getPlatformStatus().trim());
+    }
+
+    /**
+     * D95 ② · R49: closes a followed exchange as {@code STALE} once it was received more than
+     * {@code exchangeReceiptFollowDays} days ago; one save per claim (no bulk update), same as {@link ClaimStaleSweeper}.
+     *
+     * @return the followed exchanges that stay open, in the given order
+     */
+    private List<OrderClaim> closeExpiredFollowedExchanges(MarketplaceAccount account, List<OrderClaim> followed) {
+        LocalDateTime cutoff = LocalDate.now(SyncWindow.KST)
+                .minusDays(lotteonProperties.getExchangeReceiptFollowDays()).atStartOfDay();
+        List<OrderClaim> kept = new ArrayList<>();
+        int closed = 0;
+        for (OrderClaim claim : followed) {
+            if (claim.getReceivedAt() != null && claim.getReceivedAt().isBefore(cutoff)) {
+                orderClaimRepository.save(claim.toBuilder().status(ClaimStatus.STALE).build());
+                closed++;
+            } else {
+                kept.add(claim);
+            }
+        }
+        log.info("[lotteon] exchange follow sweep: account={} closed={} kept={}", account.getId(), closed, kept.size());
+        return kept;
     }
 
     private void loadList(MarketplaceAccount account, ClaimType type, List<JsonNode> rows, boolean returnRequests) {
@@ -172,7 +217,7 @@ public class LotteonClaimSyncAdapter implements ClaimSyncAdapter {
                 clmNo, odNo, null, odSeq,
                 itemName(row),
                 LotteonOrderRows.quantity(row, RETURN_TYPES.contains(type) ? "rtngQty" : "xchgQty"),
-                WITHDRAW_TYPES.contains(type) ? ClaimStatus.WITHDRAWN : status(step), step,
+                WITHDRAW_TYPES.contains(type) ? ClaimStatus.WITHDRAWN : status(RETURN_TYPES.contains(type) ? ClaimType.RETURN : ClaimType.EXCHANGE, step), step,
                 null,
                 LotteonOrderRows.text(row, "clmRsnCd"), LotteonOrderRows.text(row, "clmRsnCnts"),
                 null, null,
@@ -181,15 +226,15 @@ public class LotteonClaimSyncAdapter implements ClaimSyncAdapter {
                 receivedAt != null ? receivedAt : now, null);
     }
 
-    /** R30 status table; an unknown code stays open ({@code RECEIVED}), same as the Coupang and 11st claims. */
-    static ClaimStatus status(String step) {
+    /** R30 status table — an exchange stays IN_PROGRESS at 26 · 27 (D87; done = re-ship line 14 · 15, D88); an unknown code stays open ({@code RECEIVED}), same as the Coupang and 11st claims. */
+    static ClaimStatus status(ClaimType type, String step) {
         if (step == null) {
             return ClaimStatus.RECEIVED;
         }
         return switch (step.trim()) {
             case "03" -> ClaimStatus.RECEIVED;
             case "23", "24", "25" -> ClaimStatus.IN_PROGRESS;
-            case "26", "27" -> ClaimStatus.DONE;
+            case "26", "27" -> type == ClaimType.EXCHANGE ? ClaimStatus.IN_PROGRESS : ClaimStatus.DONE;
             case "22" -> ClaimStatus.WITHDRAWN;
             default -> ClaimStatus.RECEIVED;
         };

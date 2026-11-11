@@ -36,8 +36,10 @@ import java.util.Set;
  *   <li>D85: a claim whose raw step is already 23 ~ 27 keeps its status and step when a list says 02 · 03 (the other
  *       fields are refreshed); list step 27 and withdrawals always overwrite.</li>
  *   <li>[140] rows ({@link #applyProgress}): retrieval lines move the step (23 ~ 27 only, never a {@code WITHDRAWN} /
- *       {@code STALE} claim) and fill the pickup invoice only when LotteON has one (2609_70 D13 · D68); the exchange
- *       re-ship line goes to {@code lotteon_claim} (D67 · R32). A [140] row never creates a claim.</li>
+ *       {@code STALE} claim, never the status of a {@code DONE} exchange — D89) and fill the pickup invoice only when
+ *       LotteON has one (2609_70 D13 · D68); the exchange re-ship line goes to {@code lotteon_claim} (D67 · R32),
+ *       fills the re-ship invoice when LotteON has one (D91) and, at step 14 · 15 on an IN_PROGRESS exchange whose
+ *       retrieval step is 26 · 27, completes it (D88). A [140] row never creates a claim.</li>
  *   <li>{@code hold_status} is written by the sync for returns only (D72).</li>
  * </ul>
  * ⚠️ {@code REQUIRES_NEW} on the sync methods: one row failing does not roll back the rest of the round. The
@@ -50,6 +52,7 @@ public class LotteonClaimUpserter {
 
     private static final Set<String> PROGRESS_STEPS = Set.of("23", "24", "25", "26", "27");
     private static final Set<String> LIST_EARLY_STEPS = Set.of("02", "03");
+    private static final Set<String> RESHIP_DELIVERED_STEPS = Set.of("14", "15");
 
     private final OrderClaimRepository orderClaimRepository;
     private final LotteonClaimRepository lotteonClaimRepository;
@@ -188,7 +191,7 @@ public class LotteonClaimUpserter {
                 && "30".equals(LotteonOrderRows.text(row, "odTypCd"));
     }
 
-    /** R30 · D68: step (23 ~ 27 only) + pickup invoice (only when present) + process sequences. */
+    /** R30 · D68 · D89: step (23 ~ 27 only; a DONE exchange keeps its status) + pickup invoice (only when present) + process sequences. */
     private void applyRetrieval(MarketplaceAccount account, JsonNode row) {
         ClaimType type = "40".equals(LotteonOrderRows.text(row, "odTypCd")) ? ClaimType.RETURN : ClaimType.EXCHANGE;
         Optional<OrderClaim> found = orderClaimRepository
@@ -208,7 +211,11 @@ public class LotteonClaimUpserter {
         }
         if (isProgressStep(step) && claim.getStatus() != ClaimStatus.WITHDRAWN
                 && claim.getStatus() != ClaimStatus.STALE) {
-            next.status(LotteonClaimSyncAdapter.status(step)).platformStatus(step);
+            if (type == ClaimType.EXCHANGE && claim.getStatus() == ClaimStatus.DONE) {
+                next.platformStatus(step);
+            } else {
+                next.status(LotteonClaimSyncAdapter.status(type, step)).platformStatus(step);
+            }
         }
         orderClaimRepository.save(next.build());
 
@@ -222,7 +229,7 @@ public class LotteonClaimUpserter {
                 .build());
     }
 
-    /** D67 · D68 · R32: the re-ship line of an exchange — same line first, else the only exchange of that claim. */
+    /** D67 · D68 · D88 · R32: the re-ship line of an exchange — same line first, else the only exchange of that claim; step 14 · 15 completes a retrieval-confirmed IN_PROGRESS exchange. */
     private void applyReship(MarketplaceAccount account, JsonNode row) {
         String clmNo = LotteonOrderRows.text(row, "clmNo");
         String odSeq = LotteonOrderRows.text(row, "odSeq");
@@ -242,12 +249,21 @@ public class LotteonClaimUpserter {
         }
         OrderClaim claim = found.get();
         String invoice = LotteonOrderRows.text(row, "invcNo");
-        if (invoice != null) {
-            orderClaimRepository.save(claim.toBuilder()
-                    .reshipInvoiceNo(invoice)
-                    .reshipCarrierCode(LotteonOrderRows.text(row, "dvCoCd"))
-                    .syncedAt(LocalDateTime.now())
-                    .build());
+        String lineStep = LotteonOrderRows.text(row, "odPrgsStepCd");
+        boolean delivered = lineStep != null && RESHIP_DELIVERED_STEPS.contains(lineStep.trim())
+                && claim.getStatus() == ClaimStatus.IN_PROGRESS
+                && claim.getPlatformStatus() != null
+                && LotteonClaimSyncAdapter.RETRIEVAL_CONFIRMED_STEPS.contains(claim.getPlatformStatus().trim());
+        if (invoice != null || delivered) {
+            // D88 ③: platformStatus keeps the retrieval step; the re-ship line step is not stored.
+            OrderClaim.OrderClaimBuilder next = claim.toBuilder().syncedAt(LocalDateTime.now());
+            if (invoice != null) {
+                next.reshipInvoiceNo(invoice).reshipCarrierCode(LotteonOrderRows.text(row, "dvCoCd"));
+            }
+            if (delivered) {
+                next.status(ClaimStatus.DONE);
+            }
+            orderClaimRepository.save(next.build());
         }
         LotteonClaim lotteon = lotteonClaimRepository.findByOrderClaim_Id(claim.getId())
                 .orElseGet(() -> LotteonClaim.builder().orderClaim(claim).build());

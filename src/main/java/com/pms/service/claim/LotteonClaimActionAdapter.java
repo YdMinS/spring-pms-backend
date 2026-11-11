@@ -1,6 +1,7 @@
 package com.pms.service.claim;
 
 import com.pms.domain.ClaimAction;
+import com.pms.domain.ClaimStatus;
 import com.pms.domain.ClaimType;
 import com.pms.domain.LotteonClaim;
 import com.pms.domain.MarketplaceAccount;
@@ -35,8 +36,8 @@ import java.util.stream.Collectors;
  *
  * <p>Buttons ({@link #availableActions}) — step 23 without pickup invoice → [회수 송장 등록]; 23 · 24 with one →
  * [입고확인]; 23 · 24 · 25 not on hold → [보류]; on hold → [보류 해제]; 25 with a pickup invoice → [반품 승인] /
- * [교환 회수 확정]; an exchange with a re-ship line → [재발송 송장 등록]. Reads {@code lotteon_claim} once per claim
- * (R37). Hold / release are repeatable (D80) and never dropped as "already succeeded".
+ * [교환 회수 확정]; an open (RECEIVED · IN_PROGRESS) exchange with a re-ship line and no re-ship invoice yet →
+ * [재발송 송장 등록] (D90). Reads {@code lotteon_claim} once per claim (R37). Hold / release are repeatable (D80) and never dropped as "already succeeded".
  *
  * <p>Sending ({@link #execute}) — every sibling line of the receipt ({@code clmNo}, R33): [210] Y once per line
  * (stamped right after success, R36) → [298] retrieval 24 · 25 · 26 or delivery 13; hold / release = [141] 03 / 09.
@@ -63,6 +64,7 @@ public class LotteonClaimActionAdapter implements ClaimActionAdapter {
     private static final String SUCCESS = "0000";
     private static final Set<String> RECEIVE_STEPS = Set.of("23", "24");
     private static final Set<String> HOLD_STEPS = Set.of("23", "24", "25");
+    private static final Set<ClaimStatus> RESHIP_STATUSES = Set.of(ClaimStatus.RECEIVED, ClaimStatus.IN_PROGRESS);
 
     private static final Set<ClaimAction> REPEATABLE = Set.of(ClaimAction.RETURN_HOLD,
             ClaimAction.RETURN_HOLD_RELEASE, ClaimAction.EXCHANGE_HOLD, ClaimAction.EXCHANGE_HOLD_RELEASE);
@@ -96,6 +98,7 @@ public class LotteonClaimActionAdapter implements ClaimActionAdapter {
         boolean invoice = claim.getCollectInvoiceNo() != null && !claim.getCollectInvoiceNo().isBlank();
         boolean hold = LotteonClaim.HOLD.equals(lotteon.getHoldStatus());
         boolean exchange = claim.getClaimType() == ClaimType.EXCHANGE;
+        boolean reshipInvoice = claim.getReshipInvoiceNo() != null && !claim.getReshipInvoiceNo().isBlank();
 
         List<ClaimAction> candidates = new ArrayList<>();
         if ("23".equals(step) && !invoice) {
@@ -113,7 +116,8 @@ public class LotteonClaimActionAdapter implements ClaimActionAdapter {
         if (STEP_RECEIVED.equals(step) && invoice) {
             candidates.add(exchange ? ClaimAction.EXCHANGE_COLLECT_CONFIRM : ClaimAction.RETURN_APPROVE);
         }
-        if (exchange && lotteon.getReshipOdSeq() != null) {
+        if (exchange && RESHIP_STATUSES.contains(claim.getStatus()) && lotteon.getReshipOdSeq() != null
+                && !reshipInvoice) {
             candidates.add(ClaimAction.EXCHANGE_RESHIP_INVOICE);
         }
         return candidates.stream()

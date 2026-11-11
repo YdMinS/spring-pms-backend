@@ -26,9 +26,9 @@ import java.util.Map;
  *
  * {@code availableActions} 는 {@link ClaimActionService} 에게만 묻는다(FEATURE_2609_21 D1·Step 8) —
  * 어댑터를 여기서 직접 들면 어댑터 해석이 두 클래스에 복제돼 D17 이 절반만 지켜진다. 판정은 목록
- * 크기와 무관하게 고정 쿼리 수 + 롯데ON 클레임마다 1(R37 — 롯데ON 어댑터가 {@code lotteon_claim} 을 읽는다)로
- * 끝난다(claim 마다 형제 라인을 재조회하지 않는다). 상태 보조 글({@code statusNote}, FEATURE_2611_23 / D79)도
- * {@link ClaimActionService} 의 statusNotes 에게만 묻는다 — 마켓마다 1 쿼리.
+ * regardless of its size, takes a fixed number of queries plus 1 per LotteON claim (R37 — the LotteON adapter reads {@code lotteon_claim})
+ * (no sibling lines are re-queried per claim). The status helper text ({@code statusNote}, FEATURE_2611_23 / D79) also
+ * asks only the statusNotes of {@link ClaimActionService} — 1 query per marketplace.
  *
  * {@code status}·{@code keyword} 는 <b>조회 후 필터</b>다 — 건수가 작고 인덱스는 receivedAt 창이 먹는다
  * (FEATURE_2609_08 의 판단과 동일).

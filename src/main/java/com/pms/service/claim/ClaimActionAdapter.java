@@ -22,8 +22,8 @@ import java.util.Set;
  * <p>조회는 서비스의 일이고 어댑터는 <b>받은 것으로 판정·조립만</b> 한다. 그래서 {@code execute} 가
  * {@code siblings} 를, {@code availableActions} 가 {@code alreadySucceeded} 를 인자로 받는다 —
  * 어댑터가 다시 조회하면 "누가 형제를 아는가"가 두 곳이 된다.
- * 예외: 롯데ON 은 자기 전용 표 {@code lotteon_claim} 을 읽고 쓴다(FEATURE_2611_23 / R36 · R37) — 형제·성공 기록은
- * 여전히 서비스가 넘겨준다.
+ * Exception: LotteON reads and writes its own table {@code lotteon_claim} (FEATURE_2611_23 / R36 · R37) — siblings and success records are
+ * still passed in by the service.
  */
 public interface ClaimActionAdapter {
 
