@@ -44,6 +44,8 @@ import java.time.LocalDateTime;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.endsWith;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.lenient;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -73,6 +75,11 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
     @Autowired private CoupangShippingConfigRepository marketplaceShippingConfigRepository;
 
     @MockBean private CoupangApiClient coupangApiClient;
+
+    private static final String INTEGRATION_PRODUCT = "{\"code\":\"SUCCESS\",\"data\":{\"sellerProductId\":123456789,"
+            + "\"displayProductName\":\"쿠팡 노출명\",\"saleStartedAt\":\"2022-07-25T00:00:00\","
+            + "\"outboundShippingPlaceCode\":\"OUT-9\",\"items\":[{\"sellerProductItemId\":777,\"vendorItemId\":888,"
+            + "\"itemName\":\"45g 1개\",\"salePrice\":8000,\"unitCount\":1}]}}";
 
     private Long draftCellId;
     private Long masterId;
@@ -131,9 +138,12 @@ class ListingRegistrationControllerTest extends BaseIntegrationTest {
         // Coupang register response → sellerProductId (no live HTTP).
         given(coupangApiClient.post(anyString(), anyString(), any()))
                 .willReturn("{\"code\":\"SUCCESS\",\"data\":123456789}");
-        // 108: [수정 요청] re-submits the whole object via PUT (no preceding GET since D3-1).
+        // 108: the [수정 요청] PUT answers SUCCESS (the GET below is now required, FEATURE_2611_25).
         lenient().when(coupangApiClient.put(anyString(), anyString(), any()))
                 .thenReturn("{\"code\":\"SUCCESS\"}");
+        // FEATURE_2611_25 / D1: [수정 요청] reads the product from Coupang before overwriting it.
+        lenient().when(coupangApiClient.get(endsWith("/seller-products/123456789"), eq(""), any()))
+                .thenReturn(INTEGRATION_PRODUCT);
     }
 
     /** Delete the listing graph before base cleanup removes package / carrier_rate (FK targets). */
