@@ -128,6 +128,7 @@ public class ClaimQueryServiceImpl implements ClaimQueryService {
                 claim.getReceivedAt(),
                 (seller != null) ? seller.getId() : null,
                 (seller != null) ? seller.getSellerName() : null,
+                claim.getMarketplaceAccount().getAccountAlias(),
                 (claim.getOrderLine() != null) ? claim.getOrderLine().getId() : null,
                 claim.isLinked(),
                 // 액션 없음·미지원 플랫폼·비-ADMIN 은 전부 빈 목록이다(null 아님 — 클라이언트가 분기하지 않게).
