@@ -6,6 +6,7 @@ import com.pms.service.ShipmentConfirmResult.FailedBox;
 import com.pms.service.ShipmentConfirmResult.SkippedOrder;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * Per-marketplace order confirmation ([발주처리]) — FEATURE_2610_23 / D21, the same shape as {@code ClaimSyncAdapter}.
@@ -31,6 +32,15 @@ public interface OrderAcknowledgeAdapter {
      */
     default boolean internalStage() {
         return false;
+    }
+
+    /**
+     * Lines of this marketplace that the internal-stage mark ([내부 발주처리]) leaves out even when paid
+     * (FEATURE_2611_23 / D53 · R1) — they keep their own marketplace buttons. Read only when {@link #internalStage()}
+     * is true. Default: none.
+     */
+    default Set<Long> internalStageExcludedLineIds(List<OrderLine> lines) {
+        return Set.of();
     }
 
     /**
