@@ -22,8 +22,8 @@ import java.util.Map;
 
 /**
  * 11st invoice registration — shipping 1888, one call per delivery number (FEATURE_2610_17 / D2 · D21 · D47 · D64),
- * moved from {@link ShipmentConfirmServiceImpl} unchanged (FEATURE_2610_23 / D3 · D21). The internal-stage slot stays
- * empty for 11st (D24).
+ * moved from {@link ShipmentConfirmServiceImpl} unchanged (FEATURE_2610_23 / D3 · D21). The internal-stage slot
+ * {@link #sendReservedInvoices} ships each reserved bundle with 1888 (FEATURE_2611_23 / D51 ③).
  */
 @Slf4j
 @Component
@@ -126,6 +126,42 @@ public class ElevenstShipmentInvoiceAdapter implements ShipmentInvoiceAdapter {
         log.info("11번가 발송처리: orders={} matched={} dlvNos={} succeeded={} failed={} skipped={}",
                 orders.size(), matched, linesByDlvNo.size(), succeeded, failed.size(), skipped.size());
         return new FileOutcome(matched, succeeded, failed, skipped, List.of());
+    }
+
+    /**
+     * Reserved invoices (FEATURE_2611_23 / D51 ③): one 1888 call per bundle with its delivery number, the reserved
+     * carrier code and the first (representative) invoice. Success → the bundle's lines become {@code SHIPPED}
+     * locally and the bundle id is reported; a failure is that bundle's reason and the next bundle is still sent. A
+     * bundle without a delivery number fails with {@link #NO_BOX_MESSAGE}.
+     */
+    @Override
+    public ReservedInvoiceResult sendReservedInvoices(List<ReservedInvoice> invoices,
+                                                      Map<Long, List<OrderLine>> linesByShipment) {
+        List<Long> succeeded = new ArrayList<>();
+        Map<Long, String> failed = new LinkedHashMap<>();
+        Map<Long, ReservedInvoice> byShipmentId = new LinkedHashMap<>();
+        invoices.forEach(i -> byShipmentId.putIfAbsent(i.orderShipmentId(), i));
+        for (Map.Entry<Long, ReservedInvoice> entry : byShipmentId.entrySet()) {
+            Long shipmentId = entry.getKey();
+            ReservedInvoice reserved = entry.getValue();
+            List<OrderLine> lines = linesByShipment.getOrDefault(shipmentId, List.of());
+            String dlvNo = lines.isEmpty() ? null : InvoiceWriteBack.boxIdOf(lines.get(0));
+            if (dlvNo == null || dlvNo.isBlank()) {
+                failed.put(shipmentId, NO_BOX_MESSAGE);
+                continue;
+            }
+            MarketplaceAccount account = lines.get(0).getOrder().getMarketplaceAccount();
+            try {
+                elevenstOrderActions.ship(account, dlvNo, reserved.carrierCode(), reserved.invoiceNumbers().get(0),
+                        LocalDateTime.now(SyncWindow.KST));
+                invoiceWriteBack.markDeparted(List.of(dlvNo), Map.of(dlvNo, lines));
+                succeeded.add(shipmentId);
+            } catch (Exception e) {
+                log.warn("11번가 예약 송장 발송처리 실패: shipment={} dlvNo={}", shipmentId, dlvNo, e);
+                failed.put(shipmentId, e.getMessage());
+            }
+        }
+        return new ReservedInvoiceResult(succeeded, failed);
     }
 
     /**

@@ -38,9 +38,9 @@ public class InternalShipmentStageServiceImpl implements InternalShipmentStageSe
     public static final String RUNNING_MESSAGE =
             "예약 발송이 처리 중인 주문이 있습니다. 처리가 끝난 뒤 다시 시도하세요";
     static final String RELEASED_BY_ACKNOWLEDGE =
-            "발주처리 버튼으로 쿠팡에 발주처리되어 예약을 해제했습니다";
+            "발주처리 버튼으로 마켓에 발주처리되어 예약을 해제했습니다";
     static final String RELEASED_BY_SHIP_NOW =
-            "지금 발송으로 쿠팡에 송장이 등록되어 예약을 해제했습니다";
+            "지금 발송으로 마켓에 송장이 등록되어 예약을 해제했습니다";
     static final String RELEASED_BY_INTERNAL_RELEASE =
             "내부 발주를 해제해 저장된 송장을 닫았습니다";
 
@@ -140,7 +140,8 @@ public class InternalShipmentStageServiceImpl implements InternalShipmentStageSe
     /**
      * 라인 → 배송 묶음으로 묶어 {@code from} 단계인 묶음만 {@code to} 로 바꾼다.
      *
-     * @param requirePaid true 면 그 묶음에 결제완료이면서 전량취소가 아닌 라인이 1개 이상 있어야 한다(내부 발주)
+     * @param requirePaid true 면 그 묶음에 결제완료이면서 전량취소가 아닌 라인이 1개 이상 있어야 한다(내부 발주).
+     *                    Lines the marketplace leaves out of the mark (FEATURE_2611_23 / D53 · R1) do not count.
      */
     private InternalStageResult change(List<Long> orderItemIds, InternalShipmentStage from,
                                        InternalShipmentStage to, boolean requirePaid) {
@@ -163,6 +164,9 @@ public class InternalShipmentStageServiceImpl implements InternalShipmentStageSe
             linesByShipment.computeIfAbsent(shipment.getId(), k -> new ArrayList<>()).add(line);
         }
 
+        Set<Long> excluded = requirePaid
+                ? internalStageMarkets.excludedLineIds(linesByShipment.values().stream().flatMap(List::stream).toList())
+                : Set.of();
         List<Long> targets = new ArrayList<>();
         Set<String> changedOrders = new LinkedHashSet<>();
         Set<String> skippedOrders = new LinkedHashSet<>();
@@ -172,7 +176,8 @@ public class InternalShipmentStageServiceImpl implements InternalShipmentStageSe
             String orderId = shipmentLines.get(0).getOrder().getExternalOrderId();
             boolean eligible = shipment.getInternalStage() == from
                     && (!requirePaid || shipmentLines.stream()
-                            .anyMatch(l -> l.getStatus() == OrderStatus.PAID && !l.isFullyCancelled()));
+                            .anyMatch(l -> l.getStatus() == OrderStatus.PAID && !l.isFullyCancelled()
+                                    && !excluded.contains(l.getId())));
             if (eligible) {
                 targets.add(entry.getKey());
                 changedOrders.add(orderId);
