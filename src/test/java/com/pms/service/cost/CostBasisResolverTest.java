@@ -22,6 +22,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -209,5 +210,32 @@ class CostBasisResolverTest {
         // 부분 출고의 나머지에서 다시 구우면 같은 라인의 원가가 출고 횟수만큼 흔들린다.
         verify(orderLineRepository, never()).save(any(OrderLine.class));
         verify(purchaseRecordRepository, never()).findLatestPriced(any(), any(), any(), any());
+    }
+
+    // --- refill (FEATURE_2611_22) ---
+
+    /** D20 · D26: every filled piece without a unit price — the cost stays as it is. */
+    @Test
+    void testRefillWithEveryFilledPriceEmptyKeepsTheCost() {
+        resolver.refill(line(CostBasis.LATEST), List.of(expanded(PRODUCT_ID, 3)),
+                Map.of(PRODUCT_ID, List.of(new CostBasisResolver.FilledPiece(null, false, 3))), Map.of());
+
+        verify(orderLineRepository, never()).save(any(OrderLine.class));
+    }
+
+    /** D10 · D20 · D21: the filled pieces at the lot price, the rest by the purchase rule — the lower grade wins. */
+    @Test
+    void testRefillCostsFilledPiecesAtTheLotPriceAndTheRestAsBefore() {
+        givenPurchase(PRODUCT_ID, purchase("4000", ORDERED_ON.minusDays(3)));
+        givenProducts(product(PRODUCT_ID, "9999"));
+
+        resolver.refill(line(CostBasis.LISTED), List.of(expanded(PRODUCT_ID, 3)),
+                Map.of(PRODUCT_ID, List.of(new CostBasisResolver.FilledPiece(new BigDecimal("500"), false, 2))),
+                Map.of());
+
+        ArgumentCaptor<OrderLine> saved = ArgumentCaptor.forClass(OrderLine.class);
+        verify(orderLineRepository).save(saved.capture());
+        assertThat(saved.getValue().getCostBasis()).isEqualTo(CostBasis.LATEST);
+        assertThat(saved.getValue().getCostAmount()).isEqualByComparingTo("5000");
     }
 }

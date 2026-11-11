@@ -39,7 +39,9 @@ import java.util.Map;
  * ({@link #moveOwner}, D149), the unit price, which is typed on the debt screen (D141 · D143), by
  * 「일별 입출고 내역」 [매입가 넣기] (FEATURE_2611_16 D6) and its row popup (FEATURE_2611_17 D5 · D17), or filled
  * from the product's registered price while empty ({@code BasePriceFillService}, FEATURE_2611_17 D22), and the day,
- * corrected by an admin ({@code StockDateEditService}, FEATURE_2611_21 D11).
+ * corrected by an admin ({@code StockDateEditService}, FEATURE_2611_21 D11). One exception: an order outbound row
+ * without a lot gets its source (and its seller, and a split of its quantity) once, when a person fills it from a lot
+ * ({@code StockFillService}, FEATURE_2611_22 D8 · D9).
  */
 public interface LotLedgerService {
 
@@ -48,6 +50,22 @@ public interface LotLedgerService {
 
     /** Lots for a disposal or adjust − of {@code quantity} pieces from {@code seller}'s own lots (D50). */
     List<LotSlice> allocateOwn(Product product, Seller seller, int quantity);
+
+    /**
+     * What {@link #allocateOwn} could take now (FEATURE_2611_22 D34): Σ left of {@code seller}'s own lots with a decided
+     * seller — never an undecided lot, not even an assigned share of one.
+     */
+    int ownLeft(Product product, Seller seller);
+
+    /**
+     * The lots of one product that may fill an empty order outbound row and still have at least one piece left
+     * (FEATURE_2611_22 D4 · D15 · D18): {@link StockMovement#isFillLot} rows, D108 order (day, then record order), each
+     * with its left = quantity + Σ quantity of the rows whose source is that lot.
+     */
+    List<LotLeft> fillLots(Long productId);
+
+    /** One lot {@link #fillLots} returns and what is left of it. */
+    record LotLeft(StockMovement lot, int left) {}
 
     /** Where a matched return goes (D139 · D142). The order seller owns every slice. */
     List<LotSlice> allocateReturn(OrderLine line, Product product, Seller orderSeller, int quantity);
@@ -66,8 +84,9 @@ public interface LotLedgerService {
 
     /**
      * Purchase-price amount of outgoing rows (D123 ② · D136 ③), per row id: Σ pieces × (the lot's or share's unit
-     * price, else that owner's dearest priced lot just before the row). null = 「미기입」 — a piece had no price, an
-     * undecided piece had none, or the row used no lot (D48 ③).
+     * price, else that owner's dearest priced lot just before the row, or just before its lot when the lot is newer —
+     * a row filled later, FEATURE_2611_22 D33). null = 「미기입」 — a piece had no price, an undecided piece had none, or
+     * the row used no lot (D48 ③).
      */
     Map<Long, BigDecimal> outgoingAmounts(Long productId, Collection<Long> outRowIds);
 

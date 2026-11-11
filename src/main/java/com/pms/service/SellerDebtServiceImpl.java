@@ -22,6 +22,7 @@ import com.pms.service.cost.CostPropagationService;
 import com.pms.service.price.PriceHistoryRecorder;
 import com.pms.service.stock.BasePriceFillService;
 import com.pms.service.stock.LotLedgerService;
+import com.pms.service.stock.StockFillService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -59,6 +60,7 @@ public class SellerDebtServiceImpl implements SellerDebtService {
     private final PriceHistoryRecorder priceHistoryRecorder;
     private final LotLedgerService lotLedgerService;
     private final BasePriceFillService basePriceFillService;
+    private final StockFillService stockFillService;
 
     @Override
     public List<SellerDebtPairView> pairs() {
@@ -155,6 +157,7 @@ public class SellerDebtServiceImpl implements SellerDebtService {
         }
         LocalDateTime now = LocalDateTime.now();
         Long productId = debt.getProduct().getId();
+        List<Long> pricedLots = new ArrayList<>();
 
         if (target.record() != null) {
             // D141 ① ②: the purchase record (total = unit × quantity) and every stock row that copies its price.
@@ -166,16 +169,19 @@ public class SellerDebtServiceImpl implements SellerDebtService {
             List<StockMovement> rows = stockMovementRepository.findByPurchaseRecordIdIn(List.of(record.getId()));
             stockMovementRepository.saveAll(rows.stream()
                     .map(m -> m.toBuilder().unitPrice(saved.getUnitPrice()).priceFromBaseAt(null).build()).toList());
+            rows.forEach(m -> pricedLots.add(m.getId()));
             if (latest) {
                 costPropagationService.updateBasePrice(saved);   // D144 ② ⑤ — overwrites, history PURCHASE_UPDATE
             }
             if (record.getSourceMovement() != null) {
                 stockMovementRepository.flush();
                 lotLedgerService.resplit(record.getSourceMovement());   // D141 ④ (a)
+                pricedLots.add(record.getSourceMovement().getId());
             }
         } else {
             // D141 ① · D145 · D146: a lot without a purchase record (opening stock, a return's new lot).
             StockMovement lot = target.lot();
+            pricedLots.add(lot.getId());
             Product product = productRepository.findById(productId)
                     .orElseThrow(() -> new ResourceNotFoundException("Product", productId));
             BigDecimal registered = product.getPrice();
@@ -206,6 +212,7 @@ public class SellerDebtServiceImpl implements SellerDebtService {
         }
         stockMovementRepository.flush();
         lotLedgerService.rebuildDebts(productId);                    // D141 ④ (b)
+        stockFillService.recostFilled(pricedLots);                   // FEATURE_2611_22 D22 · D25
     }
 
     // --- helpers ---

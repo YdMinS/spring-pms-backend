@@ -260,3 +260,5 @@ databaseChangeLog:
       file: db/changelog/changes/129-unit-price-from-base.yaml
   - include:
       file: db/changelog/changes/130-stock-movement-date-edit.yaml
+  - include:
+      file: db/changelog/changes/131-stock-fill.yaml

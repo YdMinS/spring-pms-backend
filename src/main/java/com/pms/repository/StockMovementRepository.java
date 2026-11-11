@@ -249,4 +249,26 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
                                      com.pms.domain.StockMovementType.ADJUST)
             """)
     List<Long> findPricedProductIdsWithUnpricedLots();
+
+    /**
+     * FEATURE_2611_22 D7 · D28: the order outbound rows of one product still without a lot, day then record order
+     * ({@code StockMovement.isFillableOutbound} decides which of them may be filled).
+     */
+    @EntityGraph(attributePaths = {"seller", "orderLine", "orderLine.order", "orderLine.order.marketplaceAccount",
+            "orderLine.order.marketplaceAccount.seller"})
+    @Query("""
+            select m from StockMovement m
+            where m.product.id = :productId and m.quantity < 0 and m.sourceMovement is null and m.orderLine is not null
+              and m.movementType = com.pms.domain.StockMovementType.STOCK_OUT
+            order by m.movedOn asc, m.id asc
+            """)
+    List<StockMovement> findEmptyOutbound(@Param("productId") Long productId);
+
+    /** FEATURE_2611_22 D22 · D25 · D37: the rows filled later from one of these lots, with their order line. */
+    @EntityGraph(attributePaths = {"orderLine"})
+    List<StockMovement> findByFilledAtIsNotNullAndSourceMovementIdIn(Collection<Long> sourceMovementIds);
+
+    /** FEATURE_2611_22 D20: every outbound row of one order line, with its lot. */
+    @EntityGraph(attributePaths = {"product", "sourceMovement"})
+    List<StockMovement> findByOrderLineIdAndMovementTypeOrderByIdAsc(Long orderLineId, StockMovementType movementType);
 }

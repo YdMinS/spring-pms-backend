@@ -3,6 +3,8 @@ package com.pms.service;
 import com.pms.dto.request.PurchaseSettingRequest;
 import com.pms.dto.response.PurchaseSettingResponse;
 
+import java.time.LocalDateTime;
+
 /**
  * Tenant purchase settings — the stock link switch (FEATURE_2610_09 / D65 · D69 · D72).
  *
@@ -21,4 +23,10 @@ public interface PurchaseSettingService {
      * (D71 round 12).
      */
     boolean isStockLinked();
+
+    /**
+     * The last time the stock link was turned on (FEATURE_2611_22 D11); null = on from the start or never turned on
+     * (D16). An order outbound row written before it is not filled later.
+     */
+    LocalDateTime stockLinkedAt();
 }

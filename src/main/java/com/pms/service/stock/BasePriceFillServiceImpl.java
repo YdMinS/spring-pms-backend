@@ -26,6 +26,7 @@ public class BasePriceFillServiceImpl implements BasePriceFillService {
     private final PurchaseRecordRepository purchaseRecordRepository;
     private final StockMovementRepository stockMovementRepository;
     private final LotLedgerService lotLedgerService;
+    private final StockFillService stockFillService;
 
     @Override
     @Transactional
@@ -52,6 +53,10 @@ public class BasePriceFillServiceImpl implements BasePriceFillService {
                 .forEach(r -> undecidedLots.add(r.getSourceMovement().getId()));
         undecidedLots.forEach(id -> lotLedgerService.resplit(stockMovementRepository.findById(id).orElseThrow()));
         lotLedgerService.rebuildDebts(productId);
+        // FEATURE_2611_22 D37: the orders those lots filled later are costed again with the filled price.
+        Set<Long> filledLots = new LinkedHashSet<>(undecidedLots);
+        lots.forEach(m -> filledLots.add(m.getId()));
+        stockFillService.recostFilled(filledLots);
         return records.size() + lots.size();
     }
 

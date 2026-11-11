@@ -30,6 +30,7 @@ import com.pms.dto.response.PurchaseProductGroup;
 import com.pms.dto.response.PurchaseRecordResult;
 import com.pms.dto.response.PurchaseRecordView;
 import com.pms.dto.response.PurchaseShare;
+import com.pms.dto.response.StockMovementView;
 import com.pms.exception.BusinessException;
 import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.ElevenstOrderLineRepository;
@@ -151,6 +152,9 @@ class PurchaseListServiceTest {
     @BeforeEach
     void fixClock() {
         lenient().when(clock.instant()).thenReturn(NOW);
+        // FEATURE_2611_22 D3 ①: addPurchase returns the id of the stock row it wrote.
+        lenient().when(stockLedgerService.record(any())).thenReturn(new StockMovementView(900L, null, null, null,
+                null, null, StockMovementType.STOCK_IN, 0, null, null, null, null, null, null, null, null, List.of()));
     }
 
     private PurchaseCheck check(Long id, Product p, Seller seller, PurchaseCheckStatus status, int neededQty,
