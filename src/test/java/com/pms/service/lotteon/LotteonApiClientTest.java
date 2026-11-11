@@ -110,4 +110,29 @@ class LotteonApiClientTest {
         assertThat(LotteonApiClient.lineFailure(ok)).isNull();
         assertThat(LotteonApiClient.lineFailure(failed)).isEqualTo("[원산지코드]은 필수입력입니다.");
     }
+
+    @Test
+    void postList_treatsReturnCode3000AsAnEmptyAnswer() {
+        server.expect(requestTo("https://openapi.lotteon.com" + LotteonPaths.CANCEL_LIST))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess("{\"returnCode\":\"3000\",\"message\":\"조회내역이 없습니다.\"}",
+                        MediaType.APPLICATION_JSON));
+
+        JsonNode body = client.postList(LotteonPaths.CANCEL_LIST, Map.of(), "key-1");
+
+        assertThat(body.has("data")).isFalse();
+        server.verify();
+    }
+
+    @Test
+    void post_stillFailsOnReturnCode3000() {
+        server.expect(requestTo("https://openapi.lotteon.com" + LotteonPaths.CANCEL_LIST))
+                .andRespond(withSuccess("{\"returnCode\":\"3000\",\"message\":\"조회내역이 없습니다.\"}",
+                        MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> client.post(LotteonPaths.CANCEL_LIST, Map.of(), "key-1"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("조회내역이 없습니다.")
+                .extracting(e -> ((BusinessException) e).getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY);
+    }
 }

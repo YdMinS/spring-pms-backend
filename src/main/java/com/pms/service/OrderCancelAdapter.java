@@ -15,11 +15,12 @@ import java.util.Set;
 
 /**
  * Per-marketplace seller cancel before shipping — FEATURE_2610_23 / D21, the same shape as {@code ClaimSyncAdapter}.
- * Implementations: {@link CoupangOrderCancelAdapter} · {@link ElevenstOrderCancelAdapter}.
+ * Implementations: {@link CoupangOrderCancelAdapter} · {@link ElevenstOrderCancelAdapter} ·
+ * {@link LotteonOrderCancelAdapter}.
  *
  * <p>{@link OrderCancelServiceImpl} checks the reason of every marketplace in the request first (FEATURE_2610_17 /
  * D71), then opens one {@link Batch} per adapter, hands each line to its marketplace's batch in request order and
- * sends the batches in the platform order (Coupang → 11st). A line of a marketplace without an adapter is
+ * sends the batches in the platform order (Coupang → 11st → LotteON). A line of a marketplace without an adapter is
  * unsupported (D14).
  */
 public interface OrderCancelAdapter {
@@ -34,7 +35,7 @@ public interface OrderCancelAdapter {
     String REASON_REQUIRED_MESSAGE = "취소 사유를 선택하세요";
 
     /** A line that cannot be sent: another marketplace, or no delivery bundle / marketplace row. */
-    String UNSUPPORTED_MESSAGE = "쿠팡 · 11번가 주문이 아니거나 배송번호가 없습니다";
+    String UNSUPPORTED_MESSAGE = "쿠팡 · 11번가 · 롯데ON 주문이 아니거나 배송번호가 없습니다";
 
     /** The value compared with {@code marketplace_account.platform}. */
     Platform platform();
