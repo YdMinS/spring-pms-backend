@@ -113,6 +113,13 @@ public final class LotteonOrderRows {
         return value.isEmpty() ? null : value;
     }
 
+    /** R7: {@code spdNm}, plus {@code / sitmNm} when an item name is present. */
+    public static String itemName(JsonNode row) {
+        String product = text(row, "spdNm");
+        String item = text(row, "sitmNm");
+        return (item == null) ? product : (product == null ? item : product + " / " + item);
+    }
+
     /** Amount without thousands separators; unreadable → null (unknown, not 0). */
     public static BigDecimal money(JsonNode row, String field) {
         String value = text(row, field);

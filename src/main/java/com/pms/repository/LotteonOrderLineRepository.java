@@ -15,6 +15,10 @@ public interface LotteonOrderLineRepository extends JpaRepository<LotteonOrderLi
     @EntityGraph(attributePaths = {"orderLine"})
     Optional<LotteonOrderLine> findByMarketplaceAccount_IdAndOdNoAndOdSeq(Long accountId, String odNo, String odSeq);
 
+    /** Every mirror row of one order — the inquiry order-line link (FEATURE_2611_23 / R43). */
+    @EntityGraph(attributePaths = {"orderLine"})
+    List<LotteonOrderLine> findByMarketplaceAccount_IdAndOdNo(Long accountId, String odNo);
+
     /** Mirror rows of these order lines in one query (response mapping · purchase list · order confirmation). */
     List<LotteonOrderLine> findByOrderLine_IdIn(Collection<Long> orderLineIds);
 }

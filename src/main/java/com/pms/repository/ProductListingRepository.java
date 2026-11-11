@@ -130,6 +130,17 @@ public interface ProductListingRepository extends JpaRepository<ProductListing, 
     List<ProductListing> findElevenstListings(@Param("accountId") Long accountId, @Param("prdNo") String prdNo);
 
     /**
+     * The LotteON listing of one sales channel with this LotteON product number (FEATURE_2611_23 / R43 — inquiry
+     * link).
+     *
+     * @param accountId marketplace account id (seller + LOTTEON)
+     * @param spdNo     LotteON product number ({@code spdNo})
+     */
+    @Query("select l from ProductListing l, MarketplaceAccount a where a.id = :accountId and l.seller = a.seller "
+            + "and l.platform = com.pms.domain.Platform.LOTTEON and l.platformProductId = :spdNo")
+    List<ProductListing> findLotteonListings(@Param("accountId") Long accountId, @Param("spdNo") String spdNo);
+
+    /**
      * Check if a product listing exists for the given platform product ID.
      *
      * @param platformProductId Platform's product ID
