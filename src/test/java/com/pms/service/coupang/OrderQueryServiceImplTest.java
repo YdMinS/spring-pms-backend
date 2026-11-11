@@ -11,11 +11,13 @@ import com.pms.domain.OrderShipment;
 import com.pms.domain.OrderStatus;
 import com.pms.domain.Platform;
 import com.pms.domain.Product;
+import com.pms.domain.Seller;
 import com.pms.dto.response.OrderItemResponse;
 import com.pms.dto.response.OrderMonthResponse;
 import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.LotteonOrderLineRepository;
+import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.OrderRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.service.stock.OrderLineExpander;
@@ -28,6 +30,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.function.ToIntFunction;
@@ -35,10 +38,12 @@ import java.util.function.ToIntFunction;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -57,6 +62,7 @@ class OrderQueryServiceImplTest {
     @Mock private CoupangProperties coupangProperties;
     @Mock private OrderLineExpander orderLineExpander;
     @Mock private ProductRepository productRepository;
+    @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
     @InjectMocks private OrderQueryServiceImpl service;
 
     private OrderLine line(Long id, OrderStatus status, int orderQty, int cancelQty, int holdQty) {
@@ -277,6 +283,42 @@ class OrderQueryServiceImplTest {
         assertThat(service.list(null, LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 31))).isEmpty();
 
         verifyNoInteractions(coupangOrderLineRepository);
+        verifyNoInteractions(marketplaceAccountRepository);
+    }
+
+    @Test
+    void list_mapsSellerNameAndAccountAliasFromOneAccountRead() {
+        // FEATURE_2611_24 / D9 — accounts + sellers are read once for the distinct account ids, not per line.
+        given(coupangProperties.getSyncDays()).willReturn(14);
+        OrderLine line1 = line(1L, OrderStatus.PAID, 1, 0, 0);
+        OrderLine line3 = line(3L, OrderStatus.PAID, 1, 0, 0);
+        OrderLine line2 = line(2L, OrderStatus.PAID, 1, 0, 0).toBuilder()
+                .order(Order.builder().id(101L)
+                        .marketplaceAccount(MarketplaceAccount.builder().id(8L).platform(Platform.ELEVENST).build())
+                        .platform(Platform.ELEVENST).externalOrderId("O2")
+                        .orderedAt(LocalDateTime.of(2026, 8, 1, 9, 0)).build())
+                .build();
+        given(orderRepository.findRecentOrders(any(LocalDateTime.class))).willReturn(List.of(line1, line2, line3));
+        MarketplaceAccount account7 = MarketplaceAccount.builder().id(7L).platform(Platform.COUPANG)
+                .seller(Seller.builder().id(5L).sellerName("테스트셀러").build()).accountAlias("쿠팡본점").build();
+        MarketplaceAccount account8 = MarketplaceAccount.builder().id(8L).platform(Platform.ELEVENST)
+                .seller(Seller.builder().id(6L).sellerName("둘째셀러").build()).accountAlias(null).build();
+        given(marketplaceAccountRepository.findWithSellerByIdIn(anyCollection()))
+                .willReturn(List.of(account7, account8));
+
+        List<OrderItemResponse> result = service.list(null, null, null);
+
+        assertThat(result).hasSize(3);
+        assertThat(result.get(0).getSellerName()).isEqualTo("테스트셀러");
+        assertThat(result.get(0).getAccountAlias()).isEqualTo("쿠팡본점");
+        assertThat(result.get(1).getSellerName()).isEqualTo("둘째셀러");
+        assertThat(result.get(1).getAccountAlias()).isNull();
+        assertThat(result.get(2).getSellerName()).isEqualTo("테스트셀러");
+        assertThat(result.get(2).getAccountAlias()).isEqualTo("쿠팡본점");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Collection<Long>> captor = ArgumentCaptor.forClass(Collection.class);
+        verify(marketplaceAccountRepository, times(1)).findWithSellerByIdIn(captor.capture());
+        assertThat(captor.getValue()).containsExactlyInAnyOrder(7L, 8L);
     }
 
     @Test

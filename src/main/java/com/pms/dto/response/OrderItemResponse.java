@@ -33,6 +33,8 @@ public class OrderItemResponse {
     private Long id;
     private Long marketplaceAccountId;
     private String platform;
+    private String sellerName;          // seller name of the order's sales channel (account) — FEATURE_2611_24 / D8
+    private String accountAlias;        // sales channel alias as stored (blank included) — FEATURE_2611_24 / D8
     private String externalOrderId;
     private String externalBoxId;       // = order_shipment.external_shipment_id (박스 없으면 null)
     private String externalItemId;      // = coupang_order_line.vendor_item_id · elevenst_order_line.prd_stck_no (option mapping check)

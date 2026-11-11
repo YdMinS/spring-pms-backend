@@ -50,7 +50,8 @@ class OrderClaimControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data[0].linked").value(true))
                 // 03·04 가 회수 송장 안내·재전송 버튼을 그리는 근거다(2609_70 / Step 7).
                 .andExpect(jsonPath("$.data[0].collectInvoiceSource").value("LOCAL"))
-                .andExpect(jsonPath("$.data[0].returnDeliveryType").value("수기관리"));
+                .andExpect(jsonPath("$.data[0].returnDeliveryType").value("수기관리"))
+                .andExpect(jsonPath("$.data[0].accountAlias").value("쿠팡본점"));
     }
 
     @Test
@@ -110,6 +111,6 @@ class OrderClaimControllerTest extends BaseIntegrationTest {
                 "R-1", "O-1", "양말", 2, "CHANGEMIND", "단순변심", "CUSTOMER", 3000,
                 "INV-9", "CJGLS", "LOCAL", "수기관리", null, null, "홍길동",
                 LocalDateTime.of(2026, 9, 1, 10, 0),
-                5L, "테스트셀러", 10L, true, List.of());
+                5L, "테스트셀러", "쿠팡본점", 10L, true, List.of());
     }
 }

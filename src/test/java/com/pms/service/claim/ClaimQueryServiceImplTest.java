@@ -87,6 +87,7 @@ class ClaimQueryServiceImplTest {
                 LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 5), null);
         assertThat(byStatus).extracting(OrderClaimResponse::id).containsExactly(3L);
         assertThat(byStatus.get(0).sellerName()).isEqualTo("테스트셀러");
+        assertThat(byStatus.get(0).accountAlias()).isEqualTo("쿠팡본점");
         assertThat(byStatus.get(0).linked()).isFalse();
         // 판정 진입점이 액션을 안 주면 null 이 아니라 빈 목록으로 내려간다(클라이언트가 분기하지 않게).
         assertThat(byStatus.get(0).availableActions()).isEmpty();
@@ -120,7 +121,7 @@ class ClaimQueryServiceImplTest {
     private OrderClaim claim(Long id, ClaimStatus status, String orderId, String requester, String itemName) {
         Seller seller = Seller.builder().id(5L).sellerName("테스트셀러").build();
         MarketplaceAccount account = MarketplaceAccount.builder()
-                .id(1L).seller(seller).platform(Platform.COUPANG).build();
+                .id(1L).seller(seller).platform(Platform.COUPANG).accountAlias("쿠팡본점").build();
         return OrderClaim.builder()
                 .id(id).marketplaceAccount(account).platform(Platform.COUPANG).claimType(ClaimType.RETURN)
                 .externalClaimId("R-" + id).externalOrderId(orderId).externalItemId("V-" + id)

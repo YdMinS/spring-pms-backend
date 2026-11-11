@@ -31,6 +31,9 @@ import java.util.List;
  *
  * A null {@code orderItemId} means the claim is not linked to an order line (D12) — the screen shows the badge from
  * {@code linked} and the minimum info from {@code itemName}.
+ *
+ * {@code accountAlias} is the sales channel alias, the material of the list screen's 「판매처」 text
+ * (FEATURE_2611_24 / D13) — the account is already read by the query graph.
  */
 public record OrderClaimResponse(
         Long id,
@@ -57,6 +60,7 @@ public record OrderClaimResponse(
         LocalDateTime receivedAt,
         Long sellerId,
         String sellerName,
+        String accountAlias,
         Long orderItemId,
         boolean linked,
         List<ClaimActionOption> availableActions) {
