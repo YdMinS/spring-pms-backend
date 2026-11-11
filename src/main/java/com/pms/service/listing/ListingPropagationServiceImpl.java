@@ -85,18 +85,30 @@ public class ListingPropagationServiceImpl implements ListingPropagationService 
 
             try {
                 ListingChannel adapter = resolver.resolve(cell.getPlatform());
-                // whole-object re-submit → PUT (active options only)
-                PushOutcome outcome = adapter.updateAndReport(cell, gen.get(), account.get());
+                // batch default items only (FEATURE_2611_25 / D9) — Coupang may skip (D26)
+                PushOutcome outcome = adapter.updateAndReport(cell, gen.get(), account.get(),
+                        ListingUpdateSelection.batch());
+                if (outcome.skipped()) {
+                    // D26: nothing was sent → only the dirty marker is cleared (status · 총 수량 · bundle type kept,
+                    // no tag revision, no option revert).
+                    productListingRepository.save(cell.toBuilder().needsMarketSync(false).build());
+                    skipped++;
+                    continue;
+                }
+                // D31: a batch push never changes the options' on/off → outcome.optionActive() is not read.
                 // 42: options deactivated on this channel are dropped from the re-submitted payload → they are no
                 // longer live on the market. Revert any previously-APPROVED deactivated option to NOT_APPROVED
                 // (active options keep their approval). ⚠️ Orchestration owns this state change (@Transactional
                 // boundary); the adapter only filters items[]. Coupang cannot physically delete an approved option
                 // (stop-selling API = follow-up) — this step is payload-exclusion + local status only.
-                for (ProductListingOption option : productListingOptionRepository.findByProductListingId(id)) {
-                    if (!Boolean.TRUE.equals(option.getActive())
-                            && option.getApprovalStatus() == OptionApprovalStatus.APPROVED) {
-                        productListingOptionRepository.save(
-                                option.toBuilder().approvalStatus(OptionApprovalStatus.NOT_APPROVED).build());
+                // Coupang keeps them on the market (D8) → no revert (FEATURE_2611_25 / D23).
+                if (!adapter.keepsInactiveOptionsOnUpdate()) {
+                    for (ProductListingOption option : productListingOptionRepository.findByProductListingId(id)) {
+                        if (!Boolean.TRUE.equals(option.getActive())
+                                && option.getApprovalStatus() == OptionApprovalStatus.APPROVED) {
+                            productListingOptionRepository.save(
+                                    option.toBuilder().approvalStatus(OptionApprovalStatus.NOT_APPROVED).build());
+                        }
                     }
                 }
                 // Push succeeded → append the merged tag snapshot (33) if it changed. Failed cells never reach here.
@@ -110,7 +122,7 @@ public class ListingPropagationServiceImpl implements ListingPropagationService 
                         .needsMarketSync(false)
                         .grandTotalSend(outcome.grandTotalSend() != null
                                 ? outcome.grandTotalSend() : cell.getGrandTotalSend())
-                        // FEATURE_2610_36 / D11: the bundle type sent (read once while the listing did not know it).
+                        // FEATURE_2611_25 / D2: the bundle type read from Coupang (null keeps the stored one).
                         .marketBundleType(outcome.marketBundleType() != null
                                 ? outcome.marketBundleType() : cell.getMarketBundleType())
                         .build());
