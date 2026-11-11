@@ -23,7 +23,12 @@ import java.util.List;
  *   <li>{@code SPLIT} — the one line in {@code orderItemIds} over {@code splits} (6791, 2~10 invoices; the quantities
  *       add up to the line's order quantity). {@code invoiceNumber} is the first split's invoice</li>
  * </ul>
- * A Coupang order ignores the three fields.
+ * A Coupang order ignores the three fields; a LotteON order ignores {@code mode} (always the whole bundle,
+ * FEATURE_2611_23 / D18).
+ *
+ * <p>LotteON invoice update only (FEATURE_2611_23 / D19 ⑥-5) — {@code records}: the delivery records chosen on the
+ * LotteON invoice-update window (line id + {@code procSeq} of the record list). Not used by other marketplaces nor by
+ * a LotteON registration (before shipping).
  *
  * <p>Record → accessors are generated (no Lombok).
  */
@@ -35,7 +40,8 @@ public record ManualShipmentRequest(
         @Size(max = 50, message = "송장번호는 50자 이하여야 합니다") String invoiceNumber,
         @Size(max = 10, message = "보내는 방식은 10자 이하여야 합니다") String mode,
         List<Long> orderItemIds,
-        @Valid List<Split> splits) {
+        @Valid List<Split> splits,
+        @Valid List<RecordChoice> records) {
 
     /** {@code mode} values (FEATURE_2610_17 / D64). */
     public static final String MODE_ALL = "ALL";
@@ -47,11 +53,23 @@ public record ManualShipmentRequest(
         this(orderItemId, deliveryCompanyCode, invoiceNumber, null, null, null);
     }
 
+    /** The request before FEATURE_2611_23 — no LotteON records ({@code records} = null). */
+    public ManualShipmentRequest(Long orderItemId, String deliveryCompanyCode, String invoiceNumber, String mode,
+                                 List<Long> orderItemIds, List<Split> splits) {
+        this(orderItemId, deliveryCompanyCode, invoiceNumber, mode, orderItemIds, splits, null);
+    }
+
     /** One invoice of a {@code SPLIT} send. */
     public record Split(
             @NotBlank(message = "송장번호는 필수입니다")
             @Size(max = 50, message = "송장번호는 50자 이하여야 합니다") String invoiceNumber,
             @NotNull(message = "수량이 필요합니다") @Min(value = 1, message = "수량은 1개 이상이어야 합니다")
             Integer quantity) {
+    }
+
+    /** One LotteON delivery record chosen for the invoice update (FEATURE_2611_23 / D19 ⑥-4). */
+    public record RecordChoice(
+            @NotNull(message = "주문 라인 ID는 필수입니다") Long orderItemId,
+            @NotBlank(message = "처리순번은 필수입니다") String procSeq) {
     }
 }

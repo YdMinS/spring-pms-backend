@@ -234,7 +234,7 @@ class LotteonOrderCoreTest {
 
         AcknowledgeOutcome outcome = adapter.acknowledge(List.of(line1, line2));
 
-        assertThat(adapter.internalStage()).isFalse();
+        assertThat(adapter.internalStage()).isTrue();
         assertThat(outcome.targets()).isEqualTo(2);
         assertThat(outcome.succeeded()).isZero();
         assertThat(outcome.failed()).containsExactly(new FailedBox("OD1-1", "ERROR", "거절"));

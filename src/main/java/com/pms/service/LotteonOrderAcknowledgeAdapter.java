@@ -30,7 +30,8 @@ import java.util.stream.Collectors;
  * by one; a failed chunk is reported once per delivery bundle. A bundle is a succeeded box only when none of its sent
  * lines failed (R10).
  *
- * <p>{@link #internalStage()} stays closed here — it opens together with the reserved invoice send.
+ * <p>{@link #internalStage()} is open (D49 ①): the internal sheet ({@code LotteonShippingLabelAdapter}) and the
+ * reserved invoice send ({@link LotteonShipmentInvoiceAdapter#sendReservedInvoices}) are both filled.
  */
 @Slf4j
 @Component
@@ -47,6 +48,12 @@ public class LotteonOrderAcknowledgeAdapter implements OrderAcknowledgeAdapter {
     @Override
     public Platform platform() {
         return Platform.LOTTEON;
+    }
+
+    /** D49 ①: LotteON opens the internal-stage bundle (both slots are filled). */
+    @Override
+    public boolean internalStage() {
+        return true;
     }
 
     @Override
