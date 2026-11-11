@@ -21,6 +21,7 @@ import com.pms.repository.OrderShipmentRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.service.OrderAcknowledgeAdapter.AcknowledgeOutcome;
 import com.pms.service.ShipmentConfirmResult.FailedBox;
+import com.pms.service.claim.LotteonClaimSyncAdapter;
 import com.pms.service.coupang.LotteonOrderSyncAdapter;
 import com.pms.service.coupang.OrderSyncPreset;
 import com.pms.service.coupang.OrderUpserter.UpsertCount;
@@ -79,6 +80,7 @@ class LotteonOrderCoreTest {
     @Mock private LotteonCancelRequestUpserter lotteonCancelRequestUpserter;
     @Mock private LotteonOrderSyncService lotteonOrderSyncService;
     @Mock private SyncStatusRecorder syncStatusRecorder;
+    @Mock private LotteonClaimSyncAdapter lotteonClaimSyncAdapter;
 
     private final MarketplaceAccount account = MarketplaceAccount.builder().id(9L).platform(Platform.LOTTEON)
             .seller(Seller.builder().id(3L).sellerName("판매자").build())
@@ -183,7 +185,7 @@ class LotteonOrderCoreTest {
         given(lotteonOrderApi.progressStates(eq(account), any(), any())).willReturn(List.of());
         given(lotteonOrderUpserter.upsertRows(eq(account), anyList())).willReturn(UpsertCount.empty());
         LotteonOrderSyncServiceImpl service = new LotteonOrderSyncServiceImpl(lotteonOrderApi, lotteonOrderUpserter,
-                lotteonCancelRequestUpserter, syncStatusRecorder, List.of(), List.of());
+                lotteonCancelRequestUpserter, syncStatusRecorder, lotteonClaimSyncAdapter, List.of());
 
         service.sync(account, OrderSyncPreset.QUICK, false);
 

@@ -27,6 +27,7 @@ import com.pms.service.OrderCancelResult.CancelledLine;
 import com.pms.service.OrderCancelResult.FailedLine;
 import com.pms.service.OrderCancelResult.SkippedLine;
 import com.pms.service.claim.ActionChoice;
+import com.pms.service.claim.LotteonClaimSyncAdapter;
 import com.pms.service.coupang.OrderSyncFacade.OrderSyncResult;
 import com.pms.service.coupang.OrderSyncPreset;
 import com.pms.service.coupang.OrderUpserter.UpsertCount;
@@ -85,6 +86,7 @@ class LotteonCancelTest {
     @Mock private LotteonOrderUpserter lotteonOrderUpserter;
     @Mock private LotteonCancelRequestUpserter lotteonCancelRequestUpserter;
     @Mock private SyncStatusRecorder syncStatusRecorder;
+    @Mock private LotteonClaimSyncAdapter lotteonClaimSyncAdapter;
     @Mock private CarrierCodeService carrierCodeService;
 
     private final MarketplaceAccount account = MarketplaceAccount.builder().id(9L).platform(Platform.LOTTEON)
@@ -116,7 +118,7 @@ class LotteonCancelTest {
 
     private LotteonOrderSyncServiceImpl syncService() {
         return new LotteonOrderSyncServiceImpl(lotteonOrderApi, lotteonOrderUpserter, lotteonCancelRequestUpserter,
-                syncStatusRecorder, List.of(), List.of());
+                syncStatusRecorder, lotteonClaimSyncAdapter, List.of());
     }
 
     @Test
