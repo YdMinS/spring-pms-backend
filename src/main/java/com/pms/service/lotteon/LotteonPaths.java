@@ -40,6 +40,17 @@ public final class LotteonPaths {
     public static final String PROGRESS_INFORM = "/v1/openapi/delivery/v2/SellerDeliveryProgressStateInform";
     /** [139] invoice number modification (FEATURE_2611_23 / D19). */
     public static final String INVOICE_MODIFY = "/v1/openapi/delivery/v1/SellerInvoiceNoModifyInform";
+    /** [50] cancel request / completed / withdrawn list (FEATURE_2611_23 / D11 · R21). */
+    public static final String CANCEL_LIST =
+            "/v1/openapi/claim/v1/cancellationOpenApi/getCancellationRequestAndComplateList";
+    /** [60] cancel request approval (FEATURE_2611_23 / D24). */
+    public static final String CANCEL_APPROVE = "/v1/openapi/claim/v1/cancellationOpenApi/cnclRequestApproval";
+    /** [59] cancel request rejection (FEATURE_2611_23 / D24). */
+    public static final String CANCEL_REJECT = "/v1/openapi/claim/v1/cancellationOpenApi/cnclRequestHold";
+    /** [225] seller direct cancel (FEATURE_2611_23 / D25). */
+    public static final String SELLER_CANCEL = "/v1/openapi/claim/v1/cancellationOpenApi/slrDirectCnclProc";
+    /** [138] shipping appointment date inform (FEATURE_2611_23 / D26). */
+    public static final String DELIVERY_APPOINTMENT = "/v1/openapi/delivery/v1/SellerDeliveryAppointmentInform";
 
     private LotteonPaths() {
     }

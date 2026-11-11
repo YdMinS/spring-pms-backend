@@ -1,6 +1,7 @@
 package com.pms.service.lotteon;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
@@ -23,7 +24,11 @@ import java.util.Map;
  * ({@code returnCode} ≠ {@code 0000} · 4xx · 5xx · dev switch off) is thrown there (D10 · D15). This class reads the
  * per-call result ({@code data.rsltCd}) and per-line failures ({@code data.failList}).
  *
- * <p>⚠️ No write here is called by the sync — [210] · [298] · [139] run only from a person's button (D16 · D30).
+ * <p>FEATURE_2611_23 / 06: [50] cancel list (read by the sync through {@link LotteonApiClient#postList}, D66) · [60]
+ * cancel approval · [59] cancel rejection · [225] seller direct cancel · [138] shipping appointment inform.
+ *
+ * <p>⚠️ No write here is called by the sync — [210] · [298] · [139] · [60] · [59] · [225] · [138] run only from a
+ * person's button (D16 · D30).
  */
 @Component
 @RequiredArgsConstructor
@@ -89,6 +94,65 @@ public class LotteonOrderApi {
     /** [139] invoice modification (D19) — the body is the line array itself. Same result rule as [210]. */
     public void modifyInvoice(MarketplaceAccount account, List<Map<String, Object>> lines) {
         requireSuccess(post(account, LotteonPaths.INVOICE_MODIFY, lines));
+    }
+
+    /**
+     * [50] cancel requests · completions · withdrawals of one window (D11 · R21) — no step or type filter, so 02 · 21 ·
+     * 22 come in one call. {@code returnCode} 3000 = empty list (D66). Rows = {@link #claimItems}.
+     */
+    public List<JsonNode> cancelRequests(MarketplaceAccount account, LocalDateTime from, LocalDateTime to) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("srchStrtDttm", from.format(TIME));
+        body.put("srchEndDttm", to.format(TIME));
+        return claimItems(lotteonApiClient.postList(LotteonPaths.CANCEL_LIST, body,
+                LotteonCredentials.of(account).apiKey()));
+    }
+
+    /** [60] cancel request approval (D24) — the {@code returnCode} check only (D15). */
+    public void approveCancelRequest(MarketplaceAccount account, Map<String, Object> body) {
+        post(account, LotteonPaths.CANCEL_APPROVE, body);
+    }
+
+    /** [59] cancel request rejection (D24) — the {@code returnCode} check only (D15). */
+    public void rejectCancelRequest(MarketplaceAccount account, Map<String, Object> body) {
+        post(account, LotteonPaths.CANCEL_REJECT, body);
+    }
+
+    /** [225] seller direct cancel of one line (D25) — the {@code returnCode} check only (D15). */
+    public void sellerCancel(MarketplaceAccount account, Map<String, Object> body) {
+        post(account, LotteonPaths.SELLER_CANCEL, body);
+    }
+
+    /** [138] shipping appointment inform (D26) — the body is the line array itself. Same result rule as [210]. */
+    public void informAppointment(MarketplaceAccount account, List<Map<String, Object>> lines) {
+        requireSuccess(post(account, LotteonPaths.DELIVERY_APPOINTMENT, lines));
+    }
+
+    /**
+     * Claim list answer → one row per {@code data[].itemList[]} line, each a copy carrying its parent's {@code odNo}
+     * and {@code clmNo} (R21). Used by [50] and the return / exchange lists.
+     */
+    static List<JsonNode> claimItems(JsonNode answer) {
+        List<JsonNode> rows = new ArrayList<>();
+        for (JsonNode claim : answer.path("data")) {
+            for (JsonNode item : claim.path("itemList")) {
+                if (!item.isObject()) {
+                    continue;
+                }
+                ObjectNode row = item.deepCopy();
+                copyField(claim, row, "odNo");
+                copyField(claim, row, "clmNo");
+                rows.add(row);
+            }
+        }
+        return rows;
+    }
+
+    private static void copyField(JsonNode from, ObjectNode to, String field) {
+        JsonNode value = from.get(field);
+        if (value != null && !value.isNull()) {
+            to.set(field, value);
+        }
     }
 
     /** D14: the first 14 characters as {@link #TIME}; blank or unreadable → null. */

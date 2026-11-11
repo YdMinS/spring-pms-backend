@@ -36,6 +36,11 @@ public class LotteonApiClient {
     public static final String OUTBOUND_DISABLED_MESSAGE = "개발 서버에서는 롯데ON 을 부르지 않습니다";
     static final String FALLBACK_MESSAGE_PREFIX = "롯데ON 응답 오류(HTTP ";
     static final String SUCCESS = "0000";
+    /**
+     * FEATURE_2611_23 / D66 · R28: the {@code returnCode} the LotteON list APIs answer when the window holds nothing —
+     * an empty answer for {@link #postList}, still a failure for {@link #post}.
+     */
+    static final String NO_DATA = "3000";
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -53,6 +58,25 @@ public class LotteonApiClient {
 
     public JsonNode post(String path, Object body, String apiKey) {
         return execute(HttpMethod.POST, properties.getBaseUrl() + path, body, apiKey, true);
+    }
+
+    /**
+     * FEATURE_2611_23 / D66 · R28: {@link #post} for the LotteON list APIs only — a {@code returnCode} of
+     * {@value #NO_DATA} (nothing in the window) is an empty answer {@code {}}; any other code but {@code 0000} is the
+     * same 502 as {@link #post}. ❌ Do not use it for writes or for product calls.
+     */
+    public JsonNode postList(String path, Object body, String apiKey) {
+        JsonNode node = execute(HttpMethod.POST, properties.getBaseUrl() + path, body, apiKey, false);
+        JsonNode returnCode = node.get("returnCode");
+        if (returnCode != null && !returnCode.isNull()) {
+            if (NO_DATA.equals(returnCode.asText())) {
+                return JSON.createObjectNode();
+            }
+            if (!SUCCESS.equals(returnCode.asText())) {
+                throw new BusinessException(messageOf(node, 200), HttpStatus.BAD_GATEWAY);
+            }
+        }
+        return node;
     }
 
     /** [205] on the category host — its answer has no {@code returnCode} ({@code itemList} only). */

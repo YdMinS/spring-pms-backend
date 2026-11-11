@@ -179,7 +179,7 @@ class OrderCancelServiceImplTest {
         assertThat(result.unsupported()).extracting(OrderCancelResult.SkippedLine::orderItemId)
                 .containsExactly(11L, 12L);
         assertThat(result.unsupported().get(0).reason())
-                .isEqualTo("쿠팡 · 11번가 주문이 아니거나 배송번호가 없습니다");
+                .isEqualTo("쿠팡 · 11번가 · 롯데ON 주문이 아니거나 배송번호가 없습니다");
     }
 
     @Test
