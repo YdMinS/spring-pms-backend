@@ -27,8 +27,11 @@ import java.util.Map;
  * <p>FEATURE_2611_23 / 06: [50] cancel list (read by the sync through {@link LotteonApiClient#postList}, D66) · [60]
  * cancel approval · [59] cancel rejection · [225] seller direct cancel · [138] shipping appointment inform.
  *
- * <p>⚠️ No write here is called by the sync — [210] · [298] · [139] · [60] · [59] · [225] · [138] run only from a
- * person's button (D16 · D30).
+ * <p>FEATURE_2611_23 / 07: [51] return · [67] return withdrawal · [69] exchange · [70] exchange withdrawal lists (each
+ * through {@link LotteonApiClient#postList}, D66) · [141] retrieval exception (hold / release).
+ *
+ * <p>⚠️ No write here is called by the sync — [210] · [298] · [139] · [60] · [59] · [225] · [138] · [141] run only
+ * from a person's button (D16 · D30).
  */
 @Component
 @RequiredArgsConstructor
@@ -106,6 +109,55 @@ public class LotteonOrderApi {
         body.put("srchEndDttm", to.format(TIME));
         return claimItems(lotteonApiClient.postList(LotteonPaths.CANCEL_LIST, body,
                 LotteonCredentials.of(account).apiKey()));
+    }
+
+    /**
+     * [51] return requests of one window (D27) — {@code returnCode} 3000 = empty list (D66). Rows =
+     * {@link #claimItems}.
+     */
+    public List<JsonNode> returnList(MarketplaceAccount account, LocalDateTime from, LocalDateTime to) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("srchStrtDttm", from.format(TIME));
+        body.put("srchEndDttm", to.format(TIME));
+        return claimItems(lotteonApiClient.postList(LotteonPaths.RETURN_LIST, body,
+                LotteonCredentials.of(account).apiKey()));
+    }
+
+    /** [67] return withdrawals of one window (D27) — same rules as {@link #returnList}. */
+    public List<JsonNode> returnWithdrawList(MarketplaceAccount account, LocalDateTime from, LocalDateTime to) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("srchStrtDttm", from.format(TIME));
+        body.put("srchEndDttm", to.format(TIME));
+        return claimItems(lotteonApiClient.postList(LotteonPaths.RETURN_WITHDRAW_LIST, body,
+                LotteonCredentials.of(account).apiKey()));
+    }
+
+    /** [69] exchange requests of one window (D27) — same rules as {@link #returnList}. */
+    public List<JsonNode> exchangeList(MarketplaceAccount account, LocalDateTime from, LocalDateTime to) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("srchStrtDttm", from.format(TIME));
+        body.put("srchEndDttm", to.format(TIME));
+        return claimItems(lotteonApiClient.postList(LotteonPaths.EXCHANGE_LIST, body,
+                LotteonCredentials.of(account).apiKey()));
+    }
+
+    /** [70] exchange withdrawals of one window (D27) — same rules as {@link #returnList}. */
+    public List<JsonNode> exchangeWithdrawList(MarketplaceAccount account, LocalDateTime from, LocalDateTime to) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("srchStrtDttm", from.format(TIME));
+        body.put("srchEndDttm", to.format(TIME));
+        return claimItems(lotteonApiClient.postList(LotteonPaths.EXCHANGE_WITHDRAW_LIST, body,
+                LotteonCredentials.of(account).apiKey()));
+    }
+
+    /**
+     * [141] retrieval exception — return / exchange hold (03) or release (09) of the given lines (D28 ③ · D45). Same
+     * result rule as [210]: {@code data.rsltCd} ≠ {@code 0000} → 502 with LotteON's text (D15 · D44).
+     */
+    public void informRetrievalException(MarketplaceAccount account, List<Map<String, Object>> lines) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("retrievalExceptionList", lines);
+        requireSuccess(post(account, LotteonPaths.RETRIEVAL_EXCEPTION, body));
     }
 
     /** [60] cancel request approval (D24) — the {@code returnCode} check only (D15). */

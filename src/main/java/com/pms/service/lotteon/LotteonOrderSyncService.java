@@ -9,8 +9,9 @@ import com.pms.service.coupang.OrderSyncPreset;
  * LotteON account here, called by {@code OrderSyncFacadeImpl} after taking the channel lock.
  *
  * <p>Order of steps: orders ([209] then [140]) → cancels ([50], R23) → return / exchange claims
- * ({@code ClaimSyncAdapter}) → inquiries ({@code InquirySyncAdapter}). Orders failing = failure, cancels failing =
- * partial (manual rounds only, both thrown on); claims / inquiries failing = log only.
+ * ({@code LotteonClaimSyncAdapter}, with the [140] rows of the order step — R31) → inquiries
+ * ({@code InquirySyncAdapter}). Orders failing = failure, cancels / claims failing = partial (manual rounds only, all
+ * thrown on — R23 · R39); inquiries failing = log only.
  *
  * <p>❌ Do not call this from anywhere but {@code LotteonOrderSyncAdapter} — the facade sets the lock and the tenant
  * before it.

@@ -51,6 +51,16 @@ public final class LotteonPaths {
     public static final String SELLER_CANCEL = "/v1/openapi/claim/v1/cancellationOpenApi/slrDirectCnclProc";
     /** [138] shipping appointment date inform (FEATURE_2611_23 / D26). */
     public static final String DELIVERY_APPOINTMENT = "/v1/openapi/delivery/v1/SellerDeliveryAppointmentInform";
+    /** [51] return request list (FEATURE_2611_23 / D27). */
+    public static final String RETURN_LIST = "/v1/openapi/claim/v1/returningOpenApi/returnRequestSearch";
+    /** [67] return withdrawal list (FEATURE_2611_23 / D27). */
+    public static final String RETURN_WITHDRAW_LIST = "/v1/openapi/claim/v1/returningOpenApi/returnWithdrawSearch";
+    /** [69] exchange request list (FEATURE_2611_23 / D27). */
+    public static final String EXCHANGE_LIST = "/v1/openapi/claim/v1/exchangeOpenApi/exchangeSearch";
+    /** [70] exchange withdrawal list (FEATURE_2611_23 / D27). */
+    public static final String EXCHANGE_WITHDRAW_LIST = "/v1/openapi/claim/v1/exchangeOpenApi/exchangeWithdrawSearch";
+    /** [141] retrieval exception (hold 03 · release 09) inform (FEATURE_2611_23 / D28 · D45). */
+    public static final String RETRIEVAL_EXCEPTION = "/v1/openapi/delivery/v1/SellerRetrievalExceptionInform";
 
     private LotteonPaths() {
     }

@@ -37,12 +37,20 @@ public enum ClaimAction {
     RETURN_HOLD(ClaimType.RETURN, "반품 보류", Requires.REASON, false),
     /** 11st only (D23 · D34): return-completion hold 1655 — stops 11st's automatic return completion. */
     RETURN_COMPLETE_HOLD(ClaimType.RETURN, "반품완료 보류", Requires.REASON, false),
+    /** LotteON only (FEATURE_2611_23 / D45 · D78): return hold release [141] 09 — reason text only, repeatable. */
+    RETURN_HOLD_RELEASE(ClaimType.RETURN, "반품 보류 해제", Requires.REASON_TEXT, false),
 
     EXCHANGE_RECEIVE_CONFIRM(ClaimType.EXCHANGE, "교환 입고확인", Requires.NONE, false),
     /** 🔴 되돌릴 수 없다. */
     EXCHANGE_REJECT(ClaimType.EXCHANGE, "교환 거부", Requires.REJECT_CODE, true),
     EXCHANGE_RESHIP_INVOICE(ClaimType.EXCHANGE, "재발송 송장 등록", Requires.INVOICE, false),
-    EXCHANGE_COLLECT_INVOICE(ClaimType.EXCHANGE, "회수 송장 등록", Requires.INVOICE, false);
+    EXCHANGE_COLLECT_INVOICE(ClaimType.EXCHANGE, "회수 송장 등록", Requires.INVOICE, false),
+    /** LotteON only (FEATURE_2611_23 / D46): exchange hold [141] 03 — repeatable. */
+    EXCHANGE_HOLD(ClaimType.EXCHANGE, "교환 보류", Requires.REASON, false),
+    /** LotteON only (FEATURE_2611_23 / D45 · D78): exchange hold release [141] 09 — reason text only, repeatable. */
+    EXCHANGE_HOLD_RELEASE(ClaimType.EXCHANGE, "교환 보류 해제", Requires.REASON_TEXT, false),
+    /** LotteON only (FEATURE_2611_23 / D47): exchange pickup confirm [298] 26 — 🔴 cannot be undone. */
+    EXCHANGE_COLLECT_CONFIRM(ClaimType.EXCHANGE, "교환 회수 확정", Requires.NONE, true);
 
     /**
      * 액션이 요구하는 추가 입력. 요청 DTO 검증이 이 값 하나로 갈린다(서비스가 아니라 액션 메타가 정한다).
@@ -61,7 +69,9 @@ public enum ClaimAction {
          * Reason code (from {@code choices}) + reason text, both required (FEATURE_2610_17 / D34 · D39 ①) — the 11st
          * reject / hold actions. The 11st adapter also returns it for {@code EXCHANGE_REJECT} (D15).
          */
-        REASON
+        REASON,
+        /** Reason text only, 1~200 characters; no reason code (FEATURE_2611_23 / D78) — LotteON hold release. */
+        REASON_TEXT
     }
 
     private final ClaimType claimType;

@@ -36,4 +36,13 @@ public interface ClaimActionService {
      * <p>액션은 ADMIN 전용이므로(D13) 비-ADMIN 에게는 전부 빈 목록으로 내린다.
      */
     Map<Long, List<ClaimActionOption>> availableActions(List<OrderClaim> claims);
+
+    /**
+     * Status side notes for the list and detail responses — claim id → text (FEATURE_2611_23 / D79). Claims are grouped
+     * by platform and each platform's adapter answers ({@link ClaimActionAdapter#statusNotes}); a platform without an
+     * adapter adds nothing.
+     *
+     * <p>Unlike {@link #availableActions}, every user gets it (read permission only).
+     */
+    Map<Long, String> statusNotes(List<OrderClaim> claims);
 }

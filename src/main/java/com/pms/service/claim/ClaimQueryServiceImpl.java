@@ -26,7 +26,9 @@ import java.util.Map;
  *
  * {@code availableActions} 는 {@link ClaimActionService} 에게만 묻는다(FEATURE_2609_21 D1·Step 8) —
  * 어댑터를 여기서 직접 들면 어댑터 해석이 두 클래스에 복제돼 D17 이 절반만 지켜진다. 판정은 목록
- * 크기와 무관하게 고정 쿼리 수로 끝난다(claim 마다 형제 라인을 재조회하지 않는다).
+ * regardless of its size, takes a fixed number of queries plus 1 per LotteON claim (R37 — the LotteON adapter reads {@code lotteon_claim})
+ * (no sibling lines are re-queried per claim). The status helper text ({@code statusNote}, FEATURE_2611_23 / D79) also
+ * asks only the statusNotes of {@link ClaimActionService} — 1 query per marketplace.
  *
  * {@code status}·{@code keyword} 는 <b>조회 후 필터</b>다 — 건수가 작고 인덱스는 receivedAt 창이 먹는다
  * (FEATURE_2609_08 의 판단과 동일).
@@ -73,15 +75,17 @@ public class ClaimQueryServiceImpl implements ClaimQueryService {
                 .toList();
 
         Map<Long, List<ClaimActionOption>> actions = claimActionService.availableActions(visible);
+        Map<Long, String> notes = claimActionService.statusNotes(visible);
         return visible.stream()
-                .map(claim -> toResponse(claim, actions))
+                .map(claim -> toResponse(claim, actions, notes))
                 .toList();
     }
 
     @Override
     public OrderClaimResponse getClaim(Long id) {
         return orderClaimRepository.findWithAccountById(id)
-                .map(claim -> toResponse(claim, claimActionService.availableActions(List.of(claim))))
+                .map(claim -> toResponse(claim, claimActionService.availableActions(List.of(claim)),
+                        claimActionService.statusNotes(List.of(claim))))
                 .orElseThrow(() -> new ResourceNotFoundException("Claim", id));
     }
 
@@ -101,7 +105,8 @@ public class ClaimQueryServiceImpl implements ClaimQueryService {
     }
 
     private OrderClaimResponse toResponse(OrderClaim claim,
-                                          Map<Long, List<ClaimActionOption>> actions) {
+                                          Map<Long, List<ClaimActionOption>> actions,
+                                          Map<Long, String> notes) {
         var seller = claim.getMarketplaceAccount().getSeller();
         return new OrderClaimResponse(
                 claim.getId(),
@@ -132,6 +137,7 @@ public class ClaimQueryServiceImpl implements ClaimQueryService {
                 (claim.getOrderLine() != null) ? claim.getOrderLine().getId() : null,
                 claim.isLinked(),
                 // 액션 없음·미지원 플랫폼·비-ADMIN 은 전부 빈 목록이다(null 아님 — 클라이언트가 분기하지 않게).
-                actions.getOrDefault(claim.getId(), List.of()));
+                actions.getOrDefault(claim.getId(), List.of()),
+                notes.get(claim.getId()));
     }
 }

@@ -25,4 +25,10 @@ public class LotteonProperties {
      * server. The dev and local profiles set false. There is no exception (category lookups included, D10).
      */
     private boolean outboundEnabled = true;
+
+    /**
+     * D94 · D95: a LotteON exchange whose retrieval is confirmed (26 · 27) and still IN_PROGRESS is followed until this
+     * many days after receipt, then closed as STALE. Other claims keep claimStaleDays (30).
+     */
+    private int exchangeReceiptFollowDays = 60;
 }
