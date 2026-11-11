@@ -23,7 +23,8 @@ import java.io.IOException;
  *   <li>D8 — {@code oklyx.lotteon.outbound-enabled=false} (dev · local) → 503 {@value #OUTBOUND_DISABLED_MESSAGE}
  *       before any network I/O. No exception for category lookups (D10).</li>
  *   <li>D23 · D30 — an HTTP error (429 included), or a body whose {@code returnCode} is not {@code 0000}, becomes a
- *       502 whose message is LotteON's own text ({@link #messageOf}). Per-line results ({@code data[].resultCode})
+ *       502 whose message is LotteON's own text ({@link #messageOf}) — except {@value #NO_DATA} through
+ *       {@link #postList}, which is an empty answer (D66 · R28). Per-line results ({@code data[].resultCode})
  *       are the caller's to read ({@link #lineFailure}).</li>
  * </ul>
  *
@@ -36,6 +37,11 @@ public class LotteonApiClient {
     public static final String OUTBOUND_DISABLED_MESSAGE = "개발 서버에서는 롯데ON 을 부르지 않습니다";
     static final String FALLBACK_MESSAGE_PREFIX = "롯데ON 응답 오류(HTTP ";
     static final String SUCCESS = "0000";
+    /**
+     * FEATURE_2611_23 / D66 · R28: the {@code returnCode} the LotteON list APIs answer when the window holds nothing —
+     * an empty answer for {@link #postList}, still a failure for {@link #post}.
+     */
+    static final String NO_DATA = "3000";
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -53,6 +59,25 @@ public class LotteonApiClient {
 
     public JsonNode post(String path, Object body, String apiKey) {
         return execute(HttpMethod.POST, properties.getBaseUrl() + path, body, apiKey, true);
+    }
+
+    /**
+     * FEATURE_2611_23 / D66 · R28: {@link #post} for the LotteON list APIs only — a {@code returnCode} of
+     * {@value #NO_DATA} (nothing in the window) is an empty answer {@code {}}; any other code but {@code 0000} is the
+     * same 502 as {@link #post}. ❌ Do not use it for writes or for product calls.
+     */
+    public JsonNode postList(String path, Object body, String apiKey) {
+        JsonNode node = execute(HttpMethod.POST, properties.getBaseUrl() + path, body, apiKey, false);
+        JsonNode returnCode = node.get("returnCode");
+        if (returnCode != null && !returnCode.isNull()) {
+            if (NO_DATA.equals(returnCode.asText())) {
+                return JSON.createObjectNode();
+            }
+            if (!SUCCESS.equals(returnCode.asText())) {
+                throw new BusinessException(messageOf(node, 200), HttpStatus.BAD_GATEWAY);
+            }
+        }
+        return node;
     }
 
     /** [205] on the category host — its answer has no {@code returnCode} ({@code itemList} only). */

@@ -2,6 +2,7 @@ package com.pms.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.pms.config.LotteonProperties;
 import com.pms.domain.LotteonAccountCredential;
 import com.pms.domain.LotteonOrderLine;
 import com.pms.domain.MarketplaceAccount;
@@ -25,6 +26,7 @@ import com.pms.service.coupang.OrderSyncPreset;
 import com.pms.service.coupang.OrderUpserter.UpsertCount;
 import com.pms.service.coupang.SyncStatusRecorder;
 import com.pms.service.lotteon.LotteonApiClient;
+import com.pms.service.lotteon.LotteonCancelRequestUpserter;
 import com.pms.service.lotteon.LotteonOrderApi;
 import com.pms.service.lotteon.LotteonOrderSyncService;
 import com.pms.service.lotteon.LotteonOrderSyncServiceImpl;
@@ -74,6 +76,7 @@ class LotteonOrderCoreTest {
     @Mock private LotteonOrderApi lotteonOrderApi;
     @Mock private LotteonApiClient lotteonApiClient;
     @Mock private LotteonOrderUpserter lotteonOrderUpserter;
+    @Mock private LotteonCancelRequestUpserter lotteonCancelRequestUpserter;
     @Mock private LotteonOrderSyncService lotteonOrderSyncService;
     @Mock private SyncStatusRecorder syncStatusRecorder;
 
@@ -180,7 +183,7 @@ class LotteonOrderCoreTest {
         given(lotteonOrderApi.progressStates(eq(account), any(), any())).willReturn(List.of());
         given(lotteonOrderUpserter.upsertRows(eq(account), anyList())).willReturn(UpsertCount.empty());
         LotteonOrderSyncServiceImpl service = new LotteonOrderSyncServiceImpl(lotteonOrderApi, lotteonOrderUpserter,
-                syncStatusRecorder, List.of(), List.of());
+                lotteonCancelRequestUpserter, syncStatusRecorder, List.of(), List.of());
 
         service.sync(account, OrderSyncPreset.QUICK, false);
 
@@ -193,10 +196,14 @@ class LotteonOrderCoreTest {
     }
 
     @Test
-    void syncAdapter_skipsScheduledRoundUntilCancelSync() {
-        LotteonOrderSyncAdapter adapter = new LotteonOrderSyncAdapter(lotteonOrderSyncService);
+    void syncAdapter_scheduledRoundFollowsTheOutboundSwitch() {
+        LotteonProperties properties = new LotteonProperties();
+        LotteonOrderSyncAdapter adapter = new LotteonOrderSyncAdapter(lotteonOrderSyncService, properties);
 
         assertThat(adapter.platform()).isEqualTo(Platform.LOTTEON);
+        properties.setOutboundEnabled(true);
+        assertThat(adapter.runsInScheduledRound()).isTrue();
+        properties.setOutboundEnabled(false);
         assertThat(adapter.runsInScheduledRound()).isFalse();
         verifyNoInteractions(lotteonOrderSyncService);
     }
