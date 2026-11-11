@@ -8,6 +8,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+
 /** {@link PurchaseSettingService} implementation. No row = {@link #DEFAULT_STOCK_LINKED} (D69). */
 @Service
 @RequiredArgsConstructor
@@ -24,13 +26,18 @@ public class PurchaseSettingServiceImpl implements PurchaseSettingService {
         return new PurchaseSettingResponse(isStockLinked());
     }
 
+    /** FEATURE_2611_22 D11: turning the link on (off or no row -> on) stamps {@code stockLinkedAt}; on -> on keeps it. */
     @Override
     @Transactional
     public PurchaseSettingResponse update(PurchaseSettingRequest request) {
         boolean stockLinked = request.stockLinked();
+        LocalDateTime now = LocalDateTime.now();
         TenantPurchaseSetting next = tenantPurchaseSettingRepository.findFirstByOrderByIdAsc()
-                .map(s -> s.toBuilder().stockLinked(stockLinked).build())
-                .orElseGet(() -> TenantPurchaseSetting.builder().stockLinked(stockLinked).build());
+                .map(s -> s.toBuilder().stockLinked(stockLinked)
+                        .stockLinkedAt(stockLinked && !Boolean.TRUE.equals(s.getStockLinked()) ? now : s.getStockLinkedAt())
+                        .build())
+                .orElseGet(() -> TenantPurchaseSetting.builder().stockLinked(stockLinked)
+                        .stockLinkedAt(stockLinked ? now : null).build());
         tenantPurchaseSettingRepository.save(next);
         return new PurchaseSettingResponse(stockLinked);
     }
@@ -40,5 +47,12 @@ public class PurchaseSettingServiceImpl implements PurchaseSettingService {
         return tenantPurchaseSettingRepository.findFirstByOrderByIdAsc()
                 .map(TenantPurchaseSetting::getStockLinked)
                 .orElse(DEFAULT_STOCK_LINKED);
+    }
+
+    @Override
+    public LocalDateTime stockLinkedAt() {
+        return tenantPurchaseSettingRepository.findFirstByOrderByIdAsc()
+                .map(TenantPurchaseSetting::getStockLinkedAt)
+                .orElse(null);
     }
 }

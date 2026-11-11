@@ -14,12 +14,14 @@ import com.pms.repository.ProductRepository;
 import com.pms.repository.PurchaseRecordRepository;
 import com.pms.repository.StockMovementDateEditRepository;
 import com.pms.repository.StockMovementRepository;
+import com.pms.service.PurchaseSettingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -42,6 +44,7 @@ public class StockDailyServiceImpl implements StockDailyService {
     private final ProductRepository productRepository;
     private final LotLedgerService lotLedgerService;
     private final StockMovementDateEditRepository stockMovementDateEditRepository;
+    private final PurchaseSettingService purchaseSettingService;
 
     @Override
     public StockDailyView daily(LocalDate date) {
@@ -75,6 +78,9 @@ public class StockDailyServiceImpl implements StockDailyService {
                 .collect(Collectors.groupingBy(e -> e.getStockMovement().getId(), LinkedHashMap::new,
                         Collectors.mapping(e -> new StockDailyRowView.DateEdit(e.getEditedAt(), e.getEditedBy(),
                                 e.getOldMovedOn(), e.getNewMovedOn()), Collectors.toList())));
+        // FEATURE_2611_22 D11 · D16 · D35: [입고로 채우기] only while the stock link is on.
+        boolean linked = purchaseSettingService.isStockLinked();
+        LocalDateTime linkedAt = linked ? purchaseSettingService.stockLinkedAt() : null;
 
         List<StockDailyRowView> views = new ArrayList<>();
         for (StockMovement m : rows) {
@@ -127,7 +133,8 @@ public class StockDailyServiceImpl implements StockDailyService {
                     record == null || record.getReceipt() == null ? null : record.getReceipt().getId(),
                     shareViews, priced.unitPrices(), priced.priceFromBase(), m.isOpeningPriceEditable(),
                     source == null ? null : source.getId(), source == null ? null : source.getMovedOn(),
-                    sourcePriceEditable, editsByRow.getOrDefault(m.getId(), List.of())));
+                    sourcePriceEditable, editsByRow.getOrDefault(m.getId(), List.of()),
+                    linked && m.isFillableOutbound(linkedAt), m.isFilledLater()));
         }
 
         // D147: products with an undecided quantity left among that day's purchases.
@@ -159,7 +166,7 @@ public class StockDailyServiceImpl implements StockDailyService {
     }
 
     /**
-     * FEATURE_2611_21 D20: the lot has a value to fix in its window — a decided purchase or opening stock
+     * FEATURE_2611_21 D20: the lot has a value to fix in its window — a decided purchase, opening stock or 「기타」 intake
      * ({@link StockMovement#isPriceRetypable} · {@link StockMovement#isOpeningPriceEditable}), or an undecided lot of
      * which the outgoing row used at least one registered share.
      */

@@ -4,6 +4,8 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.TenantId;
 
+import java.time.LocalDateTime;
+
 /**
  * Tenant purchase settings (FEATURE_2610_09 / D65 · D69 · D72). One row per tenant.
  *
@@ -29,4 +31,11 @@ public class TenantPurchaseSetting extends BaseEntity {
     /** true = a purchase is also added to stock (D65). */
     @Column(name = "stock_linked", nullable = false)
     private Boolean stockLinked;
+
+    /**
+     * The last time the stock link was turned on (off -> on, FEATURE_2611_22 D11). null = not turned on since changeset
+     * 131-1 — an account that is on counts as on from the start (D16).
+     */
+    @Column(name = "stock_linked_at")
+    private LocalDateTime stockLinkedAt;
 }

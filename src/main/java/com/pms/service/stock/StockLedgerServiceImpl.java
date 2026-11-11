@@ -83,6 +83,16 @@ public class StockLedgerServiceImpl implements StockLedgerService {
 
         List<LotSlice> slices;
         if (type == StockMovementType.DISPOSAL || (type == StockMovementType.ADJUST && signed < 0)) {
+            // FEATURE_2611_22 D34 · D35 · D36: with the stock link on, never below the seller's on-hand balance or what
+            // is left of the seller's decided lots, whichever is smaller.
+            if (purchaseSettingService.isStockLinked()) {
+                long onHand = balances(product.getId(), seller.getId(), null).stream()
+                        .mapToLong(StockBalanceView::onHand).sum();
+                long limit = Math.min(onHand, lotLedgerService.ownLeft(product, seller));
+                if (Math.abs(signed) > limit) {
+                    throw new IllegalArgumentException("남은 재고 수량(" + limit + "개)보다 많습니다.");
+                }
+            }
             // FEATURE_2610_19 D50: the row seller's own lots, oldest first.
             slices = lotLedgerService.allocateOwn(product, seller, Math.abs(signed));
         } else if (type == StockMovementType.RETURN_IN && orderClaim.getOrderLine() != null) {

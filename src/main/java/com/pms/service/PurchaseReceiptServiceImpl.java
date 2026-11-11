@@ -28,6 +28,7 @@ import com.pms.service.cost.CostPropagationService;
 import com.pms.service.stock.BasePriceFillService;
 import com.pms.service.stock.LotLedgerService;
 import com.pms.service.stock.StockDateEditService;
+import com.pms.service.stock.StockFillService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -76,6 +77,7 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
     private final LotLedgerService lotLedgerService;
     private final BasePriceFillService basePriceFillService;
     private final StockDateEditService stockDateEditService;
+    private final StockFillService stockFillService;
 
     @Override
     @Transactional
@@ -112,8 +114,9 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
                 .build());
 
         // D89: every line belongs to the payer seller. D88: no debt is written here.
+        List<Long> lotIds = new ArrayList<>();
         for (ReceiptLineRequest line : request.lines()) {
-            purchaseListService.addPurchase(new PurchaseRecordRequest(
+            Long lotId = purchaseListService.addPurchase(new PurchaseRecordRequest(
                     line.productId(),             // productId
                     payer.getId(),                // sellerId
                     request.purchasedOn(),        // purchasedOn
@@ -121,9 +124,12 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
                     line.totalAmount(),           // totalAmount
                     line.unitPrice(),             // unitPrice
                     line.reflectToBasePrice(),    // reflectToBasePrice
-                    Boolean.TRUE), receipt);      // recordStock — the stock link setting decides (FEATURE_2610_09 D65)
+                    Boolean.TRUE), receipt).lotId(); // recordStock — the stock link setting decides (FEATURE_2610_09 D65)
+            if (lotId != null) {
+                lotIds.add(lotId);                // FEATURE_2611_22 D3 ①: the 「채울까요?」 window asks for these
+            }
         }
-        return new ReceiptCreateResult(receipt.getId());
+        return new ReceiptCreateResult(receipt.getId(), lotIds);
     }
 
     @Override
@@ -397,6 +403,7 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
         // PurchaseRecord only (D135 ① round 32).
         Set<Long> productIds = new LinkedHashSet<>();
         Map<Long, StockMovement> lots = new LinkedHashMap<>();
+        Set<Long> pricedLots = new LinkedHashSet<>();
         for (int index = 0; index < records.size(); index++) {
             PurchaseRecord record = records.get(index);
             PurchasePriceRequest.Line line = request.lines().get(index);
@@ -411,6 +418,7 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
             List<StockMovement> rows = stockMovementRepository.findByPurchaseRecordIdIn(List.of(record.getId()));
             stockMovementRepository.saveAll(rows.stream()       // FEATURE_2611_17 D22: a typed price drops 「미기입」
                     .map(m -> m.toBuilder().unitPrice(saved.getUnitPrice()).priceFromBaseAt(null).build()).toList());
+            rows.forEach(m -> pricedLots.add(m.getId()));
             if (latest) {
                 costPropagationService.updateBasePrice(saved);           // D3 — history PURCHASE_UPDATE
             }
@@ -418,6 +426,7 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
             productIds.add(record.getProduct().getId());
             if (record.getSourceMovement() != null) {
                 lots.putIfAbsent(record.getSourceMovement().getId(), record.getSourceMovement());
+                pricedLots.add(record.getSourceMovement().getId());
             }
         }
 
@@ -442,6 +451,7 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
         // D6: a retyped share re-splits its undecided lot, then the touched products' debts are rewritten.
         lots.values().forEach(lotLedgerService::resplit);
         productIds.forEach(lotLedgerService::rebuildDebts);
+        stockFillService.recostFilled(pricedLots);       // FEATURE_2611_22 D22 · D25: the orders those lots filled later
         return new ReceiptCreateResult(receiptId);
     }
 
@@ -558,9 +568,10 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
     }
 
     /**
-     * FEATURE_2611_17 D17 · D18: an opening-stock row takes the typed price (total → total / quantity); the registered
-     * price is filled only while it is empty (and the product's other empty prices follow it, D22). The debts are
-     * rewritten; the cost of orders that already went out stays (FEATURE_2611_16 D5).
+     * FEATURE_2611_17 D17 · D18: an opening-stock row — or an 「기타」 intake row, FEATURE_2611_22 D38 — takes the typed
+     * price (total → total / quantity); the registered price is filled only while it is empty (and the product's other
+     * empty prices follow it, D22). The debts are rewritten; the cost of orders that already went out stays
+     * (FEATURE_2611_16 D5), except the orders this lot filled later, which are costed again (FEATURE_2611_22 D22).
      */
     private void priceOpeningStock(StockMovement row, BigDecimal totalAmount, BigDecimal unitPrice) {
         BigDecimal unit = totalAmount != null
@@ -577,6 +588,7 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
         }
         stockMovementRepository.flush();
         lotLedgerService.rebuildDebts(productId);
+        stockFillService.recostFilled(List.of(row.getId()));
     }
 
     /** What of one undecided intake row no receipt took yet (D121 ①): its record minus the assigned records. */
@@ -650,6 +662,8 @@ public class PurchaseReceiptServiceImpl implements PurchaseReceiptService {
             lotLedgerService.resplit(intake);
         }
         touched.stream().map(m -> m.getProduct().getId()).distinct().forEach(lotLedgerService::rebuildDebts);
+        // FEATURE_2611_22 D25: the orders those intake rows filled later take the new share prices.
+        stockFillService.recostFilled(touched.stream().map(StockMovement::getId).toList());
     }
 
     /** 「영수증 없이 판매자 정하기」 · 「판매자 바꾸기」 seller — required, never back to 「미정」 (FEATURE_2610_19 D116 ⑤). */

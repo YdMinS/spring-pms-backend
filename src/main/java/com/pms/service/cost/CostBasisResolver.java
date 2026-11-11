@@ -22,25 +22,27 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * 라인 원가 스냅샷 (FEATURE_2609_28 / PLAN D20, 2609_29 D3 로 개정).
+ * Line cost snapshot (FEATURE_2609_28 / PLAN D20, revised by 2609_29 D3).
  *
- * <p><b>주문 라인이 실제로 나갈 때 그 시점 원가를 라인에 굽는 유일한 클래스.</b> 이후 매입가가 바뀌어도
- * 과거 손익이 흔들리지 않게 하는 것이 존재 이유다 — 리포트 시점에 {@code Product.price} 를 조인하면
- * 6월 매입가를 9월에 고칠 때 6월 순이익이 소급 변동하고, 그러면 리포트를 아무도 믿지 않는다.
+ * <p><b>The only class that bakes the cost of the moment an order line actually leaves into the line.</b> It exists so
+ * that a later purchase price change does not shake past profit — joining {@code Product.price} at report time would
+ * move June's net profit when June's purchase price is fixed in September, and then nobody trusts the report.
  *
- * <p>판정은 <b>물품 단위</b>다. 한 라인은 BOM 으로 여러 물품을 소진하므로 물품마다 등급·단가를 구하고,
- * 라인의 등급은 그중 <b>가장 낮은 등급</b>(가장 부정확한 쪽), 금액은 Σ(단가 × 소진 수량) 이다.
- * 3개 중 하나만 {@link CostBasis#LISTED} 여도 라인은 {@code LISTED} 다 — 평균으로 뭉개면 리포트가
- * 실제보다 정확해 보인다.
+ * <p>The decision is <b>per product</b>. One line uses several products through its BOM, so each product gets a grade
+ * and a unit price; the line's grade is the <b>lowest</b> of them (the least exact one) and its amount is
+ * Σ(unit price × quantity used). If only one of three is {@link CostBasis#LISTED}, the line is {@code LISTED} —
+ * averaging would make the report look more exact than it is.
  *
- * <p>🔴 <b>{@code PURCHASED} 등급은 없다.</b> 근거였던 {@code purchase_record → shopping_list_item}
- * 링크를 2609_29 가 드롭했다(매입은 이제 물품 × 판매자). 자세한 사정은 {@link CostBasis} javadoc.
+ * <p>🔴 <b>There is no {@code PURCHASED} grade.</b> The {@code purchase_record → shopping_list_item} link it rested on
+ * was dropped by 2609_29 (a purchase is now product × seller). See the {@link CostBasis} javadoc.
  *
- * <p>⚠️ 스냅샷은 <b>한 번만</b> 굽는다. 이미 값이 있으면 아무것도 하지 않는다 — 부분 출고마다 다시
- * 구우면 같은 라인의 원가가 출고 횟수만큼 흔들린다.
+ * <p>⚠️ The snapshot is baked <b>once</b>: when the line already has one, {@link #snapshot} does nothing — baking again
+ * on every partial outbound would shake the line's cost as many times as it ships. The one exception is
+ * {@link #refill} (FEATURE_2611_22 D10 · D20 · D22 · D25 · D37): a line whose outbound row got its lot later is costed
+ * again from scratch when it is filled and when the price of that lot (or share) is typed or filled later.
  *
- * <p>⚠️ 과거 라인을 배치로 백필하지 않는다. 그 시점 원가를 지금 알 수 없고, 지어낸 숫자가 리포트에
- * 들어가는 것이 빈칸보다 나쁘다.
+ * <p>⚠️ Past lines are never backfilled in a batch: their cost at that moment cannot be known now, and an invented
+ * number in a report is worse than a gap.
  */
 @Slf4j
 @Component
@@ -56,6 +58,12 @@ public class CostBasisResolver {
 
     /** 판정 결과 1건. {@code amount == null} = 단가를 하나도 못 구했다(0 이 아니다). */
     public record LineCost(CostBasis basis, BigDecimal amount) {}
+
+    /**
+     * Pieces of one product that a filled row took (FEATURE_2611_22 D10 · D25): {@code unitPrice} = the lot's or the
+     * share's unit price (null = empty) · {@code undecidedPart} = taken from the undecided part of an undecided lot.
+     */
+    public record FilledPiece(BigDecimal unitPrice, boolean undecidedPart, int quantity) {}
 
     /**
      * 첫 출고 시점에 원가를 굽는다. 이미 구워져 있으면 <b>건드리지 않는다</b>.
@@ -87,6 +95,27 @@ public class CostBasisResolver {
     }
 
     /**
+     * FEATURE_2611_22 D10 · D20 · D26: a line with a filled row costed again from scratch — {@code filled} pieces per
+     * product first (unit price → grade {@code LOT_PRICE}; an empty unit price or the undecided part → the registered
+     * price, grade {@code LISTED}), then {@code undecidedQty} pieces at the registered price, then the rest by the
+     * purchase rule. Nothing changes when every filled piece has an empty unit price and none is an undecided part.
+     */
+    public void refill(OrderLine line, List<OrderLineExpander.ExpandedProduct> products,
+                       Map<Long, List<FilledPiece>> filled, Map<Long, Integer> undecidedQty) {
+        boolean priced = filled.values().stream().flatMap(List::stream)
+                .anyMatch(piece -> piece.undecidedPart() || piece.unitPrice() != null);
+        if (!priced) {
+            return;
+        }
+        LineCost cost = resolve(line, products, filled, undecidedQty);
+        orderLineRepository.save(line.toBuilder()
+                .costBasis(cost.basis())
+                .costAmount(cost.amount())
+                .costSnapshotAt(LocalDateTime.now())
+                .build());
+    }
+
+    /**
      * 물품마다 등급·단가를 구해 라인 하나로 접는다.
      *
      * <p>⚠️ 단가를 못 구한 물품은 금액에 <b>기여하지 않고</b> 등급만 {@code LISTED} 로 끌어내린다.
@@ -102,14 +131,38 @@ public class CostBasisResolver {
      */
     LineCost resolve(OrderLine line, List<OrderLineExpander.ExpandedProduct> products,
                      Map<Long, Integer> undecidedQty) {
+        return resolve(line, products, Map.of(), undecidedQty);
+    }
+
+    private LineCost resolve(OrderLine line, List<OrderLineExpander.ExpandedProduct> products,
+                             Map<Long, List<FilledPiece>> filled, Map<Long, Integer> undecidedQty) {
         LocalDate orderedOn = orderedOn(line);
         Long sellerId = line.getOrder().getMarketplaceAccount().getSeller().getId();
         Map<Long, Product> productsById = loadProducts(products);
 
-        CostBasis worst = CostBasis.LATEST;
+        // FEATURE_2611_22 D21: LOT_PRICE > LATEST > LISTED — the line takes the lowest grade of its pieces.
+        CostBasis worst = filled.isEmpty() ? CostBasis.LATEST : CostBasis.LOT_PRICE;
         BigDecimal amount = null;
         for (OrderLineExpander.ExpandedProduct expanded : products) {
-            int undecided = Math.min(expanded.quantity(), undecidedQty.getOrDefault(expanded.productId(), 0));
+            int left = expanded.quantity();
+            for (FilledPiece piece : filled.getOrDefault(expanded.productId(), List.of())) {
+                int qty = Math.min(left, piece.quantity());
+                if (qty <= 0) {
+                    continue;
+                }
+                left -= qty;
+                BigDecimal unit = piece.undecidedPart() ? null : piece.unitPrice();
+                if (unit == null) {
+                    worst = CostBasis.LISTED;
+                    Product product = productsById.get(expanded.productId());
+                    unit = (product == null) ? null : product.getPrice();
+                }
+                if (unit != null) {
+                    BigDecimal part = unit.multiply(BigDecimal.valueOf(qty));
+                    amount = (amount == null) ? part : amount.add(part);
+                }
+            }
+            int undecided = Math.min(left, undecidedQty.getOrDefault(expanded.productId(), 0));
             if (undecided > 0) {
                 worst = CostBasis.LISTED;
                 Product product = productsById.get(expanded.productId());
@@ -119,11 +172,14 @@ public class CostBasisResolver {
                     amount = (amount == null) ? part : amount.add(part);
                 }
             }
-            int rest = expanded.quantity() - undecided;
+            int rest = left - undecided;
             if (rest <= 0) {
                 continue;
             }
             BigDecimal unitPrice = latestPurchasePrice(expanded.productId(), sellerId, orderedOn);
+            if (unitPrice != null && worst == CostBasis.LOT_PRICE) {
+                worst = CostBasis.LATEST;
+            }
             if (unitPrice == null) {
                 worst = CostBasis.LISTED;
                 Product product = productsById.get(expanded.productId());

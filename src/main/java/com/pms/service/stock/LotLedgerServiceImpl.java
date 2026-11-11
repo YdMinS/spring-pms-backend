@@ -89,14 +89,30 @@ public class LotLedgerServiceImpl implements LotLedgerService {
         if (!purchaseSettingService.isStockLinked()) {
             return List.of(new LotSlice(null, seller, quantity, null));
         }
-        Ledger ledger = load(product.getId());
-        List<Piece> own = new ArrayList<>();
-        for (Piece piece : ledger.pieces(null)) {
-            // D116 ③ · D131: a disposal never uses an undecided lot, not even an owner's share of one.
-            if (piece.available > 0 && !isUndecided(piece.lot) && sameSeller(piece.owner, seller)) own.add(piece);
+        return take(ownPieces(load(product.getId()), seller), quantity, seller);
+    }
+
+    @Override
+    public int ownLeft(Product product, Seller seller) {
+        return ownPieces(load(product.getId()), seller).stream().mapToInt(Piece::available).sum();
+    }
+
+    @Override
+    public List<LotLeft> fillLots(Long productId) {
+        Ledger ledger = load(productId);
+        Map<Long, Integer> flow = new HashMap<>();
+        for (StockMovement row : ledger.rows) {
+            if (row.getSourceMovement() != null) {
+                flow.merge(row.getSourceMovement().getId(), row.getQuantity(), Integer::sum);
+            }
         }
-        own.sort(Comparator.comparing((Piece p) -> p.lot.getMovedOn()).thenComparing(p -> p.lot.getId()));
-        return take(own, quantity, seller);
+        List<LotLeft> lots = new ArrayList<>();
+        for (StockMovement lot : ledger.rows) {
+            int left = lot.isFillLot() ? lot.getQuantity() + flow.getOrDefault(lot.getId(), 0) : 0;
+            if (left >= 1) lots.add(new LotLeft(lot, left));
+        }
+        lots.sort(Comparator.comparing((LotLeft l) -> l.lot().getMovedOn()).thenComparing(l -> l.lot().getId()));
+        return lots;
     }
 
     @Override
@@ -229,7 +245,7 @@ public class LotLedgerServiceImpl implements LotLedgerService {
             theirs.add(null);   // null = the undecided part
             theirs.sort(Comparator.comparing((PurchaseRecord s) -> s == null ? lot.getUnitPrice()
                                     : s.getUnitPrice() != null ? s.getUnitPrice()
-                                    : maxPricedBefore(ledger, s.getSeller(), out.getId()),
+                                    : maxPricedBefore(ledger, s.getSeller(), cutoff(out, lot)),
                             Comparator.nullsLast(Comparator.reverseOrder()))
                     .thenComparing(s -> s == null ? 1 : 0)
                     .thenComparing(s -> rankOf(rank, s == null ? null : s.getSeller()))
@@ -274,7 +290,7 @@ public class LotLedgerServiceImpl implements LotLedgerService {
             if (!isUndecided(lot)) {
                 if (lot.getSeller() != null && !sameSeller(lot.getSeller(), borrower)) {
                     BigDecimal unit = lot.getUnitPrice() != null ? lot.getUnitPrice()
-                            : maxPricedBefore(ledger, lot.getSeller(), out.getId());
+                            : maxPricedBefore(ledger, lot.getSeller(), cutoff(out, lot));
                     debts.add(debt(out, lot, null, borrower, lot.getSeller(), -out.getQuantity(), unit));
                 }
                 continue;
@@ -283,7 +299,7 @@ public class LotLedgerServiceImpl implements LotLedgerService {
                 PurchaseRecord share = usage.getShareRecord();
                 if (share == null || sameSeller(share.getSeller(), borrower)) continue;
                 BigDecimal unit = share.getUnitPrice() != null ? share.getUnitPrice()
-                        : maxPricedBefore(ledger, share.getSeller(), out.getId());
+                        : maxPricedBefore(ledger, share.getSeller(), cutoff(out, lot));
                 debts.add(debt(out, lot, share, borrower, share.getSeller(), usage.getQuantity(), unit));
             }
         }
@@ -338,7 +354,7 @@ public class LotLedgerServiceImpl implements LotLedgerService {
             boolean unknown = false;
             if (!isUndecided(lot)) {
                 BigDecimal unit = lot.getUnitPrice() != null ? lot.getUnitPrice()
-                        : (lot.getSeller() == null ? null : maxPricedBefore(ledger, lot.getSeller(), rowId));
+                        : (lot.getSeller() == null ? null : maxPricedBefore(ledger, lot.getSeller(), cutoff(out, lot)));
                 if (unit == null) unknown = true;
                 else parts.add(new StockDailyRowView.UnitCount(unit, Math.abs(out.getQuantity())));
                 fromBase = lot.getUnitPrice() != null && lot.isPriceFromBase();
@@ -347,7 +363,7 @@ public class LotLedgerServiceImpl implements LotLedgerService {
                     PurchaseRecord share = usage.getShareRecord();
                     BigDecimal unit = share == null ? lot.getUnitPrice()
                             : (share.getUnitPrice() != null ? share.getUnitPrice()
-                            : maxPricedBefore(ledger, share.getSeller(), rowId));
+                            : maxPricedBefore(ledger, share.getSeller(), cutoff(out, lot)));
                     if (unit == null) {
                         unknown = true;
                         break;
@@ -401,6 +417,24 @@ public class LotLedgerServiceImpl implements LotLedgerService {
         if (left == onHand) return total.setScale(2, RoundingMode.HALF_UP);                // D30 ④ ⑤
         return total.multiply(BigDecimal.valueOf(onHand))
                 .divide(BigDecimal.valueOf(left), 2, RoundingMode.HALF_UP);                // D30 ④ ⑤
+    }
+
+    /** D116 ③ · D131: a seller's own pieces of decided lots, oldest first — a disposal never uses an undecided lot. */
+    private List<Piece> ownPieces(Ledger ledger, Seller seller) {
+        List<Piece> own = new ArrayList<>();
+        for (Piece piece : ledger.pieces(null)) {
+            if (piece.available > 0 && !isUndecided(piece.lot) && sameSeller(piece.owner, seller)) own.add(piece);
+        }
+        own.sort(Comparator.comparing((Piece p) -> p.lot.getMovedOn()).thenComparing(p -> p.lot.getId()));
+        return own;
+    }
+
+    /**
+     * FEATURE_2611_22 D33: the moment D136 ③ looks just before for an outgoing row = the later of the row and its lot —
+     * a row filled later from a newer lot looks just before that lot; every other row looks just before itself.
+     */
+    private static Long cutoff(StockMovement out, StockMovement lot) {
+        return Math.max(out.getId(), lot.getId());
     }
 
     private List<LotSlice> take(List<Piece> order, int quantity, Seller fallbackSeller) {

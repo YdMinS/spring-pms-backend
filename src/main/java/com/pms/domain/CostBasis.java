@@ -5,7 +5,8 @@ package com.pms.domain;
  * Priority order — the first that applies wins.
  *
  * <p>The user never classifies anything: the grade falls out of what data existed when the goods
- * actually left. Cost type is a property of what happened to THIS line, not of the product.
+ * actually left, or when the lot of a row that left without one was filled later (FEATURE_2611_22 D10). Cost type is
+ * a property of what happened to THIS line, not of the product.
  *
  * <p>🔴 <b>{@code PURCHASED} was removed before this enum was ever written.</b> That grade meant
  * "a purchase record is attached to this very line — zero error", and it rested on
@@ -17,6 +18,12 @@ package com.pms.domain;
  * being an estimate makes that decision on a lie.
  */
 public enum CostBasis {
+
+    /**
+     * The order outbound row got its lot later and this cost uses that lot's unit price (or its share's) —
+     * FEATURE_2611_22 D10 · D21. Only a filled line carries it; the strongest grade: the price of the goods that left.
+     */
+    LOT_PRICE,
 
     /**
      * The seller of this order line has purchase history for the product — the most recent priced

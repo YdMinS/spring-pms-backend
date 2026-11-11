@@ -18,7 +18,8 @@ package com.pms.service.stock;
  *   <li>{@code ProductServiceImpl.updateProduct} — 「상품 수정」</li>
  *   <li>{@code SellerDebtServiceImpl.fillUnitPrice} — a lot price typed on the debt screen filled it</li>
  *   <li>{@code ProductMergeService.merge} — the merged product took a price</li>
- *   <li>{@code PurchaseReceiptServiceImpl.editDailyRow} — an opening-stock price typed in the daily row popup (D17)</li>
+ *   <li>{@code PurchaseReceiptServiceImpl.editDailyRow} — an opening-stock or 「기타」 intake price typed in the daily row
+ *       popup (D17 · FEATURE_2611_22 D38)</li>
  * </ol>
  * {@link #fillAllEmptyPrices} is the deploy-time fill of the rows that are empty today
  * ({@code UnitPriceFromBaseBackfillRunner}, once per tenant at start-up — idempotent, a filled row is never empty
@@ -33,15 +34,16 @@ package com.pms.service.stock;
  * }</pre>
  *
  * <p>⚠️ The debts of the product are rewritten ({@code LotLedgerService.rebuildDebts}); the cost of orders that already
- * went out is never recalculated (FEATURE_2611_16 D5).
+ * went out is never recalculated (FEATURE_2611_16 D5), except the orders a filled lot filled later, which are costed
+ * again with the filled price ({@code StockFillService.recostFilled}, FEATURE_2611_22 D37).
  * <p>❌ A minus purchase row is never filled (FEATURE_2610_19 D135 ③), and nothing here moves {@code Product.price}.
  */
 public interface BasePriceFillService {
 
     /**
      * The product has a registered price: fill its purchases (quantity &gt; 0) and lots without a unit price, mark them
-     * 「미기입」, re-split the undecided lots of the filled shares and rewrite the product's debts. No registered price
-     * or nothing empty → nothing changes.
+     * 「미기입」, re-split the undecided lots of the filled shares, rewrite the product's debts and cost again the orders
+     * those lots filled later (FEATURE_2611_22 D37). No registered price or nothing empty → nothing changes.
      *
      * @return how many purchases and lots were filled
      */

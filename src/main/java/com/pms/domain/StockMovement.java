@@ -25,7 +25,7 @@ import java.time.LocalDateTime;
  * {@code PurchaseListService -> StockLedgerService} is the one opened path. A receipt header edit
  * (FEATURE_2610_18 D101) writes no row — it only moves the rows of its lines, and every row that used them
  * (FEATURE_2610_19 D149), to the new payer seller, and the rows of its lines to a new purchase day
- * (FEATURE_2611_21 D26).
+ * (FEATURE_2611_21 D26). Filling an empty source later (FEATURE_2611_22 D3) is a person's [채우기] click too.
  *
  * <p>⚠️ {@code movedOn} (the day a person confirmed the goods moved) and {@code createdAt} (the audit
  * timestamp of the row) are <b>different</b>. Yesterday's delivery can be entered this morning.
@@ -33,9 +33,10 @@ import java.time.LocalDateTime;
  * <p>⚠️ No UNIQUE constraint: the same product moves many times a day and corrections pile up as
  * extra rows. Negative balances are allowed on purpose — a negative number means "an entry is
  * missing", which is a signal, not an error to reject (rejecting it makes people stop using the
- * ledger at all).
+ * ledger at all). An order outbound is never rejected for it; with the stock link on, a disposal or an adjust − is
+ * rejected when it takes more than is left (FEATURE_2611_22 D34).
  *
- * <p>⚠️ ddl-auto=validate (dev/prod) → the @Column definitions below must match changesets 071 + 078 + 122-1 + 129-1.
+ * <p>⚠️ ddl-auto=validate (dev/prod) → the @Column definitions below must match changesets 071 + 078 + 122-1 + 129-1 + 131-1.
  *
  * @see StockMovementType movement kinds and their sign
  * @see StockReason reason codes and which type each belongs to
@@ -114,7 +115,8 @@ public class StockMovement extends BaseEntity {
      *
      * <p>FEATURE_2611_17: an ETC stock-in without a typed price = the {@code Product.price} snapshot (D25); an empty
      * lot price is filled from {@code Product.price} once the product has one (D22) — both set
-     * {@link #priceFromBaseAt}. An opening-stock price can be typed again in the daily row popup (D17).
+     * {@link #priceFromBaseAt}. An opening-stock or 「기타」 intake price can be typed again in the daily row popup (D17 ·
+     * FEATURE_2611_22 D38).
      *
      * <p>null is a legitimate value meaning "amount unknown" — never substituted with 0.
      */
@@ -142,7 +144,8 @@ public class StockMovement extends BaseEntity {
     /**
      * The lot (incoming row) this row used (FEATURE_2610_19 D42): an outbound, disposal or adjust− row takes goods
      * out of it, a matched return row puts goods back into it (D139 ②). null = no lot was used (D48 ③) or the row is
-     * itself a lot. Written once and never re-pointed (D125).
+     * itself a lot. Written once and never re-pointed (D125); an order outbound row without one may get it once later
+     * ({@code StockFillService}, FEATURE_2611_22 D9), then it stays.
      */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "source_movement_id")
@@ -162,6 +165,17 @@ public class StockMovement extends BaseEntity {
      */
     @Column(name = "price_from_base_at")
     private LocalDateTime priceFromBaseAt;
+
+    /**
+     * Set when this order outbound row got its lot later — 「○월 ○일 입고로 나중에 채움」 (FEATURE_2611_22 D9). null = the
+     * row was written with its lot, or still has none.
+     */
+    @Column(name = "filled_at")
+    private LocalDateTime filledAt;
+
+    /** Who filled it (authentication principal = email, FEATURE_2611_22 D9); null with {@link #filledAt}. */
+    @Column(name = "filled_by", length = 100)
+    private String filledBy;
 
     /**
      * The day a person confirmed the goods moved. NOT the audit timestamp. An admin may correct it later in
@@ -198,12 +212,38 @@ public class StockMovement extends BaseEntity {
     }
 
     /**
-     * An opening-stock row whose unit price the daily row popup may set (FEATURE_2611_17 D5 · D17): a stock-in of
-     * 「기초재고」 with a decided seller, even when it already has a price.
+     * An opening-stock or 「기타」 intake row whose unit price the daily row popup may set (FEATURE_2611_17 D5 · D17 ·
+     * FEATURE_2611_22 D38): a stock-in of 「기초재고」 or 「기타」 with a decided seller, even when it already has a price.
      */
     public boolean isOpeningPriceEditable() {
-        return movementType == StockMovementType.STOCK_IN && reason == StockReason.OPENING
+        return movementType == StockMovementType.STOCK_IN
+                && (reason == StockReason.OPENING || reason == StockReason.ETC)
                 && quantity != null && quantity > 0 && sourceMovement == null && seller != null;
+    }
+
+    /**
+     * A lot that may fill an empty order outbound row (FEATURE_2611_22 D4 · D18): a stock-in (purchase, opening, free,
+     * etc.) or an adjust +, not a return and not a return into another lot.
+     */
+    public boolean isFillLot() {
+        boolean incoming = movementType == StockMovementType.STOCK_IN || movementType == StockMovementType.ADJUST;
+        return incoming && quantity != null && quantity > 0 && sourceMovement == null;
+    }
+
+    /**
+     * An order outbound row still without a lot that may be filled (FEATURE_2611_22 D11 · D16 · D28): written at or
+     * after {@code stockLinkedAt}, the last time the stock link was turned on (null = on from the start). The caller
+     * checks that the stock link is on now.
+     */
+    public boolean isFillableOutbound(LocalDateTime stockLinkedAt) {
+        return movementType == StockMovementType.STOCK_OUT && quantity != null && quantity < 0
+                && sourceMovement == null && orderLine != null
+                && (stockLinkedAt == null || (getCreatedAt() != null && !getCreatedAt().isBefore(stockLinkedAt)));
+    }
+
+    /** The row got its lot later (FEATURE_2611_22 D9). */
+    public boolean isFilledLater() {
+        return filledAt != null;
     }
 
     /** Whether the unit price was filled from the registered price — the 「미기입」 mark (FEATURE_2611_17 D22). */

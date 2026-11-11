@@ -112,7 +112,10 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
     List<OrderLine> findOutboundTargets(@Param("statuses") Collection<OrderStatus> statuses,
                                         @Param("sellerId") Long sellerId);
 
-    /** 출고 확인 대상 단건 — 전개(옵션·마스터 옵션)와 판매자 유도에 필요한 것을 전부 즉시 로딩한다. */
+    /**
+     * One order line with everything its expansion (option · master option) and its seller need, loaded at once — the
+     * outbound confirm, and the cost of a line whose outbound row got its lot later (FEATURE_2611_22 D10).
+     */
     @EntityGraph(attributePaths = {"order", "order.marketplaceAccount", "order.marketplaceAccount.seller",
             "productListingOption", "productListingOption.masterProductOption"})
     Optional<OrderLine> findWithListingOptionById(Long id);

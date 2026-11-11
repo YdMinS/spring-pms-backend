@@ -114,14 +114,17 @@ public class OrderLine extends BaseEntity {
     private BigDecimal platformDiscountAmount;
 
     /**
-     * 원가 스냅샷 3컬럼 — 물건이 <b>실제로 나갈 때</b> 굽는다 (FEATURE_2609_28 / PLAN D20, changeset 081).
+     * The three cost snapshot columns — baked when the goods <b>actually leave</b> (FEATURE_2609_28 / PLAN D20,
+     * changeset 081).
      *
-     * <p>🔴 리포트 시점에 {@code Product.price} 나 매입 이력을 조인해 과거 손익을 계산하지 않는다.
-     * 6월 매입가를 9월에 고치면 6월 리포트 숫자가 달라지고, 그러면 아무도 리포트를 믿지 않는다.
+     * <p>🔴 Past profit is never computed by joining {@code Product.price} or the purchase history at report time. If
+     * June's purchase price is fixed in September, June's report changes, and then nobody trusts the report.
      *
-     * <p>⚠️ 전부 nullable 이다. 값이 비었다는 것은 <b>아직 안 나갔다</b>는 뜻이고 그것이 정상이다.
-     * 첫 {@code STOCK_OUT} 에서만 굽고 두 번째 출고에서 <b>덮지 않는다</b> — 부분 출고마다 다시 구우면
-     * 같은 라인의 원가가 출고 횟수만큼 흔들린다. 출고 뒤 취소·반품에도 되돌리지 않는다.
+     * <p>⚠️ All nullable. An empty value means the line <b>has not left yet</b>, which is normal. Baked on the first
+     * {@code STOCK_OUT} only and <b>not overwritten</b> by the second outbound — baking again on every partial outbound
+     * would shake the line's cost as many times as it ships. Not reverted by a cancel or return after the outbound
+     * either. The one exception: a line whose outbound row got its lot later is costed again from scratch
+     * ({@code CostBasisResolver.refill}, FEATURE_2611_22 D10 · D20).
      */
     @Enumerated(EnumType.STRING)
     @Column(name = "cost_basis", length = 20)
