@@ -82,6 +82,7 @@ public class InquiryUpserter {
                     .itemName(itemName)
                     .content(record.content())
                     .category(record.category())
+                    .title(record.title())
                     .status(record.status())
                     .platformStatus(record.platformStatus())
                     .inquiredAt(record.inquiredAt())
@@ -122,6 +123,7 @@ public class InquiryUpserter {
                 .itemName(resolvedItemName)
                 .content(record.content())
                 .category(record.category())
+                .title(record.title() != null ? record.title() : existing.getTitle())
                 .status(record.status())
                 .platformStatus(record.platformStatus())
                 .answeredAt(record.answeredAt())
@@ -139,6 +141,7 @@ public class InquiryUpserter {
                 || !Objects.equals(existing.getItemName(), itemName)
                 || !Objects.equals(existing.getContent(), record.content())
                 || !Objects.equals(existing.getCategory(), record.category())
+                || (record.title() != null && !Objects.equals(existing.getTitle(), record.title()))
                 || existing.getStatus() != record.status()
                 || !Objects.equals(existing.getPlatformStatus(), record.platformStatus())
                 || !Objects.equals(existing.getAnsweredAt(), record.answeredAt());

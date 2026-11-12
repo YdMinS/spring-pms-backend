@@ -12,7 +12,8 @@ import java.util.List;
  *
  * Parsers are <b>fully separate</b> per type (the response schemas share not one field), but they all return this
  * one type — keeping only the stored shape the same is the core of D1·D3. 11st fills it from Q&A 1626 and urgent
- * notices 1796 (FEATURE_2610_17 / D16 · D26).
+ * notices 1796 (FEATURE_2610_17 / D16 · D26). LotteON fills it from Q&A 99 · seller inquiries 179 · seller contacts 144
+ * · non-receipt reports 68, and only its seller contacts carry a {@code title} (FEATURE_2611_23 / D62 · R44).
  *
  * <p>🔴 Do not add buyer phone / email fields (D13). Call-center (and 11st) responses carry them, but they are not kept.
  *
@@ -21,6 +22,8 @@ import java.util.List;
  * @param itemName          nullable — Coupang product Q&A has none and is filled by the cell link (D15); 11st sends prdNm
  * @param category          nullable — Coupang call-center receiptCategory raw value; 11st leaves it null
  * @param platformStatus    raw status (kept without normalization loss, D7)
+ * @param title             nullable — LotteON seller contact {@code ctctTtl} (first 100 characters), the title of its
+ *                          146 answer; never in a response (FEATURE_2611_23 / D62)
  */
 public record InquiryRecord(
         InquiryType type,
@@ -35,7 +38,17 @@ public record InquiryRecord(
         String platformStatus,
         LocalDateTime inquiredAt,
         LocalDateTime answeredAt,
-        List<ReplyRecord> replies) {
+        List<ReplyRecord> replies,
+        String title) {
+
+    /** Without a title — Coupang · 11st (FEATURE_2611_23 / R44). */
+    public InquiryRecord(InquiryType type, String externalInquiryId, String externalItemId, String externalOrderId,
+                         String externalProductId, String itemName, String content, String category,
+                         InquiryStatus status, String platformStatus, LocalDateTime inquiredAt,
+                         LocalDateTime answeredAt, List<ReplyRecord> replies) {
+        this(type, externalInquiryId, externalItemId, externalOrderId, externalProductId, itemName, content, category,
+                status, platformStatus, inquiredAt, answeredAt, replies, null);
+    }
 
     /**
      * 답변 1건.

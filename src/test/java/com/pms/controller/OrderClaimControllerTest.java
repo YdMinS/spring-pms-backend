@@ -111,6 +111,6 @@ class OrderClaimControllerTest extends BaseIntegrationTest {
                 "R-1", "O-1", "양말", 2, "CHANGEMIND", "단순변심", "CUSTOMER", 3000,
                 "INV-9", "CJGLS", "LOCAL", "수기관리", null, null, "홍길동",
                 LocalDateTime.of(2026, 9, 1, 10, 0),
-                5L, "테스트셀러", "쿠팡본점", 10L, true, List.of());
+                5L, "테스트셀러", "쿠팡본점", 10L, true, List.of(), null);
     }
 }

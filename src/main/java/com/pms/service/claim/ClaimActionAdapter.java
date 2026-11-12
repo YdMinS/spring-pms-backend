@@ -6,6 +6,7 @@ import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.OrderClaim;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -21,6 +22,8 @@ import java.util.Set;
  * <p>조회는 서비스의 일이고 어댑터는 <b>받은 것으로 판정·조립만</b> 한다. 그래서 {@code execute} 가
  * {@code siblings} 를, {@code availableActions} 가 {@code alreadySucceeded} 를 인자로 받는다 —
  * 어댑터가 다시 조회하면 "누가 형제를 아는가"가 두 곳이 된다.
+ * Exception: LotteON reads and writes its own table {@code lotteon_claim} (FEATURE_2611_23 / R36 · R37) — siblings and success records are
+ * still passed in by the service.
  */
 public interface ClaimActionAdapter {
 
@@ -46,4 +49,24 @@ public interface ClaimActionAdapter {
     ClaimActionOutcome execute(MarketplaceAccount account,
                                List<OrderClaim> siblings,
                                ClaimActionCommand command);
+
+    /**
+     * Actions the service lets through again after a success (FEATURE_2611_23 / D80) — the 409 「이미 처리된 접수입니다」
+     * guard is skipped for these and only the {@link #availableActions} check decides.
+     *
+     * <p>Default = empty (today's behavior — Coupang and 11st unchanged). LotteON = hold / release.
+     */
+    default Set<ClaimAction> repeatableActions() {
+        return Set.of();
+    }
+
+    /**
+     * Status side notes of these claims, claim id → text, for {@code OrderClaimResponse.statusNote} (FEATURE_2611_23 /
+     * D79). A claim without a note is absent.
+     *
+     * <p>Default = empty (today's behavior — no note). LotteON = 「보류 중」 while on hold.
+     */
+    default Map<Long, String> statusNotes(List<OrderClaim> claims) {
+        return Map.of();
+    }
 }

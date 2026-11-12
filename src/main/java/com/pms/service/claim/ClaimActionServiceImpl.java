@@ -90,7 +90,8 @@ public class ClaimActionServiceImpl implements ClaimActionService {
 
         // 1) 중복 가드는 접수 단위다(D6) — 형제 라인 중 하나라도 성공했으면 재전송하지 않는다.
         //    실패 기록은 재시도를 막지 않는다.
-        if (orderClaimActionRepository
+        //    FEATURE_2611_23 / D80: an action the adapter calls repeatable (LotteON hold / release) skips this guard.
+        if (!adapter.repeatableActions().contains(action) && orderClaimActionRepository
                 .existsByOrderClaim_IdInAndActionAndSucceededTrue(siblingIds, action)) {
             throw new BusinessException("이미 처리된 접수입니다", HttpStatus.CONFLICT);
         }
@@ -193,6 +194,23 @@ public class ClaimActionServiceImpl implements ClaimActionService {
             result.put(claim.getId(), adapter.get().availableActions(claim, succeeded));
         }
         return result;
+    }
+
+    @Override
+    public Map<Long, String> statusNotes(List<OrderClaim> claims) {
+        if (claims.isEmpty()) {
+            return Map.of();
+        }
+        // No ADMIN check — the note is part of what everyone reads (D79).
+        Map<Platform, List<OrderClaim>> byPlatform = new LinkedHashMap<>();
+        for (OrderClaim claim : claims) {
+            byPlatform.computeIfAbsent(claim.getPlatform(), k -> new ArrayList<>()).add(claim);
+        }
+        Map<Long, String> notes = new HashMap<>();
+        for (Map.Entry<Platform, List<OrderClaim>> entry : byPlatform.entrySet()) {
+            resolve(entry.getKey()).ifPresent(adapter -> notes.putAll(adapter.statusNotes(entry.getValue())));
+        }
+        return notes;
     }
 
     /**

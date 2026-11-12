@@ -46,6 +46,8 @@ public record ClaimActionRequest(
                 requireText(rejectCode, "사유를 선택하세요");
                 requireText(reasonText, "사유는 필수입니다");
             }
+            // FEATURE_2611_23 / D78: text only — rejectCode is not read.
+            case REASON_TEXT -> requireText(reasonText, "사유는 필수입니다");
             case NONE -> {
                 // 추가 입력 없음 — 여분 필드가 실려 와도 무시한다.
             }

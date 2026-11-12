@@ -30,7 +30,13 @@ public class InquiryTypeCatalog {
             Platform.ELEVENST, List.of(
                     new InquiryTypeCatalogResponse.Option(InquiryType.PRODUCT_QNA, "상품 Q&A"),
                     new InquiryTypeCatalogResponse.Option(InquiryType.CALL_CENTER, "긴급알리미"),
-                    new InquiryTypeCatalogResponse.Option(InquiryType.NON_DELIVERY, "상품 미도착")));
+                    new InquiryTypeCatalogResponse.Option(InquiryType.NON_DELIVERY, "상품 미도착")),
+            // FEATURE_2611_23 / D31: LotteON product Q&A, seller inquiries, seller contacts and non-receipt reports.
+            Platform.LOTTEON, List.of(
+                    new InquiryTypeCatalogResponse.Option(InquiryType.PRODUCT_QNA, "상품 Q&A"),
+                    new InquiryTypeCatalogResponse.Option(InquiryType.SELLER_INQUIRY, "판매자 문의"),
+                    new InquiryTypeCatalogResponse.Option(InquiryType.CALL_CENTER, "판매자 연락"),
+                    new InquiryTypeCatalogResponse.Option(InquiryType.NON_DELIVERY, "미수령 신고")));
 
     /**
      * 주어진 플랫폼들의 지원 유형 목록. 아는 플랫폼만 담는다(모르는 플랫폼은 조용히 빠진다) —

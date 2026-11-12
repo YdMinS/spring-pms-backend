@@ -97,6 +97,9 @@ public class CustomerInquiry extends BaseEntity {
     @Column(length = 100)
     private String category;                        // receiptCategory 원문 — 고객센터 전용
 
+    @Column(name = "title", length = 100)
+    private String title;                           // LotteON seller contact original title (D62) — not in any response
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private InquiryStatus status;                   // 정규화 상태 (§3.1)

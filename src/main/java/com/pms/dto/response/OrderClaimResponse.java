@@ -34,6 +34,10 @@ import java.util.List;
  *
  * {@code accountAlias} is the sales channel alias, the material of the list screen's 「판매처」 text
  * (FEATURE_2611_24 / D13) — the account is already read by the query graph.
+ *
+ * {@code statusNote} is the marketplace-neutral status side note (FEATURE_2611_23 / D79) — LotteON 「보류 중」 while the
+ * return / exchange is on hold, otherwise (and for Coupang · 11st) null. The screens draw it next to the status, as
+ * given, only when present. Everyone with read access gets it; it comes from {@code ClaimActionService.statusNotes}.
  */
 public record OrderClaimResponse(
         Long id,
@@ -63,5 +67,6 @@ public record OrderClaimResponse(
         String accountAlias,
         Long orderItemId,
         boolean linked,
-        List<ClaimActionOption> availableActions) {
+        List<ClaimActionOption> availableActions,
+        String statusNote) {
 }

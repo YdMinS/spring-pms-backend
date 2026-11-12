@@ -51,6 +51,33 @@ public final class LotteonPaths {
     public static final String SELLER_CANCEL = "/v1/openapi/claim/v1/cancellationOpenApi/slrDirectCnclProc";
     /** [138] shipping appointment date inform (FEATURE_2611_23 / D26). */
     public static final String DELIVERY_APPOINTMENT = "/v1/openapi/delivery/v1/SellerDeliveryAppointmentInform";
+    /** [51] return request list (FEATURE_2611_23 / D27). */
+    public static final String RETURN_LIST = "/v1/openapi/claim/v1/returningOpenApi/returnRequestSearch";
+    /** [67] return withdrawal list (FEATURE_2611_23 / D27). */
+    public static final String RETURN_WITHDRAW_LIST = "/v1/openapi/claim/v1/returningOpenApi/returnWithdrawSearch";
+    /** [69] exchange request list (FEATURE_2611_23 / D27). */
+    public static final String EXCHANGE_LIST = "/v1/openapi/claim/v1/exchangeOpenApi/exchangeSearch";
+    /** [70] exchange withdrawal list (FEATURE_2611_23 / D27). */
+    public static final String EXCHANGE_WITHDRAW_LIST = "/v1/openapi/claim/v1/exchangeOpenApi/exchangeWithdrawSearch";
+    /** [141] retrieval exception (hold 03 · release 09) inform (FEATURE_2611_23 / D28 · D45). */
+    public static final String RETRIEVAL_EXCEPTION = "/v1/openapi/delivery/v1/SellerRetrievalExceptionInform";
+    /** [99] product Q&A list (FEATURE_2611_23 / D31 · D83). */
+    public static final String QNA_LIST = "/v1/openapi/product/v1/product/qna/list";
+    /** [100] product Q&A answer (FEATURE_2611_23 / D31). */
+    public static final String QNA_REPLY = "/v1/openapi/product/v1/product/qna/reply";
+    /** [179] seller inquiry list (FEATURE_2611_23 / D31 · D81). */
+    public static final String SELLER_INQUIRY_LIST = "/v1/openapi/customer/v1/getSellerInquiryList";
+    /** [181] seller inquiry answer (FEATURE_2611_23 / D31 · D81). */
+    public static final String SELLER_INQUIRY_REPLY = "/v1/openapi/customer/v1/updateSellerInquiry";
+    /** [144] seller contact list (FEATURE_2611_23 / D31 · D81 · D82). */
+    public static final String SELLER_CONTACT_LIST = "/v1/openapi/customer/v1/getSellerContactList";
+    /** [146] seller contact answer (FEATURE_2611_23 / D31 · D81). */
+    public static final String SELLER_CONTACT_REPLY = "/v1/openapi/customer/v1/updateSellerContact";
+    /** [68] non-receipt report list (FEATURE_2611_23 / D31 · D66). */
+    public static final String NON_RECEIPT_LIST = "/v1/openapi/claim/v1/nonReceiptDeclareOpenApi/noReceiveSearch";
+    /** [66] non-receipt report withdrawal request (FEATURE_2611_23 / D31). */
+    public static final String NON_RECEIPT_WITHDRAW =
+            "/v1/openapi/claim/v1/nonReceiptDeclareOpenApi/noReceiveCancelReq";
 
     private LotteonPaths() {
     }
