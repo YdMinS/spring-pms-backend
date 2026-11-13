@@ -2,6 +2,7 @@ package com.pms.service.listing;
 
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingMarketImage;
+import com.pms.domain.ListingMarketValueGroup;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
@@ -37,6 +38,7 @@ import org.w3c.dom.Element;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -375,6 +377,15 @@ public class ElevenstListingAdapter implements ListingChannel {
     }
 
     /**
+     * FEATURE_2611_27 / D29: 11st sends the product notice and the shipping fields from the listing's own values; it
+     * sends no attribute value and no search tag.
+     */
+    @Override
+    public Set<ListingMarketValueGroup> marketValueGroups() {
+        return EnumSet.of(ListingMarketValueGroup.ATTRIBUTES, ListingMarketValueGroup.SHIPPING);
+    }
+
+    /**
      * FEATURE_2611_11 / D12 · D19 · D35 · D39: 1620 gives the one product name ({@code prdNm} → our 「노출상품명」, no
      * 「등록상품명」) and the detail ({@code htmlDetail}); the photos come from the public OpenAPI with the company key —
      * main {@code BasicImage} + additional {@code AddImage1} ~ {@code 3}. A failed photo read is not an error: the
@@ -412,10 +423,18 @@ public class ElevenstListingAdapter implements ListingChannel {
                 imageNotice = PHOTO_READ_FAILED;
             }
         }
+        // FEATURE_2611_27 / D30 · D31: the one product-level notice goes into every option; the group onto the product.
+        ElevenstNoticeConverter.Imported notification = readNotification(doc);
+        List<ImportedProduct.Option> withNotices = new ArrayList<>();
+        for (ImportedProduct.Option option : options) {
+            withNotices.add(new ImportedProduct.Option(option.itemName(), option.vendorItemId(),
+                    option.sellerProductItemId(), option.salePrice(), option.originalPrice(), option.stockQuantity(),
+                    Map.of(), notification.notices()));
+        }
         return new ImportedProduct(null, null, ElevenstXml.firstText(doc, "dispCtgrNo"),
-                code == null ? null : STATUS_BY_CODE.get(code), List.of(), null, List.of(), List.of(), options,
-                code == null ? null : STATUS_NAME_BY_CODE.get(code), name, null,
-                ElevenstXml.firstText(doc, "htmlDetail"), images, imageNotice);
+                code == null ? null : STATUS_BY_CODE.get(code), List.of(), notification.coupangGroup(), List.of(),
+                List.of(), withNotices, code == null ? null : STATUS_NAME_BY_CODE.get(code), name, null,
+                ElevenstXml.firstText(doc, "htmlDetail"), images, imageNotice, readShipping(doc));
     }
 
     /**
@@ -447,6 +466,41 @@ public class ElevenstListingAdapter implements ListingChannel {
                     stockQty == null ? null : stockQty.intValue()));
         }
         return options;
+    }
+
+    /**
+     * FEATURE_2611_27 / D31: the 1620 {@code ProductNotification} block (its {@code type} and each {@code item}'s
+     * {@code code} → {@code name}) read back into our vocabulary. No block → no group and no value.
+     */
+    private static ElevenstNoticeConverter.Imported readNotification(Document doc) {
+        List<Element> blocks = ElevenstXml.elements(doc, "ProductNotification");
+        if (blocks.isEmpty()) {
+            return new ElevenstNoticeConverter.Imported(null, Map.of());
+        }
+        Element block = blocks.get(0);
+        Map<String, String> values = new LinkedHashMap<>();
+        for (Element item : ElevenstXml.elements(block, "item")) {
+            String itemCode = ElevenstXml.firstText(item, "code");
+            if (StringUtils.hasText(itemCode)) {
+                values.put(itemCode, ElevenstXml.firstText(item, "name"));
+            }
+        }
+        return ElevenstNoticeConverter.fromElevenst(ElevenstXml.firstText(block, "type"), values);
+    }
+
+    /**
+     * FEATURE_2611_27 / R13: each 11st shipping key ({@code ALL_KEYS}) read from the 1620 field of the same name
+     * without the {@code elevenst.} prefix; blank fields are left out.
+     */
+    private static Map<String, String> readShipping(Document doc) {
+        Map<String, String> shipping = new LinkedHashMap<>();
+        for (String key : ElevenstShippingKeys.ALL_KEYS) {
+            String value = ElevenstXml.firstText(doc, key.substring(ElevenstShippingKeys.PREFIX.length()));
+            if (StringUtils.hasText(value)) {
+                shipping.put(key, value.trim());
+            }
+        }
+        return shipping;
     }
 
     /**
@@ -484,7 +538,6 @@ public class ElevenstListingAdapter implements ListingChannel {
         if (!missing.isEmpty()) {
             throw new IllegalArgumentException("배송설정 미완료 — 누락 필드: " + String.join(", ", missing));
         }
-        MasterProduct master = cell.getMasterProduct();
         String categoryCode = masterChannelConfigService.resolveChannelCategory(cell).category().getCode();
 
         StringBuilder xml = new StringBuilder("<Product>");
@@ -545,9 +598,11 @@ public class ElevenstListingAdapter implements ListingChannel {
         ElevenstXml.element(xml, "asDetail", texts.asNotice());
         ElevenstXml.element(xml, "rtngExchDetail", texts.returnExchangeNotice());
 
+        // FEATURE_2611_27 / D30 · R12: the listing's own notice while it uses the market values, else the master's.
+        ListingNoticeSource.NoticeInput noticeInput =
+                ListingNoticeSource.of(cell, lines.isEmpty() ? null : lines.get(0).option());
         ElevenstNoticeConverter.Notification notification = ElevenstNoticeConverter.convert(
-                master == null ? null : master.getCategoryNoticeGroup(),
-                master == null ? null : master.getCategoryNotices());
+                noticeInput.group(), noticeInput.notices());
         xml.append("<ProductNotification>");
         ElevenstXml.element(xml, "type", notification.typeCode());
         for (ElevenstNoticeConverter.Line line : notification.lines()) {
