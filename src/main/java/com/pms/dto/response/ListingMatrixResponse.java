@@ -153,5 +153,17 @@ public class ListingMatrixResponse {
          */
         @Schema(description = "Coupang bundle type on the market (SINGLE/AB, null = unknown)", example = "AB")
         private String marketBundleType;
+
+        /** FEATURE_2611_27 / D27: {@code ProductListing.usesMarketAttributes}. */
+        @Schema(description = "The attributes and notices of this cell use the values read from the market", example = "false")
+        private boolean usesMarketAttributes;
+
+        /** FEATURE_2611_27 / D27: {@code ProductListing.usesMarketTags}. */
+        @Schema(description = "The search tags of this cell use the values read from the market", example = "false")
+        private boolean usesMarketTags;
+
+        /** FEATURE_2611_27 / D27: {@code ProductListing.usesMarketShipping}. */
+        @Schema(description = "The shipping settings of this cell use the values read from the market", example = "false")
+        private boolean usesMarketShipping;
     }
 }

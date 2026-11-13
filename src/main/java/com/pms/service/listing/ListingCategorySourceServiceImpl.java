@@ -38,6 +38,8 @@ public class ListingCategorySourceServiceImpl implements ListingCategorySourceSe
         ProductListing updated = productListingRepository.save(cell.toBuilder()
                 .platformCategoryCode(null)
                 .categoryNoticeGroup(null)
+                // FEATURE_2611_27 / D35: the attributes · notices follow the master again, so the market-value flag of that group goes off; the tags and shipping flags stay.
+                .usesMarketAttributes(false)
                 .build());
 
         // 🔴 셀 옵션 메타는 **옛 카테고리 스키마의 값**이다. 남기면 3단 병합에서 셀이 마스터를 이겨,

@@ -67,6 +67,7 @@ class LotteonListingImportTest {
     @Mock private MasterOptionChannelSync masterOptionChannelSync;
     @Mock private ListingAssetService listingAssetService;
     @Mock private ListingMarketSyncService listingMarketSyncService;
+    @Mock private ListingMarketValueService listingMarketValueService;
     @Mock private ListingChannel channel;
     @InjectMocks private CoupangListingImportServiceImpl service;
 

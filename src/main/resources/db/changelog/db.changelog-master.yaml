@@ -264,3 +264,5 @@ databaseChangeLog:
       file: db/changelog/changes/131-stock-fill.yaml
   - include:
       file: db/changelog/changes/132-lotteon-order.yaml
+  - include:
+      file: db/changelog/changes/133-listing-market-value-flags.yaml

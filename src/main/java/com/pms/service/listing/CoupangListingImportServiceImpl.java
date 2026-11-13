@@ -97,6 +97,8 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
     private final ListingAssetService listingAssetService;
     /** FEATURE_2611_11: the market values of the imported product (names · photos · detail). */
     private final ListingMarketSyncService listingMarketSyncService;
+    /** FEATURE_2611_27: the market-value groups of the imported product. */
+    private final ListingMarketValueService listingMarketValueService;
 
     /**
      * Self proxy: {@code importListing} 은 트랜잭션 밖에서 {@link #importInTransaction} 을 <b>프록시 경유로</b>
@@ -165,6 +167,7 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
         // FEATURE_2611_11 / D2 · D4 · D6 · D8: the market's own 「등록상품명」 · photos · detail go on the listing BEFORE the
         // generation — the generation then keeps them (origin MARKET) and only fills what the market did not give.
         applyMarketValues(listingId, done.fetched());
+        applyMarketValueGroups(listingId, done.fetched());
         return imported.toBuilder()
                 .assetsGenerated(generateAssets(listingId))
                 // 자동생성이 실패해도 404 가 아니다(2609_47/D3) — 썸네일·상세만 null 로 돌아온다.
@@ -338,6 +341,19 @@ public class CoupangListingImportServiceImpl implements CoupangListingImportServ
             listingMarketSyncService.applyImported(listingId, fetched);
         } catch (Exception e) {
             log.warn("Market values were not applied to the imported cell {}: {}", listingId, e.getMessage());
+        }
+    }
+
+    /**
+     * FEATURE_2611_27 / R5: store the attributes · notices, tags and shipping the market sends from the cell's own
+     * values, and their 「마켓 값 사용」 flags. Outside the import transaction like {@link #applyMarketValues} — a failure
+     * leaves every flag off (the master values) and keeps the listing.
+     */
+    private void applyMarketValueGroups(Long listingId, ImportedProduct fetched) {
+        try {
+            listingMarketValueService.applyImported(listingId, fetched);
+        } catch (Exception e) {
+            log.warn("Market value groups were not stored on the imported cell {}: {}", listingId, e.getMessage());
         }
     }
 

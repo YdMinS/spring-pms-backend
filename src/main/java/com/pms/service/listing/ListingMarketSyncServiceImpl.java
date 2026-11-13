@@ -188,21 +188,7 @@ public class ListingMarketSyncServiceImpl implements ListingMarketSyncService {
      */
     private static ProductListingOption matchOption(List<ProductListingOption> options,
                                                     ImportedProduct.MarketImage image) {
-        if (image.vendorItemId() != null) {
-            for (ProductListingOption option : options) {
-                if (image.vendorItemId().equals(option.getPlatformOptionId())) {
-                    return option;
-                }
-            }
-        }
-        if (image.itemName() != null) {
-            for (ProductListingOption option : options) {
-                if (image.itemName().equals(option.getOptionName())) {
-                    return option;
-                }
-            }
-        }
-        return null;
+        return MarketOptionMatch.find(options, image.vendorItemId(), image.itemName());
     }
 
     private ProductListing requireScopedCell(Long id) {

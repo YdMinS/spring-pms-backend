@@ -201,6 +201,34 @@ public class ProductListing extends BaseEntity {
     private boolean needsMarketSync = false;
 
     /**
+     * FEATURE_2611_27 / D27: the attributes · notices of this cell are the cell's own values read from the market
+     * (sent instead of the master's). Set by an import or a market read; turned off by [마스터 값으로 바꾸기] and by
+     * [마스터 카테고리로 변경] (D35). Pre-existing rows are {@code false} (changeset 133).
+     */
+    @Column(name = "uses_market_attributes", nullable = false)
+    @Builder.Default
+    @Schema(description = "The attributes and notices of this cell use the values read from the market", example = "false")
+    private boolean usesMarketAttributes = false;
+
+    /**
+     * FEATURE_2611_27 / D27 · D19: the search tags of this cell are the market's own — the master tags are not appended
+     * ({@code TagMergeService.resolveTags}). Pre-existing rows are {@code false} (changeset 133).
+     */
+    @Column(name = "uses_market_tags", nullable = false)
+    @Builder.Default
+    @Schema(description = "The search tags of this cell use the values read from the market", example = "false")
+    private boolean usesMarketTags = false;
+
+    /**
+     * FEATURE_2611_27 / D27 · D39: the shipping override of this cell holds the market's own values — [채널에 적용]
+     * without a list skips this cell. Pre-existing rows are {@code false} (changeset 133).
+     */
+    @Column(name = "uses_market_shipping", nullable = false)
+    @Builder.Default
+    @Schema(description = "The shipping settings of this cell use the values read from the market", example = "false")
+    private boolean usesMarketShipping = false;
+
+    /**
      * Per-channel text field-value overrides (FEATURE_2608_06 / 12, Design 2). Reuses the master's
      * {@link MapStringConverter} (JSON TEXT). During asset (re)generation these are layered <b>on top of</b>
      * the master field values per key, so the render priority is
@@ -297,4 +325,18 @@ public class ProductListing extends BaseEntity {
     @Schema(description = "Coupang bundle type of this listing on the market (SINGLE/AB, null = unknown)",
             example = "AB")
     private String marketBundleType;
+
+    /**
+     * FEATURE_2611_27 / D27: whether the given group of this cell uses the values read from the market.
+     *
+     * @param group the market-value group
+     * @return the flag of that group
+     */
+    public boolean usesMarketValues(ListingMarketValueGroup group) {
+        return switch (group) {
+            case ATTRIBUTES -> usesMarketAttributes;
+            case TAGS -> usesMarketTags;
+            case SHIPPING -> usesMarketShipping;
+        };
+    }
 }

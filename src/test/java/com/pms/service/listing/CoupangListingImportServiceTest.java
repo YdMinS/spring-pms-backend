@@ -84,6 +84,7 @@ class CoupangListingImportServiceTest {
     @Mock private MasterOptionChannelSync masterOptionChannelSync;
     @Mock private ListingAssetService listingAssetService;
     @Mock private ListingMarketSyncService listingMarketSyncService;
+    @Mock private ListingMarketValueService listingMarketValueService;
     @Mock private ListingChannel channel;
     @InjectMocks private CoupangListingImportServiceImpl service;
 
@@ -565,6 +566,39 @@ class CoupangListingImportServiceTest {
         order.verify(listingMarketSyncService).applyImported(50L, market);
         order.verify(listingAssetService).regenerate(50L);
         verify(channel, org.mockito.Mockito.times(1)).fetchProduct(any(), any());
+    }
+
+    @Test
+    void testImportStoresMarketValueGroupsAfterMarketValues_beforeGeneration() {
+        MasterProductOption existing = masterOption(10L, "6입");
+        ImportedProduct market = marketProduct(marketOption("6입", "8123", "12900"));
+        givenImportReady(market, List.of(existing),
+                List.of(MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_A)).quantity(6).build(),
+                        MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_B)).quantity(1).build()));
+
+        service.importListing(MASTER_ID, importRequest(spec("6입", "8123", 6, 1)));
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(
+                listingMarketSyncService, listingMarketValueService, listingAssetService);
+        order.verify(listingMarketSyncService).applyImported(50L, market);
+        order.verify(listingMarketValueService).applyImported(50L, market);
+        order.verify(listingAssetService).regenerate(50L);
+    }
+
+    @Test
+    void testImportMarketValueGroupFailure_keepsTheImport() {
+        MasterProductOption existing = masterOption(10L, "6입");
+        ImportedProduct market = marketProduct(marketOption("6입", "8123", "12900"));
+        givenImportReady(market, List.of(existing),
+                List.of(MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_A)).quantity(6).build(),
+                        MasterProductOptionItem.builder().option(existing).product(product(PRODUCT_B)).quantity(1).build()));
+        willThrow(new IllegalArgumentException("배송설정 오류"))
+                .given(listingMarketValueService).applyImported(50L, market);
+
+        ChannelAddResponse response = service.importListing(MASTER_ID, importRequest(spec("6입", "8123", 6, 1)));
+
+        assertThat(response.getProductListingId()).isEqualTo(50L);
+        verify(listingAssetService, times(1)).regenerate(50L);
     }
 
     /**

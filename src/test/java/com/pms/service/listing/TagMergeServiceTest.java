@@ -51,6 +51,16 @@ class TagMergeServiceTest {
     }
 
     @Test
+    void resolve_마켓검색어사용_마스터태그를붙이지않음() {
+        ProductListing cell = cell(Platform.COUPANG, List.of("a", "b"), List.of("c"))
+                .toBuilder().usesMarketTags(true).build();
+
+        List<String> merged = service.resolveTags(cell);
+
+        assertThat(merged).containsExactly("a", "b");
+    }
+
+    @Test
     void resolve_쿠팡상한20_초과절단() {
         List<String> twentyFive = IntStream.range(0, 25).mapToObj(i -> "t" + i).toList();
 

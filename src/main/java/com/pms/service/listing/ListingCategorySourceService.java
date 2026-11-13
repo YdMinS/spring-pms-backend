@@ -18,6 +18,7 @@ public interface ListingCategorySourceService {
      * @param listingId        채널 셀 id (없거나 다른 테넌트면 404)
      * @param useMasterCategory {@code true} = 채널 카테고리 코드·고시 품목군·셀 옵션 메타를 모두 비운다
      *                          (이미 비어 있으면 멱등 no-op). {@code false} = 400 — 복원할 원본이 없다.
+     *                          FEATURE_2611_27 / D35: also turns {@code usesMarketAttributes} off (the tags and shipping flags stay).
      */
     ListingCategorySourceResponse updateCategorySource(Long listingId, boolean useMasterCategory);
 }

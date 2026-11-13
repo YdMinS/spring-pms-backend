@@ -26,7 +26,8 @@ public class TagMergeServiceImpl implements TagMergeService {
     public List<String> resolveTags(ProductListing cell) {
         // Channel tags first (order preserved), then master tags appended without duplicates.
         List<String> merged = new ArrayList<>(dedup(cell.getTags()));
-        List<String> masterTags = cell.getMasterProduct() != null
+        // FEATURE_2611_27 / D19: a cell whose tags use the market values sends the market's own tags only.
+        List<String> masterTags = cell.getMasterProduct() != null && !cell.isUsesMarketTags()
                 ? dedup(cell.getMasterProduct().getTags())
                 : List.of();
         for (String tag : masterTags) {
