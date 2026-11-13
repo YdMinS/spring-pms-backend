@@ -1,14 +1,19 @@
 package com.pms.service.listing;
 
 import com.pms.domain.ListingMarketValueGroup;
+import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.Platform;
 import com.pms.domain.PlatformCategory;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
+import com.pms.domain.Seller;
 import com.pms.dto.response.ListingMarketValuesResponse;
+import com.pms.repository.MarketplaceAccountRepository;
 import com.pms.repository.ProductListingOptionRepository;
 import com.pms.repository.ProductListingRepository;
+import com.pms.repository.SellerRepository;
+import com.pms.service.listing.ListingMarketValueService.BackfillOutcome;
 import com.pms.service.ListingAssetService;
 import com.pms.service.MasterChannelConfigService;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,8 +37,10 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /**
@@ -49,19 +56,28 @@ class ListingMarketValueServiceTest {
     @Mock private ListingAssetService listingAssetService;
     @Mock private TagMergeService tagMergeService;
     @Mock private MasterChannelConfigService masterChannelConfigService;
+    @Mock private SellerRepository sellerRepository;
+    @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock private ListingChannel channel;
     @InjectMocks private ListingMarketValueServiceImpl service;
 
     private static final Long LISTING_ID = 50L;
 
     private ProductListing cell;
+    private MarketplaceAccount account;
     private ProductListingOption o11;
     private ProductListingOption o12;
 
     @BeforeEach
     void seed() {
+        Seller seller = Seller.builder().id(3L).build();
         cell = ProductListing.builder().id(LISTING_ID).platform(Platform.COUPANG).name("셀")
+                .seller(seller).platformProductId("13386891015")
                 .masterProduct(MasterProduct.builder().id(1L).tags(List.of("생수")).build()).build();
+        account = MarketplaceAccount.builder().id(7L).platform(Platform.COUPANG).isActive(true).build();
+        lenient().when(sellerRepository.findById(3L)).thenReturn(Optional.of(seller));
+        lenient().when(marketplaceAccountRepository.findBySeller_IdAndPlatform(3L, Platform.COUPANG))
+                .thenReturn(Optional.of(account));
         o11 = ProductListingOption.builder().id(11L).optionName("6입").platformOptionId("8123").build();
         o12 = ProductListingOption.builder().id(12L).optionName("12입").platformOptionId(null).build();
         givenCell(cell);
@@ -275,5 +291,82 @@ class ListingMarketValueServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("마켓 값을 쓰지 않는 묶음입니다");
         verify(productListingRepository, never()).save(any());
+    }
+
+    // ------------------------------------------------------------------ backfillFromMarket
+
+    private ImportedProduct bayLeaf() {
+        return new ImportedProduct("월계수잎 45g ", null, null, null, List.of("월계수잎"), null, List.of(), List.of(),
+                List.of(readOption("45g 1개", "8123", Map.of(), Map.of())), null, null, null, null, List.of(), null,
+                Map.of());
+    }
+
+    private List<ProductListing> allSavedCells() {
+        ArgumentCaptor<ProductListing> captor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository, atLeastOnce()).save(captor.capture());
+        return captor.getAllValues();
+    }
+
+    @Test
+    void backfillFromMarket_flagAlreadyOn_skipsWithoutReading() {
+        givenCell(cell.toBuilder().usesMarketTags(true).build());
+
+        BackfillOutcome outcome = service.backfillFromMarket(LISTING_ID);
+
+        assertThat(outcome).isEqualTo(BackfillOutcome.ALREADY_ON);
+        verify(channel, never()).fetchProduct(any(), any());
+        verify(productListingRepository, never()).save(any());
+    }
+
+    @Test
+    void backfillFromMarket_readsTheMarketAndFillsABlankRegistrationName() {
+        given(channel.fetchProduct("13386891015", account)).willReturn(bayLeaf());
+        given(channel.marketValueGroups()).willReturn(Set.of(ListingMarketValueGroup.TAGS));
+        given(tagMergeService.dedup(List.of("월계수잎"))).willReturn(List.of("월계수잎"));
+
+        BackfillOutcome outcome = service.backfillFromMarket(LISTING_ID);
+
+        assertThat(outcome).isEqualTo(BackfillOutcome.FILLED);
+        List<ProductListing> saved = allSavedCells();
+        assertThat(saved.get(0).getRegistrationName()).isEqualTo("월계수잎 45g");
+        ProductListing last = saved.get(saved.size() - 1);
+        assertThat(last.getTags()).containsExactly("월계수잎");
+        assertThat(last.isUsesMarketTags()).isTrue();
+        verify(channel, times(1)).fetchProduct(any(), any());
+    }
+
+    @Test
+    void backfillFromMarket_keepsAStoredRegistrationName() {
+        givenCell(cell.toBuilder().registrationName("직접 이름").build());
+        given(channel.fetchProduct("13386891015", account)).willReturn(bayLeaf());
+        given(channel.marketValueGroups()).willReturn(Set.of(ListingMarketValueGroup.TAGS));
+        given(tagMergeService.dedup(List.of("월계수잎"))).willReturn(List.of("월계수잎"));
+
+        BackfillOutcome outcome = service.backfillFromMarket(LISTING_ID);
+
+        assertThat(outcome).isEqualTo(BackfillOutcome.FILLED);
+        assertThat(allSavedCells()).allSatisfy(saved ->
+                assertThat(saved.getRegistrationName()).isEqualTo("직접 이름"));
+    }
+
+    @Test
+    void backfillFromMarket_unknownListing_isNotFound() {
+        given(productListingRepository.findScopedById(99L)).willReturn(Optional.empty());
+
+        BackfillOutcome outcome = service.backfillFromMarket(99L);
+
+        assertThat(outcome).isEqualTo(BackfillOutcome.NOT_FOUND);
+        verify(resolver, never()).resolve(any());
+    }
+
+    @Test
+    void backfillFromMarket_inactiveAccount_throws() {
+        given(marketplaceAccountRepository.findBySeller_IdAndPlatform(3L, Platform.COUPANG))
+                .willReturn(Optional.of(account.toBuilder().isActive(false).build()));
+
+        assertThatThrownBy(() -> service.backfillFromMarket(LISTING_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("비활성 계정");
+        verify(channel, never()).fetchProduct(any(), any());
     }
 }
