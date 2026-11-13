@@ -3,6 +3,7 @@ package com.pms.service.listing;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.domain.Category;
 import com.pms.domain.GeneratedProductData;
+import com.pms.domain.ListingMarketValueGroup;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.ListingUpdateItem;
 import com.pms.domain.MarketplaceAccount;
@@ -1708,6 +1709,116 @@ class CoupangListingAdapterTest {
         assertThatThrownBy(() -> adapter.validateRegistrable(cell, null, acct()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("필수 고시 누락");
+    }
+
+    // ---------------------------------------------------------------- FEATURE_2611_27: market values
+
+    @Test
+    void fetchProduct_readsTheShippingFieldsUnderTheOverrideKeys() {
+        given(client.get(anyString(), eq(""), any())).willReturn(
+                "{\"code\":\"SUCCESS\",\"data\":{\"statusName\":\"승인완료\","
+                        + "\"sellerProductName\":\"등록상품명\",\"deliveryCharge\":2500,\"returnCharge\":\"5000.00\","
+                        + "\"companyContactNumber\":\"02-000-0000\",\"returnCenterCode\":\"RC1\","
+                        + "\"extraInfoMessage\":\"\","
+                        + "\"items\":[{\"itemName\":\"6입\",\"vendorItemId\":8123,\"salePrice\":12900}]}}");
+
+        ImportedProduct product = adapter.fetchProduct("222333444", acct());
+
+        assertThat(product.shipping()).containsOnly(
+                Map.entry("deliveryCharge", "2500"),
+                Map.entry("returnCharge", "5000"),
+                Map.entry("returnContactNumber", "02-000-0000"),
+                Map.entry("returnCenterCode", "RC1"));
+        assertThat(product.shipping()).doesNotContainKeys("companyContactNumber", "extraInfoMessage");
+    }
+
+    @Test
+    void fetchProduct_withoutShippingFields_readsNoShipping() {
+        given(client.get(anyString(), eq(""), any())).willReturn(
+                "{\"code\":\"SUCCESS\",\"data\":{\"statusName\":\"승인완료\","
+                        + "\"sellerProductName\":\"등록상품명\",\"displayProductName\":\"노출상품명\","
+                        + "\"items\":[{\"itemName\":\"6입\",\"vendorItemId\":8123,\"salePrice\":12900}]}}");
+
+        ImportedProduct product = adapter.fetchProduct("222333444", acct());
+
+        assertThat(product.shipping()).isEmpty();
+    }
+
+    @Test
+    void marketValueGroups_coupangSendsAllThree() {
+        assertThat(adapter.marketValueGroups()).containsExactlyInAnyOrder(
+                ListingMarketValueGroup.ATTRIBUTES, ListingMarketValueGroup.TAGS, ListingMarketValueGroup.SHIPPING);
+    }
+
+    /** A Coupang cell on {@code master} in category 73170, with or without the market attributes flag. */
+    private static ProductListing marketValueCell(MasterProduct master, String noticeGroup, boolean marketValues) {
+        return ProductListing.builder().id(100L).platform(Platform.COUPANG).name("셀")
+                .platformProductId("123456789").masterProduct(master)
+                .platformCategoryCode("73170").categoryNoticeGroup(noticeGroup)
+                .usesMarketAttributes(marketValues).build();
+    }
+
+    /** The first item of a register whose cell option is linked to a master option with its own attribute. */
+    private JsonNode attributesWithMasterOption(boolean marketValues) throws Exception {
+        MasterProduct master = masterWithOwnCategoryValues();
+        MasterProductOption mo = MasterProductOption.builder().id(7L)
+                .categoryAttributes(Map.of("색상", "빨강")).build();
+        ProductListingOption option = ProductListingOption.builder().id(1L).optionName("A")
+                .sellingPrice(new BigDecimal("6000")).active(true).masterProductOption(mo)
+                .categoryAttributes(Map.of("수량", "6")).build();
+        return registerAndCapture(marketValueCell(master, null, marketValues), option, List.of(mo),
+                new CategoryMetaSchema(List.of(), List.of()), false).path("items").get(0);
+    }
+
+    @Test
+    void register_usesMarketAttributes_dropsMasterAndMasterOptionAttributes() throws Exception {
+        JsonNode item = attributesWithMasterOption(true);
+
+        assertThat(item.path("attributes")).hasSize(1);
+        assertThat(item.path("attributes").get(0).path("attributeTypeName").asText()).isEqualTo("수량");
+    }
+
+    @Test
+    void register_flagOff_keepsMasterAndMasterOptionAttributes() throws Exception {
+        JsonNode item = attributesWithMasterOption(false);
+
+        List<String> names = new java.util.ArrayList<>();
+        item.path("attributes").forEach(a -> names.add(a.path("attributeTypeName").asText()));
+        assertThat(names).containsExactlyInAnyOrder("즉석밥 크기", "색상", "수량");
+    }
+
+    /** The first item of a register whose master carries a notice of the cell's group. */
+    private JsonNode noticesWithMasterNotice(boolean marketValues) throws Exception {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터")
+                .categoryNotices(Map.of("생산자", "마스터농장")).categoryNoticeGroup("농수축산물").build();
+        ProductListingOption option = ProductListingOption.builder().id(1L).optionName("A")
+                .sellingPrice(new BigDecimal("6000")).active(true)
+                .categoryNotices(Map.of("품목 또는 명칭", "쌀")).build();
+        CategoryMetaSchema schema = new CategoryMetaSchema(List.of(), List.of(
+                new CategoryNotice("품목 또는 명칭", "품목 또는 명칭", false, "농수축산물"),
+                new CategoryNotice("생산자", "생산자", false, "농수축산물")));
+        return registerAndCapture(marketValueCell(master, "농수축산물", marketValues), option, List.of(), schema,
+                false).path("items").get(0);
+    }
+
+    @Test
+    void register_usesMarketAttributes_dropsMasterNotices() throws Exception {
+        JsonNode item = noticesWithMasterNotice(true);
+
+        assertThat(item.path("notices")).hasSize(1);
+        assertThat(item.path("notices").get(0).path("noticeCategoryDetailName").asText())
+                .isEqualTo("품목 또는 명칭");
+        assertThat(item.path("notices").get(0).path("noticeCategoryName").asText()).isEqualTo("농수축산물");
+    }
+
+    @Test
+    void register_flagOff_keepsMasterNotices() throws Exception {
+        JsonNode item = noticesWithMasterNotice(false);
+
+        assertThat(item.path("notices")).hasSize(2);
+        List<String> names = new java.util.ArrayList<>();
+        item.path("notices").forEach(n -> names.add(n.path("noticeCategoryDetailName").asText()));
+        assertThat(names).containsExactlyInAnyOrder("품목 또는 명칭", "생산자");
     }
 
     // ---------------------------------------------------------------- FEATURE_2610_36: bundleInfo
