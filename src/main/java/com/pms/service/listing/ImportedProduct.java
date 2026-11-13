@@ -47,12 +47,25 @@ import java.util.Map;
  * @param imageNotice  FEATURE_2611_11 / D35 · D39: why the photos could not be read (the guidance text shown to the
  *                     user); null when the read did not fail. Only a market that reads photos through a separate call
  *                     (11st) fills it
+ * @param shipping     FEATURE_2611_27 / D27: the shipping override keys of that market's channel cell → the values read
+ *                     from the market. never null, empty when not read
  */
 public record ImportedProduct(String productName, String brand, String categoryCode, ListingStatus status,
                               List<String> tags, String noticeGroup, List<String> thumbnailImages,
                               List<String> detailImages, List<Option> options, String statusName,
                               String displayProductName, String marketBundleType, String detailHtml,
-                              List<MarketImage> marketImages, String imageNotice) {
+                              List<MarketImage> marketImages, String imageNotice, Map<String, String> shipping) {
+
+    /** The 15-argument form used before FEATURE_2611_27 — no shipping values read ({@code shipping = Map.of()}). */
+    public ImportedProduct(String productName, String brand, String categoryCode, ListingStatus status,
+                           List<String> tags, String noticeGroup, List<String> thumbnailImages,
+                           List<String> detailImages, List<Option> options, String statusName,
+                           String displayProductName, String marketBundleType, String detailHtml,
+                           List<MarketImage> marketImages, String imageNotice) {
+        this(productName, brand, categoryCode, status, tags, noticeGroup, thumbnailImages, detailImages,
+                options, statusName, displayProductName, marketBundleType, detailHtml, marketImages, imageNotice,
+                Map.of());
+    }
 
     /** The 12-argument form used before FEATURE_2611_11 — no detail HTML, no structured photos, no notice. */
     public ImportedProduct(String productName, String brand, String categoryCode, ListingStatus status,
@@ -124,6 +137,7 @@ public record ImportedProduct(String productName, String brand, String categoryC
         thumbnailImages = thumbnailImages == null ? List.of() : thumbnailImages;
         detailImages = detailImages == null ? List.of() : detailImages;
         marketImages = marketImages == null ? List.of() : marketImages;
+        shipping = shipping == null ? Map.of() : shipping;
     }
 
     /**

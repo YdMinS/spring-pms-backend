@@ -2,6 +2,7 @@ package com.pms.service.listing;
 
 import com.pms.domain.Platform;
 import com.pms.domain.GeneratedProductData;
+import com.pms.domain.ListingMarketValueGroup;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.ProductListing;
 import com.pms.domain.ProductListingOption;
@@ -10,6 +11,7 @@ import com.pms.dto.response.ListingUpdatePreviewResponse;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Per-platform channel adapter seam (FEATURE_2608_06 / 3c). The orchestration
@@ -154,6 +156,15 @@ public interface ListingChannel {
      */
     default boolean keepsInactiveOptionsOnUpdate() {
         return false;
+    }
+
+    /**
+     * FEATURE_2611_27 / D29 · R2: the groups this market sends from the channel cell's own values. Only a group listed
+     * here whose read carries a value turns the cell's 「마켓 값 사용」 flag on, on an import or a market read. Default =
+     * none (every group follows the master).
+     */
+    default Set<ListingMarketValueGroup> marketValueGroups() {
+        return Set.of();
     }
 
     /**

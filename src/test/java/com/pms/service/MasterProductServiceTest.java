@@ -186,6 +186,30 @@ class MasterProductServiceTest {
         assertThat(matrix.getRows().get(0).getCell().getStatus()).isEqualTo("SELLING");
     }
 
+    @Test
+    void getMatrix_exposesMarketValueFlags() {
+        Seller seller1 = seller(1L, "판매자1");
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").build();
+        MarketplaceAccount acc1 = account(10L, seller1, Platform.COUPANG, "메인");
+
+        ProductListing listing = ProductListing.builder()
+                .id(100L).seller(seller1).platform(Platform.COUPANG).platformProductId("X").name("리스팅")
+                .status(ListingStatus.SELLING).usesMarketAttributes(true).usesMarketShipping(true).build();
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(marketplaceAccountRepository.findAll()).willReturn(List.of(acc1));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(listing));
+        given(productListingOptionRepository.findByProductListingIdIn(any())).willReturn(List.of());
+        given(sellerRepository.findAllById(any())).willReturn(List.of(seller1));
+
+        ListingMatrixResponse matrix = service.getMatrix(1L);
+
+        ListingMatrixResponse.MatrixCell cell = matrix.getRows().get(0).getCell();
+        assertThat(cell.isUsesMarketAttributes()).isTrue();
+        assertThat(cell.isUsesMarketTags()).isFalse();
+        assertThat(cell.isUsesMarketShipping()).isTrue();
+    }
+
     /**
      * 🔴 온보딩(2026-09-19) 회귀 가드: 한 계정이 같은 마스터로 쿠팡 페이지를 여럿 갖는 것은 정상이다.
      * 예전에는 (판매자|플랫폼) 키로 first-wins 인덱싱을 해서 두 번째 셀이 응답에서 통째로 사라졌다 —
@@ -1311,6 +1335,73 @@ class MasterProductServiceTest {
         List<Long> affected = service.applyShippingOverrideToChannels(1L, List.of(101L));
 
         // Then only the selected cell is written; the unselected one keeps its own setting
+        assertThat(affected).containsExactly(101L);
+        ArgumentCaptor<List<ProductListing>> captor = ArgumentCaptor.forClass(List.class);
+        verify(productListingRepository).saveAll(captor.capture());
+        assertThat(captor.getValue()).hasSize(1);
+        assertThat(captor.getValue().get(0).getId()).isEqualTo(101L);
+    }
+
+    @Test
+    void applyShippingOverrideToChannels_pickedMarketShippingCell_overwritesAndTurnsFlagOff() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true)
+                .shippingOverride(Map.of(ShippingOverrideKeys.DELIVERY_METHOD, "SEQUENCIAL")).build();
+        ProductListing cellA = ProductListing.builder().id(100L).name("셀A").usesMarketShipping(true)
+                .shippingOverride(Map.of(ShippingOverrideKeys.DELIVERY_METHOD, "MAKE_ORDER",
+                        ShippingOverrideKeys.OUTBOUND_SHIPPING_PLACE_CODE, "OUT-1")).build();
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cellA));
+
+        List<Long> affected = service.applyShippingOverrideToChannels(1L, List.of(100L));
+
+        assertThat(affected).containsExactly(100L);
+        ArgumentCaptor<List<ProductListing>> captor = ArgumentCaptor.forClass(List.class);
+        verify(productListingRepository).saveAll(captor.capture());
+        assertThat(captor.getValue()).hasSize(1);
+        ProductListing saved = captor.getValue().get(0);
+        assertThat(saved.getShippingOverride())
+                .containsEntry(ShippingOverrideKeys.DELIVERY_METHOD, "SEQUENCIAL")
+                .containsEntry(ShippingOverrideKeys.OUTBOUND_SHIPPING_PLACE_CODE, "OUT-1");
+        assertThat(saved.isUsesMarketShipping()).isFalse();
+    }
+
+    @Test
+    void applyShippingOverrideToChannels_pickedMarketShippingCellAlreadyEqual_isStillSavedAndCounted() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true)
+                .shippingOverride(Map.of(ShippingOverrideKeys.DELIVERY_METHOD, "SEQUENCIAL")).build();
+        ProductListing cellA = ProductListing.builder().id(100L).name("셀A").usesMarketShipping(true)
+                .shippingOverride(Map.of(ShippingOverrideKeys.DELIVERY_METHOD, "SEQUENCIAL")).build();
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cellA));
+
+        List<Long> affected = service.applyShippingOverrideToChannels(1L, List.of(100L));
+
+        assertThat(affected).containsExactly(100L);
+        ArgumentCaptor<List<ProductListing>> captor = ArgumentCaptor.forClass(List.class);
+        verify(productListingRepository).saveAll(captor.capture());
+        assertThat(captor.getValue()).hasSize(1);
+        ProductListing saved = captor.getValue().get(0);
+        assertThat(saved.getShippingOverride())
+                .isEqualTo(Map.of(ShippingOverrideKeys.DELIVERY_METHOD, "SEQUENCIAL"));
+        assertThat(saved.isUsesMarketShipping()).isFalse();
+    }
+
+    @Test
+    void applyShippingOverrideToChannels_withoutList_skipsMarketShippingCells() {
+        MasterProduct master = MasterProduct.builder().id(1L).name("마스터A").active(true)
+                .shippingOverride(Map.of(ShippingOverrideKeys.DELIVERY_METHOD, "SEQUENCIAL")).build();
+        ProductListing cellA = ProductListing.builder().id(100L).name("셀A").usesMarketShipping(true)
+                .shippingOverride(Map.of(ShippingOverrideKeys.DELIVERY_METHOD, "MAKE_ORDER")).build();
+        ProductListing cellB = ProductListing.builder().id(101L).name("셀B")
+                .shippingOverride(Map.of(ShippingOverrideKeys.DELIVERY_METHOD, "MAKE_ORDER")).build();
+
+        given(masterProductRepository.findScopedById(1L)).willReturn(Optional.of(master));
+        given(productListingRepository.findByMasterProductId(1L)).willReturn(List.of(cellA, cellB));
+
+        List<Long> affected = service.applyShippingOverrideToChannels(1L, null);
+
         assertThat(affected).containsExactly(101L);
         ArgumentCaptor<List<ProductListing>> captor = ArgumentCaptor.forClass(List.class);
         verify(productListingRepository).saveAll(captor.capture());
