@@ -386,6 +386,17 @@ public final class ElevenstNoticeMap {
         return GROUPS.stream().filter(group -> compact(group.coupangGroup()).equals(key)).findFirst();
     }
 
+    /**
+     * FEATURE_2611_27 / R11: the first row group whose 11st type code equals {@code typeCode} (a code shared by two
+     * groups, e.g. 891045, gives the first one in the table).
+     */
+    public static Optional<Group> findByTypeCode(String typeCode) {
+        if (typeCode == null || typeCode.isBlank()) {
+            return Optional.empty();
+        }
+        return GROUPS.stream().filter(group -> group.typeCode().equals(typeCode)).findFirst();
+    }
+
     /** Whitespace-free comparison key (D89 ① ②). */
     public static String compact(String value) {
         return value == null ? "" : value.replaceAll("\\s", "");

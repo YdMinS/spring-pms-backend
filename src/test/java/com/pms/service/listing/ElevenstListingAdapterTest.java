@@ -76,6 +76,11 @@ class ElevenstListingAdapterTest {
         given(textValueResolver.notice(cell, ListingTextValueResolver.KEY_AS_NOTICE)).willReturn("A/S 글");
         given(textValueResolver.notice(cell, ListingTextValueResolver.KEY_RETURN_EXCHANGE_NOTICE)).willReturn("반품 글");
         given(textValueResolver.brand(cell)).willReturn("브랜드");
+        given(shippingResolver.resolve(cell)).willReturn(shipping());
+    }
+
+    /** The 13 shipping fields every payload test resolves. */
+    private static Map<String, String> shipping() {
         Map<String, String> shipping = new LinkedHashMap<>();
         shipping.put(ElevenstShippingKeys.DLV_CN_AREA_CD, "01");
         shipping.put(ElevenstShippingKeys.DLV_WY_CD, "01");
@@ -90,7 +95,7 @@ class ElevenstListingAdapterTest {
         shipping.put(ElevenstShippingKeys.EXCH_DLV_CST, "6000");
         shipping.put(ElevenstShippingKeys.ADDR_SEQ_OUT, "11");
         shipping.put(ElevenstShippingKeys.ADDR_SEQ_IN, "12");
-        given(shippingResolver.resolve(cell)).willReturn(shipping);
+        return shipping;
     }
 
     private void options(ProductListingOption... options) {
@@ -277,6 +282,70 @@ class ElevenstListingAdapterTest {
                         ImportedProduct.MarketImage::url)
                 .containsExactly(org.assertj.core.groups.Tuple.tuple(true, "http://i.011st.com/a_B.jpg"),
                         org.assertj.core.groups.Tuple.tuple(false, "http://i.011st.com/a_A1.jpg"));
+    }
+
+    /** FEATURE_2611_27 / D30 · D31 · R13: the product notice goes into every option; the shipping fields are read. */
+    @Test
+    void fetchProduct_readsTheNotificationIntoEveryOption_andTheShippingFields() {
+        given(client.get(eq(ElevenstListingAdapter.PRODUCT_READ_PATH + "5551"), any())).willReturn(ElevenstXml.document(
+                "<Product><prdNm>11번가 이름</prdNm><selStatCd>103</selStatCd><dlvCst1>3000</dlvCst1>"
+                        + "<addrSeqOut>11</addrSeqOut><ProductNotification><type>891020</type><item>"
+                        + "<code>23760172</code><name>10x20 / 1kg</name></item></ProductNotification></Product>"));
+        stocks("<ProductStock><prdStckNo>1</prdStckNo><mixDtlOptNm>A</mixDtlOptNm><stckQty>3</stckQty></ProductStock>"
+                + "<ProductStock><prdStckNo>2</prdStckNo><mixDtlOptNm>B</mixDtlOptNm><stckQty>4</stckQty></ProductStock>");
+        given(photoKeyService.currentKey()).willReturn(java.util.Optional.empty());
+
+        ImportedProduct product = adapter.fetchProduct("5551", null);
+
+        assertThat(product.noticeGroup()).isEqualTo("사무용기기(컴퓨터/노트북/프린터 등)");
+        assertThat(product.options()).hasSize(2).allSatisfy(option -> {
+            assertThat(option.notices()).containsOnly(Map.entry("크기", "10x20"), Map.entry("무게", "1kg"));
+            assertThat(option.attributes()).isEmpty();
+        });
+        assertThat(product.shipping()).containsOnly(
+                Map.entry(ElevenstShippingKeys.ADDR_SEQ_OUT, "11"), Map.entry(ElevenstShippingKeys.DLV_CST1, "3000"));
+    }
+
+    /** FEATURE_2611_27 / D29: no notice block and no shipping field → nothing read. */
+    @Test
+    void fetchProduct_withoutNotificationOrShipping_readsNothing() {
+        given(client.get(eq(ElevenstListingAdapter.PRODUCT_READ_PATH + "5551"), any())).willReturn(ElevenstXml.document(
+                "<Product><prdNm>11번가 이름</prdNm></Product>"));
+        stocks("<ProductStock><prdStckNo>1</prdStckNo><mixDtlOptNm>A</mixDtlOptNm><stckQty>3</stckQty></ProductStock>");
+        given(photoKeyService.currentKey()).willReturn(java.util.Optional.empty());
+
+        ImportedProduct product = adapter.fetchProduct("5551", null);
+
+        assertThat(product.noticeGroup()).isNull();
+        assertThat(product.options()).allSatisfy(option -> assertThat(option.notices()).isEmpty());
+        assertThat(product.shipping()).isEmpty();
+    }
+
+    /** FEATURE_2611_27 / D29 · R2. */
+    @Test
+    void marketValueGroups_elevenstSendsNoticesAndShipping() {
+        assertThat(adapter.marketValueGroups()).containsExactlyInAnyOrder(
+                com.pms.domain.ListingMarketValueGroup.ATTRIBUTES, com.pms.domain.ListingMarketValueGroup.SHIPPING);
+    }
+
+    /** FEATURE_2611_27 / D30 · R12: a listing using the market values sends its own group and first option's notices. */
+    @Test
+    void buildPayload_usesMarketAttributes_sendsTheCellGroupAndTheFirstActiveOptionNotices() {
+        ProductListing marketCell = cell.toBuilder().usesMarketAttributes(true)
+                .categoryNoticeGroup("사무용기기(컴퓨터/노트북/프린터 등)").build();
+        given(textValueResolver.notice(eq(marketCell), any())).willReturn("글");
+        given(textValueResolver.brand(marketCell)).willReturn("브랜드");
+        given(shippingResolver.resolve(marketCell)).willReturn(shipping());
+        Map<String, String> notices = new LinkedHashMap<>();
+        notices.put("크기", "10x20");
+        notices.put("무게", "1kg");
+        options(option(11L, "A", "10000.00", 3, null).toBuilder().categoryNotices(notices).build());
+
+        String xml = adapter.buildPayload(marketCell, gen);
+
+        assertThat(xml).contains("<ProductNotification><type>891020</type>",
+                "<code>23760172</code><name>10x20 / 1kg</name>");
+        assertThat(xml).doesNotContain("<type>891045</type>");
     }
 
     /** FEATURE_2611_11 / D39: no company key → no photo call, the key guidance. */
