@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingMarketImage;
+import com.pms.domain.ListingMarketValueGroup;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
@@ -35,6 +36,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -349,6 +351,15 @@ public class LotteonListingAdapter implements ListingChannel {
         return new MarketPrices(byOptionId);
     }
 
+    /**
+     * FEATURE_2611_27 / D29: LotteON sends the product notice (no attribute value), the search tags and the three
+     * shipping numbers from the listing's own values.
+     */
+    @Override
+    public Set<ListingMarketValueGroup> marketValueGroups() {
+        return EnumSet.allOf(ListingMarketValueGroup.class);
+    }
+
     /** D51 · D52 · D53 · D58 · D63: one 94 call → the shared product read shape. */
     @Override
     public ImportedProduct fetchProduct(String platformProductId, MarketplaceAccount acct) {
@@ -410,7 +421,23 @@ public class LotteonListingAdapter implements ListingChannel {
         }
         return new ImportedProduct(null, null, data.path("scatNo").asText(null), status, tags,
                 notices.coupangGroup(), List.copyOf(thumbnails), detailImages, options, statusName, name, null,
-                detailHtml, images, null);
+                detailHtml, images, null, readShipping(data));
+    }
+
+    /**
+     * FEATURE_2611_27 / R13: each LotteON shipping number ({@code INPUT_KEYS}) read from the 94 {@code data} field of
+     * the same name without the {@code lotteon.} prefix; blank fields are left out. The policy fact fields are not
+     * read — saving the shipping override fills them from the policy number.
+     */
+    private static Map<String, String> readShipping(JsonNode data) {
+        Map<String, String> shipping = new LinkedHashMap<>();
+        for (String key : LotteonShippingKeys.INPUT_KEYS) {
+            String value = data.path(key.substring(LotteonShippingKeys.PREFIX.length())).asText("");
+            if (!value.isBlank()) {
+                shipping.put(key, value.trim());
+            }
+        }
+        return shipping;
     }
 
     /** D54: one 93 call — up to 100 products, no next page. Read only. */
@@ -448,7 +475,6 @@ public class LotteonListingAdapter implements ListingChannel {
         Map<String, String> shipping = shippingResolver.resolve(cell);
         requireShipping(shipping);
         List<Line> lines = activeLines(cell);
-        MasterProduct master = cell.getMasterProduct();
         String categoryCode = masterChannelConfigService.resolveChannelCategory(cell).category().getCode();
         String displayCategory = displayCategory(categoryCode, key);
 
@@ -473,9 +499,10 @@ public class LotteonListingAdapter implements ListingChannel {
             product.put("slStrtDttm", LocalDateTime.now(SyncWindow.KST).format(LOTTEON_TIME));
             product.put("slEndDttm", "29991231235959");
         }
+        ListingNoticeSource.NoticeInput noticeInput =
+                ListingNoticeSource.of(cell, lines.isEmpty() ? null : lines.get(0).option());
         LotteonNoticeConverter.Notification notice = LotteonNoticeConverter.convert(
-                master == null ? null : master.getCategoryNoticeGroup(),
-                master == null ? null : master.getCategoryNotices());
+                noticeInput.group(), noticeInput.notices());
         List<Map<String, Object>> articles = new ArrayList<>();
         for (LotteonNoticeConverter.Line line : notice.lines()) {
             articles.add(Map.of("pdArtlCd", line.code(), "pdArtlCnts", line.value()));

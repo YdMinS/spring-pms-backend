@@ -202,10 +202,12 @@ public interface MasterProductService {
      * values, so a later master edit no longer reaches it (the {@code channel ?? master ?? account} priority is
      * unchanged — the channel simply wins with the copied values). Place keys (outbound / return center) are
      * account-specific and are <b>kept</b> untouched. Idempotent: a cell already equal to the master is not
-     * saved and not counted.</p>
+     * saved and not counted. FEATURE_2611_27 / D39: a listed cell whose shipping uses the market values is overwritten
+     * even when equal, saved, counted and its {@code usesMarketShipping} flag turned off.</p>
      *
      * @param id         master product id (404 when absent / cross-tenant)
-     * @param listingIds channels to apply to; {@code null}/empty = every linked channel. An id outside this
+     * @param listingIds channels to apply to; {@code null}/empty = every linked channel except those whose shipping uses the
+     *                   market values (skipped, FEATURE_2611_27 / D39). An id outside this
      *                   master's channels is rejected with 400.
      * @return the ids of the channel cells that actually changed (FEATURE_2610_13 / D117: the 11st ones are re-priced)
      */

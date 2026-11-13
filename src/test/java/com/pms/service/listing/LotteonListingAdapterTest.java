@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.ListingMarketImage;
+import com.pms.domain.ListingMarketValueGroup;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
 import com.pms.domain.MasterProduct;
@@ -84,17 +85,21 @@ class LotteonListingAdapterTest {
         given(masterChannelConfigService.resolveChannelCategory(any())).willReturn(
                 new MasterChannelConfigService.ChannelCategory(
                         PlatformCategory.builder().platform(Platform.LOTTEON).code("BC1").build(), false));
-        Map<String, String> shipping = new LinkedHashMap<>();
-        shipping.put(LotteonShippingKeys.OWHP_NO, "PLO1");
-        shipping.put(LotteonShippingKeys.RTRP_NO, "PLO2");
-        shipping.put(LotteonShippingKeys.DV_CST_POL_NO, "DLD1");
-        given(shippingResolver.resolve(cell)).willReturn(shipping);
+        given(shippingResolver.resolve(cell)).willReturn(shipping());
         given(client.getCategory(LotteonPaths.STANDARD_CATEGORY + "&filter_1=BC1", "KEY")).willReturn(JSON.readTree(
                 "{\"itemList\":[{\"data\":{\"disp_list\":[{\"mall_dvs_cd\":\"EL\",\"disp_cat_id\":\"X\"},"
                         + "{\"mall_dvs_cd\":\"LTON\",\"disp_cat_id\":\"FC1\"},"
                         + "{\"mall_dvs_cd\":\"LTON\",\"disp_cat_id\":\"FC2\"}]}}]}"));
         given(tagMergeService.resolveTags(cell)).willReturn(List.of("물", "생수"));
         given(marketImageRepository.findByProductListingIdOrderBySortOrderAsc(100L)).willReturn(List.of());
+    }
+
+    private static Map<String, String> shipping() {
+        Map<String, String> shipping = new LinkedHashMap<>();
+        shipping.put(LotteonShippingKeys.OWHP_NO, "PLO1");
+        shipping.put(LotteonShippingKeys.RTRP_NO, "PLO2");
+        shipping.put(LotteonShippingKeys.DV_CST_POL_NO, "DLD1");
+        return shipping;
     }
 
     private static ProductListingOption option(long id, String name, String price, String marketId, boolean active,
@@ -309,6 +314,56 @@ class LotteonListingAdapterTest {
         answer(LotteonPaths.PRODUCT_DETAIL, String.format(DETAIL, "SALE", "APRV_WT", "N"));
 
         assertThat(adapter.fetchStatus(cell, account).status()).isEqualTo(ListingStatus.SUBMITTED);
+    }
+
+    @Test
+    void fetchProduct_readsTheThreeShippingNumbers() throws Exception {
+        answer(LotteonPaths.PRODUCT_DETAIL, String.format(DETAIL, "STP", "APRV_CMPT", "Y").replace(
+                "\"scatNo\":\"BC1\"", "\"scatNo\":\"BC1\",\"owhpNo\":\"PLO1\",\"rtrpNo\":\"PLO2\",\"dvCstPolNo\":\"DLD1\""));
+
+        ImportedProduct product = adapter.fetchProduct("LO555", account);
+
+        assertThat(product.shipping()).containsExactlyInAnyOrderEntriesOf(Map.of(
+                LotteonShippingKeys.OWHP_NO, "PLO1",
+                LotteonShippingKeys.RTRP_NO, "PLO2",
+                LotteonShippingKeys.DV_CST_POL_NO, "DLD1"));
+    }
+
+    @Test
+    void fetchProduct_withoutShippingNumbers_readsNoShipping() throws Exception {
+        answer(LotteonPaths.PRODUCT_DETAIL, String.format(DETAIL, "STP", "APRV_CMPT", "Y"));
+
+        ImportedProduct product = adapter.fetchProduct("LO555", account);
+
+        assertThat(product.shipping()).isEmpty();
+    }
+
+    @Test
+    void marketValueGroups_lotteonSendsAllThree() {
+        assertThat(adapter.marketValueGroups()).containsExactlyInAnyOrder(ListingMarketValueGroup.ATTRIBUTES,
+                ListingMarketValueGroup.TAGS, ListingMarketValueGroup.SHIPPING);
+    }
+
+    @Test
+    void register_usesMarketAttributes_sendsTheCellNoticeGroupAndFirstActiveOptionNotices() throws Exception {
+        ProductListing marketCell = cell.toBuilder().usesMarketAttributes(true).categoryNoticeGroup("의류").build();
+        given(shippingResolver.resolve(marketCell)).willReturn(shipping());
+        options(option(11L, "1L", "9900", null, true, null).toBuilder()
+                .categoryNotices(Map.of("색상", "빨강")).build());
+        answer(LotteonPaths.REGISTER, "{\"returnCode\":\"0000\",\"data\":[{\"spdNo\":\"LO777\",\"resultCode\":\"0000\"}]}");
+
+        adapter.register(marketCell, gen, account);
+
+        JsonNode notice = posted(LotteonPaths.REGISTER).path("pdItmsInfo");
+        assertThat(notice.path("pdItmsCd").asText()).isEqualTo("01");
+        JsonNode color = null;
+        for (JsonNode article : notice.path("pdItmsArtlLst")) {
+            if ("0020".equals(article.path("pdArtlCd").asText())) {
+                color = article;
+            }
+        }
+        assertThat(color).isNotNull();
+        assertThat(color.path("pdArtlCnts").asText()).isEqualTo("빨강");
     }
 
     @Test

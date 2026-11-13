@@ -232,7 +232,8 @@ public class MasterProductController {
 
     @PostMapping("/{id}/shipping-override/apply-to-channels")
     @Operation(summary = "Overwrite the selected channels' shipping settings with the master's "
-            + "(77/79; body optional, no listingIds = every channel; place keys kept)")
+            + "(77/79; body optional, no listingIds = every channel except those using the market shipping values; "
+            + "place keys kept)")
     @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ResponseDTO<ShippingForceApplyResponse>> applyShippingOverrideToChannels(
             @PathVariable Long id, @RequestBody(required = false) ShippingForceApplyRequest request) {

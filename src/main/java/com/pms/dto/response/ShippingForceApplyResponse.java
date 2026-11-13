@@ -6,7 +6,8 @@ import lombok.Getter;
 /**
  * Result of forcing the master's shipping settings onto the selected channels (FEATURE_2608_06 / 77,
  * semantics revised in 79) — how many channel cells actually changed. A cell whose shipping settings already
- * equalled the master's is not saved and not counted (the operation is idempotent).
+ * equalled the master's is not saved and not counted (the operation is idempotent). FEATURE_2611_27 / D39: a listed
+ * channel whose shipping used the market values is always saved and counted.
  */
 @Getter
 @Builder

@@ -68,6 +68,49 @@ class ElevenstNoticeConverterTest {
         }
     }
 
+    /** FEATURE_2611_27 / R11: JOIN splits back into the Coupang items · SPLIT joins the distinct values. */
+    @Test
+    void fromElevenst_joinSplitsBack_splitJoinsDistinct() {
+        ElevenstNoticeConverter.Imported office =
+                ElevenstNoticeConverter.fromElevenst("891020", Map.of("23760172", "10x20 / 1kg"));
+        assertThat(office.coupangGroup()).isEqualTo("사무용기기(컴퓨터/노트북/프린터 등)");
+        assertThat(office.notices()).containsEntry("크기", "10x20").containsEntry("무게", "1kg");
+
+        Map<String, String> book = new LinkedHashMap<>();
+        book.put("11901", "홍길동");
+        book.put("11924", "출판사");
+        ElevenstNoticeConverter.Imported books = ElevenstNoticeConverter.fromElevenst("891036", book);
+        assertThat(books.coupangGroup()).isEqualTo("서적");
+        assertThat(books.notices()).containsEntry("저자, 출판사", "홍길동 / 출판사");
+    }
+
+    /** FEATURE_2611_27 / R11: 11st-only and unknown items → ELEVENST: keys, blanks dropped · unknown type → nothing. */
+    @Test
+    void fromElevenst_ownAndUnknownItemsAreOwnKeys_unknownTypeIsNothing() {
+        Map<String, String> farm = new LinkedHashMap<>();
+        farm.put("471785504", "해당 없음");
+        farm.put("99999", "기타값");
+        farm.put("23756754", " ");
+        ElevenstNoticeConverter.Imported imported = ElevenstNoticeConverter.fromElevenst("891030", farm);
+        assertThat(imported.coupangGroup()).isEqualTo("농수축산물");
+        assertThat(imported.notices()).containsOnly(
+                Map.entry("ELEVENST:471785504", "해당 없음"), Map.entry("ELEVENST:99999", "기타값"));
+
+        ElevenstNoticeConverter.Imported unknown =
+                ElevenstNoticeConverter.fromElevenst("000000", Map.of("11800", "생수"));
+        assertThat(unknown.coupangGroup()).isNull();
+        assertThat(unknown.notices()).isEmpty();
+    }
+
+    /** FEATURE_2611_27 / D31: 891045 is shared by two groups → the first one in the table. */
+    @Test
+    void fromElevenst_sharedTypeCode_takesTheFirstGroup() {
+        ElevenstNoticeConverter.Imported imported =
+                ElevenstNoticeConverter.fromElevenst("891045", Map.of("11800", "생수"));
+        assertThat(imported.coupangGroup()).isEqualTo("기타 재화(유통기간)");
+        assertThat(imported.notices()).containsEntry("품명 및 모델명", "생수");
+    }
+
     private static ElevenstNoticeConverter.Line line(ElevenstNoticeConverter.Notification n, String code) {
         return n.lines().stream().filter(l -> l.code().equals(code)).findFirst().orElseThrow();
     }

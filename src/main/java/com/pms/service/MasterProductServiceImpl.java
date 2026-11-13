@@ -345,6 +345,9 @@ public class MasterProductServiceImpl implements MasterProductService {
                         .usesOwnCategory(category != null && category.own())
                         .needsMarketSync(pl.isNeedsMarketSync())
                         .marketBundleType(pl.getMarketBundleType())
+                        .usesMarketAttributes(pl.isUsesMarketAttributes())
+                        .usesMarketTags(pl.isUsesMarketTags())
+                        .usesMarketShipping(pl.isUsesMarketShipping())
                         .build());
             }
             return MatrixRow.builder()
@@ -1084,9 +1087,14 @@ public class MasterProductServiceImpl implements MasterProductService {
         // account's own registered centers — never touched.
         Map<String, String> masterOverride = ShippingOverrideKeys.filterMaster(master.getShippingOverride());
         List<ProductListing> targets = selectChannels(id, listingIds);
+        boolean pickedByNumber = listingIds != null && !listingIds.isEmpty();
 
         List<ProductListing> changed = new ArrayList<>();
         for (ProductListing cell : targets) {
+            boolean usesMarketShipping = cell.isUsesMarketShipping();
+            if (!pickedByNumber && usesMarketShipping) {
+                continue; // FEATURE_2611_27 / D39: without a list, a cell using the market shipping values is kept
+            }
             // FEATURE_2610_13 / D104: copy only the keys of THIS cell's platform — an 11st cell gets the
             // elevenst.* keys, an ESM cell nothing (no master ESM key — it keeps all its own esm.* keys,
             // FEATURE_2610_26 / D36 · D40), a LotteON cell nothing as well (FEATURE_2610_24 / D42), every other
@@ -1123,10 +1131,11 @@ public class MasterProductServiceImpl implements MasterProductService {
                 }
             }
             Map<String, String> resolved = next.isEmpty() ? null : next;
-            if (Objects.equals(resolved, current)) {
+            if (!usesMarketShipping && Objects.equals(resolved, current)) {
                 continue; // already exactly the master's settings → idempotent no-op, not counted
             }
-            changed.add(cell.toBuilder().shippingOverride(resolved).build());
+            // FEATURE_2611_27 / D39: a listed cell using the market shipping values is always saved and its flag goes off.
+            changed.add(cell.toBuilder().shippingOverride(resolved).usesMarketShipping(false).build());
         }
         if (!changed.isEmpty()) {
             productListingRepository.saveAll(changed);

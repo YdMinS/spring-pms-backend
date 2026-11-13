@@ -10,6 +10,7 @@ import com.pms.domain.GeneratedContentSource;
 import com.pms.domain.GeneratedProductData;
 import com.pms.domain.GrandTotalSend;
 import com.pms.domain.ListingMarketImage;
+import com.pms.domain.ListingMarketValueGroup;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.ListingUpdateItem;
 import com.pms.domain.MarketplaceAccount;
@@ -37,6 +38,7 @@ import com.pms.service.listing.category.CoupangCategoryMeta;
 import com.pms.service.listing.category.OptionCategoryMeta;
 import com.pms.service.listing.shipping.ResolvedShippingConfig;
 import com.pms.service.listing.shipping.CoupangShippingConfigResolver;
+import com.pms.service.listing.shipping.ShippingOverrideKeys;
 import com.pms.service.listing.shipping.ShippingReadiness;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -425,7 +427,34 @@ public class CoupangListingAdapter implements ListingChannel {
                 marketBundleType(data),
                 detailHtml(data),
                 marketImages(data),
-                null);
+                null,
+                importedShipping(data));
+    }
+
+    /**
+     * FEATURE_2611_27 / R9: the 17 shipping fields of the product response, keyed by the listing's shipping override
+     * keys ({@link ShippingOverrideKeys}), in {@code SHIPPING_FIELDS} order. A field that is absent, null or blank is
+     * left out. The amounts are read as numbers and written without trailing zeros; {@code companyContactNumber} is
+     * the one field stored under another key ({@code returnContactNumber}).
+     */
+    private static Map<String, String> importedShipping(JsonNode data) {
+        Map<String, String> shipping = new LinkedHashMap<>();
+        for (String[] field : SHIPPING_FIELDS) {
+            String name = field[0];
+            String value;
+            if (SHIPPING_AMOUNTS.contains(name)) {
+                BigDecimal amount = asDecimalOrNull(data, name);
+                value = amount == null ? null : amount.stripTrailingZeros().toPlainString();
+            } else {
+                value = asTextOrNull(data, name);
+            }
+            if (value == null || value.isBlank()) {
+                continue;
+            }
+            String key = "companyContactNumber".equals(name) ? ShippingOverrideKeys.RETURN_CONTACT_NUMBER : name;
+            shipping.put(key, value);
+        }
+        return shipping;
     }
 
     /**
@@ -759,6 +788,15 @@ public class CoupangListingAdapter implements ListingChannel {
     @Override
     public PushOutcome updateAndReport(ProductListing cell, GeneratedProductData gen, MarketplaceAccount acct) {
         return updateAndReport(cell, gen, acct, ListingUpdateSelection.request(null, null));
+    }
+
+    /**
+     * FEATURE_2611_27 / D29: Coupang sends attributes · notices (per option), search tags and the 17 shipping fields
+     * from the listing's own values.
+     */
+    @Override
+    public Set<ListingMarketValueGroup> marketValueGroups() {
+        return EnumSet.allOf(ListingMarketValueGroup.class);
     }
 
     /** FEATURE_2611_25 / D12 · R2: a Coupang [수정 요청] opens the compare window first. */
@@ -1719,14 +1757,16 @@ public class CoupangListingAdapter implements ListingChannel {
                 masterChannelConfigService.resolveChannelCategory(cell);
         CategoryMetaSchema schema = metaAdapter.getMeta(acct, category.category().getCode());
         boolean usesOwnCategory = category.own();
+        // FEATURE_2611_27 / R10: a cell sending its own market values drops the master and master option values.
+        boolean marketValuesOnly = cell.isUsesMarketAttributes();
 
         // 2609_45/D12-1: when the channel uses its OWN category the master values belong to a DIFFERENT
         // category — they must not seed the merge (see the note on the payload builder). The import stored
         // everything this channel needs on the cell options.
         Map<String, String> masterAttributes =
-                master != null && !usesOwnCategory ? master.getCategoryAttributes() : null;
+                master != null && !usesOwnCategory && !marketValuesOnly ? master.getCategoryAttributes() : null;
         Map<String, String> masterNotices =
-                master != null && !usesOwnCategory ? master.getCategoryNotices() : null;
+                master != null && !usesOwnCategory && !marketValuesOnly ? master.getCategoryNotices() : null;
         // 2609_22/D1: master options keyed by id — the single master↔channel matching axis (never the name).
         Map<Long, MasterProductOption> byMasterOptionId = master == null ? Map.of()
                 : masterProductOptionRepository.findByMasterProductId(master.getId()).stream()
@@ -1752,7 +1792,7 @@ public class CoupangListingAdapter implements ListingChannel {
             if (!Boolean.TRUE.equals(option.getActive())) {
                 continue;   // only active options are pushed → only they need required values
             }
-            MasterProductOption mo = linkedMaster(option, byMasterOptionId);
+            MasterProductOption mo = marketValuesOnly ? null : linkedMaster(option, byMasterOptionId);
             // 47/59: every required category attribute must have a non-blank value on each ACTIVE option
             // (master shared default ++ per-option override). Categories whose schema defines no attribute have
             // nothing to send → skipped here rather than at the top of the method, so the notice check below
@@ -2030,12 +2070,14 @@ public class CoupangListingAdapter implements ListingChannel {
                                    Map<String, String> masterAttributes, Map<String, String> masterNotices,
                                    Map<String, String> groupByDetail, List<CategoryNotice> requiredNotices,
                                    Map<String, String> unitByAttr, Map<String, List<String>> usableByAttr,
-                                   Set<String> searchOptionNames) {
+                                   Set<String> searchOptionNames, boolean marketValuesOnly) {
     }
 
     private CategoryContext categoryContext(MasterChannelConfigService.ChannelCategory category, ProductListing cell,
                                             MasterProduct master, MarketplaceAccount acct) {
         boolean usesOwnCategory = category.own();
+        // FEATURE_2611_27 / R10: the cell sends its own market values — only the cell option values seed the merge.
+        boolean marketValuesOnly = cell.isUsesMarketAttributes();
         /*
          * 2609_45/D12-1: when the channel uses its OWN category the master's values are ANOTHER category's
          * values — drop them from the merge base. toAttributes does not filter by schema, so a master-only
@@ -2045,9 +2087,9 @@ public class CoupangListingAdapter implements ListingChannel {
          * Same category → the usual three-tier merge (master ++ master option ++ cell option, 2609_22/D5).
          */
         Map<String, String> masterAttributes =
-                master != null && !usesOwnCategory ? master.getCategoryAttributes() : null;
+                master != null && !usesOwnCategory && !marketValuesOnly ? master.getCategoryAttributes() : null;
         Map<String, String> masterNotices =
-                master != null && !usesOwnCategory ? master.getCategoryNotices() : null;
+                master != null && !usesOwnCategory && !marketValuesOnly ? master.getCategoryNotices() : null;
         CategoryMetaSchema schema = metaAdapter.getMeta(acct, category.category().getCode());
         // Notice detail(noticeCategoryDetailName) → group(noticeCategoryName) for this category (61), narrowed
         // to the group the user actually picked (96 ⑩ — 품목군 share notice keys, so a first-wins map tagged the
@@ -2073,7 +2115,7 @@ public class CoupangListingAdapter implements ListingChannel {
                 .filter(a -> a.usableUnits() != null && !a.usableUnits().isEmpty())
                 .collect(Collectors.toMap(CategoryAttribute::name, CategoryAttribute::usableUnits, (a, b) -> a));
         return new CategoryContext(category, schema, masterAttributes, masterNotices, groupByDetail, requiredNotices,
-                unitByAttr, usableByAttr, searchOptionNames(schema));
+                unitByAttr, usableByAttr, searchOptionNames(schema), marketValuesOnly);
     }
 
     /**
@@ -2084,7 +2126,7 @@ public class CoupangListingAdapter implements ListingChannel {
     private static List<Map<String, Object>> itemAttributes(CategoryContext context, MasterProductOption mo,
                                                             ProductListingOption option, boolean bundle) {
         Map<String, String> attrs = withConsistentGrandTotal(
-                mergedAttributes(context.masterAttributes(), mo, option));
+                mergedAttributes(context.masterAttributes(), context.marketValuesOnly() ? null : mo, option));
         // FEATURE_2610_38 / D24: …and refused one carrying purchase options ("혼합 구성 상품 등록할 때, 속성
         // (attributeTypeName) 입력할 수 없습니다", 2026-10-29). An approved AB product (16314893607) holds no
         // purchase-option value → an AB item sends search options only, each marked exposed=NONE. Also the
@@ -2108,7 +2150,7 @@ public class CoupangListingAdapter implements ListingChannel {
      */
     private static List<Map<String, Object>> itemNotices(CategoryContext context, MasterProductOption mo,
                                                          ProductListingOption option) {
-        Map<String, String> notices = mergedNotices(context.masterNotices(), mo, option);
+        Map<String, String> notices = mergedNotices(context.masterNotices(), context.marketValuesOnly() ? null : mo, option);
         if (!context.requiredNotices().isEmpty()) {
             requireNotices(context.requiredNotices(), notices, option.getOptionName());
         }

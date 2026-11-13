@@ -1,0 +1,98 @@
+# The 「마켓 값 사용」 flags of a channel cell (FEATURE_2611_27 / D27).
+#   133-1 product_listing.uses_market_attributes · uses_market_tags · uses_market_shipping = whether that group of the
+#         cell is sent from the cell's own values read from the market. Existing rows start false.
+#   133-2 MySQL only: the three BOOLEAN columns -> BIT(1) (120-2 pattern — Hibernate validate expects BIT).
+#         No data change.
+databaseChangeLog:
+
+  - changeSet:
+      id: 133-1-product-listing-market-value-flags
+      author: oclyx
+      comment: "FEATURE_2611_27 D27: product_listing.uses_market_attributes / uses_market_tags / uses_market_shipping (BOOLEAN NOT NULL default false)."
+      changes:
+        - addColumn:
+            tableName: product_listing
+            columns:
+              - column:
+                  name: uses_market_attributes
+                  type: BOOLEAN
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false
+              - column:
+                  name: uses_market_tags
+                  type: BOOLEAN
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false
+              - column:
+                  name: uses_market_shipping
+                  type: BOOLEAN
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false
+      rollback:
+        - dropColumn: { tableName: product_listing, columnName: uses_market_attributes }
+        - dropColumn: { tableName: product_listing, columnName: uses_market_tags }
+        - dropColumn: { tableName: product_listing, columnName: uses_market_shipping }
+
+  # MySQL only: abstract BOOLEAN -> TINYINT, but Hibernate expects BIT(1). Re-type + re-declare NOT NULL/DEFAULT
+  # (MySQL MODIFY drops them). Mirrors 120-2. H2 untouched.
+  - changeSet:
+      id: 133-2-product-listing-market-value-flags-mysql-bit
+      author: oclyx
+      dbms: mysql
+      comment: "product_listing.uses_market_* TINYINT -> BIT(1) to satisfy Hibernate schema validation."
+      changes:
+        - modifyDataType:
+            tableName: product_listing
+            columnName: uses_market_attributes
+            newDataType: BIT(1)
+        - addNotNullConstraint:
+            tableName: product_listing
+            columnName: uses_market_attributes
+            columnDataType: BIT(1)
+            defaultNullValue: false
+        - addDefaultValue:
+            tableName: product_listing
+            columnName: uses_market_attributes
+            defaultValueBoolean: false
+        - modifyDataType:
+            tableName: product_listing
+            columnName: uses_market_tags
+            newDataType: BIT(1)
+        - addNotNullConstraint:
+            tableName: product_listing
+            columnName: uses_market_tags
+            columnDataType: BIT(1)
+            defaultNullValue: false
+        - addDefaultValue:
+            tableName: product_listing
+            columnName: uses_market_tags
+            defaultValueBoolean: false
+        - modifyDataType:
+            tableName: product_listing
+            columnName: uses_market_shipping
+            newDataType: BIT(1)
+        - addNotNullConstraint:
+            tableName: product_listing
+            columnName: uses_market_shipping
+            columnDataType: BIT(1)
+            defaultNullValue: false
+        - addDefaultValue:
+            tableName: product_listing
+            columnName: uses_market_shipping
+            defaultValueBoolean: false
+      rollback:
+        - modifyDataType:
+            tableName: product_listing
+            columnName: uses_market_attributes
+            newDataType: BOOLEAN
+        - modifyDataType:
+            tableName: product_listing
+            columnName: uses_market_tags
+            newDataType: BOOLEAN
+        - modifyDataType:
+            tableName: product_listing
+            columnName: uses_market_shipping
+            newDataType: BOOLEAN

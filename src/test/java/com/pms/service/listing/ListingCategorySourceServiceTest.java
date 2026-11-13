@@ -111,4 +111,23 @@ class ListingCategorySourceServiceTest {
         assertThat(response.getPreviousCategoryCode()).isNull();
         assertThat(response.isUseMasterCategory()).isTrue();
     }
+
+    @Test
+    void updateCategorySource_true_turnsOffOnlyTheMarketAttributesFlag() {
+        given(productListingRepository.findScopedById(LISTING_ID)).willReturn(Optional.of(cell("73170", "가공식품")
+                .toBuilder().usesMarketAttributes(true).usesMarketTags(true).usesMarketShipping(true).build()));
+        given(productListingOptionRepository.findByProductListingId(LISTING_ID)).willReturn(List.of());
+        givenSaveEchoes();
+
+        service.updateCategorySource(LISTING_ID, true);
+
+        ArgumentCaptor<ProductListing> cellCaptor = ArgumentCaptor.forClass(ProductListing.class);
+        verify(productListingRepository).save(cellCaptor.capture());
+        ProductListing saved = cellCaptor.getValue();
+        assertThat(saved.isUsesMarketAttributes()).isFalse();
+        assertThat(saved.isUsesMarketTags()).isTrue();
+        assertThat(saved.isUsesMarketShipping()).isTrue();
+        assertThat(saved.getPlatformCategoryCode()).isNull();
+        assertThat(saved.isNeedsMarketSync()).isFalse();
+    }
 }
