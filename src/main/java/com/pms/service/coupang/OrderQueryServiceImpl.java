@@ -5,6 +5,8 @@ import com.pms.domain.CoupangOrderLine;
 import com.pms.domain.ElevenstOrderLine;
 import com.pms.domain.LotteonOrderLine;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.MasterImageZoneAssignment;
+import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.OrderLine;
 import com.pms.domain.OrderStatus;
@@ -15,6 +17,7 @@ import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.LotteonOrderLineRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.OrderRepository;
 import com.pms.repository.ProductRepository;
@@ -25,6 +28,7 @@ import com.pms.service.stock.OrderLineExpander.LineExpansion;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -50,9 +54,13 @@ import java.util.stream.Collectors;
  * <b>once</b> per batch of line ids into a Map (FEATURE_2609_26 / 04 §3-3) — a back reference in core would leak
  * the platform into core and bring N+1 with it.
  *
- * <p>The row thumbnail is the first component product of the line's BOM and the row's {@code components} are all of
- * them × {@code purchasableQty} (FEATURE_2611_15 / D16 · D18) — both from one {@link OrderLineExpander} call (the only
- * place that knows the expansion); products are read once per batch, not per line.
+ * <p>The row's {@code components} are every BOM component × {@code purchasableQty} (FEATURE_2611_15 / D16 · D18), from
+ * one {@link OrderLineExpander} call (the only place that knows the expansion). The two thumbnail fields (the first BOM
+ * component, products read once per batch) are no longer drawn by screens and stay with the same values for installed older apps (FEATURE_2611_31 / D11).
+ *
+ * <p>The row's master cover photo {@code masterCoverImageUrl} = the mapped cover image ?? the legacy column (blank = none),
+ * read <b>once</b> for the batch of master ids of the same master option batch; a broken line or a master without a cover
+ * photo gets null — never filled with a product photo (FEATURE_2611_31 / D1 · D2 · D3 · D5).
  *
  * <p>The row's seller name and sales channel alias come from reading the accounts + sellers <b>once</b> for the batch
  * of account ids in the list, joined through a Map (FEATURE_2611_24 / D9) — {@code getSeller()} is not called per
@@ -76,6 +84,7 @@ public class OrderQueryServiceImpl implements OrderQueryService {
     private final ProductRepository productRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
     private final MasterProductOptionRepository masterProductOptionRepository;
+    private final MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
 
     @Override
     public List<OrderItemResponse> list(Long sellerId, LocalDate from, LocalDate to) {
@@ -93,6 +102,7 @@ public class OrderQueryServiceImpl implements OrderQueryService {
         Map<Long, LotteonOrderLine> lotteonMirrors = lotteonMirrorsByLineId(lines);
         Map<Long, LineExpansion> expansions = orderLineExpander.expand(lines, OrderLine::purchasableQty);
         Map<Long, MasterProductOption> masterOptions = expandedMasterOptions(expansions);
+        Map<Long, String> masterCovers = masterCoverUrlsByMasterId(masterOptions);
         Map<Long, Product> thumbnails = thumbnailsByLineId(expansions);
         return lines.stream()
                 .map(line -> {
@@ -104,7 +114,8 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                     return toResponse(line, accounts.get(line.getOrder().getMarketplaceAccount().getId()),
                             mirrors.get(line.getId()), elevenstMirrors.get(line.getId()),
                             lotteonMirrors.get(line.getId()), thumbnails.get(line.getId()), components(expansion),
-                            masterOption, unexpandedReasonOf(expansion));
+                            masterOption, unexpandedReasonOf(expansion),
+                            masterOption != null ? masterCovers.get(masterOption.getMasterProduct().getId()) : null);
                 })
                 .toList();
     }
@@ -197,9 +208,34 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 .collect(Collectors.toMap(MasterProductOption::getId, Function.identity(), (a, b) -> a));
     }
 
+    /** Master cover photos read once for the batch of master ids — mapped image ?? legacy column (FEATURE_2611_31 / D5). */
+    private Map<Long, String> masterCoverUrlsByMasterId(Map<Long, MasterProductOption> masterOptions) {
+        Map<Long, MasterProduct> masters = masterOptions.values().stream()
+                .map(MasterProductOption::getMasterProduct)
+                .collect(Collectors.toMap(MasterProduct::getId, Function.identity(), (a, b) -> a));
+        if (masters.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, String> mapped = masterImageZoneAssignmentRepository
+                .findZoneImageUrlsByMasterIds(MasterImageZoneAssignment.SOURCE_ZONE, List.copyOf(masters.keySet()))
+                .stream()
+                .filter(r -> r[1] != null)
+                .collect(Collectors.toMap(r -> (Long) r[0], r -> (String) r[1], (first, dup) -> first));
+        Map<Long, String> covers = new HashMap<>();
+        masters.forEach((masterId, master) -> {
+            String mappedUrl = mapped.get(masterId);
+            if (mappedUrl != null) {
+                covers.put(masterId, mappedUrl);
+            } else if (StringUtils.hasText(master.getSourceImageUrl())) {
+                covers.put(masterId, master.getSourceImageUrl());
+            }
+        });
+        return covers;
+    }
+
     /**
-     * Line id → thumbnail product (first BOM component). Lines that fail to expand have no entry — the screen
-     * draws an empty box. Only the product is used here, never the quantity.
+     * Line id → thumbnail product (first BOM component). Lines that fail to expand have no entry — both thumbnail
+     * fields are null. Only the product is used here, never the quantity. Kept for installed older apps only (FEATURE_2611_31 / D11).
      */
     private Map<Long, Product> thumbnailsByLineId(Map<Long, LineExpansion> expansions) {
         if (expansions.isEmpty()) {
@@ -248,7 +284,8 @@ public class OrderQueryServiceImpl implements OrderQueryService {
 
     private OrderItemResponse toResponse(OrderLine line, MarketplaceAccount account, CoupangOrderLine mirror, ElevenstOrderLine elevenstMirror,
                                          LotteonOrderLine lotteonMirror, Product thumbnail, List<OrderItemResponse.ComponentQuantity> components,
-                                         MasterProductOption masterOption, String unexpandedReason) {
+                                         MasterProductOption masterOption, String unexpandedReason,
+                                         String masterCoverImageUrl) {
         var order = line.getOrder();
         // 전량취소는 저장되지 않는 파생값이라 여기서 만들어 낸다(PLAN D26).
         OrderStatus effective = line.effectiveStatus();
@@ -298,6 +335,7 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 .masterProductName(masterOption != null ? masterOption.getMasterProduct().getName() : null)
                 .masterOptionName(masterOption != null ? masterOption.getName() : null)
                 .unexpandedReason(unexpandedReason)
+                .masterCoverImageUrl(masterCoverImageUrl)
                 .build();
     }
 }

@@ -62,6 +62,7 @@ public class OrderItemResponse {
     private boolean stockConfirmSent;   // 11st reserved-sale [입고완료 처리] already sent — FEATURE_2610_17 / D67
     // Thumbnail = first component product of the line's master option BOM (product.image_url as stored).
     // Both null when the line cannot be expanded (unmapped option · no master option · empty BOM).
+    // Screens no longer draw these two fields; kept with the same values for installed older apps (FEATURE_2611_31 / D11).
     private Long thumbnailProductId;
     private String thumbnailImageUrl;
     // Real products of the line (FEATURE_2611_15 / D15 · D16 · D18): every component product of the line's master
@@ -74,6 +75,9 @@ public class OrderItemResponse {
     private String masterOptionName;
     // Null = linked; a broken line carries UNMAPPED_OPTION · NO_MASTER_OPTION · EMPTY_BOM (FEATURE_2611_30 / D28).
     private String unexpandedReason;
+    // Master cover photo URL of the line's master (the __source__ mapped image's real URL ?? master_product.source_image_url,
+    // blank = none). Null = no cover photo · broken line; never filled with a product photo (FEATURE_2611_31 / D1 · D2 · D3 · D5).
+    private String masterCoverImageUrl;
 
     /** One component product of the line and how many go out (FEATURE_2611_15 / D16 · D18). */
     public record ComponentQuantity(String productName, int quantity) {
