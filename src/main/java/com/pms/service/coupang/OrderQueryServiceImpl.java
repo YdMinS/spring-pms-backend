@@ -5,6 +5,7 @@ import com.pms.domain.CoupangOrderLine;
 import com.pms.domain.ElevenstOrderLine;
 import com.pms.domain.LotteonOrderLine;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.MasterProductOption;
 import com.pms.domain.OrderLine;
 import com.pms.domain.OrderStatus;
 import com.pms.domain.Product;
@@ -14,6 +15,7 @@ import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.LotteonOrderLineRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.OrderRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.service.elevenst.ElevenstOrderList;
@@ -55,6 +57,10 @@ import java.util.stream.Collectors;
  * <p>The row's seller name and sales channel alias come from reading the accounts + sellers <b>once</b> for the batch
  * of account ids in the list, joined through a Map (FEATURE_2611_24 / D9) — {@code getSeller()} is not called per
  * line through the order.
+ *
+ * <p>The row's master product name and master option name come from reading the master options + their masters
+ * <b>once</b> for the batch of master option ids in the same expansion result; a broken line has both names null and
+ * a reason code — the same values as the order detail {@code lineMasters} (FEATURE_2611_30 / D28 · D30).
  */
 @Service
 @RequiredArgsConstructor
@@ -69,6 +75,7 @@ public class OrderQueryServiceImpl implements OrderQueryService {
     private final OrderLineExpander orderLineExpander;
     private final ProductRepository productRepository;
     private final MarketplaceAccountRepository marketplaceAccountRepository;
+    private final MasterProductOptionRepository masterProductOptionRepository;
 
     @Override
     public List<OrderItemResponse> list(Long sellerId, LocalDate from, LocalDate to) {
@@ -85,11 +92,20 @@ public class OrderQueryServiceImpl implements OrderQueryService {
         Map<Long, ElevenstOrderLine> elevenstMirrors = elevenstMirrorsByLineId(lines);
         Map<Long, LotteonOrderLine> lotteonMirrors = lotteonMirrorsByLineId(lines);
         Map<Long, LineExpansion> expansions = orderLineExpander.expand(lines, OrderLine::purchasableQty);
+        Map<Long, MasterProductOption> masterOptions = expandedMasterOptions(expansions);
         Map<Long, Product> thumbnails = thumbnailsByLineId(expansions);
         return lines.stream()
-                .map(line -> toResponse(line, accounts.get(line.getOrder().getMarketplaceAccount().getId()),
-                        mirrors.get(line.getId()), elevenstMirrors.get(line.getId()),
-                        lotteonMirrors.get(line.getId()), thumbnails.get(line.getId()), components(expansions.get(line.getId()))))
+                .map(line -> {
+                    LineExpansion expansion = expansions.get(line.getId());
+                    // Map.of() throws on a null key lookup — only look up a linked line's master option id.
+                    MasterProductOption masterOption = expansion != null && !expansion.failed()
+                            && expansion.masterOptionId() != null
+                            ? masterOptions.get(expansion.masterOptionId()) : null;
+                    return toResponse(line, accounts.get(line.getOrder().getMarketplaceAccount().getId()),
+                            mirrors.get(line.getId()), elevenstMirrors.get(line.getId()),
+                            lotteonMirrors.get(line.getId()), thumbnails.get(line.getId()), components(expansion),
+                            masterOption, unexpandedReasonOf(expansion));
+                })
                 .toList();
     }
 
@@ -167,6 +183,20 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 .collect(Collectors.toMap(m -> m.getOrderLine().getId(), Function.identity(), (a, b) -> a));
     }
 
+    /** Master options + their masters for the expansion result, read once (FEATURE_2611_30 / D30). */
+    private Map<Long, MasterProductOption> expandedMasterOptions(Map<Long, LineExpansion> expansions) {
+        List<Long> ids = expansions.values().stream()
+                .map(LineExpansion::masterOptionId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        return masterProductOptionRepository.findWithMasterProductByIdIn(ids).stream()
+                .collect(Collectors.toMap(MasterProductOption::getId, Function.identity(), (a, b) -> a));
+    }
+
     /**
      * Line id → thumbnail product (first BOM component). Lines that fail to expand have no entry — the screen
      * draws an empty box. Only the product is used here, never the quantity.
@@ -208,8 +238,17 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 .toList();
     }
 
+    /** Null when linked, otherwise the same reason code as the order detail lineMasters (FEATURE_2611_30 / D28). */
+    private static String unexpandedReasonOf(LineExpansion expansion) {
+        if (expansion != null && !expansion.failed()) {
+            return null;
+        }
+        return expansion == null ? OrderLineExpander.Failure.UNMAPPED_OPTION.name() : expansion.failure().name();
+    }
+
     private OrderItemResponse toResponse(OrderLine line, MarketplaceAccount account, CoupangOrderLine mirror, ElevenstOrderLine elevenstMirror,
-                                         LotteonOrderLine lotteonMirror, Product thumbnail, List<OrderItemResponse.ComponentQuantity> components) {
+                                         LotteonOrderLine lotteonMirror, Product thumbnail, List<OrderItemResponse.ComponentQuantity> components,
+                                         MasterProductOption masterOption, String unexpandedReason) {
         var order = line.getOrder();
         // 전량취소는 저장되지 않는 파생값이라 여기서 만들어 낸다(PLAN D26).
         OrderStatus effective = line.effectiveStatus();
@@ -256,6 +295,9 @@ public class OrderQueryServiceImpl implements OrderQueryService {
                 .thumbnailProductId(thumbnail != null ? thumbnail.getId() : null)
                 .thumbnailImageUrl(thumbnail != null ? thumbnail.getImageUrl() : null)
                 .components(components)
+                .masterProductName(masterOption != null ? masterOption.getMasterProduct().getName() : null)
+                .masterOptionName(masterOption != null ? masterOption.getName() : null)
+                .unexpandedReason(unexpandedReason)
                 .build();
     }
 }
