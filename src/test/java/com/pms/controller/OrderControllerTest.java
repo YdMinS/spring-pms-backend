@@ -138,6 +138,8 @@ class OrderControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data[0].receiverName").value("김철수"))
                 .andExpect(jsonPath("$.data[0].sellerName").value("테스트셀러"))
                 .andExpect(jsonPath("$.data[0].accountAlias").value("쿠팡본점"))
+                .andExpect(jsonPath("$.data[0].unexpandedReason").value("UNMAPPED_OPTION"))
+                .andExpect(jsonPath("$.data[0].masterProductName").doesNotExist())
                 .andExpect(jsonPath("$.data[0].raw").doesNotExist())
                 .andExpect(jsonPath("$.data[0].secretKey").doesNotExist());
     }
@@ -386,6 +388,8 @@ class OrderControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.lineMasters[0].orderLineId").value(line.getId()))
                 .andExpect(jsonPath("$.data.lineMasters[0].unexpandedReason").value("UNMAPPED_OPTION"))
                 .andExpect(jsonPath("$.data.lineMasters[0].masterProductName").doesNotExist())
+                .andExpect(jsonPath("$.data.lines[0].unexpandedReason").value("UNMAPPED_OPTION"))
+                .andExpect(jsonPath("$.data.lines[0].masterOptionName").doesNotExist())
                 .andExpect(jsonPath("$.data.admin").value(false));
     }
 
@@ -431,10 +435,12 @@ class OrderControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.lineMasters[1].products[0].imageUrl").value("products/y.png"))
                 .andExpect(jsonPath("$.data.lineMasters[1].products[0].quantity").value(6))
                 .andExpect(jsonPath("$.data.lineMasters[1].unexpandedReason").doesNotExist())
-                // The same line as an order list row (D16): name × real quantity, no master fields (D10).
+                // The same line as an order list row: name × real quantity and the master names (FEATURE_2611_30 / D30).
                 .andExpect(jsonPath("$.data.lines[1].components[0].productName").value("노란 수세미"))
                 .andExpect(jsonPath("$.data.lines[1].components[0].quantity").value(6))
-                .andExpect(jsonPath("$.data.lines[1].masterProductName").doesNotExist());
+                .andExpect(jsonPath("$.data.lines[1].masterProductName").value("수세미 세트"))
+                .andExpect(jsonPath("$.data.lines[1].masterOptionName").value("2개 묶음"))
+                .andExpect(jsonPath("$.data.lines[1].unexpandedReason").doesNotExist());
     }
 
     @Test
