@@ -5,6 +5,7 @@ import com.pms.domain.CoupangOrderLine;
 import com.pms.domain.ElevenstOrderLine;
 import com.pms.domain.InternalShipmentStage;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
 import com.pms.domain.Order;
@@ -20,6 +21,7 @@ import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.LotteonOrderLineRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.MasterImageZoneAssignmentRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.OrderRepository;
 import com.pms.repository.ProductRepository;
@@ -67,6 +69,7 @@ class OrderQueryServiceImplTest {
     @Mock private ProductRepository productRepository;
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
     @Mock private MasterProductOptionRepository masterProductOptionRepository;
+    @Mock private MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
     @InjectMocks private OrderQueryServiceImpl service;
 
     private OrderLine line(Long id, OrderStatus status, int orderQty, int cancelQty, int holdQty) {
@@ -407,7 +410,7 @@ class OrderQueryServiceImplTest {
         assertThat(r.getPlatformStatus()).isEqualTo("202");
     }
 
-    /** Thumbnail = first BOM component; a line that fails to expand gets nulls (screen draws an empty box). */
+    /** Thumbnail = first BOM component; a line that fails to expand gets nulls (kept for installed older apps, FEATURE_2611_31 / D11). */
     @Test
     void list_thumbnailIsFirstBomProduct() {
         given(coupangProperties.getSyncDays()).willReturn(14);
@@ -459,5 +462,92 @@ class OrderQueryServiceImplTest {
         ArgumentCaptor<ToIntFunction<OrderLine>> unitCount = ArgumentCaptor.forClass(ToIntFunction.class);
         verify(orderLineExpander).expand(eq(List.of(mapped, unmapped)), unitCount.capture());
         assertThat(unitCount.getValue().applyAsInt(mapped)).isEqualTo(3);
+    }
+
+    /** FEATURE_2611_31 / D9 · D1 · D5: a mapped cover image wins over the legacy column, read once for the master ids. */
+    @Test
+    void list_masterCoverIsMappedCoverOverLegacySourceImage() {
+        given(coupangProperties.getSyncDays()).willReturn(14);
+        OrderLine line1 = line(1L, OrderStatus.PAID, 1, 0, 0);
+        OrderLine line2 = line(2L, OrderStatus.PAID, 1, 0, 0);
+        given(orderRepository.findRecentOrders(any(LocalDateTime.class))).willReturn(List.of(line1, line2));
+        given(orderLineExpander.expand(anyList(), any())).willReturn(Map.of(
+                1L, new OrderLineExpander.LineExpansion(1L, List.of(
+                        new OrderLineExpander.ExpandedProduct(30L, "노란 수세미", 1, null)), null, 77L),
+                2L, new OrderLineExpander.LineExpansion(2L, List.of(
+                        new OrderLineExpander.ExpandedProduct(31L, "흰 행주", 1, null)), null, 78L)));
+        given(masterProductOptionRepository.findWithMasterProductByIdIn(anyCollection())).willReturn(List.of(
+                MasterProductOption.builder().id(77L).name("2개 묶음")
+                        .masterProduct(MasterProduct.builder().id(80L).name("수세미 세트")
+                                .sourceImageUrl("https://img/legacy-80.jpg").build()).build(),
+                MasterProductOption.builder().id(78L).name("3장 묶음")
+                        .masterProduct(MasterProduct.builder().id(81L).name("행주 세트")
+                                .sourceImageUrl("https://img/legacy-81.jpg").build()).build()));
+        given(masterImageZoneAssignmentRepository.findZoneImageUrlsByMasterIds(
+                eq(MasterImageZoneAssignment.SOURCE_ZONE), anyCollection()))
+                .willReturn(List.<Object[]>of(new Object[] { 80L, "https://img/collage-80.png" }));
+
+        List<OrderItemResponse> result = service.list(null, null, null);
+
+        assertThat(result.get(0).getMasterCoverImageUrl()).isEqualTo("https://img/collage-80.png");
+        assertThat(result.get(1).getMasterCoverImageUrl()).isEqualTo("https://img/legacy-81.jpg");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Collection<Long>> captor = ArgumentCaptor.forClass(Collection.class);
+        verify(masterImageZoneAssignmentRepository, times(1)).findZoneImageUrlsByMasterIds(
+                eq(MasterImageZoneAssignment.SOURCE_ZONE), captor.capture());
+        assertThat(captor.getValue()).containsExactlyInAnyOrder(80L, 81L);
+    }
+
+    /** FEATURE_2611_31 / D9 · D2 · D5 · D11: a master without a cover photo gets null, not the first product photo. */
+    @Test
+    void list_masterCoverIsNullWithoutCoverNotFirstProductPhoto() {
+        given(coupangProperties.getSyncDays()).willReturn(14);
+        OrderLine line1 = line(1L, OrderStatus.PAID, 1, 0, 0);
+        OrderLine line2 = line(2L, OrderStatus.PAID, 1, 0, 0);
+        given(orderRepository.findRecentOrders(any(LocalDateTime.class))).willReturn(List.of(line1, line2));
+        given(orderLineExpander.expand(anyList(), any())).willReturn(Map.of(
+                1L, new OrderLineExpander.LineExpansion(1L, List.of(
+                        new OrderLineExpander.ExpandedProduct(30L, "노란 수세미", 1, null)), null, 77L),
+                2L, new OrderLineExpander.LineExpansion(2L, List.of(
+                        new OrderLineExpander.ExpandedProduct(30L, "노란 수세미", 1, null)), null, 78L)));
+        given(masterProductOptionRepository.findWithMasterProductByIdIn(anyCollection())).willReturn(List.of(
+                MasterProductOption.builder().id(77L).name("2개 묶음")
+                        .masterProduct(MasterProduct.builder().id(80L).name("수세미 세트")
+                                .sourceImageUrl(null).build()).build(),
+                MasterProductOption.builder().id(78L).name("3장 묶음")
+                        .masterProduct(MasterProduct.builder().id(81L).name("행주 세트")
+                                .sourceImageUrl("").build()).build()));
+        given(masterImageZoneAssignmentRepository.findZoneImageUrlsByMasterIds(
+                eq(MasterImageZoneAssignment.SOURCE_ZONE), anyCollection()))
+                .willReturn(List.of());
+        given(productRepository.findAllById(List.of(30L))).willReturn(List.of(
+                Product.builder().id(30L).productName("노란 수세미").imageUrl("https://img/30.jpg").build()));
+
+        List<OrderItemResponse> result = service.list(null, null, null);
+
+        assertThat(result.get(0).getMasterCoverImageUrl()).isNull();
+        assertThat(result.get(1).getMasterCoverImageUrl()).isNull();
+        assertThat(result.get(0).getThumbnailProductId()).isEqualTo(30L);
+        assertThat(result.get(0).getThumbnailImageUrl()).isEqualTo("https://img/30.jpg");
+    }
+
+    /** FEATURE_2611_31 / D9 · D3: broken lines get null and the cover photos are not read at all. */
+    @Test
+    void list_masterCoverIsNullForBrokenLinesWithoutCoverRead() {
+        given(coupangProperties.getSyncDays()).willReturn(14);
+        OrderLine line1 = line(1L, OrderStatus.PAID, 1, 0, 0);
+        OrderLine line2 = line(2L, OrderStatus.PAID, 1, 0, 0);
+        given(orderRepository.findRecentOrders(any(LocalDateTime.class))).willReturn(List.of(line1, line2));
+        given(orderLineExpander.expand(anyList(), any())).willReturn(Map.of(
+                1L, new OrderLineExpander.LineExpansion(1L, List.of(),
+                        OrderLineExpander.Failure.NO_MASTER_OPTION),
+                2L, new OrderLineExpander.LineExpansion(2L, List.of(),
+                        OrderLineExpander.Failure.EMPTY_BOM)));
+
+        List<OrderItemResponse> result = service.list(null, null, null);
+
+        assertThat(result.get(0).getMasterCoverImageUrl()).isNull();
+        assertThat(result.get(1).getMasterCoverImageUrl()).isNull();
+        verifyNoInteractions(masterImageZoneAssignmentRepository);
     }
 }

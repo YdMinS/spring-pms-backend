@@ -3,8 +3,10 @@ package com.pms.controller;
 import com.pms.common.BaseIntegrationTest;
 import com.pms.domain.ListingStatus;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.MasterImageZoneAssignment;
 import com.pms.domain.MasterProduct;
 import com.pms.domain.MasterProductOption;
+import com.pms.domain.MasterProductImage;
 import com.pms.domain.MasterProductOptionItem;
 import com.pms.domain.CoupangOrderLine;
 import com.pms.domain.Order;
@@ -22,6 +24,8 @@ import com.pms.domain.ShipmentParcelItem;
 import com.pms.fixture.MarketplaceAccountFixture;
 import com.pms.repository.CoupangAccountCredentialRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.MasterImageZoneAssignmentRepository;
+import com.pms.repository.MasterProductImageRepository;
 import com.pms.repository.MasterProductOptionItemRepository;
 import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.MasterProductRepository;
@@ -84,6 +88,8 @@ class OrderControllerTest extends BaseIntegrationTest {
     @Autowired private MasterProductOptionItemRepository masterProductOptionItemRepository;
     @Autowired private ProductListingRepository productListingRepository;
     @Autowired private ProductListingOptionRepository productListingOptionRepository;
+    @Autowired private MasterProductImageRepository masterProductImageRepository;
+    @Autowired private MasterImageZoneAssignmentRepository masterImageZoneAssignmentRepository;
 
     @MockBean private CoupangApiClient coupangApiClient;   // 동기화 시 빈 데이터 반환
 
@@ -140,6 +146,7 @@ class OrderControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data[0].accountAlias").value("쿠팡본점"))
                 .andExpect(jsonPath("$.data[0].unexpandedReason").value("UNMAPPED_OPTION"))
                 .andExpect(jsonPath("$.data[0].masterProductName").doesNotExist())
+                .andExpect(jsonPath("$.data[0].masterCoverImageUrl").doesNotExist())
                 .andExpect(jsonPath("$.data[0].raw").doesNotExist())
                 .andExpect(jsonPath("$.data[0].secretKey").doesNotExist());
     }
@@ -403,7 +410,7 @@ class OrderControllerTest extends BaseIntegrationTest {
         Product product = productRepository.save(Product.builder().productName("노란 수세미")
                 .imageUrl("products/y.png").active(true).build());
         MasterProduct master = masterProductRepository.save(
-                MasterProduct.builder().name("수세미 세트").active(true).build());
+                MasterProduct.builder().name("수세미 세트").active(true).sourceImageUrl("http://x/legacy-cover.png").build());
         MasterProductOption masterOption = masterProductOptionRepository.save(
                 MasterProductOption.builder().masterProduct(master).name("2개 묶음").build());
         masterProductOptionItemRepository.save(MasterProductOptionItem.builder()
@@ -421,6 +428,10 @@ class OrderControllerTest extends BaseIntegrationTest {
                 .status(OrderStatus.PAID).itemName("수세미 2개 묶음")
                 .orderQty(5).cancelQty(1).holdQty(1)
                 .productListingOption(listingOption).build());
+        MasterProductImage image = masterProductImageRepository.save(MasterProductImage.builder()
+                .masterProduct(master).sortOrder(0).imageUrl("http://x/order-collage-cover.png").build());
+        masterImageZoneAssignmentRepository.save(MasterImageZoneAssignment.builder()
+                .image(image).zoneId(MasterImageZoneAssignment.SOURCE_ZONE).sortOrder(0).build());
 
         mockMvc.perform(get("/api/orders/lines/" + linked.getId() + "/detail")
                         .header("Authorization", "Bearer " + adminToken))
@@ -440,6 +451,10 @@ class OrderControllerTest extends BaseIntegrationTest {
                 .andExpect(jsonPath("$.data.lines[1].components[0].quantity").value(6))
                 .andExpect(jsonPath("$.data.lines[1].masterProductName").value("수세미 세트"))
                 .andExpect(jsonPath("$.data.lines[1].masterOptionName").value("2개 묶음"))
+                // Edited cover image beats the legacy column, a broken line has none, product fields stay (FEATURE_2611_31 / D1 · D3 · D11).
+                .andExpect(jsonPath("$.data.lines[1].masterCoverImageUrl").value("http://x/order-collage-cover.png"))
+                .andExpect(jsonPath("$.data.lines[0].masterCoverImageUrl").doesNotExist())
+                .andExpect(jsonPath("$.data.lines[1].thumbnailProductId").value(product.getId()))
                 .andExpect(jsonPath("$.data.lines[1].unexpandedReason").doesNotExist());
     }
 
