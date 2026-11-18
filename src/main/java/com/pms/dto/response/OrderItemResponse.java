@@ -68,6 +68,12 @@ public class OrderItemResponse {
     // option, BOM order, quantity = per-set quantity × purchasableQty. Empty when the line cannot be expanded.
     @Builder.Default
     private List<ComponentQuantity> components = List.of();
+    // Master product name · master option name of the line's expanded master option — same names and values as the
+    // order detail lineMasters; both null for a line whose link is broken (FEATURE_2611_30 / D21 · D27 · D30).
+    private String masterProductName;
+    private String masterOptionName;
+    // Null = linked; a broken line carries UNMAPPED_OPTION · NO_MASTER_OPTION · EMPTY_BOM (FEATURE_2611_30 / D28).
+    private String unexpandedReason;
 
     /** One component product of the line and how many go out (FEATURE_2611_15 / D16 · D18). */
     public record ComponentQuantity(String productName, int quantity) {

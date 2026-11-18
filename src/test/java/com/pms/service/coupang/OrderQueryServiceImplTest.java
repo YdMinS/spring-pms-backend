@@ -5,6 +5,8 @@ import com.pms.domain.CoupangOrderLine;
 import com.pms.domain.ElevenstOrderLine;
 import com.pms.domain.InternalShipmentStage;
 import com.pms.domain.MarketplaceAccount;
+import com.pms.domain.MasterProduct;
+import com.pms.domain.MasterProductOption;
 import com.pms.domain.Order;
 import com.pms.domain.OrderLine;
 import com.pms.domain.OrderShipment;
@@ -18,6 +20,7 @@ import com.pms.repository.CoupangOrderLineRepository;
 import com.pms.repository.ElevenstOrderLineRepository;
 import com.pms.repository.LotteonOrderLineRepository;
 import com.pms.repository.MarketplaceAccountRepository;
+import com.pms.repository.MasterProductOptionRepository;
 import com.pms.repository.OrderRepository;
 import com.pms.repository.ProductRepository;
 import com.pms.service.stock.OrderLineExpander;
@@ -63,6 +66,7 @@ class OrderQueryServiceImplTest {
     @Mock private OrderLineExpander orderLineExpander;
     @Mock private ProductRepository productRepository;
     @Mock private MarketplaceAccountRepository marketplaceAccountRepository;
+    @Mock private MasterProductOptionRepository masterProductOptionRepository;
     @InjectMocks private OrderQueryServiceImpl service;
 
     private OrderLine line(Long id, OrderStatus status, int orderQty, int cancelQty, int holdQty) {
@@ -284,6 +288,7 @@ class OrderQueryServiceImplTest {
 
         verifyNoInteractions(coupangOrderLineRepository);
         verifyNoInteractions(marketplaceAccountRepository);
+        verifyNoInteractions(masterProductOptionRepository);
     }
 
     @Test
@@ -319,6 +324,37 @@ class OrderQueryServiceImplTest {
         ArgumentCaptor<Collection<Long>> captor = ArgumentCaptor.forClass(Collection.class);
         verify(marketplaceAccountRepository, times(1)).findWithSellerByIdIn(captor.capture());
         assertThat(captor.getValue()).containsExactlyInAnyOrder(7L, 8L);
+    }
+
+    /** FEATURE_2611_30 / D28 · D30: master names come from one master option read; a broken line carries its reason. */
+    @Test
+    void list_mapsMasterNamesAndUnexpandedReasonFromOneMasterRead() {
+        given(coupangProperties.getSyncDays()).willReturn(14);
+        OrderLine line1 = line(1L, OrderStatus.PAID, 1, 0, 0);
+        OrderLine line2 = line(2L, OrderStatus.PAID, 1, 0, 0);
+        given(orderRepository.findRecentOrders(any(LocalDateTime.class))).willReturn(List.of(line1, line2));
+        given(orderLineExpander.expand(anyList(), any())).willReturn(Map.of(
+                1L, new OrderLineExpander.LineExpansion(1L, List.of(
+                        new OrderLineExpander.ExpandedProduct(30L, "노란 수세미", 3, null)), null, 77L),
+                2L, new OrderLineExpander.LineExpansion(2L, List.of(),
+                        OrderLineExpander.Failure.NO_MASTER_OPTION)));
+        given(masterProductOptionRepository.findWithMasterProductByIdIn(anyCollection())).willReturn(List.of(
+                MasterProductOption.builder().id(77L).name("2개 묶음")
+                        .masterProduct(MasterProduct.builder().id(80L).name("수세미 세트").build()).build()));
+
+        List<OrderItemResponse> result = service.list(null, null, null);
+
+        assertThat(result).hasSize(2);
+        assertThat(result.get(0).getMasterProductName()).isEqualTo("수세미 세트");
+        assertThat(result.get(0).getMasterOptionName()).isEqualTo("2개 묶음");
+        assertThat(result.get(0).getUnexpandedReason()).isNull();
+        assertThat(result.get(1).getMasterProductName()).isNull();
+        assertThat(result.get(1).getMasterOptionName()).isNull();
+        assertThat(result.get(1).getUnexpandedReason()).isEqualTo("NO_MASTER_OPTION");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Collection<Long>> captor = ArgumentCaptor.forClass(Collection.class);
+        verify(masterProductOptionRepository, times(1)).findWithMasterProductByIdIn(captor.capture());
+        assertThat(captor.getValue()).containsExactly(77L);
     }
 
     @Test
