@@ -161,4 +161,16 @@ public class OrderClaim extends BaseEntity {
     public boolean isLinked() {
         return orderLine != null;
     }
+
+    /**
+     * Whose stock a return check-in or an exchange shipment moves (FEATURE_2611_34 R5) — the one place for this path:
+     * claim -> orderLine -> order -> marketplaceAccount -> seller; an order-unmatched claim -> its own
+     * marketplaceAccount -> seller.
+     */
+    public Seller stockSeller() {
+        if (orderLine == null) {
+            return marketplaceAccount.getSeller();
+        }
+        return orderLine.getOrder().getMarketplaceAccount().getSeller();
+    }
 }

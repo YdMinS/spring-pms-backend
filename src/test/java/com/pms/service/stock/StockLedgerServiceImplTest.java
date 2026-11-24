@@ -1,5 +1,6 @@
 package com.pms.service.stock;
 
+import com.pms.domain.ClaimType;
 import com.pms.domain.OrderClaim;
 import com.pms.domain.Product;
 import com.pms.domain.MarketplaceAccount;
@@ -399,5 +400,73 @@ class StockLedgerServiceImplTest {
         StockMovement saved = captureSaved();
         assertThat(saved.getSeller().getId()).isEqualTo(43L);
         assertThat(saved.getUnitPrice()).isEqualByComparingTo("3000");
+    }
+
+    /** FEATURE_2611_34 D5 · D6: 「매입처 반품」 is a disposal reason — same path as DAMAGED. */
+    @Test
+    void testSupplierReturnIsDisposalReason() {
+        stubSave();
+
+        service.record(new StockMovementRequest(PRODUCT_ID, SELLER_ID, StockMovementType.DISPOSAL, 3,
+                StockReason.SUPPLIER_RETURN, null, null, null, null, MOVED_ON));
+
+        StockMovement saved = captureSaved();
+        assertThat(saved.getQuantity()).isEqualTo(-3);
+        assertThat(saved.getReason()).isEqualTo(StockReason.SUPPLIER_RETURN);
+        assertThat(saved.getSeller().getId()).isEqualTo(3L);
+    }
+
+    /** FEATURE_2611_34 D40: 「교환 발송」 needs an exchange claim. */
+    @Test
+    void testExchangeShipRequiresClaim() {
+        assertThatThrownBy(() -> service.record(new StockMovementRequest(PRODUCT_ID, null, StockMovementType.DISPOSAL,
+                1, StockReason.EXCHANGE_SHIP, null, null, null, null, MOVED_ON)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("교환 건을 선택하세요");
+        verify(stockMovementRepository, never()).save(any());
+    }
+
+    /** FEATURE_2611_34 D40: 「교환 발송」 accepts an exchange claim only. */
+    @Test
+    void testExchangeShipRejectsReturnClaim() {
+        given(productRepository.findById(PRODUCT_ID)).willReturn(Optional.of(PRODUCT));
+        given(orderClaimRepository.findById(21L)).willReturn(Optional.of(
+                OrderClaim.builder().id(21L).claimType(ClaimType.RETURN).quantity(1).build()));
+
+        assertThatThrownBy(() -> service.record(new StockMovementRequest(PRODUCT_ID, null, StockMovementType.DISPOSAL,
+                1, StockReason.EXCHANGE_SHIP, null, null, 21L, null, MOVED_ON)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("교환 발송은 교환 건에만 쓸 수 있습니다");
+        verify(stockMovementRepository, never()).save(any());
+    }
+
+    /** FEATURE_2611_34 D41: the seller comes from the exchange claim (the request seller is ignored). */
+    @Test
+    void testExchangeShipDerivesSellerAndStoresClaim() {
+        stubSaveWithoutSeller();
+        Seller orderSeller = Seller.builder().id(42L).sellerName("셀러C").build();
+        MarketplaceAccount account = MarketplaceAccount.builder().id(1L).seller(orderSeller).build();
+        OrderLine line = OrderLine.builder().id(5L)
+                .order(Order.builder().id(50L).marketplaceAccount(account).build()).build();
+        given(orderClaimRepository.findById(21L)).willReturn(Optional.of(OrderClaim.builder().id(21L)
+                .claimType(ClaimType.EXCHANGE).quantity(2).orderLine(line).build()));
+
+        service.record(new StockMovementRequest(PRODUCT_ID, SELLER_ID, StockMovementType.DISPOSAL, 2,
+                StockReason.EXCHANGE_SHIP, null, null, 21L, null, MOVED_ON));
+
+        StockMovement saved = captureSaved();
+        assertThat(saved.getQuantity()).isEqualTo(-2);
+        assertThat(saved.getSeller().getId()).isEqualTo(42L);
+        assertThat(saved.getOrderClaim().getId()).isEqualTo(21L);
+        assertThat(saved.getReason()).isEqualTo(StockReason.EXCHANGE_SHIP);
+    }
+
+    /** FEATURE_2611_34 D40: every other disposal reason still may not reference a claim. */
+    @Test
+    void testDisposalOtherReasonStillRejectsClaim() {
+        assertThatThrownBy(() -> service.record(new StockMovementRequest(PRODUCT_ID, SELLER_ID,
+                StockMovementType.DISPOSAL, 1, StockReason.DAMAGED, null, null, 21L, null, MOVED_ON)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("이 이동 유형은 주문·클레임을 참조할 수 없습니다");
     }
 }

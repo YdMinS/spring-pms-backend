@@ -22,7 +22,8 @@ import java.time.LocalDateTime;
  * <p>⚠️ <b>Nothing automatic writes here</b> (2609_28 D18, revised by PLAN 2609_29 D2): no row may be
  * written without a person confirming it. Sync jobs, schedulers and shipment hooks are still
  * forbidden; the [입고] click on the purchase list IS that confirmation, so
- * {@code PurchaseListService -> StockLedgerService} is the one opened path. A receipt header edit
+ * {@code PurchaseListService -> StockLedgerService} and {@code WorkLineRecorder -> StockLedgerService} (the [저장]
+ * click of the work screens, FEATURE_2611_34) are the opened paths. A receipt header edit
  * (FEATURE_2610_18 D101) writes no row — it only moves the rows of its lines, and every row that used them
  * (FEATURE_2610_19 D149), to the new payer seller, and the rows of its lines to a new purchase day
  * (FEATURE_2611_21 D26). Filling an empty source later (FEATURE_2611_22 D3) is a person's [채우기] click too.
@@ -72,7 +73,8 @@ public class StockMovement extends BaseEntity {
      * <p>Derived by the server for {@code STOCK_OUT} (the owner of the lot it used, no lot = the order's seller,
      * FEATURE_2610_19 D124) and {@code RETURN_IN} (claim -> order -> account -> seller, D22; an order-unmatched
      * claim -> its sales channel's seller, FEATURE_2610_19 D140); required in the request for every other type
-     * except an intake-work row (null, below).
+     * except an intake-work row (null, below) and DISPOSAL 「교환 발송」 (claim -> order -> account -> seller,
+     * FEATURE_2611_34 D41).
      *
      * <p>null = "seller undecided" (FEATURE_2610_19 D105): an intake-work row whose receipt is not assigned yet, and
      * an outbound row that used such a row (D124). An undecided row is never edited to get an owner — its owners are
@@ -128,7 +130,10 @@ public class StockMovement extends BaseEntity {
     @JoinColumn(name = "order_line_id")
     private OrderLine orderLine;
 
-    /** Required for RETURN_IN — the claim the goods came back from. */
+    /**
+     * Required for RETURN_IN and for DISPOSAL 「교환 발송」 (FEATURE_2611_34 D40) — the claim the goods came back from
+     * or went out for.
+     */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "order_claim_id")
     private OrderClaim orderClaim;

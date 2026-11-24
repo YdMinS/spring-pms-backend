@@ -24,8 +24,8 @@ import java.util.List;
  * (PLAN 2609_28 D21) and must not be revived here — old clients would bind to it and misbehave.
  *
  * <p>⚠️ Nothing automatic may write to the ledger (D18, revised by PLAN 2609_29 D2). Besides this
- * controller the only caller is {@code PurchaseListService}, because the [입고] click is itself the
- * human confirmation.
+ * controller the callers are {@code PurchaseListService} and {@code WorkLineRecorder} (FEATURE_2611_34), because
+ * the [입고] click and the work screens' [저장] click are themselves the human confirmation.
  *
  * @see StockLedgerService
  */
