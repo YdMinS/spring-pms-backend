@@ -3,6 +3,8 @@ package com.pms.repository;
 import com.pms.domain.Product;
 import com.pms.domain.StockMovement;
 import com.pms.domain.StockMovementType;
+import com.pms.domain.StockReason;
+import com.pms.dto.response.ClaimProductSumView;
 import com.pms.dto.response.PurchaseCandidateView;
 import com.pms.dto.response.ReturnCandidateView;
 import com.pms.dto.response.StockBalanceView;
@@ -271,4 +273,21 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
     /** FEATURE_2611_22 D20: every outbound row of one order line, with its lot. */
     @EntityGraph(attributePaths = {"product", "sourceMovement"})
     List<StockMovement> findByOrderLineIdAndMovementTypeOrderByIdAsc(Long orderLineId, StockMovementType movementType);
+
+    /**
+     * Ledger sum per (claim × product) for one movement type and, when given, one reason (FEATURE_2611_34 D20 · D42).
+     * The quantity keeps the stored sign. Never call with an empty list.
+     */
+    @Query("""
+            select new com.pms.dto.response.ClaimProductSumView(
+                m.orderClaim.id, m.product.id, coalesce(sum(m.quantity), 0L))
+            from StockMovement m
+            where m.orderClaim.id in :claimIds
+              and m.movementType = :type
+              and (:reason is null or m.reason = :reason)
+            group by m.orderClaim.id, m.product.id
+            """)
+    List<ClaimProductSumView> findClaimProductSums(@Param("claimIds") Collection<Long> claimIds,
+                                                   @Param("type") StockMovementType type,
+                                                   @Param("reason") StockReason reason);
 }

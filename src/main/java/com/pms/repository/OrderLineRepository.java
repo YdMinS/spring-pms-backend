@@ -447,4 +447,14 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
             + "where l.status = :status and o.orderedAt >= :from "
             + "and l.orderQty > 0 and (l.cancelQty + l.holdQty) < l.orderQty")
     long countNewOrders(@Param("status") OrderStatus status, @Param("from") LocalDateTime from);
+
+    /**
+     * Lines in a shipped state whose order was placed on or after {@code from}, newest order first (FEATURE_2611_34
+     * D39 · D43 · R9).
+     */
+    @EntityGraph(attributePaths = {"order", "order.marketplaceAccount", "order.marketplaceAccount.seller"})
+    @Query("select l from OrderLine l where l.status in :statuses and l.order.orderedAt >= :from "
+            + "order by l.order.orderedAt desc, l.order.id desc, l.id asc")
+    List<OrderLine> findShippedSince(@Param("statuses") Collection<OrderStatus> statuses,
+                                     @Param("from") LocalDateTime from);
 }

@@ -159,4 +159,50 @@ public interface OrderClaimRepository extends JpaRepository<OrderClaim, Long> {
     @Query("select count(c) from OrderClaim c where c.status not in :closed and c.receivedAt >= :from")
     long countOpenForAlerts(@Param("closed") Collection<ClaimStatus> closed,
                             @Param("from") LocalDateTime from);
+
+    /**
+     * Claims whose pickup invoice equals the scanned one (FEATURE_2611_34 D18 · D30), oldest first (D22).
+     *
+     * <p>The stored value is kept as the sync gave it, so it is stripped here of {@code '-'} and {@code ' '} only;
+     * the scanned side goes through {@code InvoiceNumbers.normalize}. A stored value holding a tab or a NBSP is not
+     * found (out of scope — not seen in synced values).
+     */
+    @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller", "orderLine", "orderLine.order",
+            "orderLine.order.marketplaceAccount", "orderLine.order.marketplaceAccount.seller",
+            "orderLine.productListingOption", "orderLine.productListingOption.masterProductOption"})
+    @Query("select c from OrderClaim c "
+            + "where replace(replace(c.collectInvoiceNo, '-', ''), ' ', '') = :invoice "
+            + "order by c.receivedAt asc, c.id asc")
+    List<OrderClaim> findWorkByCollectInvoice(@Param("invoice") String invoice);
+
+    /** Exchange claims whose reship invoice equals the scanned one, stripped like the pickup one (FEATURE_2611_34 D42). */
+    @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller", "orderLine", "orderLine.order",
+            "orderLine.order.marketplaceAccount", "orderLine.order.marketplaceAccount.seller",
+            "orderLine.productListingOption", "orderLine.productListingOption.masterProductOption"})
+    @Query("select c from OrderClaim c "
+            + "where replace(replace(c.reshipInvoiceNo, '-', ''), ' ', '') = :invoice "
+            + "and c.claimType = com.pms.domain.ClaimType.EXCHANGE "
+            + "order by c.receivedAt asc, c.id asc")
+    List<OrderClaim> findWorkByReshipInvoice(@Param("invoice") String invoice);
+
+    /** Claims on the given order lines, oldest first (FEATURE_2611_34 D26 · D27 · D29). Never call with an empty list. */
+    @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller", "orderLine", "orderLine.order",
+            "orderLine.order.marketplaceAccount", "orderLine.order.marketplaceAccount.seller",
+            "orderLine.productListingOption", "orderLine.productListingOption.masterProductOption"})
+    @Query("select c from OrderClaim c where c.orderLine.id in :lineIds order by c.receivedAt asc, c.id asc")
+    List<OrderClaim> findWorkByOrderLineIds(@Param("lineIds") Collection<Long> lineIds);
+
+    /** Every claim of one type, newest first, no period (FEATURE_2611_34 D42 round 5). */
+    @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller", "orderLine", "orderLine.order",
+            "orderLine.order.marketplaceAccount", "orderLine.order.marketplaceAccount.seller",
+            "orderLine.productListingOption", "orderLine.productListingOption.masterProductOption"})
+    @Query("select c from OrderClaim c where c.claimType = :type order by c.receivedAt desc, c.id desc")
+    List<OrderClaim> findWorkByClaimType(@Param("type") ClaimType type);
+
+    /** The claims of a work save, oldest first (FEATURE_2611_34 D34). Never call with an empty list. */
+    @EntityGraph(attributePaths = {"marketplaceAccount", "marketplaceAccount.seller", "orderLine", "orderLine.order",
+            "orderLine.order.marketplaceAccount", "orderLine.order.marketplaceAccount.seller",
+            "orderLine.productListingOption", "orderLine.productListingOption.masterProductOption"})
+    @Query("select c from OrderClaim c where c.id in :ids order by c.receivedAt asc, c.id asc")
+    List<OrderClaim> findWorkByIdIn(@Param("ids") Collection<Long> ids);
 }
