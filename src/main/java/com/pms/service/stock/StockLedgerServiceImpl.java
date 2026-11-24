@@ -1,5 +1,6 @@
 package com.pms.service.stock;
 
+import com.pms.domain.ClaimType;
 import com.pms.domain.LotShareUsage;
 import com.pms.domain.OrderClaim;
 import com.pms.domain.Product;
@@ -235,7 +236,7 @@ public class StockLedgerServiceImpl implements StockLedgerService {
      *   <tr><th>type</th><th>quantity</th><th>reason</th><th>required ref</th><th>forbidden ref</th></tr>
      *   <tr><td>STOCK_IN</td><td>&gt; 0</td><td>required</td><td>PURCHASE -&gt; purchaseRecordId (while the stock link is on)</td><td>claim</td></tr>
      *   <tr><td>RETURN_IN</td><td>&gt; 0</td><td>none</td><td>orderClaimId</td><td>purchaseRecord</td></tr>
-     *   <tr><td>DISPOSAL</td><td>&gt; 0 (stored negative)</td><td>required</td><td>-</td><td>all</td></tr>
+     *   <tr><td>DISPOSAL</td><td>&gt; 0 (stored negative)</td><td>required</td><td>-</td><td>all (EXCHANGE_SHIP: orderClaimId required, exchange only)</td></tr>
      *   <tr><td>ADJUST</td><td>!= 0</td><td>required</td><td>-</td><td>all</td></tr>
      *   <tr><td>STOCK_OUT</td><td colspan="4">rejected here — outbound starts from an order</td></tr>
      * </table>
@@ -282,8 +283,20 @@ public class StockLedgerServiceImpl implements StockLedgerService {
             return;
         }
 
-        // STOCK_IN / DISPOSAL / ADJUST never belong to a single order (D6): one delivery is consumed
-        // by many orders, so tying an inbound row to one of them is structurally wrong.
+        // FEATURE_2611_34 D40: 「교환 발송」 is the one disposal tied to a claim
+        if (type == StockMovementType.DISPOSAL && reason == StockReason.EXCHANGE_SHIP) {
+            if (request.orderClaimId() == null) {
+                throw new IllegalArgumentException("교환 건을 선택하세요");
+            }
+            if (request.purchaseRecordId() != null) {
+                throw new IllegalArgumentException("이 이동 유형은 구매기록을 참조할 수 없습니다");
+            }
+            return;
+        }
+
+        // STOCK_IN / DISPOSAL / ADJUST never belong to a single order (D6) — except DISPOSAL 「교환 발송」, handled
+        // above (FEATURE_2611_34 D40): one delivery is consumed by many orders, so tying an inbound row to one of them
+        // is structurally wrong.
         if (request.orderClaimId() != null) {
             throw new IllegalArgumentException("이 이동 유형은 주문·클레임을 참조할 수 없습니다");
         }
@@ -358,7 +371,7 @@ public class StockLedgerServiceImpl implements StockLedgerService {
      *
      * <table>
      *   <tr><th>type</th><th>seller</th></tr>
-     *   <tr><td>RETURN_IN</td><td>derived from the claim — the screen never asks</td></tr>
+     *   <tr><td>RETURN_IN · DISPOSAL 「교환 발송」</td><td>derived from the claim — the screen never asks</td></tr>
      *   <tr><td>everything else</td><td>the request's {@code sellerId}, mandatory</td></tr>
      * </table>
      *
@@ -372,7 +385,7 @@ public class StockLedgerServiceImpl implements StockLedgerService {
      */
     private Seller resolveSeller(StockMovementRequest request, StockMovementType type,
                                  OrderClaim orderClaim, PurchaseRecord purchaseRecord) {
-        if (type == StockMovementType.RETURN_IN) {
+        if (type == StockMovementType.RETURN_IN || request.reason() == StockReason.EXCHANGE_SHIP) {
             return sellerOfClaim(orderClaim);
         }
         if (request.sellerId() == null) {
@@ -392,10 +405,7 @@ public class StockLedgerServiceImpl implements StockLedgerService {
      * its own marketplaceAccount -> seller (FEATURE_2610_19 D140 — the account and its seller are NOT NULL).
      */
     private Seller sellerOfClaim(OrderClaim orderClaim) {
-        if (orderClaim.getOrderLine() == null) {
-            return orderClaim.getMarketplaceAccount().getSeller();
-        }
-        return orderClaim.getOrderLine().getOrder().getMarketplaceAccount().getSeller();
+        return orderClaim.stockSeller();
     }
 
     private PurchaseRecord resolvePurchaseRecord(StockMovementRequest request, StockMovementType type) {
@@ -408,11 +418,15 @@ public class StockLedgerServiceImpl implements StockLedgerService {
     }
 
     private OrderClaim resolveOrderClaim(StockMovementRequest request, StockMovementType type) {
-        if (type != StockMovementType.RETURN_IN) {
+        if (type != StockMovementType.RETURN_IN && request.reason() != StockReason.EXCHANGE_SHIP) {
             return null;
         }
-        return orderClaimRepository.findById(request.orderClaimId())
+        OrderClaim orderClaim = orderClaimRepository.findById(request.orderClaimId())
                 .orElseThrow(() -> new ResourceNotFoundException("OrderClaim", request.orderClaimId()));
+        if (request.reason() == StockReason.EXCHANGE_SHIP && orderClaim.getClaimType() != ClaimType.EXCHANGE) {
+            throw new IllegalArgumentException("교환 발송은 교환 건에만 쓸 수 있습니다");
+        }
+        return orderClaim;
     }
 
     private StockMovementView toView(StockMovement m) {

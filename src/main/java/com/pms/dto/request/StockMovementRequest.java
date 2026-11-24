@@ -15,8 +15,8 @@ import java.time.LocalDate;
  * {@code ADJUST} is the one exception: a count difference is genuinely signed.
  *
  * <p>⚠️ {@code sellerId} (PLAN 2609_29 D4·D22) is <b>required for every type except</b>
- * {@code RETURN_IN}, where the server derives it from the claim's order
- * (claim -> orderLine -> order -> marketplaceAccount -> seller) and the screen never asks.
+ * {@code RETURN_IN} and DISPOSAL with {@code EXCHANGE_SHIP} (FEATURE_2611_34 D41), where the server derives it
+ * from the claim's order (claim -> orderLine -> order -> marketplaceAccount -> seller) and the screen never asks.
  * It carries no {@code @NotNull} on purpose: the per-type rule is owned by the service, and an
  * annotation here would reject the derived case before the service ever sees it.
  * For {@code STOCK_IN + PURCHASE} with a purchase record it must equal the record's seller — otherwise the
