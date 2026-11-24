@@ -18,8 +18,8 @@ import java.util.List;
  * PLAN 2609_29 D2). Order sync, schedulers and shipment hooks are still forbidden: every row means
  * "a person confirmed the goods moved", and the moment something automatic writes here the ledger
  * stops describing the warehouse and the feature is worthless. The [입고] click on the purchase list
- * IS that confirmation — {@code PurchaseListService} is therefore a legitimate caller, and the only
- * one besides the controller.
+ * IS that confirmation — {@code PurchaseListService} is therefore a legitimate caller, and so is
+ * {@code WorkLineRecorder} (the [저장] click of 「출고 작업」 · 「반품 재입고」 · 「교환 발송」, FEATURE_2611_34).
  *
  * <p>Outbound movements ({@code STOCK_OUT}) are not recorded here — they start from an order and get
  * their own flow.

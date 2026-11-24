@@ -9,7 +9,9 @@ import java.util.Set;
  *
  * <p>Each value carries the {@link StockMovementType}s it may appear under, so the combination check
  * stays a single {@link #allowedFor(StockMovementType)} call instead of string comparisons scattered
- * across the service. Adding a reason means touching this file only.
+ * across the service. Adding a reason means touching this file only — except a reason tied to a
+ * claim (EXCHANGE_SHIP, FEATURE_2611_34 D40), whose rule also lives in
+ * {@code StockLedgerServiceImpl#validate}.
  *
  * <p>⚠️ {@code SAMPLE} and {@code INTERNAL_USE} sit under {@code DISPOSAL} on purpose: from the
  * ledger's point of view they are identical — a decrease that is not a sale. What separates them is
@@ -39,6 +41,13 @@ public enum StockReason {
     LOST(StockMovementType.DISPOSAL),
     SAMPLE(StockMovementType.DISPOSAL),
     INTERNAL_USE(StockMovementType.DISPOSAL),
+    /** Goods sent back to the supplier, stock only (FEATURE_2611_34 D5 · D6). */
+    SUPPLIER_RETURN(StockMovementType.DISPOSAL),
+    /**
+     * Goods re-sent to a customer for an exchange; the only disposal reason that requires an exchange claim
+     * (FEATURE_2611_34 D40).
+     */
+    EXCHANGE_SHIP(StockMovementType.DISPOSAL),
 
     /** Stock count difference. */
     COUNT_DIFF(StockMovementType.ADJUST),
